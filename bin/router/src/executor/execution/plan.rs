@@ -1,6 +1,6 @@
 use super::context::{
-    collect_context_entities, unalias_response, AliasedRequests, ContextGroup, EntityRef,
-    TargetEntities,
+    collect_context_entities, collect_path_values, context_depth, unalias_response,
+    AliasedRequests, ContextGroup, EntityRef, TargetEntities,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -15,8 +15,7 @@ use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use crate::query_planner::{
     ast::operation::OperationDefinition,
     planner::plan_nodes::{
-        EntityBatch, EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode, QueryPlan,
-        SequenceNode,
+        EntityBatch, EntityBatchAlias, FetchRewrite, PlanNode, QueryPlan, SequenceNode,
     },
     state::supergraph_state::OperationKind,
 };
@@ -81,7 +80,7 @@ use crate::executor::{
         subgraph_response::SubgraphResponse,
         value::Value,
     },
-    utils::traverse::traverse_and_callback_mut,
+    utils::traverse::PathTrie,
 };
 use crate::query_planner::state::entity_keys::KeysByType;
 
@@ -733,16 +732,16 @@ pub enum ExecutionJob<'exec> {
         response: SubgraphResponse<'exec>,
         output_rewrites: Option<&'exec [FetchRewrite]>,
         // By default, this job is merged at the root. When this is set, we merge at
-        // a specific path instead of the root (used for root re-entry fetches)
-        merge_path: Option<ResponsePathRef<'exec>>,
+        // its path instead of the root (used for root re-entry fetches)
+        flatten_node: Option<&'exec FlattenNode>,
     },
     FlattenFetch {
         subgraph_name: &'exec str,
         operation: &'exec SubgraphFetchOperation,
         response: SubgraphResponse<'exec>,
-        flatten_node_path: &'exec FlattenNodePath,
+        flatten_node: &'exec FlattenNode,
         /// For each target, in walk order: which entity goes into it.
-        target_entities: TargetEntities,
+        targets: Arc<TargetEntities>,
         /// Where each context group's entities start in the response, if this request sent
         /// the group.
         context_group_offsets: Vec<Option<usize>>,
@@ -753,6 +752,8 @@ pub enum ExecutionJob<'exec> {
         operation: &'exec SubgraphFetchOperation,
         response: SubgraphResponse<'exec>,
         aliases: Vec<AliasBatchState<'exec>>,
+        /// The merge paths of all the aliases
+        trie: &'exec PathTrie,
     },
 }
 
@@ -794,12 +795,27 @@ pub struct AliasBatchState<'exec> {
     /// Where each context group's entities start in the alias's response, if this request
     /// sent the group.
     context_group_offsets: Vec<Option<usize>>,
-    paths: Vec<AliasPathState<'exec>>,
+    targets: Arc<TargetEntities>,
 }
 
-struct AliasPathState<'exec> {
-    merge_path: ResponsePathRef<'exec>,
-    target_entities: TargetEntities,
+/// What one alias of a batch merges back
+struct AliasMerge<'a, 'exec> {
+    state: &'a AliasBatchState<'exec>,
+    merger: Option<EntityMerger<'a, 'exec>>,
+    /// Where each entity went, kept only when the alias has errors
+    error_targets: Option<HashMap<usize, Vec<GraphQLErrorPath>>>,
+}
+
+impl AliasMerge<'_, '_> {
+    fn entity_index(&self, target: Option<EntityRef>) -> Option<usize> {
+        entity_index(target, &self.state.context_group_offsets)
+    }
+}
+
+/// The targets a path still has to merge, in walk order
+struct Cursor<'a> {
+    alias: usize,
+    targets: std::slice::Iter<'a, Option<EntityRef>>,
 }
 
 /// Where an entity sits in an `_entities` response that carries the context groups in
@@ -873,10 +889,8 @@ impl<'exec> ExecutionJob<'exec> {
 
     fn affected_path(&self) -> Option<ResponsePathRef<'exec>> {
         match self {
-            ExecutionJob::Fetch { merge_path, .. } => *merge_path,
-            ExecutionJob::FlattenFetch {
-                flatten_node_path, ..
-            } => Some(flatten_node_path.as_ref()),
+            ExecutionJob::Fetch { flatten_node, .. } => flatten_node.map(|node| node.path.as_ref()),
+            ExecutionJob::FlattenFetch { flatten_node, .. } => Some(flatten_node.path.as_ref()),
             ExecutionJob::BatchFetch { .. } => None,
         }
     }
@@ -899,8 +913,9 @@ struct PrepareExecutionJobOpts<'exec> {
     custom_scalar_paths: Option<&'exec CustomScalarPaths>,
     // If the fetch job is for a flatten node, we pass the filtered representations,
     raw_variable_values: Option<Vec<(&'exec str, Vec<u8>)>>,
-    // and the path to the representations in the original response for error handling and normalization
-    affected_path: Option<ResponsePathRef<'exec>>,
+    // and the flatten node, whose path leads to the representations in the original response,
+    // for error handling and normalization
+    flatten_node: Option<&'exec FlattenNode>,
 }
 
 impl<'exec> Executor<'exec> {
@@ -919,7 +934,11 @@ impl<'exec> Executor<'exec> {
                         scope.push(fut);
                     }
                 }
-                entity_reuse::merge_copies(&mut ctx.data, copies, self.schema_metadata);
+                entity_reuse::merge_copies(
+                    &mut ctx.data,
+                    copies,
+                    &self.schema_metadata.possible_types,
+                );
 
                 while let Some(job) = scope.next().await {
                     self.process_job_result(ctx, job);
@@ -938,7 +957,11 @@ impl<'exec> Executor<'exec> {
                     .prepare_job_future(node, &ctx.data, self.copy_into(ctx, &mut copies))
                     .into_iter()
                     .collect();
-                entity_reuse::merge_copies(&mut ctx.data, copies, self.schema_metadata);
+                entity_reuse::merge_copies(
+                    &mut ctx.data,
+                    copies,
+                    &self.schema_metadata.possible_types,
+                );
                 while let Some(job) = scope.next().await {
                     self.process_job_result(ctx, job);
                 }
@@ -973,7 +996,7 @@ impl<'exec> Executor<'exec> {
             output_rewrites: fetch_node.output_rewrites.as_deref(),
             custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
             raw_variable_values: None,
-            affected_path: Some(flatten_node.path.as_ref()),
+            flatten_node: Some(flatten_node),
         })
         .boxed()
     }
@@ -1191,11 +1214,11 @@ impl<'exec> Executor<'exec> {
                     output_rewrites: fetch_node.output_rewrites.as_deref(),
                     custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
                     raw_variable_values: None,
-                    affected_path: None,
+                    flatten_node: None,
                 })
                 .boxed()],
             PlanNode::BatchFetch(batch_fetch_node) => {
-                let waves = self.prepare_batch_fetch_job_state(
+                let (trie, waves) = self.prepare_batch_fetch_job_state(
                     &batch_fetch_node.entity_batch,
                     data,
                     self.schema_metadata
@@ -1235,7 +1258,7 @@ impl<'exec> Executor<'exec> {
                             output_rewrites: None,
                             custom_scalar_paths,
                             raw_variable_values: Some(variables),
-                            affected_path: None,
+                            flatten_node: None,
                         })
                         .map_ok(move |fetch_job| {
                             let mut response = fetch_job.response();
@@ -1247,6 +1270,7 @@ impl<'exec> Executor<'exec> {
                                 subgraph_name: &batch_fetch_node.service_name,
                                 response,
                                 aliases,
+                                trie,
                             }
                         })
                         .boxed()
@@ -1282,9 +1306,17 @@ impl<'exec> Executor<'exec> {
                             possible_types,
                         )
                     });
-                let (groups, mut path_entities) = collect_context_entities(
+                let trie = flatten_node.trie();
+                let path_values = collect_path_values(
+                    trie,
                     data,
-                    [flatten_node.path.as_ref()],
+                    possible_types,
+                    context_depth(&fetch_node.context),
+                );
+                let (groups, targets) = collect_context_entities(
+                    &path_values,
+                    trie,
+                    0..trie.ends().len(),
                     requires_nodes,
                     fetch_node.input_rewrites.as_deref(),
                     &fetch_node.context,
@@ -1294,11 +1326,13 @@ impl<'exec> Executor<'exec> {
                         .of_subgraph(&fetch_node.service_name),
                     reuse.as_mut(),
                 );
-                let target_entities = path_entities.pop().unwrap_or_default();
                 let copies = reuse.map(ReuseIndex::into_copies).unwrap_or_default();
+                let targets = Arc::new(targets);
                 if let Some(copy_into) = copy_into.filter(|_| !copies.is_empty()) {
                     copy_into.push(Copies {
-                        paths: vec![(flatten_node.path.as_ref(), Arc::clone(&target_entities))],
+                        trie,
+                        paths: 0..trie.ends().len(),
+                        targets: Arc::clone(&targets),
                         copies,
                     });
                 }
@@ -1313,7 +1347,7 @@ impl<'exec> Executor<'exec> {
                             merge: context_group_offsets,
                             unalias,
                         } = request;
-                        let target_entities = Arc::clone(&target_entities);
+                        let targets = Arc::clone(&targets);
                         self.prepare_execution_job(PrepareExecutionJobOpts {
                             subgraph_name: &fetch_node.service_name,
                             variable_usages: fetch_node.variable_usages.as_ref(),
@@ -1325,7 +1359,7 @@ impl<'exec> Executor<'exec> {
                             output_rewrites: fetch_node.output_rewrites.as_deref(),
                             custom_scalar_paths,
                             raw_variable_values: Some(variables),
-                            affected_path: Some(flatten_node.path.as_ref()),
+                            flatten_node: Some(flatten_node),
                         })
                         .map_ok(move |fetch_job| {
                             let mut response = fetch_job.response();
@@ -1334,10 +1368,10 @@ impl<'exec> Executor<'exec> {
                             }
                             ExecutionJob::FlattenFetch {
                                 operation: &fetch_node.operation,
-                                flatten_node_path: &flatten_node.path,
+                                flatten_node,
                                 response,
                                 subgraph_name: fetch_node.service_name.as_str(),
-                                target_entities,
+                                targets,
                                 context_group_offsets,
                                 output_rewrites: fetch_node.output_rewrites.as_deref(),
                             }
@@ -1428,7 +1462,7 @@ impl<'exec> Executor<'exec> {
                     ExecutionJob::Fetch {
                         mut response,
                         output_rewrites,
-                        merge_path,
+                        flatten_node,
                         ..
                     } => {
                         if let Some(response_bytes) = response.bytes {
@@ -1443,20 +1477,17 @@ impl<'exec> Executor<'exec> {
                             }
                         }
 
-                        match merge_path {
+                        match flatten_node {
                             // Root fetch
                             None => deep_merge(&mut ctx.data, response.data),
                             // Root re-entry
-                            Some(merge_path) => {
+                            Some(flatten_node) => {
                                 let source = response.data;
-                                traverse_and_callback_mut(
+                                flatten_node.trie().walk_mut(
                                     &mut ctx.data,
-                                    merge_path.as_slice(),
-                                    self.schema_metadata,
+                                    &self.schema_metadata.possible_types,
                                     None,
-                                    &mut |target, _error_path| {
-                                        deep_merge_from(target, &source);
-                                    },
+                                    &mut |_, target, _| deep_merge_from(target, &source),
                                 );
                             }
                         }
@@ -1465,8 +1496,8 @@ impl<'exec> Executor<'exec> {
                     }
                     ExecutionJob::FlattenFetch {
                         mut response,
-                        flatten_node_path,
-                        ref target_entities,
+                        flatten_node,
+                        ref targets,
                         ref context_group_offsets,
                         output_rewrites,
                         ..
@@ -1484,11 +1515,9 @@ impl<'exec> Executor<'exec> {
                                 }
                             }
 
-                            let mut index = 0;
-                            let normalized_path = flatten_node_path.as_slice();
                             // If there is an error in the response, then collect the paths for normalizing the error
                             let initial_error_path = response.errors.as_ref().map(|_| {
-                                GraphQLErrorPath::with_capacity(normalized_path.len() + 2)
+                                GraphQLErrorPath::with_capacity(flatten_node.path.len() + 2)
                             });
                             let mut entity_index_error_map = response
                                 .errors
@@ -1496,18 +1525,17 @@ impl<'exec> Executor<'exec> {
                                 .map(|_| HashMap::with_capacity(entities.len()));
                             let mut merger = EntityMerger::new(
                                 &mut entities,
-                                target_entities.iter().filter_map(|entity| {
+                                targets.iter().filter_map(|entity| {
                                     entity_index(*entity, context_group_offsets)
                                 }),
                             );
-                            traverse_and_callback_mut(
+                            let mut targets = targets.iter();
+                            flatten_node.trie().walk_mut(
                                 &mut ctx.data,
-                                normalized_path,
-                                self.schema_metadata,
+                                &self.schema_metadata.possible_types,
                                 initial_error_path,
-                                &mut |target, error_path| {
-                                    let entity = target_entities.get(index).copied().flatten();
-                                    index += 1;
+                                &mut |_, target, error_path| {
+                                    let entity = targets.next().copied().flatten();
 
                                     if let Some(entity_index) =
                                         entity_index(entity, context_group_offsets)
@@ -1518,7 +1546,7 @@ impl<'exec> Executor<'exec> {
                                             let error_paths = entity_index_error_map
                                                 .entry(entity_index)
                                                 .or_insert_with(Vec::new);
-                                            error_paths.push(error_path);
+                                            error_paths.push(error_path.clone());
                                         }
                                         merger.merge_into(target, entity_index);
                                     }
@@ -1538,6 +1566,7 @@ impl<'exec> Executor<'exec> {
                     ExecutionJob::BatchFetch {
                         mut response,
                         aliases,
+                        trie,
                         ..
                     } => {
                         if let Some(response_bytes) = response.bytes {
@@ -1551,29 +1580,30 @@ impl<'exec> Executor<'exec> {
                         let mut entities_by_alias =
                             Self::collect_batched_entities_by_alias(&mut response.data, &aliases);
 
-                        for (alias_index, alias_state) in aliases.iter().enumerate() {
-                            let alias_index = AliasIndex(alias_index);
-                            let mut alias_errors = errors.by_alias_index.remove(&alias_index);
-                            // Merge entities back into execution context (final data)
-                            // and attach alias errors and unmatched errors
-                            let entity_index_error_map = self.merge_batch_alias_entities(
-                                ctx,
-                                alias_state,
-                                entities_by_alias.get_mut(&alias_index),
-                                alias_errors.as_deref(),
-                            );
+                        // Merge entities back into execution context (final data)
+                        let entity_index_error_maps = self.merge_batch_entities(
+                            ctx,
+                            trie,
+                            &aliases,
+                            &mut entities_by_alias,
+                            &errors,
+                        );
 
-                            let affected_path = if alias_state.paths.len() == 1 {
-                                Some(alias_state.paths[0].merge_path)
-                            } else {
-                                None
-                            };
+                        for (alias_index, (alias_state, entity_index_error_map)) in
+                            aliases.iter().zip(entity_index_error_maps).enumerate()
+                        {
+                            let alias_errors =
+                                errors.by_alias_index.remove(&AliasIndex(alias_index));
+
+                            let merge_paths = &alias_state.alias_spec.merge_paths;
+                            let affected_path =
+                                merge_paths.iter().next().filter(|_| merge_paths.len() == 1);
 
                             // Attach alias errors
                             ctx.handle_errors(
                                 subgraph_name,
                                 affected_path,
-                                alias_errors.take(),
+                                alias_errors,
                                 entity_index_error_map,
                             );
                         }
@@ -1667,97 +1697,128 @@ impl<'exec> Executor<'exec> {
     fn collect_batched_entities_by_alias(
         response_data: &mut Value<'exec>,
         aliases: &[AliasBatchState<'exec>],
-    ) -> AHashMap<AliasIndex, Vec<Value<'exec>>> {
+    ) -> Vec<Option<Vec<Value<'exec>>>> {
         // Take entity arrays from response data once per alias.
         // This avoids repeated lookups/mutations on response data.
-        let mut entities_by_alias: AHashMap<AliasIndex, Vec<Value<'exec>>> =
-            AHashMap::with_capacity(aliases.len());
-
-        for (alias_index, alias_state) in aliases.iter().enumerate() {
-            let Some(entities) =
+        aliases
+            .iter()
+            .map(|alias_state| {
                 response_data.take_entities_by_key(alias_state.alias_spec.alias.as_str())
-            else {
-                continue;
-            };
-            entities_by_alias.insert(AliasIndex(alias_index), entities);
-        }
-
-        entities_by_alias
+            })
+            .collect()
     }
 
-    /// Merge one alias's returned entities back into `ctx.data`.
-    fn merge_batch_alias_entities<'alias>(
+    /// Merges the returned entities of every alias back into `ctx.data`, in one walk
+    /// over the merge paths of all of them. Returns, for each alias with errors, where its
+    /// entities went.
+    fn merge_batch_entities(
         &self,
         ctx: &mut ExecutionContext<'exec>,
-        alias_state: &'alias AliasBatchState<'exec>,
-        entities: Option<&mut Vec<Value<'exec>>>,
-        alias_errors: Option<&[GraphQLError]>,
-    ) -> Option<HashMap<usize, Vec<GraphQLErrorPath>>> {
-        let has_alias_errors = alias_errors.is_some();
-        let mut entity_index_error_map = has_alias_errors.then(HashMap::new);
-        let Some(entities) = entities else {
-            return entity_index_error_map;
-        };
-
-        if let Some(output_rewrites) = alias_state.alias_spec.output_rewrites.as_ref() {
-            for output_rewrite in output_rewrites {
-                for entity in entities.iter_mut() {
-                    output_rewrite.rewrite(&self.schema_metadata.possible_types, entity);
+        trie: &PathTrie,
+        aliases: &[AliasBatchState<'exec>],
+        entities_by_alias: &mut [Option<Vec<Value<'exec>>>],
+        errors: &BatchFetchErrors,
+    ) -> Vec<Option<HashMap<usize, Vec<GraphQLErrorPath>>>> {
+        let mut merges: Vec<AliasMerge> = aliases
+            .iter()
+            .zip(entities_by_alias.iter_mut())
+            .enumerate()
+            .map(|(alias_index, (state, entities))| {
+                let merger = match entities {
+                    Some(entities) if state.entity_count > 0 => {
+                        if let Some(output_rewrites) = state.alias_spec.output_rewrites.as_ref() {
+                            for output_rewrite in output_rewrites {
+                                for entity in entities.iter_mut() {
+                                    output_rewrite
+                                        .rewrite(&self.schema_metadata.possible_types, entity);
+                                }
+                            }
+                        }
+                        Some(EntityMerger::new(
+                            entities,
+                            state.targets.iter().filter_map(|target| {
+                                entity_index(*target, &state.context_group_offsets)
+                            }),
+                        ))
+                    }
+                    _ => None,
+                };
+                AliasMerge {
+                    state,
+                    merger,
+                    error_targets: errors
+                        .by_alias_index
+                        .contains_key(&AliasIndex(alias_index))
+                        .then(HashMap::new),
                 }
+            })
+            .collect();
+
+        if merges.iter().any(|merge| merge.merger.is_some()) {
+            // one per path of the batch's trie, every alias has its paths there in this order.
+            // `None` for the paths of an alias with nothing to merge.
+            let mut cursors: Vec<Option<Cursor>> = Vec::with_capacity(trie.ends().len());
+            for (alias, merge) in merges.iter().enumerate() {
+                let targets = &merge.state.targets;
+                // an alias that's off has no targets, and no merger
+                let paths = merge.state.alias_spec.merge_paths.len();
+                cursors.extend((0..paths).map(|path| {
+                    merge.merger.is_some().then(|| Cursor {
+                        alias,
+                        targets: targets.path(path).iter(),
+                    })
+                }));
             }
-        }
-
-        if alias_state.entity_count == 0 {
-            return entity_index_error_map;
-        }
-
-        let mut merger = EntityMerger::new(
-            entities,
-            alias_state
-                .paths
+            debug_assert_eq!(cursors.len(), trie.ends().len());
+            let error_path = merges
                 .iter()
-                .flat_map(|path_state| path_state.target_entities.iter())
-                .filter_map(|entity| entity_index(*entity, &alias_state.context_group_offsets)),
-        );
-
-        // We walk each merge path
-        for path_state in &alias_state.paths {
-            let mut index = 0;
-            let normalized_path = path_state.merge_path;
-            let initial_error_path = has_alias_errors
-                // Small extra capacity for path segments that will be appended later.
-                .then(|| GraphQLErrorPath::with_capacity(normalized_path.len() + 2));
-
-            // For each visited target:
-            traverse_and_callback_mut(
+                .any(|merge| merge.error_targets.is_some())
+                .then(|| {
+                    let longest = aliases
+                        .iter()
+                        .flat_map(|alias_state| alias_state.alias_spec.merge_paths.iter())
+                        .map(|merge_path| merge_path.len())
+                        .max()
+                        .unwrap_or_default();
+                    // Small extra capacity for path segments that will be appended later.
+                    GraphQLErrorPath::with_capacity(longest + 2)
+                });
+            trie.walk_mut(
                 &mut ctx.data,
-                normalized_path.as_slice(),
-                self.schema_metadata,
-                initial_error_path,
-                &mut |target_data, error_path| {
-                    let entity = path_state.target_entities.get(index).copied().flatten();
-                    index += 1;
-
-                    if let Some(entity_index) =
-                        entity_index(entity, &alias_state.context_group_offsets)
-                    {
+                &self.schema_metadata.possible_types,
+                error_path,
+                &mut |node, target_data, error_path| {
+                    for &path in trie.paths_ending_at(node) {
+                        let Some(cursor) = &mut cursors[path] else {
+                            continue;
+                        };
+                        let target = cursor.targets.next().copied().flatten();
+                        let merge = &mut merges[cursor.alias];
+                        let Some(entity_index) = merge.entity_index(target) else {
+                            continue;
+                        };
                         // If this alias has errors, we also collect target paths
                         // so one subgraph error can be copied to all matching targets.
-                        if let (Some(error_path), Some(entity_index_error_map)) =
-                            (error_path, entity_index_error_map.as_mut())
+                        if let (Some(error_path), Some(error_targets)) =
+                            (error_path, merge.error_targets.as_mut())
                         {
-                            let error_paths = entity_index_error_map
+                            error_targets
                                 .entry(entity_index)
-                                .or_insert_with(Vec::new);
-                            error_paths.push(error_path);
+                                .or_default()
+                                .push(error_path.clone());
                         }
-                        merger.merge_into(target_data, entity_index);
+                        if let Some(merger) = &mut merge.merger {
+                            merger.merge_into(target_data, entity_index);
+                        }
                     }
                 },
             );
         }
 
-        entity_index_error_map
+        merges
+            .into_iter()
+            .map(|merge| merge.error_targets)
+            .collect()
     }
 
     // The preperation includes:
@@ -1773,15 +1834,28 @@ impl<'exec> Executor<'exec> {
         data: &Value<'exec>,
         subgraph_keys: Option<&KeysByType>,
         mut copy_into: Option<&mut Vec<Copies<'exec, 'exec>>>,
-    ) -> Vec<BatchWave<'exec>> {
+    ) -> (&'exec PathTrie, Vec<BatchWave<'exec>>) {
         let possible_types = &self.schema_metadata.possible_types;
+        // one walk for the merge paths of every alias
+        let trie = entity_batch.trie();
+        let depth = entity_batch
+            .aliases
+            .iter()
+            .map(|alias_spec| context_depth(&alias_spec.context))
+            .max()
+            .unwrap_or_default();
+        let path_values = collect_path_values(trie, data, possible_types, depth);
+        // the trie has every alias's paths, one alias after another
+        let mut first_path = 0;
         let mut prepared: Vec<_> = entity_batch
             .aliases
             .iter()
             .map(|alias_spec| {
+                let paths = first_path..first_path + alias_spec.merge_paths.len();
+                first_path = paths.end;
                 // an alias that's off sends `[]`
                 if !self.runs(alias_spec.run_if.as_deref()) {
-                    return (Vec::new(), Vec::new());
+                    return (Vec::new(), Arc::default());
                 }
                 let mut reuse = alias_spec
                     .entity_reuse
@@ -1795,9 +1869,10 @@ impl<'exec> Executor<'exec> {
                             possible_types,
                         )
                     });
-                let (groups, path_entities) = collect_context_entities(
-                    data,
-                    alias_spec.merge_paths.iter(),
+                let (groups, targets) = collect_context_entities(
+                    &path_values,
+                    trie,
+                    paths.clone(),
                     &alias_spec.requires,
                     alias_spec.input_rewrites.as_deref(),
                     &alias_spec.context,
@@ -1806,17 +1881,16 @@ impl<'exec> Executor<'exec> {
                     reuse.as_mut(),
                 );
                 let copies = reuse.map(ReuseIndex::into_copies).unwrap_or_default();
+                let targets = Arc::new(targets);
                 if let Some(copy_into) = copy_into.as_deref_mut().filter(|_| !copies.is_empty()) {
                     copy_into.push(Copies {
-                        paths: alias_spec
-                            .merge_paths
-                            .iter()
-                            .zip(path_entities.iter().cloned())
-                            .collect(),
+                        trie,
+                        paths,
+                        targets: Arc::clone(&targets),
                         copies,
                     });
                 }
-                (groups, path_entities)
+                (groups, targets)
             })
             .collect();
 
@@ -1830,9 +1904,7 @@ impl<'exec> Executor<'exec> {
             let mut raw_variable_values: Vec<(&'exec str, Vec<u8>)> =
                 Vec::with_capacity(entity_batch.aliases.len());
             let mut aliases = Vec::with_capacity(entity_batch.aliases.len());
-            for (alias_spec, (groups, path_entities)) in
-                entity_batch.aliases.iter().zip(&mut prepared)
-            {
+            for (alias_spec, (groups, targets)) in entity_batch.aliases.iter().zip(&mut prepared) {
                 // an alias with fewer groups still needs its context variables, it just sends no
                 // representations. it borrows them from its first group, so that one is copied,
                 // every other group is read once and can be moved out.
@@ -1871,15 +1943,7 @@ impl<'exec> Executor<'exec> {
                     alias_spec,
                     entity_count: group.map_or(0, |group| group.count),
                     context_group_offsets: single_context_group_offsets(wave, groups.len()),
-                    paths: alias_spec
-                        .merge_paths
-                        .iter()
-                        .zip(path_entities.iter())
-                        .map(|(merge_path, target_entities)| AliasPathState {
-                            merge_path,
-                            target_entities: Arc::clone(target_entities),
-                        })
-                        .collect(),
+                    targets: Arc::clone(targets),
                 });
             }
             if aliases.iter().any(|alias| alias.entity_count > 0) {
@@ -1887,7 +1951,7 @@ impl<'exec> Executor<'exec> {
             }
         }
 
-        waves
+        (trie, waves)
     }
 
     async fn prepare_execution_job(
@@ -1901,7 +1965,7 @@ impl<'exec> Executor<'exec> {
             // TODO: We could optimize header map creation by caching them per service name
             let mut headers_map = HeaderMap::new();
             let subgraph_name_factory = || Some(opts.subgraph_name.to_string());
-            let affected_path_factory = || opts.affected_path.map(|p| p.to_string());
+            let affected_path_factory = || opts.flatten_node.map(|node| node.path.to_string());
             modify_subgraph_request_headers(
                 self.headers_plan,
                 opts.subgraph_name,
@@ -1982,7 +2046,7 @@ impl<'exec> Executor<'exec> {
                 operation: opts.operation,
                 response,
                 output_rewrites: opts.output_rewrites,
-                merge_path: opts.affected_path,
+                flatten_node: opts.flatten_node,
             })
         }
         .inspect_err(|err: &PlanExecutionError| {
@@ -2290,7 +2354,7 @@ mod tests {
             ])]
             .into()
         };
-        let entity_batch = EntityBatch {
+        let mut entity_batch = EntityBatch {
             aliases: vec![
                 EntityBatchAlias {
                     alias: "_e0".to_string(),
@@ -2315,9 +2379,11 @@ mod tests {
                     entity_reuse: None,
                 },
             ],
+            trie: Default::default(),
         };
+        entity_batch.build_tries();
 
-        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None, None);
+        let (_, waves) = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None, None);
 
         assert_eq!(waves.len(), 1);
         let (raw_variable_values, aliases) = &waves[0];
@@ -2325,14 +2391,13 @@ mod tests {
         assert_eq!(raw_variable_values.len(), 1);
         assert_eq!(raw_variable_values[0].0, "__batch_reps_0");
 
-        let mut entity_batch = entity_batch;
         for (index, alias) in entity_batch.aliases.iter_mut().enumerate() {
             alias.context = crate::query_planner::planner::plan_nodes::FetchContext::new(
                 vec![format!("__context_{index}")],
                 Some(Vec::new()),
             );
         }
-        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None, None);
+        let (_, waves) = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None, None);
         assert_eq!(waves.len(), 1);
         assert!(waves[0].0.contains(&("__context_0", b"null".to_vec())));
         assert!(waves[0].0.contains(&("__context_1", b"null".to_vec())));
@@ -2369,7 +2434,7 @@ mod tests {
                     rename_key_to: "__context_1".into(),
                 }]),
             );
-        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None, None);
+        let (_, waves) = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None, None);
         assert_eq!(waves.len(), 2);
         for (wave, upc) in waves.iter().zip(["\"1\"", "\"2\""]) {
             assert!(wave.0.contains(&("__context_0", upc.as_bytes().to_vec())));

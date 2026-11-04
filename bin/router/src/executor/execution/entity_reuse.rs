@@ -2,19 +2,18 @@
 //! A representation that matches an object at one of the planner's `EntityReuse` sources is the
 //! same entity with the same `@requires` inputs.
 
+use std::{ops::Range, sync::Arc};
+
 use crate::{
     executor::{
         execution::context::{EntityRef, Known, TargetEntities},
-        introspection::schema::{PossibleTypes, SchemaMetadata},
+        introspection::schema::PossibleTypes,
         response::{merge::EntityMerger, value::Value},
-        utils::{
-            prehashed_map::PrehashedMap,
-            traverse::{traverse_and_callback, traverse_and_callback_mut},
-        },
+        utils::{prehashed_map::PrehashedMap, traverse::PathTrie},
     },
     query_planner::{
         ast::requires::{RequiresSelection, RequiresSelectionSetRef},
-        planner::plan_nodes::{EntityReuse, ResponsePathRef},
+        planner::plan_nodes::EntityReuse,
     },
 };
 
@@ -34,14 +33,13 @@ impl<'d, 'v> ReuseIndex<'d, 'v> {
         possible_types: &PossibleTypes,
     ) -> Self {
         let mut seen = PrehashedMap::default();
-        for source in &reuse.sources {
-            traverse_and_callback(data, source.as_slice(), possible_types, &mut |object, _| {
-                if object.is_object() && holds_every_field(object, required_selections) {
-                    seen.entry(object.to_hash(required_selections, possible_types))
-                        .or_insert(Known::InResponse(object));
-                }
-            });
-        }
+        let trie = reuse.trie();
+        trie.walk(data, possible_types, &mut |_, object, _| {
+            if object.is_object() && holds_every_field(object, required_selections) {
+                seen.entry(object.to_hash(required_selections, possible_types))
+                    .or_insert(Known::InResponse(object));
+            }
+        });
         Self {
             seen,
             copy: reuse.copy.root_selections(),
@@ -59,8 +57,11 @@ impl<'d, 'v> ReuseIndex<'d, 'v> {
     }
 }
 
+/// The entities one fetch copied, and its `paths` among the ones of `trie`, with their targets.
 pub struct Copies<'a, 'v> {
-    pub paths: Vec<(ResponsePathRef<'a>, TargetEntities)>,
+    pub trie: &'a PathTrie,
+    pub paths: Range<usize>,
+    pub targets: Arc<TargetEntities>,
     pub copies: Vec<Value<'v>>,
 }
 
@@ -68,34 +69,34 @@ pub struct Copies<'a, 'v> {
 pub fn merge_copies<'v>(
     data: &mut Value<'v>,
     copies: Vec<Copies<'_, 'v>>,
-    schema_metadata: &SchemaMetadata,
+    possible_types: &PossibleTypes,
 ) {
     let copied = |target: &Option<EntityRef>| match target {
         Some(EntityRef::Copied { index }) => Some(*index as usize),
         _ => None,
     };
-    for Copies { paths, mut copies } in copies {
-        let mut merger = EntityMerger::new(
-            &mut copies,
-            paths
-                .iter()
-                .flat_map(|(_, targets)| targets.iter())
-                .filter_map(copied),
-        );
-        for (path, targets) in &paths {
-            let mut targets = targets.iter();
-            traverse_and_callback_mut(
-                data,
-                path.as_slice(),
-                schema_metadata,
-                None,
-                &mut |target, _| {
-                    if let Some(index) = targets.next().and_then(copied) {
-                        merger.merge_into(target, index);
-                    }
-                },
-            );
-        }
+    for Copies {
+        trie,
+        paths,
+        targets,
+        mut copies,
+    } in copies
+    {
+        let mut merger = EntityMerger::new(&mut copies, targets.iter().filter_map(copied));
+        // the next target on each of the fetch's paths
+        let mut next: Vec<_> = (0..targets.path_count())
+            .map(|path| targets.path(path).iter())
+            .collect();
+        trie.walk_mut(data, possible_types, None, &mut |node, target, _| {
+            for &path in trie.paths_ending_at(node) {
+                if !paths.contains(&path) {
+                    continue;
+                }
+                if let Some(index) = next[path - paths.start].next().and_then(copied) {
+                    merger.merge_into(target, index);
+                }
+            }
+        });
     }
 }
 
