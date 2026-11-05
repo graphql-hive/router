@@ -100,35 +100,44 @@ mod storage_s3_e2e_tests {
                 "type Query { dummyNew: NewType } type NewType { id: ID! }".as_bytes(),
             )
             .await;
-        tokio::time::sleep(Duration::from_millis(100)).await;
 
-        let res = router
-            .send_graphql_request("{ __schema { types { name } } }", None, None)
-            .await;
+        // a poll cycle takes the poll interval, up to a timer tick (~16ms) and the reload itself,
+        // so keep asking until the new schema shows up instead of guessing a fixed delay
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let types_arr: Vec<String> = loop {
+            let res = router
+                .send_graphql_request("{ __schema { types { name } } }", None, None)
+                .await;
 
-        assert!(res.status().is_success(), "Expected 200 OK");
+            assert!(res.status().is_success(), "Expected 200 OK");
 
-        let json_body = res.json_body().await;
-        let types_arr: Vec<String> = json_body
-            .get("data")
-            .unwrap()
-            .get("__schema")
-            .unwrap()
-            .get("types")
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|i| {
-                i.as_object()
-                    .unwrap()
-                    .get(&"name")
-                    .unwrap()
-                    .as_str()
-                    .unwrap()
-                    .to_string()
-            })
-            .collect();
+            let json_body = res.json_body().await;
+            let types_arr: Vec<String> = json_body
+                .get("data")
+                .unwrap()
+                .get("__schema")
+                .unwrap()
+                .get("types")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|i| {
+                    i.as_object()
+                        .unwrap()
+                        .get(&"name")
+                        .unwrap()
+                        .as_str()
+                        .unwrap()
+                        .to_string()
+                })
+                .collect();
+
+            if types_arr.contains(&"NewType".to_string()) || std::time::Instant::now() > deadline {
+                break types_arr;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
         assert_eq!(
             types_arr.contains(&"Query".to_string()),
             true,

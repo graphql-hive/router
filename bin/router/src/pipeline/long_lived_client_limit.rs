@@ -1,22 +1,15 @@
-use std::{
-    rc::Rc,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-    task::{Context, Poll},
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
 };
 
 use http::{header, StatusCode};
 use ntex::{
-    http::body::{Body, BodySize, MessageBody},
-    service::{Service, ServiceCtx},
-    util::Bytes,
-    web::{self, DefaultError},
-    Middleware, SharedCfg,
+    service::{Ctx, Service},
+    web, Middleware,
 };
 
-use crate::RouterSharedState;
+use crate::{RouterAppState, RouterSharedState};
 
 /// Counting happens in two places because the two kinds of long-lived clients
 /// become known at different points of the request lifecycle:
@@ -48,10 +41,10 @@ impl LongLivedClientLimitService {
     }
 }
 
-impl<S> Middleware<S, SharedCfg> for LongLivedClientLimitService {
+impl<S> Middleware<S, RouterAppState> for LongLivedClientLimitService {
     type Service = LongLivedClientLimitMiddleware<S>;
 
-    fn create(&self, service: S, _cfg: SharedCfg) -> Self::Service {
+    fn create(&self, _st: &RouterAppState, service: S) -> Self::Service {
         LongLivedClientLimitMiddleware {
             service,
             enabled: self.enabled,
@@ -64,20 +57,22 @@ pub struct LongLivedClientLimitMiddleware<S> {
     enabled: bool,
 }
 
-impl<S> Service<web::WebRequest<DefaultError>> for LongLivedClientLimitMiddleware<S>
+impl<S> Service<RouterAppState, web::WebRequest<()>> for LongLivedClientLimitMiddleware<S>
 where
-    S: Service<web::WebRequest<DefaultError>, Response = web::WebResponse, Error = web::Error>,
+    S: Service<RouterAppState, web::WebRequest<()>, Res = web::WebResponse>,
 {
-    type Response = web::WebResponse;
+    type Res = web::WebResponse;
     type Error = S::Error;
 
-    ntex::forward_ready!(service);
+    ntex::forward_bind!(RouterAppState, service);
+    ntex::forward_ready!(RouterAppState, service);
+    ntex::forward_shutdown!(RouterAppState, service);
 
     async fn call(
         &self,
-        req: web::WebRequest<DefaultError>,
-        ctx: ServiceCtx<'_, Self>,
-    ) -> Result<Self::Response, Self::Error> {
+        req: web::WebRequest<()>,
+        ctx: Ctx<'_, Self, RouterAppState>,
+    ) -> Result<Self::Res, Self::Error> {
         if !self.enabled {
             return ctx.call(&self.service, req).await;
         }
@@ -89,12 +84,8 @@ where
             return ctx.call(&self.service, req).await;
         }
 
-        let shared_state = match req.app_state::<Arc<RouterSharedState>>() {
-            Some(s) => s,
-            None => return ctx.call(&self.service, req).await,
-        };
-
-        let guard = match try_reserve_long_lived_client(shared_state) {
+        // the shared state comes from the typed app state in the pipeline ctx
+        let _guard = match try_reserve_long_lived_client(&ctx.st().shared) {
             Ok(Some(guard)) => guard,
             // limit disabled, nothing to track
             Ok(None) => return ctx.call(&self.service, req).await,
@@ -103,18 +94,10 @@ where
             }
         };
 
-        let response = ctx.call(&self.service, req).await?;
-
-        // wrap the body so the guard lives until the connection is fully closed
-        let response = response.map_body(|_head, body| {
-            let wrapped = GuardedBody {
-                inner: body.into_body().into(),
-                _guard: guard,
-            };
-            Body::from_message(wrapped).into()
-        });
-
-        Ok(response)
+        // `ws::start` drives the whole connection inside the handler, so this call resolves
+        // only once the socket is closed and holding the guard across it covers the
+        // connection's lifetime. a rejected upgrade resolves right away and frees the slot
+        ctx.call(&self.service, req).await
     }
 }
 
@@ -123,7 +106,7 @@ pub struct LongLivedClientLimitReached;
 
 impl From<LongLivedClientLimitReached> for web::HttpResponse {
     fn from(_: LongLivedClientLimitReached) -> Self {
-        web::HttpResponse::build(StatusCode::SERVICE_UNAVAILABLE)
+        web::HttpResponse::builder(StatusCode::SERVICE_UNAVAILABLE)
             .header(header::RETRY_AFTER, "5")
             .body("Too many long-lived clients")
     }
@@ -168,27 +151,6 @@ pub struct LongLivedClientGuard(Arc<AtomicUsize>);
 impl Drop for LongLivedClientGuard {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::AcqRel);
-    }
-}
-
-// wraps the body and keeps the guard alive until it's fully consumed and dropped.
-// one extra vtable call per chunk on top of the Box<dyn MessageBody> dispatch streaming bodies
-// already go through - negligible next to actual I/O cost per chunk.
-struct GuardedBody {
-    inner: Body,
-    _guard: LongLivedClientGuard,
-}
-
-impl MessageBody for GuardedBody {
-    fn size(&self) -> BodySize {
-        self.inner.size()
-    }
-
-    fn poll_next_chunk(
-        &mut self,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Bytes, Rc<dyn std::error::Error>>>> {
-        self.inner.poll_next_chunk(cx)
     }
 }
 

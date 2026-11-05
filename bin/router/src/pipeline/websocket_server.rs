@@ -5,9 +5,10 @@ use http::Method;
 use ntex::channel::oneshot;
 use ntex::http::{header::HeaderName, header::HeaderValue, HeaderMap};
 use ntex::router::Path;
-use ntex::service::{fn_factory_with_config, fn_service, fn_shutdown, Service};
-use ntex::web::{self, ws, Error, HttpRequest, HttpResponse};
-use ntex::{chain, rt};
+use ntex::rt;
+use ntex::service::{Ctx, Service};
+use ntex::url::Url;
+use ntex::web::{ws, HttpRequest, HttpResponse};
 use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -54,16 +55,14 @@ use crate::telemetry::logging::summary::{self, WithRequestSummary};
 use crate::telemetry::logging::targets;
 use crate::telemetry::request_scope::RequestTaskScope;
 use crate::telemetry::{traces::hive_trace_context::HiveTraceScope, HeaderExtractor};
+use crate::RouterAppState;
 
 type WsStateRef = Rc<RefCell<WsState<tokio::sync::mpsc::Sender<()>>>>;
 
-pub async fn ws_index(
-    req: HttpRequest,
-    schema_state: web::types::State<Arc<SchemaState>>,
-    shared_state: web::types::State<Arc<RouterSharedState>>,
-) -> Result<HttpResponse, Error> {
-    let schema_state = schema_state.get_ref().clone();
-    let shared_state = shared_state.get_ref().clone();
+pub async fn ws_index(state: &RouterAppState, _: (), req: HttpRequest) -> HttpResponse {
+    // the ws connection service outlives the handler, so it owns its own arcs
+    let schema_state = state.schema.clone();
+    let shared_state = state.shared.clone();
 
     let accepted_subprotocol = ws::subprotocols(&req)
         .find(|p| *p == WS_SUBPROTOCOL)
@@ -72,142 +71,184 @@ pub async fn ws_index(
     let plugin_context = req.extensions().get::<Arc<PluginContext>>().cloned();
     let request_context = match req.read_request_context() {
         Ok(ctx) => ctx,
-        Err(_) => return Ok(HttpResponse::BadRequest().finish()),
+        Err(_) => return HttpResponse::BadRequest().build(),
     };
 
-    ws::start(
+    let service = WsConnectionService::new(
+        accepted_subprotocol.is_some(),
+        schema_state,
+        shared_state,
         req.clone(),
-        accepted_subprotocol,
-        fn_factory_with_config(move |sink: ws::WsSink| {
-            let schema_state = schema_state.clone();
-            let shared_state = shared_state.clone();
-            let plugin_context = plugin_context.clone();
-            let request_context = request_context.clone();
-            let req = req.clone();
-            async move {
-                ws_service(
-                    accepted_subprotocol.is_some(),
-                    sink,
-                    schema_state,
-                    shared_state,
-                    req,
-                    plugin_context,
-                    request_context,
-                )
-                .await
+        plugin_context,
+        request_context,
+    );
+
+    // drives the whole connection, it resolves only once the connection is closed
+    match ws::start(&req, accepted_subprotocol, service).await {
+        // a rejected handshake gets its proper error status. when ntex still had the io it
+        // already wrote this response itself, otherwise (like a missing `Connection: upgrade`)
+        // this is the response the client gets
+        Err(ntex::ws::error::WsError::Handshake(err)) => {
+            debug!(target: targets::WEBSOCKET_SERVER, error = ?err, "websocket handshake rejected");
+            ntex::http::ResponseError::error_response(&err)
+        }
+        result => {
+            if let Err(err) = result {
+                debug!(target: targets::WEBSOCKET_SERVER, error = ?err, "websocket connection terminated with an error");
             }
-        }),
-    )
-    .await
+            // the upgraded connection belongs to the websocket dispatcher, so this response is
+            // never sent. it carries the 101 that went out on the wire, so request summaries
+            // and plugin `on_end` callbacks see the real status
+            HttpResponse::new(ntex::http::StatusCode::SWITCHING_PROTOCOLS)
+        }
+    }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn ws_service(
+/// Serves the frames of a single GraphQL over WebSocket connection.
+///
+/// ntex hands the connection's sink to the service as its state on every call. The tasks
+/// that need the sink from the start of the connection (the heartbeat and the handshake
+/// timeout) are therefore started on the first readiness check, which the websocket
+/// dispatcher performs before reading the first frame.
+struct WsConnectionService {
     has_accepted_subprotocol: bool,
-    sink: ws::WsSink,
+    state: WsStateRef,
     schema_state: Arc<SchemaState>,
     shared_state: Arc<RouterSharedState>,
     req: HttpRequest,
     plugin_context: Option<Arc<PluginContext>>,
     request_context: SharedRequestContext,
-) -> Result<impl Service<ws::Frame, Response = Option<ws::Message>, Error = io::Error>, web::Error>
-{
-    if !has_accepted_subprotocol {
-        warn!(target: targets::WEBSOCKET_SERVER, "websocket connection rejecting due to unacceptable subprotocol");
-        let _ = sink.send(CloseCode::SubprotocolNotAcceptable.into()).await;
-        // we dont return an Err here because we want to gracefully close the
-        // connection for the client side with a close frame. returning an Err
-        // would result in an abrupt termination of the connection
-    } else {
-        debug!(target: targets::WEBSOCKET_SERVER, "websocket connection accepted");
-    }
+    ws_uri: Url,
+    ws_path: Path<Url>,
+    /// Stop receivers for the heartbeat and handshake timeout tasks, taken when the tasks start.
+    pending_tasks: RefCell<Option<(oneshot::Receiver<()>, oneshot::Receiver<()>)>>,
+    heartbeat_tx: RefCell<Option<oneshot::Sender<()>>>,
+    conn_guard: RefCell<Option<ActiveClientConnectionGuard>>,
+}
 
-    let conn_guard: Option<ActiveClientConnectionGuard> = if has_accepted_subprotocol {
-        Some(
-            shared_state
-                .telemetry_context
-                .metrics
-                .subscriptions
-                .active_client_connection(SubscriptionTransport::WebSocket),
-        )
-    } else {
-        None
-    };
+impl WsConnectionService {
+    fn new(
+        has_accepted_subprotocol: bool,
+        schema_state: Arc<SchemaState>,
+        shared_state: Arc<RouterSharedState>,
+        req: HttpRequest,
+        plugin_context: Option<Arc<PluginContext>>,
+        request_context: SharedRequestContext,
+    ) -> Self {
+        let conn_guard: Option<ActiveClientConnectionGuard> = if has_accepted_subprotocol {
+            Some(
+                shared_state
+                    .telemetry_context
+                    .metrics
+                    .subscriptions
+                    .active_client_connection(SubscriptionTransport::WebSocket),
+            )
+        } else {
+            None
+        };
 
-    let ws_uri: Rc<http::Uri> = Rc::new(
-        shared_state
+        let ws_uri: Url = shared_state
             .router_config
             .websocket_path()
             .expect("websocket path must exist because the websocket handler wouldn't have been mounted otherwise")
             .parse()
-            .unwrap_or_else(|_| http::Uri::from_static("/graphql")),
-    );
-    let ws_path: Rc<Path<http::Uri>> = Rc::new(Path::new((*ws_uri).clone()));
+            .unwrap_or_else(|_| Url::from_static("/graphql"));
+        let ws_path = Path::new(ws_uri.clone());
 
-    let (heartbeat_tx, heartbeat_rx) = oneshot::channel();
-    let (acknowledged_tx, acknowledged_rx) = oneshot::channel();
+        let (heartbeat_tx, heartbeat_rx) = oneshot::channel();
+        let (acknowledged_tx, acknowledged_rx) = oneshot::channel();
 
-    let state: WsStateRef = Rc::new(RefCell::new(WsState::new(acknowledged_tx)));
-
-    rt::spawn(heartbeat(state.clone(), sink.clone(), heartbeat_rx));
-    rt::spawn(handshake_timeout(
-        state.clone(),
-        sink.clone(),
-        acknowledged_rx,
-        CloseCode::ConnectionInitTimeout,
-    ));
-
-    let state_for_service = state.clone();
-    let service = fn_service(move |frame| {
-        let sink = sink.clone();
-        let state = state_for_service.clone();
-        let schema_state = schema_state.clone();
-        let shared_state = shared_state.clone();
-        let plugin_context = plugin_context.clone();
-        let request_context = request_context.clone();
-        let ws_uri = ws_uri.clone();
-        let ws_path = ws_path.clone();
-        let req = req.clone();
-        async move {
-            match parse_frame_to_text(frame, &state) {
-                Ok(text) => Ok(handle_text_frame(
-                    text,
-                    sink,
-                    state,
-                    &schema_state,
-                    &shared_state,
-                    &req,
-                    plugin_context,
-                    &request_context,
-                    &ws_uri,
-                    &ws_path,
-                )
-                .await),
-                Err(FrameNotParsedToText::Message(msg)) => Ok(Some(msg)),
-                Err(FrameNotParsedToText::Closed) => {
-                    // we dont need to emit anything here because the conneciton is already closed
-                    Ok(None)
-                }
-                Err(FrameNotParsedToText::None) => Ok(None),
-            }
+        Self {
+            has_accepted_subprotocol,
+            state: Rc::new(RefCell::new(WsState::new(acknowledged_tx))),
+            schema_state,
+            shared_state,
+            req,
+            plugin_context,
+            request_context,
+            ws_uri,
+            ws_path,
+            pending_tasks: RefCell::new(Some((heartbeat_rx, acknowledged_rx))),
+            heartbeat_tx: RefCell::new(Some(heartbeat_tx)),
+            conn_guard: RefCell::new(conn_guard),
         }
-    });
+    }
+}
 
-    let on_shutdown = fn_shutdown(async move || {
+impl Service<ws::WsSink, ws::Frame> for WsConnectionService {
+    type Res = Option<ws::Message>;
+    type Error = io::Error;
+
+    async fn ready(&self, ctx: Ctx<'_, Self, ws::WsSink>) -> Result<(), Self::Error> {
+        // only the first check starts the tasks, later checks find nothing pending
+        let pending_tasks = self.pending_tasks.borrow_mut().take();
+        if let Some((heartbeat_rx, acknowledged_rx)) = pending_tasks {
+            let sink = ctx.st().clone();
+
+            if !self.has_accepted_subprotocol {
+                warn!(target: targets::WEBSOCKET_SERVER, "websocket connection rejecting due to unacceptable subprotocol");
+                let _ = sink.send(CloseCode::SubprotocolNotAcceptable.into()).await;
+                // we dont return an Err here because we want to gracefully close the
+                // connection for the client side with a close frame. returning an Err
+                // would result in an abrupt termination of the connection
+            } else {
+                debug!(target: targets::WEBSOCKET_SERVER, "websocket connection accepted");
+            }
+
+            rt::spawn(heartbeat(self.state.clone(), sink.clone(), heartbeat_rx));
+            rt::spawn(handshake_timeout(
+                self.state.clone(),
+                sink,
+                acknowledged_rx,
+                CloseCode::ConnectionInitTimeout,
+            ));
+        }
+        Ok(())
+    }
+
+    async fn call(
+        &self,
+        frame: ws::Frame,
+        ctx: Ctx<'_, Self, ws::WsSink>,
+    ) -> Result<Self::Res, Self::Error> {
+        match parse_frame_to_text(frame, &self.state) {
+            Ok(text) => Ok(handle_text_frame(
+                text,
+                ctx.st().clone(),
+                self.state.clone(),
+                &self.schema_state,
+                &self.shared_state,
+                &self.req,
+                self.plugin_context.clone(),
+                &self.request_context,
+                &self.ws_uri,
+                &self.ws_path,
+            )
+            .await),
+            Err(FrameNotParsedToText::Message(msg)) => Ok(Some(msg)),
+            Err(FrameNotParsedToText::Closed) => {
+                // we dont need to emit anything here because the conneciton is already closed
+                Ok(None)
+            }
+            Err(FrameNotParsedToText::None) => Ok(None),
+        }
+    }
+
+    async fn shutdown(&self, _: Ctx<'_, Self, ws::WsSink>) {
         // stop heartbeat and handshake timeout tasks on shutdown
-        let _ = heartbeat_tx.send(());
-        if let Some(tx) = state.borrow_mut().acknowledged_tx.take() {
+        if let Some(tx) = self.heartbeat_tx.borrow_mut().take() {
+            let _ = tx.send(());
+        }
+        if let Some(tx) = self.state.borrow_mut().acknowledged_tx.take() {
             let _ = tx.send(());
         }
         // clearing the map will drop all the senders, which will
         // in turn cancel all active subscription streams and perform
         // the cleanup in there
-        state.borrow_mut().subscriptions.clear();
+        self.state.borrow_mut().subscriptions.clear();
         // drop conn_guard here to decrement the connection counter
-        drop(conn_guard);
-    });
-
-    Ok(chain(service).and_then(on_shutdown))
+        self.conn_guard.borrow_mut().take();
+    }
 }
 
 /// Ensure a subscription is removed from active subscriptions when dropped (server-side).
@@ -237,8 +278,8 @@ async fn handle_text_frame(
     req: &HttpRequest,
     plugin_context: Option<Arc<PluginContext>>,
     request_context: &SharedRequestContext,
-    ws_uri: &http::Uri,
-    ws_path: &Path<http::Uri>,
+    ws_uri: &Url,
+    ws_path: &Path<Url>,
 ) -> Option<ws::Message> {
     // IMPORTANT: we intentionally check if a supergraph is selected this "late" because
     // browsers cannot interpret a rejected HTTP Upgrade request and will show a cryptic
@@ -406,8 +447,8 @@ async fn handle_text_frame(
                               method: &Method::POST,
                               version: http::Version::HTTP_11,
                               headers: headers.as_ref(),
-                              path: ws_uri.path(),
-                              query_string: ws_uri.query().unwrap_or(""),
+                              path: ws_uri.path().as_str(),
+                              query_string: ws_uri.query().map(|q| q.as_str()).unwrap_or(""),
                               match_info: ws_path,
                           },
                           context: plugin_context.clone(),
@@ -552,7 +593,7 @@ async fn handle_text_frame(
                   let connection_fingerprint = (request_dedupe_enabled || websocket_reuse_enabled)
                     .then(|| connection_fingerprint(
                       &Method::POST,
-                      ws_uri.path(),
+                      ws_uri.path().as_str(),
                       headers.as_ref(),
                       &shared_state.in_flight_requests_header_policy,
                       supergraph.snapshot.cache_id,
@@ -689,7 +730,8 @@ async fn handle_text_frame(
 
                       let request_details = RequestDetails {
                           method: Method::POST,
-                          url: (*ws_uri).clone(),
+                          // the usage agent works with `http::Uri`, an unconvertible path falls back to "/"
+                          url: http::Uri::try_from(ws_uri).unwrap_or_default(),
                           headers: headers_vec,
                       };
                       usage_reporting::collect_usage_report(

@@ -192,6 +192,6 @@ use ntex::web::test;
 impl Into<test::TestRequest> for GraphQLParams {
     fn into(self) -> test::TestRequest {
         let body = self;
-        test::TestRequest::post().uri("/graphql").set_json(&body)
+        test::TestRequest::post().uri("/graphql").json(&body)
     }
 }

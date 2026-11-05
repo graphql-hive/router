@@ -7,6 +7,7 @@ use crate::executor::response::graphql_error::GraphQLError;
 use crate::telemetry::logging::targets;
 use crate::telemetry::metrics::subscription_metrics::SubscriptionTransport;
 use crate::telemetry::TelemetryContext;
+use crate::RouterAppState;
 use bytes::Bytes as BytesLib;
 use dashmap::mapref::one::Ref;
 use http::StatusCode;
@@ -93,7 +94,7 @@ impl CallbackError {
     }
 }
 
-impl WebResponseError for CallbackError {
+impl CallbackError {
     fn status_code(&self) -> StatusCode {
         match self {
             CallbackError::InvalidProtocolHeader
@@ -105,11 +106,15 @@ impl WebResponseError for CallbackError {
             | CallbackError::SubscriptionIdMismatch { .. } => StatusCode::NOT_FOUND,
         }
     }
-    fn error_response(&self, _: &HttpRequest) -> HttpResponse {
+}
+
+// rendered for any app state, the response only depends on the error itself
+impl<St> WebResponseError<St, web::DefaultError> for CallbackError {
+    fn error_response(&self, _: &St) -> HttpResponse {
         self.log();
-        HttpResponse::build(self.status_code())
+        HttpResponse::builder(self.status_code())
             .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
-            .finish()
+            .build()
     }
 }
 
@@ -210,12 +215,15 @@ fn handle_complete(
 }
 
 pub async fn handler(
+    state: &RouterAppState,
+    _: (),
     req: HttpRequest,
     path: Path<String>,
     body: Bytes,
-    callback_subscriptions: web::types::State<CallbackSubscriptionsMap>,
-    telemetry_context: web::types::State<std::sync::Arc<TelemetryContext>>,
 ) -> Result<HttpResponse, CallbackError> {
+    // the map is shared with the subgraph executors that register the subscriptions
+    let callback_subscriptions = &state.schema.callback_subscriptions;
+    let telemetry_context = &state.shared.telemetry_context;
     let subscription_id_from_path = path.into_inner();
 
     validate_protocol(&req)?;
@@ -246,16 +254,16 @@ pub async fn handler(
                 &payload.id,
                 &payload,
                 subscription,
-                &callback_subscriptions,
-                &telemetry_context,
+                callback_subscriptions,
+                telemetry_context,
             )?;
         }
         CallbackAction::Complete => {
-            handle_complete(&payload.id, &payload, subscription, &callback_subscriptions)
+            handle_complete(&payload.id, &payload, subscription, callback_subscriptions)
         }
     };
 
     Ok(HttpResponse::NoContent()
         .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
-        .finish())
+        .build())
 }

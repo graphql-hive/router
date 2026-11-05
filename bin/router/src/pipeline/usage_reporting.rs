@@ -365,7 +365,8 @@ pub fn request_details_from_ntex_request(req: &ntex::web::HttpRequest) -> Reques
 
     RequestDetails {
         method: req.method().clone(),
-        url: req.uri().clone(),
+        // the usage agent works with `http::Uri`, an unconvertible target falls back to "/"
+        url: http::Uri::try_from(req.uri()).unwrap_or_default(),
         headers,
     }
 }

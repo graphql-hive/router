@@ -14,7 +14,9 @@ mod tests {
         let mut accounts_server = mockito::Server::new_async().await;
 
         let number_of_tests = 5;
-        let number_of_parallel_requests = 10;
+        // the test client opens at most 8 connections per host, any request beyond that waits for
+        // a free connection and can arrive after the in-flight one finished, becoming a new leader
+        let number_of_parallel_requests = 8;
 
         let mock = accounts_server
             .mock("POST", "/accounts")

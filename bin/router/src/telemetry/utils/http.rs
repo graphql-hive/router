@@ -14,6 +14,17 @@ impl HttpUriAsStr for Uri {
     }
 }
 
+// server requests carry an `ntex::url::Url`, subgraph requests an `http::Uri`
+impl HttpUriAsStr for ntex::url::Url {
+    fn scheme_static_str(&self) -> &'static str {
+        if self.scheme_str() == Some("https") {
+            "https"
+        } else {
+            "http"
+        }
+    }
+}
+
 pub trait HttpVersionAsStr {
     fn as_static_str(&self) -> &'static str;
 }

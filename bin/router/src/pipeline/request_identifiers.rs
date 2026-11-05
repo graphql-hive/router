@@ -2,12 +2,11 @@ use std::sync::Arc;
 
 use crate::telemetry::logging::request_id::WithRequestIdentifiers;
 use ntex::{
-    service::{Service, ServiceCtx},
-    web::{self, DefaultError},
-    Middleware, SharedCfg,
+    service::{Ctx, Service},
+    web, Middleware,
 };
 
-use crate::{telemetry::HeaderExtractor, RouterSharedState};
+use crate::{telemetry::HeaderExtractor, RouterAppState};
 
 /// Extracts the request/trace correlation identifiers and scopes them as a task-local
 /// for the rest of the request, so every downstream middleware (`PluginService`,
@@ -16,10 +15,10 @@ use crate::{telemetry::HeaderExtractor, RouterSharedState};
 #[derive(Clone, Default)]
 pub struct RequestIdentifiersService;
 
-impl<S> Middleware<S, SharedCfg> for RequestIdentifiersService {
+impl<S> Middleware<S, RouterAppState> for RequestIdentifiersService {
     type Service = RequestIdentifiersMiddleware<S>;
 
-    fn create(&self, service: S, _cfg: SharedCfg) -> Self::Service {
+    fn create(&self, _st: &RouterAppState, service: S) -> Self::Service {
         RequestIdentifiersMiddleware { service }
     }
 }
@@ -28,24 +27,24 @@ pub struct RequestIdentifiersMiddleware<S> {
     service: S,
 }
 
-impl<S> Service<web::WebRequest<DefaultError>> for RequestIdentifiersMiddleware<S>
+impl<S> Service<RouterAppState, web::WebRequest<()>> for RequestIdentifiersMiddleware<S>
 where
-    S: Service<web::WebRequest<DefaultError>, Response = web::WebResponse, Error = web::Error>,
+    S: Service<RouterAppState, web::WebRequest<()>, Res = web::WebResponse>,
 {
-    type Response = web::WebResponse;
+    type Res = web::WebResponse;
     type Error = S::Error;
 
-    ntex::forward_ready!(service);
+    ntex::forward_bind!(RouterAppState, service);
+    ntex::forward_ready!(RouterAppState, service);
+    ntex::forward_shutdown!(RouterAppState, service);
 
     async fn call(
         &self,
-        req: web::WebRequest<DefaultError>,
-        ctx: ServiceCtx<'_, Self>,
-    ) -> Result<Self::Response, Self::Error> {
-        let Some(shared_state) = req.app_state::<Arc<RouterSharedState>>() else {
-            return ctx.call(&self.service, req).await;
-        };
-
+        req: web::WebRequest<()>,
+        ctx: Ctx<'_, Self, RouterAppState>,
+    ) -> Result<Self::Res, Self::Error> {
+        // the typed app state rides along in the pipeline ctx, no lookup or clone needed
+        let shared_state = &ctx.st().shared;
         let parent_ctx = shared_state
             .telemetry_context
             .extract_context(&HeaderExtractor(req.headers()));

@@ -1,18 +1,18 @@
-use std::sync::Arc;
-
 use ntex::web::{self, HttpRequest, Responder};
 
-use crate::schema_state::SchemaState;
+use crate::RouterAppState;
 
-pub async fn health_check_handler() -> impl Responder {
+// responders are typed by the app state of the app serving them
+pub async fn health_check_handler() -> impl Responder<RouterAppState> {
     web::HttpResponse::Ok()
 }
 
 pub async fn readiness_check_handler(
+    state: &RouterAppState,
+    _: (),
     req: HttpRequest,
-    schema_state: web::types::State<Arc<SchemaState>>,
-) -> impl Responder {
-    if schema_state.is_ready(&req).await {
+) -> impl Responder<RouterAppState> {
+    if state.schema.is_ready(&req).await {
         web::HttpResponse::Ok()
     } else {
         web::HttpResponse::ServiceUnavailable()
