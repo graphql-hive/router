@@ -116,6 +116,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.3.13 (2026-11-05)
+
+### Fixes
+
+#### Conditional `@requires` inputs stay with their condition
+
+A `@requires` field under `@skip`/`@include` next to an unconditional field of the same entity, like `permissions @skip(if: $skip)` next to `basicPermissions`, no longer turns the unconditional field into `null` when the condition is off. Entity calls only merge when each side's input is there whenever the merged call runs.
+
+#### Fields missing from the response under `@include`/`@skip`
+
+- An abstract field selected again under `@include`/`@skip` keeps its fields with the condition off. The subgraph is now asked for the `__typename` the response needs to tell the types apart, not only under the condition.
+- A field under a fragment on every type its parent can be, like `... on Query @include(if: $a) { feed { id } }` next to `feed { id }`, no longer goes missing from the response.
+
+#### Send the key of the right subgraph to a `@requires` field
+
+The entity call for a `@requires` field sent the key of whichever subgraph came first, not one of the subgraph that has the field. With `Item @key(fields: "group { id }")` in one subgraph and `Item @key(fields: "group { tag }")` in the one with the field, the call sent `group { id }`, so the subgraph couldn't find the item. It now sends that subgraph's own key.
+
+#### Keep `null` list items in `@requires` representations
+
+A list a `@requires` reads, like `similar: [Book]` in `@requires(fields: "similar { id }")`, lost its `null` items on the way to the subgraph. `[null, {id: "2"}, null, {id: "3"}]` arrived as `[{id: "2"}, {id: "3"}]`, so a resolver that counts the items or reads their positions got the wrong answer. Every item now keeps its place, and one with nothing to send is sent as `null`.
+
 ## 0.3.12 (2026-11-03)
 
 ### Fixes
