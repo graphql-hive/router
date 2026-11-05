@@ -83,6 +83,11 @@ impl RouterRequestInput {
         }
     }
 
+    /// Consumes the input and returns the request, including any mutations applied by the stage.
+    pub fn into_request(self) -> web::WebRequest<()> {
+        self.request
+    }
+
     pub(crate) fn restore_request_body_if_unchanged(&mut self) {
         // If coprocessor replaced body, restoring old bytes would be wasted and wrong
         if self.body_replaced {
@@ -100,6 +105,11 @@ impl RouterRequestInput {
 impl RouterResponseInput {
     pub fn new(response: web::WebResponse) -> Self {
         Self { response }
+    }
+
+    /// Consumes the input and returns the response, including any mutations applied by the stage.
+    pub fn into_response(self) -> web::WebResponse {
+        self.response
     }
 }
 
