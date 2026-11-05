@@ -1,0 +1,30 @@
+{
+  "tests/two-same-service-calls.supergraph.graphql": {
+    "skipped": "invalid fixture: `price(withDiscount: boolean)` isn't valid GraphQL, it needs recomposing",
+    "skipError": "Unknown type: \"boolean\""
+  },
+  "tests/context-edge-cases.supergraph.graphql": {
+    "planner-refused": "unvalidated: not a composed supergraph (no `@link` or `join__` definitions), so nothing says these refusals are right; recompose it to fuzz it",
+    "plannerErrors": [
+      "No paths found for selection item"
+    ]
+  },
+  "tests/context-basic.supergraph.graphql": {
+    "planner-refused": "expected: a `fromUnion` context that can't be reached, there's no path to plan",
+    "plannerErrors": [
+      "No paths found for selection item: fromUnion"
+    ]
+  },
+  "tests/corrupted-supergraph-node-id.supergraph.graphql": {
+    "planner-refused": "expected: the audit suite of the same name has the router refuse `node` here",
+    "plannerErrors": [
+      "No paths found for selection item: node"
+    ]
+  },
+  "wfg/supergraph.graphql": {
+    "excluded": "run.js covers WFG with its own operations and every variable combination"
+  },
+  "bfg/supergraph.graphql": {
+    "excluded": "30 MB, too big to fuzz in this run"
+  }
+}

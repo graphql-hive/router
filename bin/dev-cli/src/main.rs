@@ -1,6 +1,9 @@
 use std::env;
 use std::process;
 
+use graphql_differential::{GeneratorConfig, QueryGenerator};
+use graphql_tools::parser::schema::{Definition, TypeDefinition};
+use graphql_tools::validation::{rules::default_rules_validation_plan, validate::validate};
 use hive_router::executor::introspection::schema::SchemaWithMetadata;
 use hive_router::executor::projection::plan::ProjectionPlan;
 use hive_router::query_planner::ast::normalization::normalize_operation;
@@ -129,11 +132,73 @@ fn main() {
             let (_, projection) = ProjectionPlan::from_operation(operation, &schema_metadata);
             println!("{projection}");
         }
+        // `generate <supergraph> <count> [first seed]`, `count` operations of the differential
+        // generator the router accepts, one JSON object a line:
+        // `{ seed, document, operationName, variables }`
+        "generate" => {
+            let supergraph_sdl =
+                std::fs::read_to_string(&args[2]).expect("Unable to read input file");
+            let count: u64 = args.get(3).and_then(|n| n.parse().ok()).unwrap_or(10);
+            let first: u64 = args.get(4).and_then(|n| n.parse().ok()).unwrap_or(0);
+            generate_operations(&supergraph_sdl, count, first);
+        }
         _ => {
-            eprintln!("Unknown command. Available commands: consumer_schema, graph, paths, fetch_graph, plan");
+            eprintln!("Unknown command. Available commands: consumer_schema, graph, paths, fetch_graph, plan, generate");
             process::exit(1);
         }
     };
+}
+
+fn generate_operations(supergraph_sdl: &str, count: u64, first: u64) {
+    let supergraph = parse_schema(supergraph_sdl);
+    let schema = ConsumerSchema::new_from_supergraph(&supergraph);
+    // without introspection, the generator would spend most operations on `__schema`
+    let mut api = (*schema.document).clone();
+    api.definitions.retain_mut(|definition| match definition {
+        Definition::TypeDefinition(TypeDefinition::Object(object)) => {
+            object.fields.retain(|field| !field.name.starts_with("__"));
+            !object.name.starts_with("__")
+        }
+        Definition::TypeDefinition(other) => !other.name().starts_with("__"),
+        _ => true,
+    });
+    let config = GeneratorConfig {
+        max_depth: 6,
+        max_width: 6,
+        ..GeneratorConfig::default()
+    };
+    let rules = default_rules_validation_plan();
+    let debug = std::env::var("GENERATE_DEBUG").is_ok();
+    // generated operations are often invalid, so try more seeds until there are `count` valid
+    // ones, up to this many seeds per operation
+    const SEEDS_PER_OPERATION: u64 = 50;
+    let mut valid = 0;
+    for seed in first..first + count * SEEDS_PER_OPERATION {
+        if valid == count {
+            break;
+        }
+        let case = QueryGenerator::new(&api, seed, config.clone()).generate();
+        // the generator doesn't always make a valid operation, and the router refuses those
+        let errors = validate(&schema.document, &parse_operation(&case.document), &rules);
+        if !errors.is_empty() {
+            if debug {
+                eprintln!("{seed}: {:?}\n{}", errors.first(), case.document);
+            }
+            continue;
+        }
+        valid += 1;
+        let variables: serde_json::Value =
+            serde_json::from_str(&case.variables_json).expect("generated variables are JSON");
+        println!(
+            "{}",
+            serde_json::json!({
+                "seed": seed,
+                "document": case.document,
+                "operationName": case.operation_name,
+                "variables": variables,
+            })
+        );
+    }
 }
 
 fn process_consumer_schema(path: &str) {

@@ -1,0 +1,13 @@
+{
+  "name": "wfg-harness",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "query-1": "node run.js --operation query-1",
+    "query-2": "node run.js --operation query-2",
+    "mutation-1": "node run.js --operation mutation-1"
+  },
+  "dependencies": {
+    "graphql": "17.0.2"
+  }
+}
