@@ -6,7 +6,8 @@ use crate::executor::execution::plan::{
     execute_query_plan, CoerceVariablesPayload, ExecutionResultExtensions, PlanExecutionOutput,
     QueryPlanExecutionOpts, QueryPlanExecutionResult,
 };
-use crate::executor::executors::common::{ConnectionFingerprint, SubgraphRequestExtensions};
+use crate::executor::executors::common::ConnectionFingerprint;
+use crate::executor::extensions::subgraph_request::SelectedSubgraphRequestExtensions;
 use crate::executor::headers::response::ResponseHeaderSink;
 use crate::pipeline::error::{InternalPipelineError, PipelineError};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
@@ -41,8 +42,8 @@ pub struct PlannedRequest<'req> {
     pub demand_control_execution_context: Option<DemandControlExecutionContext>,
     pub plugin_req_state: Option<PluginRequestState<'req>>,
     pub connection_fingerprint: Option<ConnectionFingerprint>,
-    /// Client request `extensions` to send with every subgraph request.
-    pub subgraph_request_extensions: Option<Arc<SubgraphRequestExtensions>>,
+    /// Client request `extensions` to send with subgraph requests.
+    pub subgraph_request_extensions: Option<Arc<SelectedSubgraphRequestExtensions>>,
 }
 
 #[inline]

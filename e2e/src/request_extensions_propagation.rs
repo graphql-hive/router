@@ -72,8 +72,9 @@ mod request_extensions_propagation_e2e_tests {
                   path: supergraph.graphql
                 request_extensions:
                   propagate:
-                    mode: allow
-                    keys: [tenant]
+                    all:
+                      mode: allow
+                      keys: [tenant]
                 "#,
             )
             .build()
@@ -115,8 +116,9 @@ mod request_extensions_propagation_e2e_tests {
                   path: supergraph.graphql
                 request_extensions:
                   propagate:
-                    mode: deny
-                    keys: [debug]
+                    all:
+                      mode: deny
+                      keys: [debug]
                 "#,
             )
             .build()
@@ -151,6 +153,136 @@ mod request_extensions_propagation_e2e_tests {
     }
 
     #[ntex::test]
+    async fn should_replace_all_rules_with_subgraph_rules() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                  source: file
+                  path: supergraph.graphql
+                request_extensions:
+                  propagate:
+                    all:
+                      mode: allow
+                      keys: [tenant]
+                    subgraphs:
+                      reviews:
+                        mode: allow
+                        keys: [clientInfo]
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_post_request(
+                router.graphql_path(),
+                json!({
+                    "query": "{ topProducts { upc reviews { id } } }",
+                    "extensions": { "tenant": "acme", "clientInfo": { "name": "web" } }
+                }),
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "expected 200 OK");
+
+        assert_eq!(
+            sent_extensions_of_all(&subgraphs, "products"),
+            vec![Some(json!({ "tenant": "acme" }))]
+        );
+        assert_eq!(
+            sent_extensions_of_all(&subgraphs, "reviews"),
+            vec![Some(json!({ "clientInfo": { "name": "web" } }))]
+        );
+    }
+
+    #[ntex::test]
+    async fn should_only_propagate_to_subgraphs_with_rules() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                  source: file
+                  path: supergraph.graphql
+                request_extensions:
+                  propagate:
+                    subgraphs:
+                      products:
+                        mode: deny
+                        keys: []
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_post_request(
+                router.graphql_path(),
+                json!({
+                    "query": "{ topProducts { upc reviews { id } } }",
+                    "extensions": { "tenant": "acme" }
+                }),
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "expected 200 OK");
+
+        assert_eq!(
+            sent_extensions_of_all(&subgraphs, "products"),
+            vec![Some(json!({ "tenant": "acme" }))]
+        );
+        assert_eq!(sent_extensions_of_all(&subgraphs, "reviews"), vec![None]);
+    }
+
+    #[ntex::test]
+    async fn should_not_propagate_to_subgraph_set_to_null() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                  source: file
+                  path: supergraph.graphql
+                request_extensions:
+                  propagate:
+                    all:
+                      mode: deny
+                      keys: []
+                    subgraphs:
+                      reviews: null
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_post_request(
+                router.graphql_path(),
+                json!({
+                    "query": "{ topProducts { upc reviews { id } } }",
+                    "extensions": { "tenant": "acme" }
+                }),
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "expected 200 OK");
+
+        assert_eq!(
+            sent_extensions_of_all(&subgraphs, "products"),
+            vec![Some(json!({ "tenant": "acme" }))]
+        );
+        assert_eq!(sent_extensions_of_all(&subgraphs, "reviews"), vec![None]);
+    }
+
+    #[ntex::test]
     async fn should_not_propagate_client_extensions_as_jwt_claims() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()
@@ -171,8 +303,9 @@ mod request_extensions_propagation_e2e_tests {
                       path: jwks.rsa512.json
                 request_extensions:
                   propagate:
-                    mode: deny
-                    keys: []
+                    all:
+                      mode: deny
+                      keys: []
                 "#,
             )
             .build()
@@ -213,8 +346,9 @@ mod request_extensions_propagation_e2e_tests {
                   enabled: true
                 request_extensions:
                   propagate:
-                    mode: allow
-                    keys: [tenant]
+                    all:
+                      mode: allow
+                      keys: [tenant]
                 "#,
             )
             .build()
@@ -276,8 +410,9 @@ mod request_extensions_propagation_e2e_tests {
                     source: operation
                 request_extensions:
                   propagate:
-                    mode: deny
-                    keys: []
+                    all:
+                      mode: deny
+                      keys: []
                 "#,
             )
             .build()

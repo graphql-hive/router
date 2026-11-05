@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 
-use ahash::HashSet;
+use ahash::{HashMap as AHashMap, HashSet};
 use sonic_rs::Value;
 
 use crate::config::jwt_auth::JwtAuthConfig;
 use crate::config::persisted_documents::{
     PersistedDocumentExtractorConfig, PersistedDocumentsConfig,
 };
-use crate::config::request_extensions::{RequestExtensionsConfig, RequestExtensionsPropagateMode};
+use crate::config::request_extensions::{
+    RequestExtensionsConfig, RequestExtensionsPropagateMode, RequestExtensionsPropagateRule,
+};
 use crate::executor::executors::common::SubgraphRequestExtensions;
 use crate::executor::executors::http_callback::CALLBACK_EXTENSIONS_SUBSCRIPTION_KEY;
 use crate::pipeline::persisted_documents::extract::extractors::apollo::APOLLO_EXTENSIONS_PERSISTED_QUERY_KEY;
@@ -30,18 +32,17 @@ const ROUTER_OWNED_KEYS: [(&str, &str); 3] = [
     ),
 ];
 
-/// Decides which client request `extensions` are sent to subgraphs.
-pub enum SubgraphRequestExtensionsPlan {
+/// Decides which client request `extensions` are sent to a subgraph.
+enum PropagateRule {
     /// Only these keys are propagated.
     Allow(HashSet<String>),
     /// Every key except these is propagated. Includes the router-owned keys.
     Deny(HashSet<String>),
 }
 
-impl SubgraphRequestExtensionsPlan {
-    /// Selects the client request extensions to send to subgraphs.
+impl PropagateRule {
     /// Returns `None` when nothing is left to send.
-    pub fn select(
+    fn select(
         &self,
         client_extensions: &HashMap<String, Value>,
     ) -> Option<SubgraphRequestExtensions> {
@@ -58,12 +59,72 @@ impl SubgraphRequestExtensionsPlan {
     }
 }
 
+/// Decides which client request `extensions` are sent to each subgraph.
+pub struct SubgraphRequestExtensionsPlan {
+    /// The rule applied to all subgraphs.
+    all: Option<PropagateRule>,
+    /// The rules of individual subgraphs, replacing the `all` rule.
+    /// `None` when the subgraph receives no client request extensions.
+    by_subgraph: AHashMap<String, Option<PropagateRule>>,
+}
+
+impl SubgraphRequestExtensionsPlan {
+    /// Selects the client request extensions to send to each subgraph.
+    /// Returns `None` when nothing is left to send to any subgraph.
+    pub fn select(
+        &self,
+        client_extensions: &HashMap<String, Value>,
+    ) -> Option<SelectedSubgraphRequestExtensions> {
+        let all = self
+            .all
+            .as_ref()
+            .and_then(|rule| rule.select(client_extensions));
+        let by_subgraph: AHashMap<String, Option<SubgraphRequestExtensions>> = self
+            .by_subgraph
+            .iter()
+            .map(|(subgraph_name, rule)| {
+                (
+                    subgraph_name.clone(),
+                    rule.as_ref()
+                        .and_then(|rule| rule.select(client_extensions)),
+                )
+            })
+            .collect();
+
+        if all.is_none() && by_subgraph.values().all(Option::is_none) {
+            return None;
+        }
+
+        Some(SelectedSubgraphRequestExtensions { all, by_subgraph })
+    }
+}
+
+/// The client request `extensions` selected for each subgraph of a single request.
+pub struct SelectedSubgraphRequestExtensions {
+    all: Option<SubgraphRequestExtensions>,
+    by_subgraph: AHashMap<String, Option<SubgraphRequestExtensions>>,
+}
+
+impl SelectedSubgraphRequestExtensions {
+    /// The extensions to send to the given subgraph, if any.
+    pub fn for_subgraph(&self, subgraph_name: &str) -> Option<&SubgraphRequestExtensions> {
+        match self.by_subgraph.get(subgraph_name) {
+            Some(selected) => selected.as_ref(),
+            None => self.all.as_ref(),
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SubgraphRequestExtensionsPlanError {
-    #[error("'propagate.keys' can't be empty in 'allow' mode")]
-    EmptyAllowList,
-    #[error("'propagate.keys' can't allow '{key}', it's owned by the router ({owner})")]
-    RouterOwnedKey { key: String, owner: String },
+    #[error("'{scope}.keys' can't be empty in 'allow' mode")]
+    EmptyAllowList { scope: String },
+    #[error("'{scope}.keys' can't allow '{key}', it's owned by the router ({owner})")]
+    RouterOwnedKey {
+        scope: String,
+        key: String,
+        owner: String,
+    },
 }
 
 pub fn compile_subgraph_request_extensions_plan(
@@ -77,34 +138,69 @@ pub fn compile_subgraph_request_extensions_plan(
 
     let router_owned = router_owned_keys(jwt, persisted_documents);
 
-    let plan = match propagate.mode {
+    let all = propagate
+        .all
+        .as_ref()
+        .map(|rule| compile_propagate_rule(rule, "propagate.all", &router_owned))
+        .transpose()?;
+    let by_subgraph = propagate
+        .subgraphs
+        .iter()
+        .map(|(subgraph_name, rule)| {
+            let rule = rule
+                .as_ref()
+                .map(|rule| {
+                    compile_propagate_rule(
+                        rule,
+                        &format!("propagate.subgraphs.{subgraph_name}"),
+                        &router_owned,
+                    )
+                })
+                .transpose()?;
+            Ok((subgraph_name.clone(), rule))
+        })
+        .collect::<Result<AHashMap<_, _>, _>>()?;
+
+    if all.is_none() && by_subgraph.values().all(Option::is_none) {
+        return Ok(None);
+    }
+
+    Ok(Some(SubgraphRequestExtensionsPlan { all, by_subgraph }))
+}
+
+fn compile_propagate_rule(
+    rule: &RequestExtensionsPropagateRule,
+    scope: &str,
+    router_owned: &HashMap<String, String>,
+) -> Result<PropagateRule, SubgraphRequestExtensionsPlanError> {
+    match rule.mode {
         RequestExtensionsPropagateMode::Allow => {
-            if propagate.keys.is_empty() {
-                return Err(SubgraphRequestExtensionsPlanError::EmptyAllowList);
+            if rule.keys.is_empty() {
+                return Err(SubgraphRequestExtensionsPlanError::EmptyAllowList {
+                    scope: scope.to_string(),
+                });
             }
-            if let Some((key, owner)) = propagate
+            if let Some((key, owner)) = rule
                 .keys
                 .iter()
                 .find_map(|key| router_owned.get_key_value(key.as_str()))
             {
                 return Err(SubgraphRequestExtensionsPlanError::RouterOwnedKey {
+                    scope: scope.to_string(),
                     key: key.clone(),
                     owner: owner.clone(),
                 });
             }
-            SubgraphRequestExtensionsPlan::Allow(propagate.keys.iter().cloned().collect())
+            Ok(PropagateRule::Allow(rule.keys.iter().cloned().collect()))
         }
-        RequestExtensionsPropagateMode::Deny => SubgraphRequestExtensionsPlan::Deny(
-            propagate
-                .keys
+        RequestExtensionsPropagateMode::Deny => Ok(PropagateRule::Deny(
+            rule.keys
                 .iter()
+                .chain(router_owned.keys())
                 .cloned()
-                .chain(router_owned.into_keys())
                 .collect(),
-        ),
-    };
-
-    Ok(Some(plan))
+        )),
+    }
 }
 
 /// Collects the top-level extension keys the router reads or writes, paired with what owns them.
@@ -153,13 +249,30 @@ mod tests {
     use crate::config::persisted_documents::PersistedDocumentJsonPath;
     use crate::config::request_extensions::RequestExtensionsPropagateConfig;
 
-    fn config(mode: RequestExtensionsPropagateMode, keys: &[&str]) -> RequestExtensionsConfig {
+    fn rule(mode: RequestExtensionsPropagateMode, keys: &[&str]) -> RequestExtensionsPropagateRule {
+        RequestExtensionsPropagateRule {
+            mode,
+            keys: keys.iter().map(|key| key.to_string()).collect(),
+        }
+    }
+
+    fn propagate(
+        all: Option<RequestExtensionsPropagateRule>,
+        subgraphs: &[(&str, Option<RequestExtensionsPropagateRule>)],
+    ) -> RequestExtensionsConfig {
         RequestExtensionsConfig {
             propagate: Some(RequestExtensionsPropagateConfig {
-                mode,
-                keys: keys.iter().map(|key| key.to_string()).collect(),
+                all,
+                subgraphs: subgraphs
+                    .iter()
+                    .map(|(name, rule)| (name.to_string(), rule.clone()))
+                    .collect(),
             }),
         }
+    }
+
+    fn config(mode: RequestExtensionsPropagateMode, keys: &[&str]) -> RequestExtensionsConfig {
+        propagate(Some(rule(mode, keys)), &[])
     }
 
     fn compile(cfg: &RequestExtensionsConfig) -> SubgraphRequestExtensionsPlan {
@@ -204,21 +317,39 @@ mod tests {
         sonic_rs::from_str(&value.to_string()).expect("extensions should be an object")
     }
 
-    fn selected_keys(extensions: Option<SubgraphRequestExtensions>) -> Vec<String> {
-        let mut keys: Vec<String> = extensions.unwrap_or_default().into_keys().collect();
+    /// The sorted keys selected for the given subgraph.
+    fn selected_keys(
+        plan: &SubgraphRequestExtensionsPlan,
+        extensions: &HashMap<String, Value>,
+        subgraph_name: &str,
+    ) -> Vec<String> {
+        let selected = plan.select(extensions);
+        let mut keys: Vec<String> = selected
+            .as_ref()
+            .and_then(|selected| selected.for_subgraph(subgraph_name))
+            .map(|extensions| extensions.keys().cloned().collect())
+            .unwrap_or_default();
         keys.sort();
         keys
     }
 
     #[test]
     fn no_plan_without_propagate() {
-        let plan = compile_subgraph_request_extensions_plan(
-            &RequestExtensionsConfig::default(),
-            &JwtAuthConfig::default(),
-            &PersistedDocumentsConfig::default(),
-        )
-        .expect("config should be valid");
-        assert!(plan.is_none());
+        let configs = [
+            RequestExtensionsConfig::default(),
+            propagate(None, &[]),
+            propagate(None, &[("reviews", None)]),
+        ];
+
+        for cfg in configs {
+            let plan = compile_subgraph_request_extensions_plan(
+                &cfg,
+                &JwtAuthConfig::default(),
+                &PersistedDocumentsConfig::default(),
+            )
+            .expect("config should be valid");
+            assert!(plan.is_none());
+        }
     }
 
     #[test]
@@ -234,6 +365,9 @@ mod tests {
         }));
 
         let selected = plan.select(&extensions).expect("should select keys");
+        let selected = selected
+            .for_subgraph("products")
+            .expect("should select keys for any subgraph");
         assert_eq!(selected.len(), 2);
         assert_eq!(selected["tenant"], json!("acme"));
         assert_eq!(selected["clientInfo"], json!({ "name": "web" }));
@@ -250,7 +384,10 @@ mod tests {
             "subscription": { "callbackUrl": "http://attacker" },
         }));
 
-        assert_eq!(selected_keys(plan.select(&extensions)), vec!["tenant"]);
+        assert_eq!(
+            selected_keys(&plan, &extensions, "products"),
+            vec!["tenant"]
+        );
     }
 
     #[test]
@@ -263,7 +400,7 @@ mod tests {
         }));
 
         assert_eq!(
-            selected_keys(plan.select(&extensions)),
+            selected_keys(&plan, &extensions, "products"),
             vec!["debug", "tenant"]
         );
     }
@@ -271,6 +408,77 @@ mod tests {
     #[test]
     fn selects_nothing_when_no_key_matches() {
         let plan = compile(&config(RequestExtensionsPropagateMode::Allow, &["tenant"]));
+        let extensions = client_extensions(json!({ "debug": true }));
+
+        assert!(plan.select(&extensions).is_none());
+    }
+
+    #[test]
+    fn subgraph_rule_replaces_all_rule() {
+        let plan = compile(&propagate(
+            Some(rule(RequestExtensionsPropagateMode::Allow, &["tenant"])),
+            &[(
+                "reviews",
+                Some(rule(RequestExtensionsPropagateMode::Allow, &["clientInfo"])),
+            )],
+        ));
+        let extensions = client_extensions(json!({
+            "tenant": "acme",
+            "clientInfo": { "name": "web" },
+        }));
+
+        assert_eq!(
+            selected_keys(&plan, &extensions, "products"),
+            vec!["tenant"]
+        );
+        assert_eq!(
+            selected_keys(&plan, &extensions, "reviews"),
+            vec!["clientInfo"]
+        );
+    }
+
+    #[test]
+    fn subgraph_set_to_null_receives_nothing() {
+        let plan = compile(&propagate(
+            Some(rule(RequestExtensionsPropagateMode::Deny, &[])),
+            &[("reviews", None)],
+        ));
+        let extensions = client_extensions(json!({ "tenant": "acme" }));
+
+        assert_eq!(
+            selected_keys(&plan, &extensions, "products"),
+            vec!["tenant"]
+        );
+        assert!(selected_keys(&plan, &extensions, "reviews").is_empty());
+    }
+
+    #[test]
+    fn subgraph_rule_without_all_rule() {
+        let plan = compile(&propagate(
+            None,
+            &[(
+                "reviews",
+                Some(rule(RequestExtensionsPropagateMode::Deny, &[])),
+            )],
+        ));
+        let extensions = client_extensions(json!({
+            "tenant": "acme",
+            "persistedQuery": { "version": 1, "sha256Hash": "abc" },
+        }));
+
+        assert_eq!(selected_keys(&plan, &extensions, "reviews"), vec!["tenant"]);
+        assert!(selected_keys(&plan, &extensions, "products").is_empty());
+    }
+
+    #[test]
+    fn selects_nothing_when_no_subgraph_matches() {
+        let plan = compile(&propagate(
+            Some(rule(RequestExtensionsPropagateMode::Allow, &["tenant"])),
+            &[(
+                "reviews",
+                Some(rule(RequestExtensionsPropagateMode::Allow, &["clientInfo"])),
+            )],
+        ));
         let extensions = client_extensions(json!({ "debug": true }));
 
         assert!(plan.select(&extensions).is_none());
@@ -290,7 +498,10 @@ mod tests {
             "claims": { "role": "admin" },
         }));
 
-        assert_eq!(selected_keys(plan.select(&extensions)), vec!["tenant"]);
+        assert_eq!(
+            selected_keys(&plan, &extensions, "products"),
+            vec!["tenant"]
+        );
     }
 
     #[test]
@@ -298,7 +509,7 @@ mod tests {
         let plan = compile(&config(RequestExtensionsPropagateMode::Allow, &["jwt"]));
         let extensions = client_extensions(json!({ "jwt": "value" }));
 
-        assert_eq!(selected_keys(plan.select(&extensions)), vec!["jwt"]);
+        assert_eq!(selected_keys(&plan, &extensions, "products"), vec!["jwt"]);
     }
 
     #[test]
@@ -315,21 +526,45 @@ mod tests {
             "docs": { "id": "123" },
         }));
 
-        assert_eq!(selected_keys(plan.select(&extensions)), vec!["tenant"]);
+        assert_eq!(
+            selected_keys(&plan, &extensions, "products"),
+            vec!["tenant"]
+        );
     }
 
     #[test]
     fn rejects_empty_allow_list() {
-        let result = compile_subgraph_request_extensions_plan(
-            &config(RequestExtensionsPropagateMode::Allow, &[]),
-            &JwtAuthConfig::default(),
-            &PersistedDocumentsConfig::default(),
-        );
+        let cases = [
+            (
+                "propagate.all",
+                config(RequestExtensionsPropagateMode::Allow, &[]),
+            ),
+            (
+                "propagate.subgraphs.reviews",
+                propagate(
+                    None,
+                    &[(
+                        "reviews",
+                        Some(rule(RequestExtensionsPropagateMode::Allow, &[])),
+                    )],
+                ),
+            ),
+        ];
 
-        assert!(matches!(
-            result,
-            Err(SubgraphRequestExtensionsPlanError::EmptyAllowList)
-        ));
+        for (expected_scope, cfg) in cases {
+            let result = compile_subgraph_request_extensions_plan(
+                &cfg,
+                &JwtAuthConfig::default(),
+                &PersistedDocumentsConfig::default(),
+            );
+
+            match result {
+                Err(SubgraphRequestExtensionsPlanError::EmptyAllowList { scope }) => {
+                    assert_eq!(scope, expected_scope)
+                }
+                _ => panic!("expected an empty allow list in '{expected_scope}' to be rejected"),
+            }
+        }
     }
 
     #[test]
@@ -360,11 +595,39 @@ mod tests {
             );
 
             match result {
-                Err(SubgraphRequestExtensionsPlanError::RouterOwnedKey { key: owned, .. }) => {
-                    assert_eq!(owned, key)
+                Err(SubgraphRequestExtensionsPlanError::RouterOwnedKey {
+                    scope,
+                    key: owned,
+                    ..
+                }) => {
+                    assert_eq!(scope, "propagate.all");
+                    assert_eq!(owned, key);
                 }
                 _ => panic!("expected '{key}' to be rejected as a router-owned key"),
             }
+        }
+    }
+
+    #[test]
+    fn rejects_allowing_router_owned_keys_in_subgraph_scope() {
+        let result = compile_subgraph_request_extensions_plan(
+            &propagate(
+                Some(rule(RequestExtensionsPropagateMode::Allow, &["tenant"])),
+                &[(
+                    "reviews",
+                    Some(rule(RequestExtensionsPropagateMode::Allow, &["headers"])),
+                )],
+            ),
+            &JwtAuthConfig::default(),
+            &PersistedDocumentsConfig::default(),
+        );
+
+        match result {
+            Err(SubgraphRequestExtensionsPlanError::RouterOwnedKey { scope, key, .. }) => {
+                assert_eq!(scope, "propagate.subgraphs.reviews");
+                assert_eq!(key, "headers");
+            }
+            _ => panic!("expected 'headers' to be rejected as a router-owned key"),
         }
     }
 }
