@@ -58,6 +58,32 @@ impl<'arena> Merger<'arena> {
             field.value = Value::Children(self.merge_selection_set(sub_fields, child_type));
         }
 
+        // Some fields get a scope that lists every type the object can be.
+        // That scope doesn't filter anything, so we remove it.
+        //
+        // `orders { media { id } }`
+        // and the same selection inside
+        // `... on Store @include(if: $a) { orders { media { id } } }`
+        // both ask for `id`. Only the second `id` gets a scope.
+        // Because their scopes differ, `id` gets split into one copy per type, and picking the
+        // right copy needs `__typename`.
+        // The subgraph wasn't asked for it, so `id` goes missing.
+        // With the scope gone, both are the same `id` and nothing gets split.
+        let mut object_types = None;
+        for field in &mut siblings {
+            let Some(scope) = field.parent_scope else {
+                continue;
+            };
+            let object_types = object_types.get_or_insert_with(|| self.object_types(parent_type));
+            if !object_types.is_empty()
+                && object_types.iter().all(|name| scope.matches(name))
+                && self.child_parent_type(parent_type, None, field.field_name)
+                    == self.child_parent_type(parent_type, Some(scope), field.field_name)
+            {
+                field.parent_scope = None;
+            }
+        }
+
         let mut key_groups = ResponseKeyGroups::new();
         for next in siblings {
             let variants = key_groups
@@ -72,7 +98,7 @@ impl<'arena> Merger<'arena> {
             }
         }
 
-        self.merge_groups(key_groups, parent_type)
+        self.merge_groups(key_groups, parent_type, object_types)
     }
 
     /// Merges `next` into `kept`. Both share one response key and one parent scope.
@@ -115,8 +141,8 @@ impl<'arena> Merger<'arena> {
         &self,
         key_groups: ResponseKeyGroups<'arena>,
         parent_type: &'arena str,
+        mut object_types: Option<BumpVec<'arena, &'arena str>>,
     ) -> BumpVec<'arena, Field<'arena>> {
-        let mut object_types: Option<BumpVec<'arena, &'arena str>> = None;
         let mut merged = BumpVec::new_in(self.arena);
         for (_, variants) in key_groups {
             // One variant, or scopes that are all single concrete types, can
@@ -131,30 +157,33 @@ impl<'arena> Merger<'arena> {
                 continue;
             }
 
-            let object_types = object_types.get_or_insert_with(|| {
-                let mut names = BumpVec::new_in(self.arena);
-                if let Some(possible) = self.schema.get_possible_types(parent_type) {
-                    names.extend(
-                        possible
-                            .iter()
-                            .map(String::as_str)
-                            .filter(|obj_type| self.schema.is_object_type(obj_type)),
-                    );
-                }
-
-                if self.schema.is_object_type(parent_type) {
-                    names.push(parent_type);
-                }
-
-                names.sort_unstable();
-                names.dedup();
-                names
-            });
+            let object_types = object_types.get_or_insert_with(|| self.object_types(parent_type));
 
             self.specialize_variants(variants, parent_type, object_types, &mut merged);
         }
 
         merged
+    }
+
+    /// Every object type a value of `parent_type` can be, sorted.
+    fn object_types(&self, parent_type: &'arena str) -> BumpVec<'arena, &'arena str> {
+        let mut names = BumpVec::new_in(self.arena);
+        if let Some(possible) = self.schema.get_possible_types(parent_type) {
+            names.extend(
+                possible
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|obj_type| self.schema.is_object_type(obj_type)),
+            );
+        }
+
+        if self.schema.is_object_type(parent_type) {
+            names.push(parent_type);
+        }
+
+        names.sort_unstable();
+        names.dedup();
+        names
     }
 
     /// Clones an overlapping group into one exact variant per concrete type.
@@ -584,6 +613,61 @@ mod tests {
             }
         }
         "###);
+    }
+
+    /// `feed { id }` and the same under `... on Query @include(if: $a)`: in the fragment `id`
+    /// sits under every `Content` type, which is no type guard at all. Split per type, `id` would
+    /// need a `__typename` the subgraph wasn't asked for, and come out missing.
+    #[test]
+    fn scope_of_every_type_merges_with_no_scope() {
+        insta::assert_snapshot!(plan(SCHEMA_1,
+            r#"query($a: Boolean!) {
+                ... on Query @include(if: $a) { feed { id } }
+                feed { id }
+            }"#
+        ), @r"
+        feed: {
+          conditions: ((Include(if: $a) AND FieldType(OneOf(Article, Content, Photo, Video))) OR FieldType(OneOf(Article, Content, Photo, Video)))
+          selections:
+            id: {
+            }
+        }
+        ");
+    }
+
+    /// `ConcreteType` is the only `Node`, but `inner` isn't a `Node` field: without its scope it
+    /// would be read on `Node` and its own fields guarded by `Node` types.
+    #[test]
+    fn scope_of_every_type_stays_for_a_field_the_interface_lacks() {
+        let schema = SCHEMA_1
+            .replace(
+                "concrete: ConcreteType",
+                "concrete: ConcreteType\n        node: Node",
+            )
+            .replace(
+                "type ConcreteType @join__type(graph: LOCAL) {",
+                "type ConcreteType implements Node @join__type(graph: LOCAL) @join__implements(graph: LOCAL, interface: \"Node\") {",
+            )
+            + "\n    interface Node @join__type(graph: LOCAL) { id: ID! }\n";
+        insta::assert_snapshot!(plan(&schema,
+            r#"query($a: Boolean!) {
+                node {
+                    ... on ConcreteType { inner @skip(if: $a) { __typename } }
+                    ... on ConcreteType { inner { ... on InnerType { __typename } } }
+                }
+            }"#
+        ), @r"
+        node: {
+          conditions: FieldType(OneOf(ConcreteType, Node))
+          selections:
+            inner: {
+              type guard: Exact(ConcreteType)
+              selections:
+                __typename: {
+                }
+            }
+        }
+        ");
     }
 
     /// An "unguarded" selection (no concrete type) of `meta` (on the `Content` interface) overlaps a

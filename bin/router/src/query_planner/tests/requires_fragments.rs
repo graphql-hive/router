@@ -217,6 +217,7 @@ fn conditional_requires_stay_out_of_an_unconditional_call() -> Result<(), Box<dy
               __typename
               id
               profile {
+                __typename
                 displayName
               }
               ... on User @skip(if: $skip) {
@@ -330,6 +331,7 @@ fn merged_conditional_requires_stay_out_of_an_unconditional_call() -> Result<(),
               __typename
               id
               profile {
+                __typename
                 displayName
               }
               ... on User @skip(if: $skip) {
@@ -474,6 +476,7 @@ fn merged_conditional_inputs_stay_out_of_an_unconditional_call() -> Result<(), B
               __typename
               id
               profile {
+                __typename
                 displayName
               }
               ... on User @skip(if: $skip) {

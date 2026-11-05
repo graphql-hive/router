@@ -1930,3 +1930,119 @@ fn plan_is_empty_when_no_fetch_ever_runs() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+/// `results` once on its own and once under `$a` with `... on Product { id }`. The projection
+/// picks the `id` of a `Product` by `__typename`, so the subgraph has to send it with `$a` off
+/// too, not only under the condition. The `results` that's always there when `recommender` is
+/// gets it, the one under `$b` doesn't need it too.
+#[test]
+fn abstract_field_selected_again_under_a_condition_asks_for_its_typename(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($a: Boolean!, $b: Boolean!, $c: Boolean!) {
+          recommender @include(if: $c) {
+            results @include(if: $b) { id }
+            results { id }
+            results @include(if: $a) { ... on Product { id } }
+          }
+        }
+      "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/190.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "recommender", if: $c) {
+        query ($a:Boolean!,$b:Boolean!,$c:Boolean!) {
+          recommender @include(if: $c) {
+            results @include(if: $b) {
+              id
+            }
+            results {
+              __typename
+              id
+            }
+            results @include(if: $a) {
+              __typename
+              ... on Product {
+                id
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn abstract_field_selected_again_under_a_condition_in_an_entity_call_asks_for_its_typename(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($a: Boolean!) {
+          books {
+            reviews { product { id } }
+            reviews @include(if: $a) { product { ... on Book { id } } }
+          }
+        }
+      "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/abstract-types.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "books") {
+          {
+            books {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "books.@") {
+          Fetch(service: "reviews") {
+            {
+              ... on Book {
+                __typename
+                id
+              }
+            } =>
+            ($a:Boolean!) {
+              ... on Book {
+                ... on Book @include(if: $a) {
+                  reviews {
+                    product {
+                      __typename
+                      ... on Book {
+                        id
+                      }
+                    }
+                  }
+                }
+                reviews {
+                  product {
+                    __typename
+                    id
+                  }
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
