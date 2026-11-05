@@ -61,6 +61,7 @@ impl FetchGraph<MultiTypeFetchStep> {
             }
         }
         self.fix_conflicting_type_mismatches(supergraph_state)?;
+        self.keep_conditions_steps_were_planned_under()?;
 
         Ok(())
     }
