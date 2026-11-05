@@ -238,8 +238,16 @@ mod graceful_shutdown_tests {
                 .await
         });
 
-        // Give the request a moment to actually reach the slow subgraph call before SIGTERM.
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        // wait until the router actually forwarded the request to the slow subgraph, a fixed
+        // sleep races on slow ci runners where sigterm lands before the request is in flight
+        // and the graceful stop has nothing to drain
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while subgraphs.get_requests_log("products").is_none() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the in-flight request never reached the products subgraph");
 
         let sigterm_sent = Instant::now();
         let kill_status = std::process::Command::new("kill")
