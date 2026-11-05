@@ -6,7 +6,8 @@ use crate::query_planner::{
     state::supergraph_state::{SupergraphDefinition, SupergraphState},
 };
 
-/// `selection_set` is a root fetch's selections, of type `type_name`.
+/// Adds the `__typename` the projection needs to the objects in `selection_set`, a root fetch's
+/// selections on `type_name`. Not to `selection_set` itself.
 pub(super) fn add_typename_for_projection(
     selection_set: &mut SelectionSet,
     type_name: &str,
