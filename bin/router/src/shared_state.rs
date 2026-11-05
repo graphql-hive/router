@@ -7,7 +7,14 @@ use crate::executor::coprocessor::{CoprocessorError, CoprocessorRuntime};
 use crate::executor::execution::plan::FailedExecutionResult;
 use crate::executor::executors::common::InboundRequestFingerprint;
 use crate::executor::executors::inflight::{InFlightCleanupGuard, InFlightMap};
-use crate::executor::extensions::{compile::compile_extensions_plan, plan::ExtensionsPlan};
+use crate::executor::extensions::{
+    compile::compile_extensions_plan,
+    plan::ExtensionsPlan,
+    subgraph_request::{
+        compile_subgraph_request_extensions_plan, SubgraphRequestExtensionsPlan,
+        SubgraphRequestExtensionsPlanError,
+    },
+};
 use crate::executor::headers::sanitizer::is_never_join_header;
 use crate::executor::plugin_trait::RouterPluginBoxed;
 use crate::telemetry::logging::targets;
@@ -326,6 +333,9 @@ pub struct RouterSharedState {
     pub parse_cache: Cache<u64, ParseCacheEntry>,
     pub router_config: &'static HiveRouterConfig,
     pub extensions_plan: Arc<ExtensionsPlan>,
+    /// Decides which client request `extensions` are sent to subgraphs.
+    /// `None` when they are not propagated.
+    pub subgraph_request_extensions_plan: Option<SubgraphRequestExtensionsPlan>,
     pub cors_runtime: Option<Cors>,
     /// Cache for validated JWT claims to avoid re-parsing on every request.
     /// The cache key is the raw JWT token string.
@@ -375,11 +385,18 @@ impl RouterSharedState {
             })
             .transpose()?;
         check_laboratory_config(&router_config.laboratory)?;
+        let subgraph_request_extensions_plan = compile_subgraph_request_extensions_plan(
+            &router_config.request_extensions,
+            &router_config.jwt,
+            &router_config.persisted_documents,
+        )
+        .map_err(Box::new)?;
 
         Ok(Self {
             validation_plan: Arc::new(validation_plan),
             validation_options,
             extensions_plan: Arc::new(compile_extensions_plan(&router_config.response_extensions)),
+            subgraph_request_extensions_plan,
             parse_cache,
             cors_runtime: Cors::from_config(&router_config.cors).map_err(Box::new)?,
             jwt_claims_cache: Cache::builder()
@@ -465,6 +482,8 @@ pub enum SharedStateError {
     IntrospectionPolicyCompile(#[from] Box<ExpressionCompileError>),
     #[error("invalid coprocessor config: {0}")]
     CoprocessorRuntime(#[from] Box<CoprocessorError>),
+    #[error("invalid request_extensions config: {0}")]
+    RequestExtensionsConfig(#[from] Box<SubgraphRequestExtensionsPlanError>),
     #[cfg(not(feature = "graphiql"))]
     #[error("invalid laboratory config: {0}")]
     LaboratoryConfig(#[from] Box<LaboratoryConfigError>),

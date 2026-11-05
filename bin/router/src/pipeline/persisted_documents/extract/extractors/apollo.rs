@@ -2,8 +2,12 @@ use super::super::super::types::PersistedDocumentId;
 use super::super::core::{DocumentIdSourceExtractor, ExtractionContext};
 
 pub(crate) const APOLLO_HASH_PATH: &str = "extensions.persistedQuery.sha256Hash";
-pub(crate) const APOLLO_HASH_PATH_SEGMENTS: &[&str; 3] =
-    &["extensions", "persistedQuery", "sha256Hash"];
+pub(crate) const APOLLO_EXTENSIONS_PERSISTED_QUERY_KEY: &str = "persistedQuery";
+pub(crate) const APOLLO_HASH_PATH_SEGMENTS: &[&str; 3] = &[
+    "extensions",
+    APOLLO_EXTENSIONS_PERSISTED_QUERY_KEY,
+    "sha256Hash",
+];
 
 /// Extracts "$.extensions.persistedQuery.sha256Hash" from the GraphQL request body.
 pub(crate) struct ApolloExtractor;
