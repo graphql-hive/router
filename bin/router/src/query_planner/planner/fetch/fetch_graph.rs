@@ -887,16 +887,19 @@ fn process_entity_move_edge(
     };
     let mut requirement = fetch_graph.read_at(response_path, &requirement);
 
+    let head_node_index = graph.get_edge_head(&edge_index)?;
+    let head_type = match graph.node(head_node_index)? {
+        Node::SubgraphType(t) => t,
+        _ => return Err(FetchGraphError::ExpectedSubgraphType),
+    };
+    let input_type_name = &head_type.name;
+
     // A key of an interface, like `Animal @key(fields: "id")`, sends every animal. When all that's
     // asked of them is in `... on Dog` and `... on Cat`, a Bird would go with nothing to ask of
     // it, so the input only takes the types that are asked for. Not from an
     // `@interfaceObject` though, its data has the interface's name in `__typename`.
-    let from_interface_object = matches!(
-        graph.node(graph.get_edge_head(&edge_index)?)?,
-        Node::SubgraphType(t) if t.is_interface_object
-    );
     let asked_types = only_asked_types(graph, query_node)?;
-    let narrowed = !from_interface_object && !asked_types.is_empty();
+    let narrowed = is_interface && !head_type.is_interface_object && !asked_types.is_empty();
     if narrowed {
         requirement.selection_set = SelectionSet {
             items: asked_types
@@ -912,13 +915,6 @@ fn process_entity_move_edge(
                 .collect(),
         };
     }
-
-    let head_node_index = graph.get_edge_head(&edge_index)?;
-    let head_node = graph.node(head_node_index)?;
-    let input_type_name = match head_node {
-        Node::SubgraphType(t) => &t.name,
-        _ => return Err(FetchGraphError::ExpectedSubgraphType),
-    };
 
     let tail_node_index = graph.get_edge_tail(&edge_index)?;
     let tail_node = graph.node(tail_node_index)?;
