@@ -664,10 +664,14 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             ));
         }
 
-        let response_result = response.deserialize_http_response(
-            execution_request.custom_scalar_paths,
-            execution_request.response_shape,
-        );
+        let response_result = if execution_request.raw_response {
+            Ok(response.into_raw_response())
+        } else {
+            response.deserialize_http_response(
+                execution_request.custom_scalar_paths,
+                execution_request.response_shape,
+            )
+        };
 
         if let Some(mut http_request_capture) = http_request_capture {
             finish_capture_from_subgraph_result(
@@ -953,6 +957,16 @@ fn validate_response_content_type(headers: &HeaderMap) -> (bool, Option<&str>) {
 }
 
 impl SubgraphHttpResponse {
+    /// The body as it came, for the slot pipeline to read
+    fn into_raw_response(self) -> SubgraphResponse<'static> {
+        SubgraphResponse {
+            bytes: Some(self.body),
+            headers: Some(self.headers),
+            status: Some(self.status),
+            ..Default::default()
+        }
+    }
+
     fn deserialize_http_response(
         self,
         custom_scalar_paths: Option<&CustomScalarPaths>,
@@ -999,6 +1013,7 @@ mod tests {
             extensions: None,
             custom_scalar_paths: None,
             response_shape: None,
+            raw_response: false,
             connection_fingerprint: None,
         };
 

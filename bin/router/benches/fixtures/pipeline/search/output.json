@@ -1,0 +1,1 @@
+{"data":{"listings":[{"id":"l1","rank":12.0,"pet":{"__typename":"Cat","id":"c1","name":"Tom","whiskers":12}},{"id":"l2","rank":3.0,"pet":{"__typename":"Dog","id":"d1","name":"Rex","tricks":3}},{"id":"l3","rank":1.0,"pet":{"__typename":"Bird","id":"b1","name":"Tweety"}}]}}

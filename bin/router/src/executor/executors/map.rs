@@ -287,6 +287,21 @@ impl SubgraphExecutorMap {
         Ok(subgraph_executor_map)
     }
 
+    /// Puts `executor` in place of the HTTP executor of `subgraph_name`'s static endpoint.
+    /// Benches use it to serve recorded responses without a network.
+    #[doc(hidden)]
+    pub fn replace_http_executor(&self, subgraph_name: &str, executor: SubgraphExecutorBoxedArc) {
+        let endpoint = self
+            .static_endpoints_by_subgraph
+            .get(subgraph_name)
+            .map(|endpoint| endpoint.value().to_string())
+            .expect("the subgraph has a static endpoint");
+        self.http_executors_by_subgraph
+            .entry(subgraph_name.to_string())
+            .or_default()
+            .insert(endpoint, executor);
+    }
+
     /// Returns the shared active callback subscriptions map for use by callback handlers.
     pub fn callback_subscriptions(&self) -> CallbackSubscriptionsMap {
         self.callback_subscriptions.clone()

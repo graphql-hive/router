@@ -1,0 +1,273 @@
+//! The slot pipeline against the `Value` pipeline, one root fetch at a time: the same body goes
+//! through `deserialize_with_shape` + `deep_merge` + `project_by_operation` and through
+//! `parse_body` + `merge_object` + `write_response`, and the client outputs must be JSON-equal
+//! (same keys in the same order, numbers by value). Bodies cover what a subgraph can get wrong
+//! or write differently: key order, missing and extra keys, nulls where the type is non-null,
+//! invalid enum values, escapes, whitespace, number forms.
+
+use std::sync::Arc;
+
+use bytes::Bytes;
+
+use super::compile::SlotPlan;
+use super::parse::parse_body;
+use super::store::{Arena, Slot};
+use super::write::write_response;
+use crate::executor::introspection::partition::partition_operation;
+use crate::executor::plugins::hooks::on_supergraph_load::Supergraph;
+use crate::executor::projection::plan::ProjectionPlan;
+use crate::executor::projection::response::project_by_operation;
+use crate::executor::response::merge::deep_merge;
+use crate::executor::response::subgraph_response::SubgraphResponse;
+use crate::executor::response::value::Value;
+use crate::query_planner::ast::normalization::normalize_operation;
+use crate::query_planner::planner::plan_nodes::PlanNode;
+use crate::query_planner::utils::cancellation::CancellationToken;
+use crate::query_planner::utils::parsing::parse_operation;
+
+const HEADER: &str = r#"
+schema @link(url: "https://specs.apollo.dev/link/v1.0") @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) { query: Query }
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+directive @join__field(graph: join__Graph, requires: join__FieldSet, provides: join__FieldSet, type: String, external: Boolean, override: String, usedOverridden: Boolean) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+directive @join__implements(graph: join__Graph!, interface: String!) repeatable on OBJECT | INTERFACE
+directive @join__type(graph: join__Graph!, key: join__FieldSet, extension: Boolean! = false, resolvable: Boolean! = true, isInterfaceObject: Boolean! = false) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+directive @join__unionMember(graph: join__Graph!, member: String!) repeatable on UNION
+scalar join__FieldSet
+directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+scalar link__Import
+enum link__Purpose { SECURITY EXECUTION }
+enum join__Graph { A @join__graph(name: "a", url: "http://localhost/a") }
+"#;
+
+const TYPES: &str = r#"
+type Query @join__type(graph: A) {
+  products: [Product!]!
+  product: Product
+}
+type Product @join__type(graph: A) {
+  id: ID!
+  name: String
+  price: Float!
+  state: State
+  tags: [String!]
+  variants: [Variant!]!
+  meta: Meta
+}
+type Variant @join__type(graph: A) {
+  sku: String!
+  size: Int
+}
+type Meta @join__type(graph: A) {
+  label: String
+  states: [State]
+}
+enum State @join__type(graph: A) {
+  ACTIVE @join__enumValue(graph: A)
+  RETIRED @join__enumValue(graph: A)
+}
+"#;
+
+/// Runs `body` as the response of the only fetch of `query`, through both pipelines. Also
+/// returns how many subtrees the slot plan may pass through.
+fn both(query: &str, body: &str) -> (String, String, usize) {
+    both_with(TYPES, query, body)
+}
+
+fn both_with(types: &str, query: &str, body: &str) -> (String, String, usize) {
+    let sdl = format!("{HEADER}{types}");
+    let supergraph = Supergraph::from_sdl("test", &sdl, Default::default()).expect("builds");
+    let planner = &supergraph.planner;
+    let metadata = Arc::clone(&supergraph.metadata);
+    let document = parse_operation(query);
+    let normalized = normalize_operation(&planner.supergraph, &document, None).expect("normalizes");
+    let (root, projection) = ProjectionPlan::from_operation(&normalized.operation, &metadata);
+    let projection = Arc::new(projection);
+    let operation = partition_operation(normalized.operation).downstream_operation;
+    let plan = planner
+        .plan_from_normalized_operation(&operation, Default::default(), &CancellationToken::new())
+        .expect("plans")
+        .into_executable(&planner.supergraph);
+    let Some(PlanNode::Fetch(fetch)) = &plan.node else {
+        panic!("one root fetch");
+    };
+    let bytes = Bytes::from(body.to_string());
+
+    let old = match SubgraphResponse::deserialize_with_shape(
+        bytes.clone(),
+        fetch.operation.response_shape.as_deref().expect("a shape"),
+        fetch.custom_scalar_paths.as_ref(),
+    ) {
+        Ok(response) => {
+            let mut data = Value::Object(Vec::new());
+            deep_merge(&mut data, response.data);
+            let output = project_by_operation(
+                &data,
+                response.errors.unwrap_or_default(),
+                &Default::default(),
+                root,
+                &projection,
+                &None,
+                0,
+                &metadata,
+            )
+            .expect("projects");
+            String::from_utf8(output).expect("utf-8")
+        }
+        Err(_) => "invalid".to_string(),
+    };
+
+    let slots = SlotPlan::compile(&plan, &projection, &metadata, root).expect("compiles");
+    let program = &slots.fetches[&fetch.id];
+    let passthroughs = program.shape.verifies.len();
+    let mut arena = Arena::default();
+    let width = slots.layouts[slots.root_layout as usize].width();
+    let first = arena.object(width);
+    let new = match parse_body(&mut arena, &slots.layouts, &program.shape, &bytes) {
+        Some(parsed) => {
+            if let Slot::Object {
+                layout,
+                first: data,
+            } = parsed.data
+            {
+                arena.merge_object(&slots.layouts, layout, first, data);
+            }
+            let output = write_response(
+                &arena,
+                &slots,
+                Slot::Object {
+                    layout: slots.root_layout,
+                    first,
+                },
+                parsed.errors.unwrap_or_default(),
+                &Default::default(),
+                root,
+                &None,
+                0,
+                &metadata,
+            )
+            .expect("writes");
+            String::from_utf8(output).expect("utf-8")
+        }
+        None => "invalid".to_string(),
+    };
+    (old, new, passthroughs)
+}
+
+fn json_equal(a: &sonic_rs::Value, b: &sonic_rs::Value) -> bool {
+    use sonic_rs::{JsonContainerTrait, JsonValueTrait};
+    if let (Some(a), Some(b)) = (a.as_object(), b.as_object()) {
+        return a.len() == b.len()
+            && a.iter()
+                .zip(b.iter())
+                .all(|((ka, va), (kb, vb))| ka == kb && json_equal(va, vb));
+    }
+    if let (Some(a), Some(b)) = (a.as_array(), b.as_array()) {
+        return a.len() == b.len() && a.iter().zip(b.iter()).all(|(a, b)| json_equal(a, b));
+    }
+    if a.is_number() && b.is_number() {
+        return a.as_f64() == b.as_f64();
+    }
+    a == b
+}
+
+#[track_caller]
+fn same(query: &str, body: &str) -> usize {
+    let (old, new, passthroughs) = both(query, body);
+    if old == "invalid" || new == "invalid" {
+        assert_eq!(old, new, "one pipeline rejected the body\nbody: {body}");
+        return passthroughs;
+    }
+    let a: sonic_rs::Value = sonic_rs::from_str(&old).expect("old output is JSON");
+    let b: sonic_rs::Value = sonic_rs::from_str(&new).expect("new output is JSON");
+    assert!(
+        json_equal(&a, &b),
+        "outputs differ\nbody: {body}\nold:  {old}\nnew:  {new}"
+    );
+    passthroughs
+}
+
+const QUERY: &str = "{ products { id name price state tags variants { sku size } meta { label states } } product { id } }";
+
+#[test]
+fn passthrough_and_fallback_match_the_value_pipeline() {
+    let product =
+        |fields: &str| format!(r#"{{"data":{{"products":[{fields}],"product":{{"id":"x"}}}}}}"#);
+    let bodies = [
+        // the order the fetch asks for
+        product(r#"{"id":"1","name":"a","price":1.5,"state":"ACTIVE","tags":["t"],"variants":[{"sku":"s","size":1}],"meta":{"label":"l","states":["RETIRED",null]}}"#),
+        // keys in another order
+        product(r#"{"name":"a","id":"1","state":"ACTIVE","price":1.5,"variants":[{"size":1,"sku":"s"}],"tags":["t"],"meta":{"states":[],"label":"l"}}"#),
+        // a nullable key missing
+        product(r#"{"id":"1","price":1.5,"state":"ACTIVE","tags":null,"variants":[],"meta":null}"#),
+        // an extra key
+        product(r#"{"id":"1","name":"a","price":1.5,"state":"ACTIVE","tags":[],"variants":[{"sku":"s","size":1,"extra":true}],"meta":{"label":"l","states":null,"x":1}}"#),
+        // null where non-null: a variant's sku, an item of [String!], a product's price
+        product(r#"{"id":"1","name":"a","price":1.5,"state":"ACTIVE","tags":["t"],"variants":[{"sku":null,"size":1}],"meta":null}"#),
+        product(r#"{"id":"1","name":"a","price":1.5,"state":"ACTIVE","tags":["t",null],"variants":[],"meta":null}"#),
+        product(r#"{"id":"1","name":"a","price":null,"state":"ACTIVE","tags":[],"variants":[],"meta":null}"#),
+        // invalid enum values, at the top and in a list
+        product(r#"{"id":"1","name":"a","price":1.5,"state":"NOPE","tags":[],"variants":[],"meta":{"label":"l","states":["NOPE"]}}"#),
+        // an escaped enum value, escapes and unicode in strings
+        product(r#"{"id":"1","name":"a\"b\\cé ż \n","price":1.5,"state":"ACTIVE","tags":["A"],"variants":[],"meta":{"label":"\/x","states":["ACTIVE"]}}"#),
+        // whitespace everywhere
+        "{ \"data\" : { \"products\" : [ { \"id\" : \"1\" , \"name\" : null , \"price\" : 2 , \"state\" : null , \"tags\" : [ ] , \"variants\" : [ { \"sku\" : \"s\" , \"size\" : null } ] , \"meta\" : { \"label\" : \"l\" , \"states\" : [ \"ACTIVE\" ] } } ] , \"product\" : null } }\n".to_string(),
+        // number forms
+        product(r#"{"id":"1","name":"a","price":1e2,"state":"ACTIVE","tags":[],"variants":[{"sku":"s","size":-0}],"meta":null},{"id":"2","name":"b","price":1.50,"state":"RETIRED","tags":[],"variants":[{"sku":"s","size":12345678901}],"meta":null}"#),
+        // empty object and wrong kinds
+        product(r#"{}"#),
+        product(r#"{"id":"1","name":"a","price":1.5,"state":"ACTIVE","tags":"oops","variants":[],"meta":[]}"#),
+        // data null with errors, and an error next to data
+        r#"{"data":null,"errors":[{"message":"boom","path":["products"]}]}"#.to_string(),
+        r#"{"errors":[{"message":"boom"}],"data":{"products":[],"product":null}}"#.to_string(),
+        // not JSON
+        r#"{"data":{"products":[{"id":"1","name":"a","price":01}]}}"#.to_string(),
+        r#"{"data":{"products":[{"id":"1","name":"a	b"}]}}"#.to_string(),
+    ];
+    for body in &bodies {
+        // `products`, `variants`, `meta` and `product` all qualify
+        assert_eq!(same(QUERY, body), 4);
+    }
+}
+
+#[test]
+fn conditions_and_aliases_match_the_value_pipeline() {
+    let query = "{ products { id n: name s: state ... on Product { tags } variants { sku } } }";
+    let bodies = [
+        r#"{"data":{"products":[{"id":"1","n":"a","s":"ACTIVE","tags":["x"],"variants":[{"sku":"s"}]}]}}"#,
+        r#"{"data":{"products":[{"id":"1","n":"a","s":"BAD","tags":["x"],"variants":[{"sku":"s"}]}]}}"#,
+        r#"{"data":{"products":[{"id":"1","s":"ACTIVE","n":"a","variants":[{"sku":null}],"tags":null}]}}"#,
+    ];
+    for body in bodies {
+        // `... on Product` inside a Product is normalized away, so `products` and `variants`
+        // both qualify
+        assert_eq!(same(query, body), 2);
+    }
+}
+
+const ABSTRACT: &str = r#"
+type Query @join__type(graph: A) { things: [Thing] }
+interface Thing @join__type(graph: A) { detail: Detail }
+type Gadget implements Thing @join__type(graph: A) @join__implements(graph: A, interface: "Thing") { detail: Detail }
+type Widget implements Thing @join__type(graph: A) @join__implements(graph: A, interface: "Thing") { detail: Detail }
+interface Detail @join__type(graph: A) { meta: Meta }
+type RichDetail implements Detail @join__type(graph: A) @join__implements(graph: A, interface: "Detail") { meta: Meta }
+type BasicDetail implements Detail @join__type(graph: A) @join__implements(graph: A, interface: "Detail") { meta: Meta }
+type Meta @join__type(graph: A) { a: String b: String }
+"#;
+
+#[test]
+fn a_position_two_fields_read_is_never_passed_through() {
+    // the Widget's `meta { a }` and the Gadget's `meta { a b }` read one position, and the
+    // fetch selects `meta { a b }`: passing it through would give the Widget a `b`
+    let query = "{ things { detail { meta { a } } ... on Gadget { detail { ... on RichDetail { meta { b } } } } } }";
+    let body = r#"{"data":{"things":[
+        {"__typename":"Gadget","detail":{"__typename":"RichDetail","meta":{"a":"A1","b":"B1"}}},
+        {"__typename":"Gadget","detail":{"__typename":"BasicDetail","meta":{"a":"A2"}}},
+        {"__typename":"Widget","detail":{"__typename":"RichDetail","meta":{"a":"A3","b":"B3"}}}
+    ]}}"#;
+    let (old, new, _) = both_with(ABSTRACT, query, body);
+    let a: sonic_rs::Value = sonic_rs::from_str(&old).expect("JSON");
+    let b: sonic_rs::Value = sonic_rs::from_str(&new).expect("JSON");
+    assert!(json_equal(&a, &b), "old: {old}\nnew: {new}");
+}

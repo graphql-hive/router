@@ -270,6 +270,25 @@ impl ProjectionPlan {
         self.fields(self.roots)
     }
 
+    /// Where the root fields are in the field table
+    #[inline]
+    pub(crate) fn root_range(&self) -> Range {
+        self.roots
+    }
+
+    /// Where `field` is in the field table. It must be one of the plan's fields.
+    #[inline]
+    pub(crate) fn field_index(&self, field: &FieldRecord) -> usize {
+        (field as *const FieldRecord as usize - self.fields.as_ptr() as usize)
+            / size_of::<FieldRecord>()
+    }
+
+    /// How many fields the plan has, at all levels
+    #[inline]
+    pub(crate) fn field_count(&self) -> usize {
+        self.fields.len()
+    }
+
     #[inline]
     pub fn text(&self, id: SymbolId) -> &str {
         let range = self.tables.symbols[id.0 as usize];

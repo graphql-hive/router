@@ -86,6 +86,8 @@ use crate::query_planner::state::entity_keys::KeysByType;
 
 pub type VariablesMap = HashMap<String, sonic_rs::Value>;
 
+mod slots;
+
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionResultExtensions<'exec> {
@@ -148,6 +150,8 @@ pub struct QueryPlanExecutionOpts<'exec> {
     pub response_header_sink: ResponseHeaderSink,
     pub error_masking_runtime: Arc<Option<ErrorMaskingRuntime>>,
     pub connection_fingerprint: Option<ConnectionFingerprint>,
+    /// The plan compiled for the slot pipeline, when the router has it on
+    pub slot_plan: Option<Arc<crate::executor::slots::SlotPlanCell>>,
 }
 
 pub struct PlanSubscriptionOutput {
@@ -314,6 +318,7 @@ pub async fn execute_query_plan<'exec>(
             extensions: None,
             custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
             response_shape: fetch_node.operation.response_shape.as_deref(),
+            raw_response: false,
             connection_fingerprint: opts.connection_fingerprint,
         };
 
@@ -431,6 +436,7 @@ pub async fn execute_query_plan<'exec>(
                     response_header_sink: response_header_sink.clone(),
                     error_masking_runtime: opts.error_masking_runtime.clone(),
                     connection_fingerprint: opts.connection_fingerprint,
+                    slot_plan: None,
                 };
                 match execute_query_plan_with_data(response.data, opts).await {
                     Ok(result) => yield result.body,
@@ -470,6 +476,9 @@ async fn execute_query_plan_with_data<'exec>(
     mut data: Value<'exec>,
     mut opts: QueryPlanExecutionOpts<'exec>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
+    if slots::usable(&opts).is_some() {
+        return slots::execute(opts).await;
+    }
     // declared first so it outlives everything that borrows from it
     let aliased_requests = AliasedRequests::default();
     let mut errors = opts.initial_errors;
@@ -895,6 +904,8 @@ struct PrepareExecutionJobOpts<'exec> {
     raw_variable_values: Option<Vec<(&'exec str, Vec<u8>)>>,
     // and the path to the representations in the original response for error handling and normalization
     affected_path: Option<ResponsePathRef<'exec>>,
+    // Return the body unparsed, for the slot pipeline
+    raw_response: bool,
 }
 
 impl<'exec> Executor<'exec> {
@@ -951,6 +962,7 @@ impl<'exec> Executor<'exec> {
             custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
             raw_variable_values: None,
             affected_path: Some(flatten_node.path.as_ref()),
+            raw_response: false,
         })
         .boxed()
     }
@@ -1168,6 +1180,7 @@ impl<'exec> Executor<'exec> {
                     custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
                     raw_variable_values: None,
                     affected_path: None,
+                    raw_response: false,
                 })
                 .boxed()],
             PlanNode::BatchFetch(batch_fetch_node) => {
@@ -1211,6 +1224,7 @@ impl<'exec> Executor<'exec> {
                             custom_scalar_paths,
                             raw_variable_values: Some(variables),
                             affected_path: None,
+                            raw_response: false,
                         })
                         .map_ok(move |fetch_job| {
                             let mut response = fetch_job.response();
@@ -1280,6 +1294,7 @@ impl<'exec> Executor<'exec> {
                             custom_scalar_paths,
                             raw_variable_values: Some(variables),
                             affected_path: Some(flatten_node.path.as_ref()),
+                            raw_response: false,
                         })
                         .map_ok(move |fetch_job| {
                             let mut response = fetch_job.response();
@@ -1317,30 +1332,7 @@ impl<'exec> Executor<'exec> {
         job: Result<ExecutionJob<'exec>, PlanExecutionError>,
     ) {
         match job {
-            Err(ref err) => {
-                if let (Some(subgraph_name), Some(subgraph_headers)) = (
-                    err.subgraph_name().as_deref(),
-                    err.subgraph_response_headers(),
-                ) {
-                    if let Err(ref propagation_err) = apply_subgraph_response_headers(
-                        self.headers_plan,
-                        subgraph_name,
-                        subgraph_headers,
-                        self.client_request,
-                        &mut ctx.response_headers_aggregator,
-                    )
-                    .with_plan_context(LazyPlanContext {
-                        subgraph_name: || Some(subgraph_name.to_string()),
-                        affected_path: || err.affected_path().clone(),
-                    }) {
-                        self.log_error(propagation_err);
-                        ctx.errors.push(propagation_err.into());
-                    }
-                }
-
-                self.log_error(err);
-                ctx.errors.push(err.into());
-            }
+            Err(ref err) => self.handle_job_error(ctx, err),
             Ok(job) => {
                 let subgraph_name = job.subgraph_name();
                 let affected_path = job.affected_path();
@@ -1354,20 +1346,7 @@ impl<'exec> Executor<'exec> {
                 }
 
                 if let Some(ref subgraph_headers) = job.response_ref().headers {
-                    if let Err(ref err) = apply_subgraph_response_headers(
-                        self.headers_plan,
-                        job.subgraph_name(),
-                        subgraph_headers,
-                        self.client_request,
-                        &mut ctx.response_headers_aggregator,
-                    )
-                    .with_plan_context(LazyPlanContext {
-                        subgraph_name: || Some(subgraph_name.to_string()),
-                        affected_path: || affected_path.map(|p| p.to_string()),
-                    }) {
-                        self.log_error(err);
-                        ctx.errors.push(err.into());
-                    }
+                    self.apply_job_headers(ctx, subgraph_name, affected_path, subgraph_headers);
                 }
 
                 if let Some(ref subgraph_extensions) = job.response_ref().extensions {
@@ -1545,6 +1524,55 @@ impl<'exec> Executor<'exec> {
                     }
                 }
             }
+        }
+    }
+
+    /// Records a failed job: its error, and the headers of the subgraph response it carries.
+    fn handle_job_error(&self, ctx: &mut ExecutionContext<'exec>, err: &PlanExecutionError) {
+        if let (Some(subgraph_name), Some(subgraph_headers)) = (
+            err.subgraph_name().as_deref(),
+            err.subgraph_response_headers(),
+        ) {
+            if let Err(ref propagation_err) = apply_subgraph_response_headers(
+                self.headers_plan,
+                subgraph_name,
+                subgraph_headers,
+                self.client_request,
+                &mut ctx.response_headers_aggregator,
+            )
+            .with_plan_context(LazyPlanContext {
+                subgraph_name: || Some(subgraph_name.to_string()),
+                affected_path: || err.affected_path().clone(),
+            }) {
+                self.log_error(propagation_err);
+                ctx.errors.push(propagation_err.into());
+            }
+        }
+
+        self.log_error(err);
+        ctx.errors.push(err.into());
+    }
+
+    fn apply_job_headers(
+        &self,
+        ctx: &mut ExecutionContext<'exec>,
+        subgraph_name: &str,
+        affected_path: Option<ResponsePathRef<'_>>,
+        subgraph_headers: &HeaderMap,
+    ) {
+        if let Err(ref err) = apply_subgraph_response_headers(
+            self.headers_plan,
+            subgraph_name,
+            subgraph_headers,
+            self.client_request,
+            &mut ctx.response_headers_aggregator,
+        )
+        .with_plan_context(LazyPlanContext {
+            subgraph_name: || Some(subgraph_name.to_string()),
+            affected_path: || affected_path.map(|p| p.to_string()),
+        }) {
+            self.log_error(err);
+            ctx.errors.push(err.into());
         }
     }
 
@@ -1852,6 +1880,7 @@ impl<'exec> Executor<'exec> {
                 extensions: None,
                 custom_scalar_paths: opts.custom_scalar_paths,
                 response_shape: opts.operation.response_shape.as_deref(),
+                raw_response: opts.raw_response,
                 connection_fingerprint: self.connection_fingerprint,
             };
 

@@ -9,6 +9,7 @@ use crate::executor::hooks::on_query_plan::{
 use crate::executor::plugin_context::PluginRequestState;
 use crate::executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
 use crate::executor::plugins::hooks;
+use crate::executor::slots::SlotPlanCell;
 use crate::pipeline::demand_control::formula::DemandControlFormulaPlan;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
@@ -31,6 +32,8 @@ pub enum QueryPlanResult {
 pub struct PlannedQuery {
     pub plan: Arc<QueryPlan>,
     pub demand_control: Option<Arc<DemandControlFormulaPlan>>,
+    /// The plan compiled for the slot pipeline, by the first request that runs it
+    pub slots: Arc<SlotPlanCell>,
 }
 
 fn empty_planning_plan() -> QueryPlan<Planning> {
@@ -143,6 +146,7 @@ pub async fn plan_operation_with_cache(
                     return Ok(PlannedQuery {
                         plan: EMPTY_QUERY_PLAN.clone(),
                         demand_control: compile_demand_control(&empty_planning_plan()),
+                        slots: SlotPlanCell::new(),
                     });
                 }
 
@@ -166,6 +170,7 @@ pub async fn plan_operation_with_cache(
                     return Ok(PlannedQuery {
                         plan: EMPTY_QUERY_PLAN.clone(),
                         demand_control: compile_demand_control(&empty_planning_plan()),
+                        slots: SlotPlanCell::new(),
                     });
                 }
 
@@ -184,6 +189,7 @@ pub async fn plan_operation_with_cache(
                                 plan.into_executable(&supergraph.snapshot.planner.supergraph),
                             ),
                             demand_control,
+                            slots: SlotPlanCell::new(),
                         }
                     })
             })

@@ -55,6 +55,10 @@ name = "executor_benches"
 harness = false
 
 [[bench]]
+name = "pipeline_benches"
+harness = false
+
+[[bench]]
 name = "demand_control_benches"
 harness = false
 
