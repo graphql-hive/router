@@ -51,7 +51,11 @@ impl Hash for Value<'_> {
 
 #[inline(always)]
 pub fn key_eq(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
+    bytes_eq(a.as_bytes(), b.as_bytes())
+}
+
+#[inline(always)]
+pub fn bytes_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -198,12 +202,13 @@ impl<'a> Value<'a> {
         // needs it. Also remember when it is missing: each fragment then
         // falls back to its own type instead.
         let mut type_name = None;
+        let mut cursor = 0;
         for item in selections.iter() {
             match item {
                 RequiresSelection::Field {
                     name, selections, ..
                 } => {
-                    if let Some(idx) = Value::object_position(obj, name) {
+                    if let Some(idx) = Value::object_position_from(obj, name, &mut cursor) {
                         let (key, value) = &obj[idx];
                         key.hash(state);
                         value.hash_with_requires(state, selections, possible_types);
