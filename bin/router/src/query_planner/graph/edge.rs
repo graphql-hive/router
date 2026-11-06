@@ -46,7 +46,7 @@ pub struct FieldMove<'graph> {
     pub name: &'graph str,
     pub type_name: &'graph str,
     pub is_leaf: bool,
-    pub is_list: bool,
+    pub list_depth: usize,
     pub join_field: Option<JoinFieldDirective>,
     pub requirements: Option<Arc<TypeAwareSelection<'graph>>>,
     pub context_arguments: Vec<ContextArgument<'graph>>,
@@ -60,7 +60,7 @@ pub struct FieldMove<'graph> {
 pub struct ReentryMove {
     pub name: String,
     pub type_name: String,
-    pub is_list: bool,
+    pub list_depth: usize,
 }
 
 impl FieldMove<'_> {
@@ -226,7 +226,7 @@ impl<'graph> Edge<'graph> {
         name: &'graph str,
         type_name: &'graph str,
         is_leaf: bool,
-        is_list: bool,
+        list_depth: usize,
         join_field: Option<JoinFieldDirective>,
         requirements: Option<Arc<TypeAwareSelection<'graph>>>,
         context_arguments: Vec<ContextArgument<'graph>>,
@@ -239,7 +239,7 @@ impl<'graph> Edge<'graph> {
             name,
             type_name,
             is_leaf,
-            is_list,
+            list_depth,
             join_field,
             requirements,
             context_arguments,
@@ -249,11 +249,11 @@ impl<'graph> Edge<'graph> {
         }))
     }
 
-    pub fn create_reentry_move(name: String, type_name: String, is_list: bool) -> Self {
+    pub fn create_reentry_move(name: String, type_name: String, list_depth: usize) -> Self {
         Self::ReentryMove(ReentryMove {
             name: name.clone(),
             type_name: type_name.clone(),
-            is_list,
+            list_depth,
         })
     }
 

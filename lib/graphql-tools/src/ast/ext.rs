@@ -259,7 +259,9 @@ impl Value {
             (Value::Float(a), Value::Float(b)) => a == b,
             (Value::String(a), Value::String(b)) => a.eq(b),
             (Value::Enum(a), Value::Enum(b)) => a.eq(b),
-            (Value::List(a), Value::List(b)) => a.iter().zip(b.iter()).all(|(a, b)| a.compare(b)),
+            (Value::List(a), Value::List(b)) => {
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|(a, b)| a.compare(b))
+            }
             (Value::Object(a), Value::Object(b)) => {
                 if a.len() != b.len() {
                     return false;
