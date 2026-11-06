@@ -1,0 +1,154 @@
+[
+  {
+    "subgraph": "products",
+    "body": {
+      "query": "{topProducts{__typename upc name price weight}}"
+    }
+  },
+  {
+    "subgraph": "accounts",
+    "body": {
+      "query": "{users{__typename id username name}}"
+    }
+  },
+  {
+    "subgraph": "inventory",
+    "body": {
+      "query": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate inStock}}}",
+      "variables": {
+        "representations": [
+          {
+            "__typename": "Product",
+            "price": 899,
+            "weight": 100,
+            "upc": "1"
+          },
+          {
+            "__typename": "Product",
+            "price": 1299,
+            "weight": 1000,
+            "upc": "2"
+          },
+          {
+            "__typename": "Product",
+            "price": 15,
+            "weight": 20,
+            "upc": "3"
+          },
+          {
+            "__typename": "Product",
+            "price": 499,
+            "weight": 100,
+            "upc": "4"
+          },
+          {
+            "__typename": "Product",
+            "price": 1299,
+            "weight": 1000,
+            "upc": "5"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "subgraph": "reviews",
+    "body": {
+      "query": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{reviews{...a}}} _e1: _entities(representations: $__batch_reps_1){...on User{reviews{id body product{__typename upc reviews{...a}}}}}}\n\nfragment a on Review {id body author{__typename id username reviews{id body product{__typename upc}}}}\n",
+      "variables": {
+        "__batch_reps_0": [
+          {
+            "__typename": "Product",
+            "upc": "1"
+          },
+          {
+            "__typename": "Product",
+            "upc": "2"
+          },
+          {
+            "__typename": "Product",
+            "upc": "3"
+          },
+          {
+            "__typename": "Product",
+            "upc": "4"
+          },
+          {
+            "__typename": "Product",
+            "upc": "5"
+          }
+        ],
+        "__batch_reps_1": [
+          {
+            "__typename": "User",
+            "id": "1"
+          },
+          {
+            "__typename": "User",
+            "id": "2"
+          },
+          {
+            "__typename": "User",
+            "id": "3"
+          },
+          {
+            "__typename": "User",
+            "id": "4"
+          },
+          {
+            "__typename": "User",
+            "id": "5"
+          },
+          {
+            "__typename": "User",
+            "id": "6"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "subgraph": "products",
+    "body": {
+      "query": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{price weight name}}}",
+      "variables": {
+        "__batch_reps_0": [
+          {
+            "__typename": "Product",
+            "upc": "1"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "subgraph": "accounts",
+    "body": {
+      "query": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on User{name}}}",
+      "variables": {
+        "__batch_reps_0": [
+          {
+            "__typename": "User",
+            "id": "1"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "subgraph": "inventory",
+    "body": {
+      "query": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{inStock shippingEstimate}}}",
+      "variables": {
+        "__batch_reps_0": [
+          {
+            "__typename": "Product",
+            "upc": "1",
+            "price": 899,
+            "weight": 100
+          }
+        ]
+      }
+    }
+  }
+]

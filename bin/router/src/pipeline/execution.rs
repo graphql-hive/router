@@ -41,6 +41,7 @@ pub struct PlannedRequest<'req> {
     pub demand_control_execution_context: Option<DemandControlExecutionContext>,
     pub plugin_req_state: Option<PluginRequestState<'req>>,
     pub connection_fingerprint: Option<ConnectionFingerprint>,
+    pub slot_plan: Option<Arc<crate::executor::slots::SlotPlanCell>>,
 }
 
 #[inline]
@@ -161,6 +162,7 @@ pub async fn execute_plan<'exec>(
             response_header_sink,
             error_masking_runtime: supergraph.runtime.error_masking.clone(),
             connection_fingerprint: planned_request.connection_fingerprint,
+            slot_plan: planned_request.slot_plan,
         })
         .await?;
 

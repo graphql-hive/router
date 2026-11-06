@@ -956,6 +956,7 @@ pub async fn execute_pipeline<'exec>(
         }
     };
     let query_plan_payload = prepared_query_plan.plan;
+    let slot_plan = prepared_query_plan.slots;
 
     let variable_payload = Arc::new(variable_payload);
 
@@ -987,6 +988,7 @@ pub async fn execute_pipeline<'exec>(
         demand_control_execution_context,
         plugin_req_state,
         connection_fingerprint,
+        slot_plan: Some(slot_plan),
     };
 
     execute_plan(

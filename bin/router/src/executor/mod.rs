@@ -11,6 +11,7 @@ pub mod plugins;
 pub mod projection;
 pub mod request_context;
 pub mod response;
+pub mod slots;
 pub mod utils;
 pub mod variables;
 

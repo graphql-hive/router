@@ -48,6 +48,17 @@ pub struct QueryPlannerConfig {
     /// Default: true.
     #[serde(default = "default_arguments_to_variables")]
     pub arguments_to_variables: bool,
+    /// Enables an experimental response pipeline that reads subgraph responses into compact
+    /// slots and writes the client response from them, without building intermediate values.
+    ///
+    /// Plans it can't run (subscriptions, mutations, `@fromContext`, rewrites, plugins on
+    /// execution, demand control) keep the regular pipeline.
+    ///
+    /// Can also be turned on with the `HIVE_SLOT_PIPELINE=1` environment variable.
+    ///
+    /// Default: false.
+    #[serde(default)]
+    pub experimental_slot_pipeline: bool,
 }
 
 impl Default for QueryPlannerConfig {
@@ -57,6 +68,7 @@ impl Default for QueryPlannerConfig {
             timeout: default_query_planning_timeout(),
             experimental_abstract_type_folding: default_experimental_abstract_type_folding(),
             arguments_to_variables: default_arguments_to_variables(),
+            experimental_slot_pipeline: false,
         }
     }
 }

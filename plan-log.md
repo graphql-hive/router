@@ -1,0 +1,490 @@
+# plan-log: slot-based response pipeline
+
+Working record for `pipeline-plan.md`. Branch `kamil-pipeline-perf`, cut from
+`kamil-perf-runtime-pr7` (`c9bcf575`). Newest entries at the bottom of each section.
+
+## Goals, constraints, success criteria (from the plan)
+
+| # | Criterion | Status |
+|---|---|---|
+| G1 | Pipeline CPU/request ≥ 2–3x faster (bench op, ct 3 MB, `search`) | **met at the low end** for bench op (2.07x total, ~2.17x pipeline-only) and ct (2.10x), LTO; `search` falls back (unchanged) |
+| G2 | ≤ 2 allocations per request in the pipeline, warm (output buffer + errors) | dropped by the user (too strict); reported for information |
+| G3 | Peak bytes/request no higher than today | **met**: bench op −56%, ct −29%, search unchanged |
+| G4 | Router CPU µs/req and RSS under wrk both improve, neither worse | **met** on the bench op (−22% CPU, −5.5% RSS) and ct unconstrained (−29% CPU, −15% RSS); ct with 1 worker: RSS +4% (see final) |
+| G5 | Client output and subgraph request bodies JSON-equal to today | **met** on bench op and ct (bench asserts both), e2e 835/836 with slots forced on, differential 2000/2000, `slots::tests` |
+| Gate | End of P3: ≥ 2x on bench op and ct (paired), no more peak memory, ≤ 2 allocs | **met** except the allocation part (G2, dropped) |
+
+Constraints: no unsafe arena with lifetime hazards (index-based storage), `deep_merge` merge
+semantics, `project_requires` Missing-vs-Null rules, number grammar validated, depth limit,
+unsupported features fall back at plan time (one pipeline per request), old pipeline deleted
+after P5.
+
+## Understanding of today's pipeline (read before changing anything)
+
+- Subgraph body → `SubgraphResponse::deserialize_with_shape` (`response/shaped.rs`), a
+  shape-aware parser that builds `Value<'a>` (`Vec<(&str, Value)>` objects, borrowed strings,
+  numbers parsed to i64/u64/f64). Errors and extensions go through sonic.
+  Called from the HTTP executor (`executors/http.rs::deserialize_http_response`).
+- Merge: `execution/plan.rs::process_job_result`. Root fetch → `deep_merge` into `ctx.data`.
+  Flatten → `take_entities`, `output_rewrites`, `traverse_and_callback_mut` over the flatten
+  path, `EntityMerger` (moves on last use, clones otherwise). BatchFetch → per alias.
+- Representations: `execution/context.rs::collect_context_entities` walks the flatten path,
+  projects each spot with `projection/request.rs::project_requires` into bytes, dedupes by
+  `Value::to_hash` (`hash_with_requires`) per context group. Context groups (`@fromContext`)
+  and aliased multi-group requests (`AliasedRequests`, `Unalias`) are layered on top.
+- Request body: `executors/http.rs::build_request_body` splices raw representation bytes.
+- Output: `projection/response.rs::project_by_operation` walks the `ProjectionPlan` over
+  `Value`, null bubbling, conditions, type guards, enums, then appends errors (sonic) and
+  extensions.
+- Teardown: drop of the `Value` tree (`Vec` per object/list).
+
+## Baseline measurements
+
+(pending, P0)
+
+## Log
+
+### 2026-11-06 — start
+
+- Read the plan and the executor (plan.rs, shaped.rs, merge.rs, executors/map.rs, http.rs).
+- Workloads: bench op = `bench/operation.graphql` on `bench/supergraph.graphql` (subgraphs
+  from `bench/subgraphs`, in-process). ct = `ct-query.graphql` + `ct-super.graphql` +
+  `ct-payload.json` (3 MB), which live only in the main checkout
+  (`~/Work/guild/hive-router-backup/`), not in git: customer-shaped data, so the bench reads
+  them from a path (`CT_DIR`) and skips ct when missing.
+  `search`: not defined anywhere in the repo or the slot branches' history. The closest is the
+  issue-1309 supergraph (`e2e/src/issues/supergraph.1309.graphql`, `search`/`catalog`/
+  `ranking` in `bench/subgraphs`), an interface + `@requires` on a type-conditioned selection.
+  Used as the `search` workload; it is tiny (3 listings), so it is a correctness and
+  union-width probe, not a throughput number. **Assumption**, flagged.
+- `SubgraphExecutorMap` keeps executors in private `DashMap`s; the bench needs a way to put a
+  mock executor in. Plan: a small `pub` hook on the map.
+
+### 2026-11-06 — P0 harness and baseline
+
+**Harness**: `bin/router/benches/pipeline_benches.rs` (custom main, `harness = false`).
+- Runs the real `execute_query_plan` on a current-thread runtime. Subgraph executors are
+  replaced through a new `#[doc(hidden)] SubgraphExecutorMap::replace_http_executor` with a
+  `Replay` executor that builds the request body (`build_request_body`, as the HTTP executor
+  does) and parses the recorded body with `deserialize_with_shape`, as the HTTP executor does.
+- Bodies are recorded at startup from the in-process bench subgraphs (deterministic, no rand).
+  Keyed by (subgraph, query) and served in recorded order.
+- Before timing, the client output and every request body are checked JSON-equal (key order
+  kept, numbers by value) against `benches/fixtures/pipeline/<workload>/{output,requests}.json`
+  (ct: `$CT_DIR/pipeline-ref/`). `--bless` writes them. Blessed on `c9bcf575` + harness only.
+- Reports thread CPU per request (`CLOCK_THREAD_CPUTIME_ID`, p10/p50/p90), allocations
+  (alloc + realloc) and peak bytes over the live heap at request start, from a counting
+  wrapper around `RouterGlobalAllocator`. Teardown (dropping data and output) is inside the
+  measured region. `NoSubscriber` is set as the global dispatcher.
+- Command: `cargo bench -p hive-router --bench pipeline_benches -- [filter] [--iters N]`
+  (release profile; see the build note in the final section: no LTO). bench_op output = 87,327 bytes, 7 fetches; search = 3 fetches;
+  ct = 1 fetch, 3,000,000-byte output.
+
+**Baseline (`c9bcf575`, release without LTO — see the final build note, two runs)**
+
+| workload | CPU p50 µs | allocs/req | peak KB/req |
+|---|---|---|---|
+| bench_op | 122.8 / 121.2 | 1082 | 217.1 |
+| search | 8.3 / 8.4 | 127 | 11.2 |
+| ct | 1654 / 1727 | 13,258 | 4,959.5 |
+
+Allocation counts include executor plumbing (headers, spans, futures, operation names), not
+just the pipeline. G2 needs a pipeline-only count; see below.
+
+**In-process profile, bench_op** (samply, `profiling` profile, 30k iterations, inclusive):
+parse (`deserialize_with_shape`) 18.9%, representations (`collect_context_entities`) 20.1% of
+which `Value::to_hash` 11.9%, merge (`process_job_result`) 13.8% of which
+`traverse_and_callback_mut` 12.5% / `deep_merge_from` 7.4%, projection 23.4%,
+`build_request_body` 0.3%. Pipeline ≈ 76–78% ≈ 93 µs; the rest (~21%) is executor plumbing
+(`SubgraphExecutorMap::execute`, headers, spans, future boxing).
+
+**Whole router** (`profiling` build, `bench/configs/no-deduplication.config.yaml`, bench
+subgraphs on :4200, `wrk -t4 -c50`, CPU from `ps` before/after; script
+`bench/cpu-per-request.sh <router-bin> <secs> <label>`, bench subgraphs must already run):
+- base: 664.6 / 646.6 µs CPU per request, 4.0k / 3.8k req/s, RSS 93 / 90 MB, 0 validation
+  failures.
+- samply on the router under wrk, weighted by `threadCPUDelta`: **60% of router CPU is in
+  `kevent` under mio's `poll`** (idle polling of under-loaded workers, charged as CPU), ~11% in
+  read/write syscalls, ~5% hyper client. The pipeline frames: `process_job_result` 4.1%,
+  `prepare_job_future` 3.3%, `project_by_operation` 3.0%, parse 2.7%, drop ~1% ≈ **14% of
+  router CPU ≈ 90 µs/request**, which matches the in-process number (93 µs): on this laptop
+  the caches are not much colder in the router for this op.
+- Reading the target as a router number: 2x on the pipeline ≈ −45 µs ≈ −7% router CPU per
+  request; 3x ≈ −9%. Excluding the kevent polling (which scales with idleness, not work), the
+  pipeline is ~1/3 of the router's real work.
+
+**Skipped in P0, with reasons**
+- Baselines on `kamil-slot` / `kamil-slot-projection`: they predate the crate merge
+  (`lib/executor`, `lib/query-planner`) and this harness can't run there without a port. Their
+  measured numbers are already in the plan; re-measuring them buys no decision. Not done.
+- Probe 1 (`@skip`/`@include` bitmask per request): the bench op, ct and search have no
+  conditions, so the probe can't move any target workload. Not done.
+- Probe 2 (packed flags word from `294683b0`): deferred, the projection walker is 23% of the
+  in-process bench; revisit if the new writer is not used.
+
+**Exit P0**: baseline numbers and the pipeline's router share are known. Next: P1.
+
+### 2026-11-06 — design decisions for P1–P3 (before writing code)
+
+Bench op plan shape (from `hive-expose-query-plan: dry-run`): Sequence[ Parallel[Fetch products,
+Fetch accounts], Parallel[Flatten(topProducts.@) Fetch inventory (requires), BatchFetch reviews
+(2 aliases)], Parallel[BatchFetch products (1 alias, 3 paths), BatchFetch accounts (2 paths)],
+BatchFetch inventory (requires price/weight) ]. No rewrites, no context, no conditions.
+So the new pipeline must do root Fetch, Flatten+requires and multi-alias multi-path BatchFetch.
+
+**Deviation 1 — layouts per type cluster, not per client selection set.** The plan's
+"one superset layout per client selection set" breaks entity sharing: a BatchFetch alias with
+several paths parses each entity once, but its paths can sit at client positions with different
+selection sets (`product { ...Product reviews {..} }` vs `product { ...Product }` in the bench
+op), so the parsed block would need a remap per path, recursively for shared children. Instead:
+- union-find over types: every abstract type that shows up as a position (client op, fetch
+  selections, `_entities` fragment types) is unioned with its possible types;
+- one layout per cluster = every response key selected on any type of the cluster anywhere in
+  the client op or any fetch (hidden keys included), `__typename` always;
+- every object of a cluster has the same layout, so a parsed entity block copies into any spot
+  slot-for-slot and nested objects can be shared by id with no remap.
+- Response key → slot per cluster. A key means the same field at every position of the same
+  object (GraphQL field merging; the planner aliases conflicts), and different objects at
+  different positions never share a block, so keying by response key is safe. Cost: objects
+  carry slots for keys their own position doesn't select; measured per workload (open
+  question 2).
+
+**Deviation 2 — compiled lazily, once per cached plan.** The slot plan depends on the query plan
+and the projection plan. It lives in a `OnceLock` next to the cached `PlannedQuery` and is built
+by the first request that uses it; it keeps the `Arc<ProjectionPlan>` it was built from and a
+request with a different projection plan (authorization rewrite, introspection partition) uses
+the old pipeline.
+
+**Supported set (prototype)**: query operations; Sequence/Parallel/Fetch/Flatten/BatchFetch;
+no `context`, no `input_rewrites`, no `output_rewrites`, no context alias templates; no
+introspection in the operation; no plugins, no demand control, no subscriptions; projection
+plan identical to the compiled one. Anything else → old pipeline for the whole request.
+
+**Semantics kept**: `deep_merge` (Null never overwrites, objects merge slot-wise, lists zip,
+else replace), `project_requires` (field looked up by name then alias, keys-known Missing →
+`null`, explicit Null kept, nested list items keep their place, `__typename` rules, complete
+key check), projection (conditions, guards, enum sets, typename, forced nulls, nullability
+shapes, null bubbling, `trim_error_paths`), entity error maps.
+
+**Known difference**: dedupe by hashing written bytes can merge two entities whose bytes are
+equal but whose `Value` hashes differ (e.g. a keys-known Missing field vs an explicit null).
+Fewer representations in such edge cases; noted if a test hits it.
+
+**Revision of deviation 1 (before coding it)**: layouts per *position*, not per type cluster.
+A position is a response path from `data` with list steps and type conditions dropped. Every
+fetch shape object maps to a position (root fetch: from `data`; root re-entry: at its merge
+path; entity alias: unioned with every merge path of the alias). Unioning positions also unions
+their same-key children, recursively (congruence closure). One layout per class = the keys any
+fetch writes there. No schema types needed at all, layouts are narrower than type clusters, and
+a parsed entity still fits every spot it's copied into. Projection fields, paths and requires
+are resolved to slots by walking them along the positions; keys no fetch writes get no slot
+(read as Missing).
+
+User note (2026-11-06): `ProjectionPlan` and other executor structures may be changed when it
+helps CPU or memory. (`query_planner::ast` stays a public contract.)
+
+### 2026-11-06 — P1–P3 first cut, end to end
+
+Code (all new unless noted):
+- `src/executor/slots/compile.rs`: positions → layouts, fetch `Shape`s (re-parses each fetch's
+  `document_str` with graphql_tools), path programs, requires programs, projection field slots.
+  `SlotPlan::compile` returns `Unsupported(reason)` for anything outside the supported set.
+- `src/executor/slots/store.rs`: `Slot` (16 bytes, `Copy`), `Arena` (bodies, slots, items,
+  scratch, dedupe maps), thread-local pool (4 arenas, dropped past 1M slots), `merge`/
+  `merge_object` with `deep_merge` rules (a Missing target takes even a Null source: `deep_merge`
+  adds the key, and `project_requires` tells Null from Missing), `write_whole`.
+- `src/executor/slots/parse.rs`: the shaped parser loop writing slots; scalars as byte ranges;
+  number grammar + f64 overflow check (only for exponents / >300 digits); string escape check;
+  UTF-8 check when non-ASCII; depth limit 250; on failure the caller asks sonic for the message.
+- `src/executor/slots/write.rs`: projection over slots, same semantics as
+  `projection::response` (made `ShapeCursor` and `trim_error_paths` `pub(crate)`). Errors and
+  extensions are serialized straight into the output buffer.
+- `src/executor/execution/plan/slots.rs`: plan walk, representations (port of
+  `project_requires` over slots), dedupe by object id first, then by hashing the written bytes
+  (with a byte compare on a hash hit, so a collision can't merge two entities), entity merge by
+  `merge_object` (nested objects shared), batch error split, entity error paths by re-walking
+  only when there are errors.
+- Wiring: `SubgraphExecutionRequest::raw_response` (HTTP executor returns the body unparsed),
+  `PlannedQuery::slots: Arc<SlotPlanCell>` → `PlannedRequest::slot_plan` →
+  `QueryPlanExecutionOpts::slot_plan`; `execute_query_plan_with_data` dispatches when
+  `slots::usable` (enabled, no plugins, no demand control, no introspection, a query, plan
+  compiled with this projection plan). Switch: `slots::set_enabled` or `HIVE_SLOT_PIPELINE=1`.
+- Refactor in `plan.rs`: `handle_job_error`, `apply_job_headers` extracted from
+  `process_job_result` (no behavior change).
+
+Correctness: bench_op and ct give JSON-equal client output **and** JSON-equal subgraph request
+bodies on the first run. search falls back ("rewrites or context on a batch alias").
+
+Pitfall found: the bench's `Replay` executor ignored `raw_response`, so every body was parsed
+twice (old parser + slot parser): the slot path looked 5–30% *slower*. Fixed in the mock.
+
+**Paired results** (same binary, `HIVE_SLOT_PIPELINE=0/1`, non-LTO release, 1000 iters, 2 rounds):
+
+| workload | CPU p50 µs old → slots | allocs | peak KB |
+|---|---|---|---|
+| bench_op | 121.7 / 121.9 → 97.0 / 96.8 (−21%) | 1082 → 777 | 217.1 → 95.3 |
+| ct | 1657 / 1674 → 1194 / 1197 (−28%) | 13,258 → 19 | 4,959.5 → 3,516.4 |
+
+Next: profile the slot path, find what's left.
+
+### 2026-11-06 — tuning round 1 (paired, non-LTO, bench_op / ct p50 µs, old path 121.5 / 1665)
+
+| change | bench_op | ct | allocs bench_op | verdict |
+|---|---|---|---|---|
+| first cut | 97.0 | 1195 | 777 | baseline for tuning |
+| no `Box<str>` per object in representations (typename borrowed from the arena, read once per object) | 88.5 | 1225 | 107 | kept |
+| fixed 24-byte key windows + 32-byte value windows in the writer (`put_window`, small `unsafe`) | 85.1 | 1181 | 107 | kept |
+| single-pass 8-byte SWAR string scan instead of 2 SWAR steps + memchr2 + vectorized check | 90.0 | 1324 | 107 | **reverted**: NEON memchr2 + the auto-vectorized check loop win on long strings |
+
+The 107 allocations left on bench_op are executor plumbing both paths share (header maps,
+operation names, spans, boxed futures, request bodies), not pipeline.
+
+Profile of ct on the slot path (LTO): string scanning in the parser ~19% (inherent memchr +
+check), writer value copies, `resolve_type_name` ~3.5%: ct's projection has `FieldType`
+conditions on interface-typed fields (`BaseMoney`, `AttributeDefinitionType`), each costing two
+std `HashMap` (SipHash) lookups in `SchemaMetadata::type_fields` per object. Next: resolve the
+static output type per projection field at compile time.
+
+### 2026-11-06 — tuning round 2: representations (bench_op, paired non-LTO, old path ~121.8 µs)
+
+Spot statistics (`SLOTS_DEBUG=1`): bench_op has 335 spots over 6 entity fetches
+(5, 5, 6, 130, 59, 130); the 130- and 59-spot fetches collapse to **1** entity each. Every spot
+is a distinct object (each review's `product` is its own parsed object), so dedupe by object
+id never hits here.
+
+| change | bench_op p50 | verdict |
+|---|---|---|
+| (before) write every spot's representation, hash the bytes, truncate on a hit | 85.4 | |
+| fingerprint each spot from the slots it would read (typename, key presence via `keys.get` + slot search, selected values) with `ahash`, write only new ones | 86.0 | no gain: same cost as writing |
+| fingerprint key presence as a bitmask of the object's present slots instead of `keys.get` + key slot search | 85.6 | kept (simpler, no per-spot map lookup) |
+| drop the by-object-id map (3 hash-map ops per spot, never hits on bench_op; identical objects get identical fingerprints anyway) | 83.7 | kept |
+| replace `ahash::AHasher` in fingerprints with `Mix`: one folded 128-bit multiply per 8 bytes, tags packed into length words, per-process seed | **75.7** | kept |
+
+Profile before the `Mix` change: fingerprinting was 21.6% of the bench (~56 ns/spot), almost
+all of it in the dependent chain of `AHasher::update` calls (one per `write_u8` marker).
+
+Soundness of fingerprints: the representation writer is a pure function of what the
+fingerprint hashes (the typename, which slots are present, which covers the complete-key check,
+and the selected values recursively), so equal fingerprints mean equal representations, up to
+64-bit collisions. That's the same trust `Value::to_hash` gets on the old path. New
+fingerprints still go through the written-bytes dedupe, which compares bytes on a hash hit.
+
+Where bench_op stands: ~75.7 µs total. Executor plumbing (`prepare_execution_job`: headers,
+spans, operation names, the executor map) is ~16 µs on both paths, so pipeline ≈ 60 µs vs
+≈ 93 µs before: **~1.55x**. Not at the 2x gate yet.
+
+### 2026-11-06 — P4 correctness: suites with the slot pipeline forced on
+
+- `HIVE_SLOT_PIPELINE=1 cargo test_all`: 2097/2097 pass (few of these reach the slot path).
+- `HIVE_SLOT_PIPELINE=1 cargo test_e2e`, first run: 827 passed, 9 failed.
+  - 5× `issue_966_custom_scalar_*`: a custom scalar whose JSON has an escaped object key
+    (`"entity.root\t"`). The slot parser rejected escaped keys everywhere; the shaped parser
+    does too but then lets sonic read the whole body. **Fix**: escaped keys are checked like
+    any string and skipped / kept raw (they can never match a shape field).
+  - `should_override_subgraph_url_based_on_header_value` and 2× `test_otlp_*transport_failure*`:
+    they expect a connection to :4200 to fail, and the bench subgraphs I had left running for
+    the wrk measurements answered. Not the slot pipeline: pass once that process is stopped.
+    **Lesson**: stop `bench/subgraphs` on :4200 before running e2e.
+  - `file_watch_works`: known local failure.
+- Second full run with the fix: **835/836 pass** (only `file_watch_works`).
+- Coverage of that run (temporary per-request tally, since removed): 859 requests ran on the
+  slot path; fallbacks: 443 not a query (subscriptions, mutations), 105 demand control, 42
+  introspection, 27 `@fromContext`, 15 plugins, 7 projection plan differs, 6 rewrites,
+  5 context alias templates.
+- Added the config flag `query_planner.experimental_slot_pipeline` (default false), applied in
+  `RouterSharedState::new`; `HIVE_SLOT_PIPELINE=1` still forces it on. The config JSON schema
+  still needs regenerating (`cargo router-config`).
+
+### 2026-11-06 — tuning round 3 (paired, non-LTO; old path bench_op ~122.6, ct ~1670)
+
+| change | bench_op | ct | verdict |
+|---|---|---|---|
+| (start) | 75.7 | 1180 | |
+| static output type per projection field, resolved at compile time when the parent is an object type (`SlotPlan::field_types`); the writer skips `SchemaMetadata::get_type_fields` (std `HashMap`, SipHash) for `FieldType` conditions and deferred type names | 75.7 | 1072 | kept (ct has `FieldType` conditions on `BaseMoney`/`AttributeDefinitionType` fields) |
+| writer: look the response key up only when the key doesn't fit the window | | | kept |
+| parser: the control/non-ASCII check after `memchr2` as a `min`/`max` reduction (vectorized) instead of `|=` on bools (scalar) | 73.0 | 1021 | kept |
+
+ct value stats: 18.5k strings = 2.6 MB of the 3 MB body, 8.5k of them longer than 64 bytes, so
+parse on ct is mostly string scanning (memchr2 + the check pass).
+
+### 2026-11-06 — G2: where the slot path's allocations are (bench_op, `--trace-allocs`)
+
+107 per request. About 55 are executor plumbing shared with the old path (FuturesUnordered
+tasks and queues, boxed job futures, `prepare_execution_job` internals, executor map futures).
+About 50 are slot-path bookkeeping `Vec`s: per-path target lists (17), merge paths (5),
+per-alias error buckets (5), alias lists (4), merge records (4), plus the representation
+buffers and variable lists moved into each subgraph request (they go into
+`raw_variable_values: Vec<(&str, Vec<u8>)>`, which owns them). Bookkeeping can be pooled in the
+arena. The representation buffers need `raw_variable_values` to borrow (an executor API change),
+so **G2 (≤ 2) is not met as stated**. ct (one root fetch): 19 allocations total.
+
+### 2026-11-06 — G4: whole router under wrk
+
+Same binary (`profiling` profile, LTO), `HIVE_SLOT_PIPELINE=0/1`, no-dedupe config, bench
+subgraphs, `wrk -t4 -c50 -d20s`, 3 paired rounds, 0 validation failures
+(`bench/cpu-per-request.sh`):
+
+| | CPU µs/req | req/s | RSS KB | p99 (info) |
+|---|---|---|---|---|
+| slots=0 | 626.5 / 632.1 / 638.8 | 4727 / 4870 / 4837 | 92656 / 92304 / 92112 | 27.9 / 26.1 / 25.5 ms |
+| slots=1 | 510.6 / 509.2 / 530.4 | 5045 / 5207 / 5008 | 87712 / 87936 / 88416 | 22.1 / 21.0 / 27.1 ms |
+
+**−18% router CPU per request (−115 µs), −4.8% RSS.** Larger than the in-process saving
+(~−50 µs), as the plan expected from `kamil-slot` (colder caches and allocator pressure in the
+router make the old pipeline cost more there). G4 met on this laptop.
+
+### 2026-11-06 — P4 differential
+
+Two routers from the same `profiling` binary on the bench supergraph (`bench/configs/default.config.yaml`,
+dedupe on), `PORT=4001 HIVE_SLOT_PIPELINE=0` (baseline) and `PORT=4002 HIVE_SLOT_PIPELINE=1`
+(candidate), bench subgraphs on :4200:
+`GRAPHQL_DIFF_QUERIES=2000 target/debug/graphql-diff http://localhost:4001/graphql http://localhost:4002/graphql bench/schema.graphql`
+(run from a scratch dir, it writes `failed-tests/`). **2000/2000 match** (the tool compares
+`data` only).
+
+Where the gate stands (in-process, non-LTO, paired): bench_op 122.6 → 73.0 µs total; minus
+~16 µs of executor plumbing on both sides, pipeline ≈ 93 → 57 µs ≈ **1.63x**. ct 1670 →
+1021 µs ≈ **1.64x**. Peak memory −56% / −30%. Gate (2x) not reached yet.
+
+**User decision (2026-11-06): G2 (≤ 2 allocations per request) is too strict, ignore it.**
+Allocation counts are still reported for information.
+
+### 2026-11-06 — tuning round 4: fingerprint micro-fixes, verified raw passthrough (deviation 3)
+
+Fingerprint: hash the `__typename` slot's raw bytes (different bytes only make fingerprints
+differ, which is safe), decode it only when an inline fragment needs it, read tails with
+overlapping loads instead of a `memcpy`. bench_op 73.0 → 72.0 µs.
+
+**Deviation 3 — verified raw passthrough subtrees** (not in the plan). ct's writer walked ~34k
+values one by one (~11 ns each). At compile time a projection field with children qualifies when:
+- one shape object (of one fetch) writes its position and every position below it,
+- exactly one projection field reads that position (two type variants reading one position, like
+  `meta { a }` for a Widget and `meta { a b }` for a Gadget, rule it out),
+- no path walks through it and no `@requires` reads it (`touched` set),
+- the client fields are exactly the fetch's fields there, in order, recursively, none of them
+  `__typename`, forced null, guarded, or with a condition other than an enum check or a type
+  condition its static type always meets (a passthrough object has no `__typename`, so its
+  runtime type is the static one).
+The parser then checks such a value as it reads it (`Parser::check`): exactly those keys in
+order, no null where the nullability shape says non-null (lists included), enum strings in the
+allowed set. If it holds, the value is one raw range and the writer copies it in one go; if not,
+it rewinds and reads it the normal way, so null bubbling, enum errors and missing keys behave as
+before.
+
+| change | bench_op | ct |
+|---|---|---|
+| before | 72.0 | 1021 |
+| passthrough, no conditions allowed | 71.4 | 841 |
+| + enum checks and statically true type conditions | 71.5 | 806 |
+
+ct paired: 1666 → 806 µs = **2.07x** (non-LTO).
+
+Correctness:
+- New `src/executor/slots/tests.rs`: one-subgraph supergraph with enums and non-null lists,
+  17 bodies (key order, missing/extra keys, nulls in non-null positions, invalid and escaped
+  enums, escapes, whitespace, number forms, wrong kinds, errors, invalid JSON) through both
+  pipelines, JSON-equal, and asserting the passthroughs are really compiled in.
+- e2e with slots: first run after passthrough failed
+  `nested_abstract_overlap_reresolves_merged_children` (the Widget/Gadget case above). Fixed with
+  the single-reader rule, regression test `a_position_two_fields_read_is_never_passed_through`.
+  Rerun: 835/836 (only `file_watch_works`).
+
+### 2026-11-06 — tuning round 5: bench_op to the gate
+
+Profiling correction: every profile so far included the bench's one-off recording run, where
+`reqwest::Client::new()` (loading native certificates) was ~12% of all samples, counted as
+"executor plumbing". Restricted to the timed loop (`pipeline_benches::measure`), plumbing is
+~4–7% on both paths (~5 µs), so the old bench_op pipeline is ≈ 117 µs, not 93.
+
+| change | bench_op p50 | allocs |
+|---|---|---|
+| (start) | 72.2 | 107 |
+| fingerprint over `Requires::reads`: every field the selection may read per level, fragments flattened at compile time; no fragment checks, type lookups or typename decoding per spot (the raw `__typename` bytes, hashed anyway, decide which fragments apply) | 65.2 | 107 |
+| alias targets in one pooled `Vec` per alias (`Targets`), `SmallVec` for paths/merges/error buckets; removed a leftover `std::env::var("SLOTS_DEBUG")` per `collect` | 64.8 | 70 |
+| path walk level by level over a frontier instead of recursively | **63.4** | 70 |
+
+Paired (same binary): old 123.6 µs → 63.4 µs total (1.95x); minus ~5.3 µs plumbing on both
+sides, **pipeline 118 → 58 µs ≈ 2.04x**. ct 2.07x (round 4). Both gate workloads clear 2x on
+non-LTO builds; LTO confirmation below.
+
+
+### 2026-11-06 — final measurements
+
+**Build note.** The root `Cargo.toml` `[profile.release]` has `opt-level`/`lto`/
+`codegen-units` commented out ("for faster compilation"), edited at 15:24, not by this work and
+left as is. So the P0 baseline and every router binary here were release builds without LTO
+(codegen-units 16). Every comparison is paired on one binary (`HIVE_SLOT_PIPELINE=0/1`), so the
+ratios hold. The in-process table below forces LTO (`CARGO_PROFILE_RELEASE_LTO=true`,
+`CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1`).
+
+**In process (pipeline bench), LTO, 3 paired rounds × 2000 iterations, p50 µs:**
+
+| workload | old | slots | speedup | allocs old → slots | peak KB old → slots |
+|---|---|---|---|---|---|
+| bench_op | 126.4 / 126.5 / 126.2 | 60.5 / 61.3 / 61.0 | **2.07x** total; ≈ 2.17x without the ~5 µs of shared executor plumbing | 1082 → 70 | 217.1 → 95.3 |
+| ct (3 MB) | 1618 / 1622 / 1617 | 775 / 772 / 770 | **2.10x** | 13,258 → 18 | 4,959.5 → 3,516.4 |
+| search | 8.1 / 8.2 / 8.0 | 8.2 / 8.1 / 8.0 | 1.0x: falls back ("rewrites or context on a batch alias") | 127 → 127 | 11.2 → 11.2 |
+
+**Whole router, bench op** (no-dedupe config, bench subgraphs, `wrk -t4 -c50 -d20s`, 3 paired
+rounds, 0 validation failures, `bench/cpu-per-request.sh`):
+
+| workers | | CPU µs/req | req/s | RSS KB | p99 |
+|---|---|---|---|---|---|
+| default (10) | old | 582 / 606 / 600 | 4860 / 4964 / 4995 | 94384 / 92208 / 90704 | 27.9 / 23.8 / 22.9 ms |
+| default (10) | slots | 455 / 471 / 465 (**−22%**) | 5122 / 5192 / 5205 (+4.7%) | 87392 / 87456 / 87200 (**−5.5%**) | 23.5 / 20.6 / 19.6 ms |
+| 2 | old | 366 / 370 / 367 | 4585 / 4589 / 4640 | ~80 MB | ~16.0 ms |
+| 2 | slots | 301 / 300 / 303 (−18%) | 4977 / 5006 / 4984 (+8.3%) | ~82 MB (noisy) | ~14.8 ms |
+| 1 | old | 326 / 325 / 326 | 3044 / 3070 / 3061 | 84544 / 79424 / 78336 | 19.7 / 18.9 / 19.0 ms |
+| 1 | slots | 248 / 249 / 248 (**−24%**) | 4000 / 3983 / 4004 (**+30.6%**) | 78336 / 85392 / 78512 | 15.3 / 15.9 / 15.5 ms |
+
+Why req/s moves little unless the router is the bottleneck: on this laptop the bench subgraphs
+(7 subgraph requests per router request, one of them 79 KB) use ~4 cores at 3k req/s and ~5.3
+at 4k, and wrk takes more; with all router workers the router used ~2.3 of 10 cores. With one
+worker the router is the bottleneck, and req/s follows its CPU per request (+30.6%).
+
+**Whole router, ct** (ct supergraph, `serve-payload.mjs` on :4200 for every subgraph,
+`wrk -t2 -c8`, 15 s, 3 paired rounds, 3,000,000-byte responses; `<scratchpad>/steps/cpu-ct.sh`):
+
+| workers | | CPU µs/req | req/s | RSS KB |
+|---|---|---|---|---|
+| default | old | 3278 / 3353 / 3331 | 1157 / 1168 / 1179 | 186176 / 168560 / 163840 |
+| default | slots | 2351 / 2340 / 2366 (**−29%**) | 1292 / 1295 / 1247 (+9%) | 148176 / 145600 / 147888 (**−15%**) |
+| 1 | old | 2599 / 2599 / 2598 | 385 / 385 / 385 | 109712 / 112400 / 110160 |
+| 1 | slots | 1645 / 1633 / 1643 (**−37%**) | 608 / 613 / 608 (**+58%**) | 116032 / 113840 / 115744 (+4%) |
+
+The +4% RSS with one worker is the one place memory went up: 58% more requests in flight per
+second through one worker; peak bytes per request are −29% in process.
+
+**Tests:** `cargo test_all` 2100/2100 (default), slots unit tests 3/3, `cargo test_e2e`
+835/836 both with the slot pipeline forced on and off (only the known `file_watch_works`),
+differential 2000/2000, `cargo clippy` clean for the new code (pre-existing warnings elsewhere),
+`cargo fmt --check` clean.
+
+## Where things stand / what's left
+
+Done: P0 (harness, baselines, router share), P1–P3 (compiler, storage, parser, writer,
+entity calls, all behind `query_planner.experimental_slot_pipeline` / `HIVE_SLOT_PIPELINE=1`),
+P4 (suites forced on, differential, wrk). Not done:
+- **P5**: `@fromContext`, rewrites, context alias templates, demand control, plugins on
+  execution, subscriptions, mutations, introspection still use the `Value` pipeline (search
+  falls back for this reason). The old pipeline can't be deleted until these are ported, and
+  until then fixes land twice.
+- G2 (≤ 2 allocs) dropped by the user. 70 allocations remain on bench_op, ~55 of them executor
+  plumbing shared by both paths; the rest are representation buffers and variable lists that
+  `raw_variable_values` owns.
+- Whole-router samply re-profile after the change (P4 bullet) not redone; the wrk CPU numbers
+  stand in.
+- Open question 1 (invalid-JSON messages): kept sonic's wording by asking sonic for the error
+  when the slot parser rejects a body. Open question 2 (superset width): position layouts are
+  narrower than type clusters; not separately measured on a wide-union workload, since no such
+  workload exists in the repo (the `search` workload falls back).
+- Kept from `kamil-slot`: fixed-window key/value writes and raw scalars. Not ported: the
+  arena tree. New beyond the plan: position layouts (deviation 1), lazily compiled slot plans
+  (2), verified raw passthrough subtrees (3), fingerprint dedupe over flattened reads.
+
+Files: `bin/router/src/executor/slots/{mod,compile,store,parse,write,tests}.rs`,
+`bin/router/src/executor/execution/plan/slots.rs`, small changes in `plan.rs`,
+`executors/{common,http,map,graphql_transport_ws}.rs`, `projection/{plan,response}.rs`,
+`pipeline/{mod,execution,query_plan}.rs`, `config/query_planner.rs`, `shared_state.rs`; bench
+`bin/router/benches/pipeline_benches.rs` + `benches/fixtures/pipeline/`;
+`bench/cpu-per-request.sh`. Nothing committed.

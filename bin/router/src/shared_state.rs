@@ -360,6 +360,7 @@ impl RouterSharedState {
         active_subscriptions: ActiveSubscriptions,
         storage_manager: Arc<StorageManager>,
     ) -> Result<Self, SharedStateError> {
+        crate::executor::slots::set_enabled(router_config.query_planner.experimental_slot_pipeline);
         let parse_cache = build_cache(&router_config.cache.router.parsing);
         let coprocessor = router_config
             .coprocessor

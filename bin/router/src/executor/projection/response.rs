@@ -47,20 +47,20 @@ impl From<ProjectionError> for ConditionFailure {
 }
 
 #[derive(Clone, Copy)]
-struct ShapeCursor<'a>(&'a [u8]);
+pub(crate) struct ShapeCursor<'a>(&'a [u8]);
 
 impl<'a> ShapeCursor<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
+    pub(crate) fn new(bytes: &'a [u8]) -> Self {
         Self(bytes)
     }
 
-    fn is_non_null(self) -> bool {
+    pub(crate) fn is_non_null(self) -> bool {
         self.0.first().is_some_and(|marker| {
             ShapeFlags::from_bits_retain(*marker).contains(ShapeFlags::NON_NULL)
         })
     }
 
-    fn list_item(self) -> Option<Self> {
+    pub(crate) fn list_item(self) -> Option<Self> {
         match self.0.split_first() {
             Some((marker, rest))
                 if ShapeFlags::from_bits_retain(*marker).contains(ShapeFlags::LIST) =>
@@ -209,7 +209,7 @@ pub fn project_by_operation(
 /// field the router fetched for itself, like a `@requires` value under `_internal_qp_alias_0`, and
 /// that key means nothing to the client. The error points at the closest value it asked for then.
 /// The client's own keys are known from the plan, it may use `_internal_qp_alias_0` itself.
-fn trim_error_paths(errors: &mut [GraphQLError], plan: &ProjectionPlan) {
+pub(crate) fn trim_error_paths(errors: &mut [GraphQLError], plan: &ProjectionPlan) {
     // no fields to check against, every path would go
     if plan.is_empty() {
         return;
