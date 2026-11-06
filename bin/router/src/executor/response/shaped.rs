@@ -55,7 +55,8 @@
 //!
 //! [`parse_response`] reads the top-level object. It reads `data` with the shape. It gives
 //! `errors` to sonic, because errors are rare and `GraphQLError` has its own serde rules. It
-//! reads `extensions` as normal JSON.
+//! reads `extensions` as normal JSON. When the custom scalar paths make all of `data` a custom
+//! scalar, it keeps `data` as raw JSON instead.
 //!
 //! `Parser::shaped_object` is the main loop. It runs for each key, so it must be fast. This is
 //! how it reads `{"__typename":"User","name":"Kamil"}` as `search`:
@@ -399,7 +400,8 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
     /// index.
     ///
     /// It goes depth first. First it adds the fields of the object as one run of nodes. Then it
-    /// adds the objects in those fields (and their objects). Then it adds one run for each type
+    /// adds the objects in those fields (and their objects). Then it adds a run for the keys that
+    /// only the custom scalar paths have (see `Object::extra`). Then it adds one run for each type
     /// that selects different fields. In the module docs, `search` is nodes 4..7, and the fields
     /// of User and Post come after them.
     ///
@@ -1034,7 +1036,7 @@ impl<'a> Parser<'a, '_> {
 
     /// Keys point into the input, so if a key has escapes, sonic must reject it.
     ///
-    /// sonic does the same for `"ab"`. It cannot point into the input for that key either,
+    /// sonic does the same for `"a\u0062"`. It cannot point into the input for that key either,
     /// so it returns an error. When we stop here, the response gets that same error.
     fn key(&mut self) -> Option<&'a str> {
         if self.peek() != Some(b'"') {
