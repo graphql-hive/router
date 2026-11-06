@@ -180,7 +180,9 @@ pub async fn plan_operation_with_cache(
                     .map(|plan| {
                         let demand_control = compile_demand_control(&plan);
                         PlannedQuery {
-                            plan: Arc::new(plan.into_executable()),
+                            plan: Arc::new(
+                                plan.into_executable(&supergraph.snapshot.planner.supergraph),
+                            ),
                             demand_control,
                         }
                     })

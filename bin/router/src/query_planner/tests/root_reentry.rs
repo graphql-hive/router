@@ -33,8 +33,8 @@ pub fn mutation_referencing_query() -> Result<(), Box<dyn Error>> {
             doSomething {
               ok
               query {
-                healthCheck
                 __typename
+                healthCheck
               }
             }
           }
@@ -84,8 +84,8 @@ pub fn mutation_referencing_query_with_alias() -> Result<(), Box<dyn Error>> {
             doSomething {
               ok
               info: query {
-                healthCheck
                 __typename
+                healthCheck
               }
             }
           }
@@ -135,8 +135,8 @@ pub fn mutation_referencing_query_with_condition() -> Result<(), Box<dyn Error>>
             doSomething {
               ok
               query @include(if: $withQuery) {
-                healthCheck
                 __typename
+                healthCheck
               }
             }
           }
@@ -322,8 +322,8 @@ pub fn query_referncing_through_inner() -> Result<(), Box<dyn Error>> {
                   doSomething {
                     ok
                     query {
-                      healthCheck
                       __typename
+                      healthCheck
                     }
                   }
                 }
@@ -443,8 +443,8 @@ pub fn mutation_then_mixed_query() -> Result<(), Box<dyn Error>> {
             doSomething {
               ok
               query {
-                healthCheck
                 __typename
+                healthCheck
               }
             }
           }
