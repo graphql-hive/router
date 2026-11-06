@@ -1515,7 +1515,10 @@ mod tests {
                 );
                 let cost_plan = compile_actual_subgraph_cost_plan(&operation.document, &supergraph);
                 let cost = estimate_actual_subgraph_response_cost_with_compiled_plan(
-                    &cost_plan, &response, &None,
+                    &cost_plan,
+                    &response,
+                    &None,
+                    &supergraph,
                 );
                 assert!(
                     cost > 0,

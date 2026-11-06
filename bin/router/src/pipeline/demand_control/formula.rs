@@ -3,7 +3,7 @@ use ahash::{HashMap as AHashMap, HashMapExt, HashSet as AHashSet, HashSetExt};
 use crate::executor::execution::demand_control::demand_control_definition_cost;
 use crate::executor::execution::demand_control::CompiledActualCostPlan;
 use crate::executor::execution::demand_control::DemandControlEvaluation;
-use crate::executor::execution::plan::CoerceVariablesPayload;
+use crate::executor::execution::plan::{CoerceVariablesPayload, VariablesMap};
 use crate::query_planner::federation_spec::demand_control::ListSizeDirective;
 use crate::query_planner::{
     ast::{
@@ -320,7 +320,7 @@ fn eval_cost_expr(
             value,
             value_type,
             supergraph_state,
-            variable_payload,
+            &variable_payload.variables_map,
         )),
     }
 }
@@ -667,15 +667,14 @@ fn compile_cost_expr_for_list_size(
     }
 }
 
-fn estimate_input_value_cost(
+pub(crate) fn estimate_input_value_cost(
     value: &AstValue,
     value_type: &TypeNode,
     supergraph_state: &SupergraphState,
-    variable_payload: &CoerceVariablesPayload,
+    variables_map: &Option<VariablesMap>,
 ) -> u64 {
     match value {
-        AstValue::Variable(var_name) => variable_payload
-            .variables_map
+        AstValue::Variable(var_name) => variables_map
             .as_ref()
             .and_then(|variables| variables.get(var_name))
             .map(|json_value| {
@@ -691,7 +690,7 @@ fn estimate_input_value_cost(
                     nested_value,
                     nested_type,
                     supergraph_state,
-                    variable_payload,
+                    variables_map,
                 )
             },
         ),
@@ -699,7 +698,7 @@ fn estimate_input_value_cost(
             TypeNode::List(inner_type) => values
                 .iter()
                 .map(|item| {
-                    estimate_input_value_cost(item, inner_type, supergraph_state, variable_payload)
+                    estimate_input_value_cost(item, inner_type, supergraph_state, variables_map)
                 })
                 .sum(),
             _ => 0,
@@ -781,7 +780,10 @@ where
         .saturating_add(1)
 }
 
-fn is_input_object_typed(value_type: &TypeNode, supergraph_state: &SupergraphState) -> bool {
+pub(crate) fn is_input_object_typed(
+    value_type: &TypeNode,
+    supergraph_state: &SupergraphState,
+) -> bool {
     match value_type {
         TypeNode::NonNull(inner) | TypeNode::List(inner) => {
             is_input_object_typed(inner, supergraph_state)

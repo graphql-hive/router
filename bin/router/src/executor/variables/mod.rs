@@ -18,6 +18,15 @@ pub enum VariableCoercionError {
         reason: Box<InvalidValueReason>,
     },
 
+    /// A hard-coded argument value the router turned into a variable, reported as the argument
+    /// the client wrote, as the client never saw the variable.
+    #[error("Argument \"{argument}\" has invalid value{path}: {reason}")]
+    InvalidArgumentValue {
+        argument: String,
+        path: ValuePath,
+        reason: Box<InvalidValueReason>,
+    },
+
     #[error("Variable \"${name}\" has invalid default value{path}: {reason}")]
     InvalidDefaultValue {
         name: String,

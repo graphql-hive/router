@@ -165,7 +165,10 @@ mod operation_name_e2e_tests {
             @r#"
             {
               "operationName": "Second__2",
-              "query": "query Second__2 {user(id: \"1\"){id}}"
+              "query": "query Second__2($_v0:ID!){user(id: $_v0){id}}",
+              "variables": {
+                "_v0": "1"
+              }
             }
             "#
         );
