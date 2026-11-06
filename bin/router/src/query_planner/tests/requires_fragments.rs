@@ -30,8 +30,8 @@ fn requires_with_fragments_on_interfaces() -> Result<(), Box<dyn Error>> {
               __typename
               id
               profile {
-                displayName
                 __typename
+                displayName
                 ... on GuestAccount {
                   guestToken
                   accountType
@@ -221,9 +221,10 @@ fn conditional_requires_stay_out_of_an_unconditional_call() -> Result<(), Box<dy
                 displayName
               }
               ... on User @skip(if: $skip) {
+                __typename
                 profile {
-                  displayName
                   __typename
+                  displayName
                   ... on GuestAccount {
                     guestToken
                     accountType
@@ -233,7 +234,6 @@ fn conditional_requires_stay_out_of_an_unconditional_call() -> Result<(), Box<dy
                     accountType
                   }
                 }
-                __typename
                 id
               }
             }
@@ -343,9 +343,10 @@ fn merged_conditional_requires_stay_out_of_an_unconditional_call() -> Result<(),
             }
           }
           fragment a on User {
+            __typename
             profile {
-              displayName
               __typename
+              displayName
               ... on GuestAccount {
                 guestToken
                 accountType
@@ -355,7 +356,6 @@ fn merged_conditional_requires_stay_out_of_an_unconditional_call() -> Result<(),
                 accountType
               }
             }
-            __typename
             id
           }
         },
@@ -488,9 +488,10 @@ fn merged_conditional_inputs_stay_out_of_an_unconditional_call() -> Result<(), B
             }
           }
           fragment a on User {
+            __typename
             profile {
-              displayName
               __typename
+              displayName
               ... on GuestAccount {
                 guestToken
                 accountType
@@ -500,7 +501,6 @@ fn merged_conditional_inputs_stay_out_of_an_unconditional_call() -> Result<(), B
                 accountType
               }
             }
-            __typename
             id
           }
         },

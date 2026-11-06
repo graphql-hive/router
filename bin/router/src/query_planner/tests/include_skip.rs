@@ -32,8 +32,8 @@ fn include_basic_test() -> Result<(), Box<dyn Error>> {
               price
               id
               ... on Product @include(if: $bool) {
-                price
                 __typename
+                price
                 id
               }
             }
@@ -180,8 +180,8 @@ fn skip_basic_test() -> Result<(), Box<dyn Error>> {
               price
               id
               ... on Product @skip(if: $bool) {
-                price
                 __typename
+                price
                 id
               }
             }
@@ -254,8 +254,8 @@ fn skip_and_include_field_condition_test() -> Result<(), Box<dyn Error>> {
               price
               id
               ... on Product @skip(if: $skip) @include(if: $include) {
-                price
                 __typename
+                price
                 id
               }
             }
@@ -765,8 +765,8 @@ fn qp_include_field_level() -> Result<(), Box<dyn Error>> {
               price
               id
               ... on Product @include(if: $bool) {
-                price
                 __typename
+                price
                 id
               }
             }
@@ -828,8 +828,8 @@ fn qp_include_field_level_unconditional_before_conditional() -> Result<(), Box<d
               price
               id
               ... on Product @include(if: $bool) {
-                price
                 __typename
+                price
                 id
               }
             }
@@ -892,8 +892,8 @@ fn qp_include_field_level_all_merged_fields_conditional() -> Result<(), Box<dyn 
               price
               id
               ... on Product @include(if: $bool) {
-                price
                 __typename
+                price
                 id
               }
             }
@@ -952,8 +952,8 @@ fn qp_skip_field_level() -> Result<(), Box<dyn Error>> {
               price
               id
               ... on Product @skip(if: $bool) {
-                price
                 __typename
+                price
                 id
               }
             }
@@ -1015,8 +1015,8 @@ fn qp_skip_field_level_unconditional_before_conditional() -> Result<(), Box<dyn 
               price
               id
               ... on Product @skip(if: $bool) {
-                price
                 __typename
+                price
                 id
               }
             }
@@ -1080,8 +1080,8 @@ fn qp_skip_field_level_all_merged_fields_conditional() -> Result<(), Box<dyn Err
               price
               id
               ... on Product @skip(if: $bool) {
-                price
                 __typename
+                price
                 id
               }
             }
@@ -1143,8 +1143,8 @@ fn qp_skip_and_include_field_level_all_merged_fields_conditional() -> Result<(),
               price
               id
               ... on Product @skip(if: $skip) @include(if: $include) {
-                price
                 __typename
+                price
                 id
               }
             }
@@ -1214,8 +1214,8 @@ fn qp_mixed_include_skip_field_level_keeps_conditions_scoped() -> Result<(), Box
             }
           }
           fragment a on Product {
-            price
             __typename
+            price
             id
           }
         },
@@ -1410,8 +1410,8 @@ fn qp_abstract_interface_mixed_conditions_stay_scoped() -> Result<(), Box<dyn Er
         Fetch(service: "products") {
           query ($hideSku:Boolean) {
             products {
-              id
               __typename
+              id
               sku @skip(if: $hideSku)
             }
           }
@@ -1505,8 +1505,8 @@ fn qp_abstract_interface_shared_condition_can_skip_remote_fetch() -> Result<(), 
         Fetch(service: "products") {
           {
             products {
-              id
               __typename
+              id
             }
           }
         },
@@ -1668,8 +1668,8 @@ fn conditional_root_fragment_survives_merges() -> Result<(), Box<dyn Error>> {
                 __typename
                 id
                 ... on User @include(if: $x) {
-                  name
                   __typename
+                  name
                   id
                 }
               }
