@@ -81,7 +81,7 @@
 //! ask for. `Parser::value` reads them. It is a normal JSON parser, and it makes the same `Value`s
 //! as the sonic visitor.
 
-use ahash::HashSet;
+use ahash::{HashMap, HashSet};
 use smallvec::SmallVec;
 use std::ops::Range;
 
@@ -110,6 +110,9 @@ pub struct ResponseShape {
     text: Box<[u8]>,
     /// Whether the entire `data` value should be kept as raw JSON.
     raw_data: bool,
+    /// Whether the planner left a `__typename` out of the query, so `fill_typenames` has
+    /// something to do
+    fills: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -218,6 +221,10 @@ struct Object {
     /// Fields from custom scalar paths that are not in `fields`.
     /// Used to preserve raw JSON for unexpected fields.
     extra: Span,
+    /// The object's type, when its field returns an object type and the query asks for its
+    /// `__typename`. The planner leaves that `__typename` out of the query, so it's put back
+    /// from here.
+    typename: Option<Text>,
 }
 
 /// The first 8 bytes, with zeros at the end when there are fewer. Keys never have a zero byte,
@@ -272,6 +279,27 @@ impl ResponseShape {
         possible_types: impl Fn(&str) -> Option<&'s HashSet<String>>,
         custom_scalar_paths: Option<&CustomScalarPaths>,
     ) -> Option<Self> {
+        Self::with_static_typenames(
+            document,
+            None,
+            possible_types,
+            |_, _| None,
+            custom_scalar_paths,
+        )
+        .map(|(shape, _)| shape)
+    }
+
+    /// Same as `new`, but `field_type` gives the type a field returns, starting from the `root`
+    /// type, so an object of an object type knows its `__typename`. Also says which selection
+    /// sets of `document` can leave their `__typename` out, because every object they're
+    /// selected on has it in `Object::typename`.
+    pub fn with_static_typenames<'s>(
+        document: &Document,
+        root: Option<&'s str>,
+        possible_types: impl Fn(&str) -> Option<&'s HashSet<String>>,
+        field_type: impl Fn(&str, &str) -> Option<&'s str>,
+        custom_scalar_paths: Option<&CustomScalarPaths>,
+    ) -> Option<(Self, StaticTypenames)> {
         let paths = custom_scalar_paths.filter(|paths| !paths.is_empty());
         // In a request with context aliases, the keys have group numbers.
         // The shape does not have them.
@@ -281,21 +309,76 @@ impl ResponseShape {
         let mut builder = Builder {
             document,
             possible_types,
+            field_type,
             nodes: Vec::new(),
             objects: Vec::new(),
             types: Vec::new(),
             text: Vec::new(),
             fits: true,
+            sets: HashMap::default(),
         };
         let raw_data = paths.is_some_and(|paths| paths.terminal);
-        builder.object(&[&document.operation.selection_set], paths);
-        builder.fits.then(|| Self {
-            nodes: builder.nodes.into(),
-            objects: builder.objects.into(),
-            types: builder.types.into(),
-            text: builder.text.into(),
-            raw_data,
+        // the subgraph names its root type itself
+        builder.object(&[&document.operation.selection_set], paths, root, false);
+        let fills = !raw_data && builder.sets.values().any(|&typed| typed);
+        builder.fits.then(|| {
+            let shape = Self {
+                nodes: builder.nodes.into(),
+                objects: builder.objects.into(),
+                types: builder.types.into(),
+                text: builder.text.into(),
+                raw_data,
+                fills,
+            };
+            (shape, StaticTypenames(builder.sets))
         })
+    }
+
+    /// Puts back the `__typename` of every object the query asks for it on and the planner left
+    /// it out of the query for, see `Object::typename`.
+    pub fn fill_typenames<'a>(&'a self, data: &mut Value<'a>) {
+        if self.fills {
+            self.fill(data, 0);
+        }
+    }
+
+    fn fill<'a>(&'a self, value: &mut Value<'a>, object: u32) {
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    self.fill(item, object);
+                }
+            }
+            Value::Object(entries) => {
+                let object = self.objects[object as usize];
+                let typename = entries
+                    .iter()
+                    .find(|(key, _)| *key == "__typename")
+                    .and_then(|(_, value)| value.as_str());
+                let fields = match (typename, object.typename) {
+                    (Some(name), _) => self
+                        .type_fields(object.types, name.as_bytes())
+                        .unwrap_or(object.fields),
+                    (None, Some(name)) => {
+                        // type names come from the schema, so they're valid UTF-8
+                        let name = std::str::from_utf8(self.text(name)).expect("a type name");
+                        entries.insert(0, ("__typename", Value::String(name.into())));
+                        object.fields
+                    }
+                    (None, None) => object.fields,
+                };
+                for (key, value) in entries {
+                    let node = self.nodes[fields.range()].iter().find(|node| {
+                        let quoted = self.text(node.key);
+                        &quoted[1..quoted.len() - 1] == key.as_bytes()
+                    });
+                    if let Some(node) = node.filter(|node| node.object() != 0) {
+                        self.fill(value, node.object());
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     #[inline]
@@ -355,12 +438,14 @@ impl ResponseShape {
 ///
 /// In `{ u { ... on A { n { x } } ... on B { n { y } } } }`, the fields of `u` have one `n` with
 /// two sets, `{ x }` and `{ y }`. So the object in `n` has `x` and `y`.
-struct Field<'d> {
+struct Field<'d, 's> {
     key: &'d str,
     sets: SmallVec<[&'d SelectionSet; 2]>,
+    /// The type it returns, `None` when we don't know it or its places don't agree
+    ty: Option<&'s str>,
 }
 
-impl Field<'_> {
+impl Field<'_, '_> {
     /// Returns true if the two lists have the same keys from the same selection sets. Then they
     /// make the same nodes. All sets come from one document, so we can compare pointers.
     fn same(a: &[Field], b: &[Field]) -> bool {
@@ -376,15 +461,37 @@ impl Field<'_> {
     }
 }
 
-struct Builder<'d, F> {
+/// The selection sets whose `__typename` execution fills in itself.
+pub struct StaticTypenames(HashMap<*const SelectionSet, bool>);
+
+impl StaticTypenames {
+    pub fn contains(&self, set: &SelectionSet) -> bool {
+        self.0.get(&(set as *const _)) == Some(&true)
+    }
+}
+
+struct Builder<'d, F, T> {
     document: &'d Document,
     possible_types: F,
+    field_type: T,
     nodes: Vec<Node>,
     objects: Vec<Object>,
     types: Vec<TypeFields>,
     text: Vec<u8>,
     /// false when something does not fit in its bits
     fits: bool,
+    /// Whether every object a selection set is selected on has `Object::typename`
+    sets: HashMap<*const SelectionSet, bool>,
+}
+
+/// The type the fields of a fragment are looked up on. A fragment without a type condition
+/// keeps the type it's in.
+fn condition_or<'a>(condition: &'a str, parent: Option<&'a str>) -> Option<&'a str> {
+    if condition.is_empty() {
+        parent
+    } else {
+        Some(condition)
+    }
 }
 
 /// The run of `vec` from `start` to its end
@@ -395,7 +502,11 @@ fn span_from<T>(start: usize, vec: &[T]) -> Span {
     }
 }
 
-impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
+impl<'d, 's, F, T> Builder<'d, F, T>
+where
+    F: Fn(&str) -> Option<&'s HashSet<String>>,
+    T: Fn(&str, &str) -> Option<&'s str>,
+{
     /// Adds the object that the sets select, with the custom scalar paths under it. Returns its
     /// index.
     ///
@@ -417,13 +528,34 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
     /// ```
     ///
     /// If two types select the same fields, and those are not all the fields, they share one run.
-    fn object(&mut self, sets: &[&'d SelectionSet], paths: Option<&'d CustomScalarPaths>) -> u32 {
+    ///
+    /// `ty` is the type the field of the object returns. `typed` is false when the object can
+    /// have another `__typename` than `ty`.
+    fn object(
+        &mut self,
+        sets: &[&'d SelectionSet],
+        paths: Option<&'d CustomScalarPaths>,
+        ty: Option<&'s str>,
+        typed: bool,
+    ) -> u32 {
         // Get the index first, so `data` is 0.
         let index = self.objects.len();
         self.objects.push(Object::default());
 
-        let merged = self.fields(sets, None);
+        let merged = self.fields(sets, ty, None);
         let fields = self.flatten(&merged, paths);
+        // an object type is the only possible type of itself
+        let typename = ty
+            .filter(|ty| {
+                typed
+                    && (self.possible_types)(ty)
+                        .is_some_and(|types| types.len() == 1 && types.contains(*ty))
+            })
+            .filter(|_| merged.iter().any(|field| field.key == "__typename"));
+        for set in sets {
+            self.record(set, typename.is_some());
+        }
+        let typename = typename.map(|ty| self.text(ty.as_bytes()));
         // Keys of the custom scalar paths that no type selects. See `Object::extra`.
         let extra: Vec<Field> = paths
             .into_iter()
@@ -432,6 +564,7 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
             .map(|(key, _)| Field {
                 key,
                 sets: SmallVec::new(),
+                ty: None,
             })
             .collect();
         let extra = self.flatten(&extra, paths);
@@ -448,7 +581,7 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
         // this object after that, in one run.
         let mut types = Vec::new();
         for name in names {
-            let own = self.fields(sets, Some(name));
+            let own = self.fields(sets, ty, Some(name));
             if Field::same(&own, &merged) {
                 continue;
             }
@@ -471,9 +604,27 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
             fields,
             types: span_from(start, &self.types),
             extra,
+            typename,
         };
         self.fits &= index <= OBJECT_MASK as usize;
         index as u32
+    }
+
+    fn record(&mut self, set: &'d SelectionSet, typed: bool) {
+        let entry = self.sets.entry(set as *const _).or_insert(typed);
+        *entry &= typed;
+        for item in &set.items {
+            match item {
+                SelectionItem::Field(_) => {}
+                SelectionItem::InlineFragment(fragment) => self.record(&fragment.selections, typed),
+                SelectionItem::FragmentSpread(name) => {
+                    if let Some(fragment) = self.document.fragments.iter().find(|f| &f.name == name)
+                    {
+                        self.record(&fragment.selection_set, typed);
+                    }
+                }
+            }
+        }
     }
 
     fn text(&mut self, bytes: &[u8]) -> Text {
@@ -535,26 +686,44 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
     ///
     /// The fields are in the order that they first appear. This is the order that the subgraph
     /// sends them in. A field that is selected two times is one field. We use the response key,
-    /// so each alias is its own field.
-    fn fields(&self, sets: &[&'d SelectionSet], typename: Option<&str>) -> Vec<Field<'d>> {
+    /// so each alias is its own field. `parent` is the type the fields are looked up on.
+    fn fields(
+        &self,
+        sets: &[&'d SelectionSet],
+        parent: Option<&str>,
+        typename: Option<&str>,
+    ) -> Vec<Field<'d, 's>> {
         let mut out = Vec::new();
         for set in sets {
-            self.collect(set, typename, &mut out);
+            self.collect(set, parent, typename, &mut out);
         }
         out
     }
 
-    fn collect(&self, set: &'d SelectionSet, typename: Option<&str>, out: &mut Vec<Field<'d>>) {
+    fn collect(
+        &self,
+        set: &'d SelectionSet,
+        parent: Option<&str>,
+        typename: Option<&str>,
+        out: &mut Vec<Field<'d, 's>>,
+    ) {
         for item in &set.items {
             match item {
                 SelectionItem::Field(field) => {
                     let key = field.selection_identifier();
+                    let ty = parent.and_then(|parent| (self.field_type)(parent, &field.name));
                     let index = match out.iter().position(|f| f.key == key) {
-                        Some(index) => index,
+                        Some(index) => {
+                            if out[index].ty != ty {
+                                out[index].ty = None;
+                            }
+                            index
+                        }
                         None => {
                             out.push(Field {
                                 key,
                                 sets: SmallVec::new(),
+                                ty,
                             });
                             out.len() - 1
                         }
@@ -565,14 +734,16 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
                 }
                 SelectionItem::InlineFragment(fragment) => {
                     if self.applies(&fragment.type_condition, typename) {
-                        self.collect(&fragment.selections, typename, out)
+                        let condition = condition_or(&fragment.type_condition, parent);
+                        self.collect(&fragment.selections, condition, typename, out)
                     }
                 }
                 SelectionItem::FragmentSpread(name) => {
                     if let Some(fragment) = self.document.fragments.iter().find(|f| &f.name == name)
                     {
                         if self.applies(&fragment.type_condition, typename) {
-                            self.collect(&fragment.selection_set, typename, out)
+                            let condition = condition_or(&fragment.type_condition, parent);
+                            self.collect(&fragment.selection_set, condition, typename, out)
                         }
                     }
                 }
@@ -585,7 +756,7 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
     /// We add all nodes of the run before any child object. So the fields of an object are next
     /// to each other in `nodes`, and its child objects come later. We know the index of a child
     /// only after we add it, so we put it into `object` at the end.
-    fn flatten(&mut self, fields: &[Field<'d>], paths: Option<&'d CustomScalarPaths>) -> Span {
+    fn flatten(&mut self, fields: &[Field<'d, 's>], paths: Option<&'d CustomScalarPaths>) -> Span {
         let start = self.nodes.len();
         for field in fields {
             let quoted = format!("\"{}\"", field.key);
@@ -619,7 +790,7 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
                 .and_then(|paths| paths.child(field.key))
                 .filter(|paths| !paths.is_empty());
             if !field.sets.is_empty() || child.is_some() {
-                let object = self.object(&field.sets, child);
+                let object = self.object(&field.sets, child, field.ty, true);
                 self.nodes[index].object |= object & OBJECT_MASK;
             }
         }
@@ -1212,11 +1383,12 @@ mod tests {
     use crate::executor::response::value::Value;
     use crate::query_planner::ast::{
         document::Document, fragment::FragmentDefinition, operation::OperationDefinition,
+        selection_item::SelectionItem, selection_set::SelectionSet,
     };
     use crate::query_planner::planner::plan_nodes::CustomScalarPaths;
     use crate::query_planner::utils::parsing::parse_operation;
 
-    fn shape(source: &str, paths: Option<&CustomScalarPaths>) -> ResponseShape {
+    fn document(source: &str) -> Document {
         let mut selection_set = None;
         let mut fragments = Vec::new();
         for definition in parse_operation(source).definitions {
@@ -1238,19 +1410,23 @@ mod tests {
                 query::Definition::Operation(_) => {}
             }
         }
+        Document {
+            operation: OperationDefinition {
+                name: None,
+                operation_kind: None,
+                selection_set: selection_set.expect("a query"),
+                variable_definitions: None,
+            },
+            fragments,
+        }
+    }
+
+    fn shape(source: &str, paths: Option<&CustomScalarPaths>) -> ResponseShape {
         // `I` is an interface. A and C implement it.
         let mut interface = HashSet::new();
         interface.extend(["A".to_string(), "C".to_string()]);
         ResponseShape::new(
-            &Document {
-                operation: OperationDefinition {
-                    name: None,
-                    operation_kind: None,
-                    selection_set: selection_set.expect("a query"),
-                    variable_definitions: None,
-                },
-                fragments,
-            },
+            &document(source),
             |name| (name == "I").then_some(&interface),
             paths,
         )
@@ -1424,6 +1600,62 @@ mod tests {
             );
             same_as_sonic(body, None);
         }
+    }
+
+    /// `o` returns the object type O and `i` the interface I. `p` returns O on A and P on B,
+    /// so without the object's `__typename` we can't tell which.
+    #[test]
+    fn fills_the_typenames_left_out_of_the_query() {
+        let document = document(
+            "{ __typename o { __typename id o { __typename id } } i { __typename id }
+               u { ... on A { p { __typename id } } ... on B { p { __typename id } } } }",
+        );
+        let set = |types: &[&str]| HashSet::from_iter(types.iter().map(|t| t.to_string()));
+        let (o, p, i) = (set(&["O"]), set(&["P"]), set(&["A", "C"]));
+        let (shape, static_typenames) = ResponseShape::with_static_typenames(
+            &document,
+            Some("Query"),
+            |name| match name {
+                "O" => Some(&o),
+                "P" => Some(&p),
+                "I" => Some(&i),
+                _ => None,
+            },
+            |parent, field| match (parent, field) {
+                ("Query", "o") | ("O", "o") | ("A", "p") => Some("O"),
+                ("B", "p") => Some("P"),
+                ("Query", "i") => Some("I"),
+                _ => None,
+            },
+            None,
+        )
+        .expect("a shape");
+
+        let root = &document.operation.selection_set;
+        fn selections(set: &SelectionSet, index: usize) -> &SelectionSet {
+            match &set.items[index] {
+                SelectionItem::Field(field) => &field.selections,
+                SelectionItem::InlineFragment(fragment) => &fragment.selections,
+                SelectionItem::FragmentSpread(_) => unreachable!(),
+            }
+        }
+        let o_set = selections(root, 1);
+        let u_set = selections(root, 3);
+        assert!(!static_typenames.contains(root));
+        assert!(static_typenames.contains(o_set));
+        assert!(static_typenames.contains(selections(o_set, 2)));
+        assert!(!static_typenames.contains(selections(root, 2)));
+        assert!(!static_typenames.contains(selections(selections(u_set, 0), 0)));
+        assert!(!static_typenames.contains(selections(selections(u_set, 1), 0)));
+
+        let body = r#"{"data":{"__typename":"Query","o":[{"id":1,"o":{"id":2}},null],
+            "i":{"__typename":"A","id":3},"u":{"p":{"__typename":"P","id":4}}}}"#;
+        let mut data = parse_response(body.as_bytes(), &shape).unwrap().data;
+        shape.fill_typenames(&mut data);
+        assert_eq!(
+            sonic_rs::to_string(&data).unwrap(),
+            r#"{"__typename":"Query","o":[{"__typename":"O","id":1,"o":{"__typename":"O","id":2}},null],"i":{"__typename":"A","id":3},"u":{"p":{"__typename":"P","id":4}}}"#
+        );
     }
 
     #[test]

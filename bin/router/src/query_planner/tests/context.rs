@@ -153,10 +153,8 @@ fn mutation_results_supply_context_in_root_field_order() -> Result<(), Box<dyn E
         Fetch(service: "a") {
           mutation {
             first: updateUser(id: "1") {
-              __typename
               currency
               txs {
-                __typename
                 id
               }
             }
@@ -180,10 +178,8 @@ fn mutation_results_supply_context_in_root_field_order() -> Result<(), Box<dyn E
         Fetch(service: "a") {
           mutation {
             second: updateUser(id: "2") {
-              __typename
               currency
               txs {
-                __typename
                 id
               }
             }
@@ -222,10 +218,8 @@ fn multi_type_fetch_preserves_contexts_from_different_ancestors() -> Result<(), 
         Fetch(service: "a") {
           {
             outer {
-              __typename
               code
               user {
-                __typename
                 currency
                 entries {
                   __typename
@@ -277,7 +271,7 @@ fn multi_type_fetch_preserves_contexts_from_different_ancestors() -> Result<(), 
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{outer{__typename code user{__typename currency entries{__typename ...on Transaction{__typename id} ...on Adjustment{__typename id}}}}}"
+            "operation": "{outer{code user{currency entries{__typename ...on Transaction{__typename id} ...on Adjustment{__typename id}}}}}"
           },
           {
             "kind": "Flatten",
@@ -389,10 +383,8 @@ fn context_variables_do_not_collide_with_client_variables_or_requires() -> Resul
         Fetch(service: "a") {
           {
             users {
-              __typename
               currency
               txs {
-                __typename
                 id
               }
             }
@@ -471,10 +463,8 @@ fn batch_context_variables_do_not_collide_with_client_variables() -> Result<(), 
             }
           }
           fragment a on User {
-            __typename
             currency
             txs {
-              __typename
               id
             }
           }
@@ -553,7 +543,6 @@ fn context_under_conditional_ancestor_fragments() -> Result<(), Box<dyn Error>> 
             }
           }
           fragment a on Transaction {
-            __typename
             id
           }
         },
@@ -639,10 +628,8 @@ fn single_subgraph_nearest_ancestor() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             users {
-              __typename
               currency
               txs {
-                __typename
                 id
               }
             }
@@ -676,7 +663,7 @@ fn single_subgraph_nearest_ancestor() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{users{__typename currency txs{__typename id}}}"
+            "operation": "{users{currency txs{id}}}"
           },
           {
             "kind": "Flatten",
@@ -757,10 +744,8 @@ fn nested_ancestor_picks_nearest() -> Result<(), Box<dyn Error>> {
           {
             users {
               child {
-                __typename
                 currency
                 txs {
-                  __typename
                   id
                 }
               }
@@ -802,11 +787,9 @@ fn ancestor_through_non_context_wrapper() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             users {
-              __typename
               currency
               wrapper {
                 txs {
-                  __typename
                   id
                 }
               }
@@ -851,7 +834,6 @@ fn interface_context() -> Result<(), Box<dyn Error>> {
               __typename
               currency
               txs {
-                __typename
                 id
               }
             }
@@ -886,7 +868,7 @@ fn interface_context() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{account{__typename currency txs{__typename id}}}"
+            "operation": "{account{__typename currency txs{id}}}"
           },
           {
             "kind": "Flatten",
@@ -964,10 +946,8 @@ fn remote_context_producer_precedes_consumer() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             t {
-              __typename
               id
               u {
-                __typename
                 id
               }
             }
@@ -1016,7 +996,7 @@ fn remote_context_producer_precedes_consumer() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{t{__typename id u{__typename id}}}"
+            "operation": "{t{id u{id}}}"
           },
           {
             "kind": "Flatten",
@@ -1122,13 +1102,10 @@ fn context_selection_crosses_subgraphs_multiple_times() -> Result<(), Box<dyn Er
         Fetch(service: "a") {
           {
             t {
-              __typename
               a {
-                __typename
                 id
               }
               u {
-                __typename
                 id
               }
             }
@@ -1145,7 +1122,6 @@ fn context_selection_crosses_subgraphs_multiple_times() -> Result<(), Box<dyn Er
             {
               ... on A {
                 b {
-                  __typename
                   id
                 }
               }
@@ -1197,7 +1173,7 @@ fn context_selection_crosses_subgraphs_multiple_times() -> Result<(), Box<dyn Er
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{t{__typename a{__typename id} u{__typename id}}}"
+            "operation": "{t{a{id} u{id}}}"
           },
           {
             "kind": "Flatten",
@@ -1213,7 +1189,7 @@ fn context_selection_crosses_subgraphs_multiple_times() -> Result<(), Box<dyn Er
               "kind": "Fetch",
               "serviceName": "b",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on A{b{__typename id}}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on A{b{id}}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -1355,7 +1331,6 @@ fn query_root_context_selects_a_sibling_field() -> Result<(), Box<dyn Error>> {
               locale
             }
             product {
-              __typename
               id
             }
           }
@@ -1388,7 +1363,7 @@ fn query_root_context_selects_a_sibling_field() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{__typename me{locale} product{__typename id}}"
+            "operation": "{__typename me{locale} product{id}}"
           },
           {
             "kind": "Flatten",
@@ -1464,12 +1439,10 @@ fn context_is_resolved_before_a_key_transition() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             customer {
-              __typename
               identifiers {
                 legacyUserId
               }
               child {
-                __typename
                 id
               }
             }
@@ -1503,7 +1476,7 @@ fn context_is_resolved_before_a_key_transition() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{customer{__typename identifiers{legacyUserId} child{__typename id}}}"
+            "operation": "{customer{identifiers{legacyUserId} child{id}}}"
           },
           {
             "kind": "Flatten",
@@ -1582,10 +1555,8 @@ fn context_value_reuses_an_existing_fetch() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             t {
-              __typename
               prop
               u {
-                __typename
                 id
               }
             }
@@ -1619,7 +1590,7 @@ fn context_value_reuses_an_existing_fetch() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{t{__typename prop u{__typename id}}}"
+            "operation": "{t{prop u{id}}}"
           },
           {
             "kind": "Flatten",
@@ -1695,10 +1666,8 @@ fn list_context_argument_preserves_its_type() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             t {
-              __typename
               prop
               u {
-                __typename
                 id
               }
             }
@@ -1732,7 +1701,7 @@ fn list_context_argument_preserves_its_type() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{t{__typename prop u{__typename id}}}"
+            "operation": "{t{prop u{id}}}"
           },
           {
             "kind": "Flatten",
@@ -1808,7 +1777,6 @@ fn multiple_context_arguments_merge_into_an_ancestor_fetch() -> Result<(), Box<d
         Fetch(service: "b") {
           {
             customer {
-              __typename
               id
               identifiers {
                 id5
@@ -1830,7 +1798,6 @@ fn multiple_context_arguments_merge_into_an_ancestor_fetch() -> Result<(), Box<d
                 __typename
                 id
                 accounts {
-                  __typename
                   id
                   foo(ctx_id5: $__context_0, ctx_mid: $__context_1) {
                     id
@@ -1853,7 +1820,7 @@ fn multiple_context_arguments_merge_into_an_ancestor_fetch() -> Result<(), Box<d
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "{customer{__typename id identifiers{id5} mid}}"
+            "operation": "{customer{id identifiers{id5} mid}}"
           },
           {
             "kind": "Flatten",
@@ -1870,7 +1837,7 @@ fn multiple_context_arguments_merge_into_an_ancestor_fetch() -> Result<(), Box<d
                 "__context_1"
               ],
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!, $__context_0:ID, $__context_1:ID){_entities(representations: $representations){...on Customer{__typename id accounts{__typename id foo(ctx_id5: $__context_0, ctx_mid: $__context_1){id}}}}}",
+              "operation": "query($representations:[_Any!]!, $__context_0:ID, $__context_1:ID){_entities(representations: $representations){...on Customer{__typename id accounts{id foo(ctx_id5: $__context_0, ctx_mid: $__context_1){id}}}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -1943,14 +1910,12 @@ fn unrelated_objects_share_a_context_name() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             foo {
-              __typename
               prop
               u {
                 ...a
               }
             }
             bar {
-              __typename
               prop
               u {
                 ...a
@@ -1958,7 +1923,6 @@ fn unrelated_objects_share_a_context_name() -> Result<(), Box<dyn Error>> {
             }
           }
           fragment a on U {
-            __typename
             id
           }
         },
@@ -2013,7 +1977,7 @@ fn unrelated_objects_share_a_context_name() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{foo{__typename prop u{...a}} bar{__typename prop u{...a}}}\n\nfragment a on U {__typename id}\n"
+            "operation": "{foo{prop u{...a}} bar{prop u{...a}}}\n\nfragment a on U {id}\n"
           },
           {
             "kind": "BatchFetch",
@@ -2146,14 +2110,12 @@ fn shared_context_name_selects_fields_by_type() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             foo {
-              __typename
               prop
               u {
                 ...a
               }
             }
             bar {
-              __typename
               prop2
               u {
                 ...a
@@ -2161,7 +2123,6 @@ fn shared_context_name_selects_fields_by_type() -> Result<(), Box<dyn Error>> {
             }
           }
           fragment a on U {
-            __typename
             id
           }
         },
@@ -2216,7 +2177,7 @@ fn shared_context_name_selects_fields_by_type() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{foo{__typename prop u{...a}} bar{__typename prop2 u{...a}}}\n\nfragment a on U {__typename id}\n"
+            "operation": "{foo{prop u{...a}} bar{prop2 u{...a}}}\n\nfragment a on U {id}\n"
           },
           {
             "kind": "BatchFetch",
@@ -2370,7 +2331,6 @@ fn union_context_with_type_conditions() -> Result<(), Box<dyn Error>> {
             }
           }
           fragment a on Transaction {
-            __typename
             id
           }
         },
@@ -2425,7 +2385,7 @@ fn union_context_with_type_conditions() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{viewer{__typename ...on User{__typename currency txs{...a}} ...on Other{__typename currency txs{...a}}}}\n\nfragment a on Transaction {__typename id}\n"
+            "operation": "{viewer{__typename ...on User{__typename currency txs{...a}} ...on Other{__typename currency txs{...a}}}}\n\nfragment a on Transaction {id}\n"
           },
           {
             "kind": "BatchFetch",
@@ -2600,13 +2560,10 @@ fn multiple_arguments_from_different_ancestors() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             outer {
-              __typename
               code
               user {
-                __typename
                 currency
                 txs {
-                  __typename
                   id
                 }
               }
@@ -2648,10 +2605,8 @@ fn requires_and_context_on_one_field() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             users {
-              __typename
               currency
               txs {
-                __typename
                 id
               }
             }
@@ -2710,10 +2665,8 @@ fn context_field_under_include() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             users {
-              __typename
               currency
               txs {
-                __typename
                 id
               }
             }
@@ -2754,11 +2707,9 @@ fn client_alias_colliding_with_context_key() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             users {
-              __typename
               currency: id
               _internal_qp_alias_0: currency
               txs {
-                __typename
                 id
               }
             }
@@ -2806,10 +2757,8 @@ fn two_root_fields_batch_into_one_fetch() -> Result<(), Box<dyn Error>> {
             }
           }
           fragment a on User {
-            __typename
             currency
             txs {
-              __typename
               id
             }
           }
@@ -2894,10 +2843,8 @@ fn context_field_under_skip() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             users {
-              __typename
               currency
               txs {
-                __typename
                 id
               }
             }
@@ -2938,10 +2885,8 @@ fn client_alias_on_ancestor_field() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             renamed: users {
-              __typename
               currency
               txs {
-                __typename
                 id
               }
             }
@@ -2982,7 +2927,6 @@ fn cross_subgraph_merges_into_two_fetches() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             user {
-              __typename
               id
               userCurrency {
                 isoCode
@@ -3003,7 +2947,6 @@ fn cross_subgraph_merges_into_two_fetches() -> Result<(), Box<dyn Error>> {
                 __typename
                 id
                 lastTransaction {
-                  __typename
                   id
                   amountInUserCurrency(currencyCode: $__context_0)
                 }
@@ -3024,7 +2967,7 @@ fn cross_subgraph_merges_into_two_fetches() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{user{__typename id userCurrency{isoCode}}}"
+            "operation": "{user{id userCurrency{isoCode}}}"
           },
           {
             "kind": "Flatten",
@@ -3040,7 +2983,7 @@ fn cross_subgraph_merges_into_two_fetches() -> Result<(), Box<dyn Error>> {
                 "__context_0"
               ],
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!, $__context_0:String){_entities(representations: $representations){...on User{__typename id lastTransaction{__typename id amountInUserCurrency(currencyCode: $__context_0)}}}}",
+              "operation": "query($representations:[_Any!]!, $__context_0:String){_entities(representations: $representations){...on User{__typename id lastTransaction{id amountInUserCurrency(currencyCode: $__context_0)}}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -3205,7 +3148,6 @@ fn context_from_the_implementation_of_an_interface_ancestor() -> Result<(), Box<
                 plan
               }
               wallet {
-                __typename
                 id
               }
             }
@@ -3268,11 +3210,9 @@ fn requires_selection_that_sets_its_own_context() -> Result<(), Box<dyn Error>> 
         Fetch(service: "a") {
           {
             plan {
-              __typename
               id
               tier
               offer {
-                __typename
                 id
               }
             }
@@ -3325,11 +3265,9 @@ fn requires_selection_that_sets_its_own_context() -> Result<(), Box<dyn Error>> 
         Fetch(service: "a") {
           {
             plan {
-              __typename
               id
               tier
               offer {
-                __typename
                 id
               }
             }
@@ -3449,7 +3387,6 @@ fn per_type_contextual_fields_under_other_aliases_stay_apart() -> Result<(), Box
             }
           }
           fragment a on Wallet {
-            __typename
             id
           }
         },

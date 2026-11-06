@@ -98,7 +98,6 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
             }
           }
           fragment a on Product {
-            __typename
             id
           }
         },
@@ -211,7 +210,6 @@ fn issue_190_test() -> Result<(), Box<dyn Error>> {
       Fetch(service: "recommender", if: $included) {
         query ($included:Boolean!) {
           recommender @include(if: $included) {
-            __typename
             id
             results {
               __typename
@@ -845,7 +843,6 @@ fn requires_self_dependency_false_positive() -> Result<(), Box<dyn Error>> {
         Fetch(service: "library") {
           {
             books {
-              __typename
               edition {
                 book {
                   catalogId
@@ -909,7 +906,6 @@ fn issue_1539_requires_after_entity_hop() -> Result<(), Box<dyn Error>> {
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -925,7 +921,6 @@ fn issue_1539_requires_after_entity_hop() -> Result<(), Box<dyn Error>> {
             {
               ... on User {
                 orders {
-                  __typename
                   id
                   sku
                 }
@@ -981,7 +976,6 @@ fn issue_1539_requires_after_entity_hop_with_explicit_requirement() -> Result<()
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -997,7 +991,6 @@ fn issue_1539_requires_after_entity_hop_with_explicit_requirement() -> Result<()
             {
               ... on User {
                 orders {
-                  __typename
                   sku
                   id
                 }
@@ -1052,7 +1045,6 @@ fn issue_1539_requires_on_root_parent() -> Result<(), Box<dyn Error>> {
         Fetch(service: "orders") {
           {
             order {
-              __typename
               id
               sku
             }
@@ -1109,7 +1101,6 @@ fn issue_1539_requires_on_self_referential_entity() -> Result<(), Box<dyn Error>
         Fetch(service: "users") {
           {
             order {
-              __typename
               id
             }
           }
@@ -1125,7 +1116,6 @@ fn issue_1539_requires_on_self_referential_entity() -> Result<(), Box<dyn Error>
             {
               ... on Order {
                 related {
-                  __typename
                   id
                   sku
                 }
@@ -1211,7 +1201,6 @@ fn issue_1308_conditional_rank_keeps_concrete_requires_types() -> Result<(), Box
         Fetch(service: "catalog") {
           {
             cage {
-              __typename
               id
             }
           }
@@ -1227,7 +1216,6 @@ fn issue_1308_conditional_rank_keeps_concrete_requires_types() -> Result<(), Box
             ($includeRank:Boolean!) {
               ... on Cage {
                 listings {
-                  __typename
                   id
                   ... on Listing @include(if: $includeRank) {
                     pet {
@@ -1316,7 +1304,6 @@ fn issue_1309_requires_through_entity_interface() -> Result<(), Box<dyn Error>> 
         Fetch(service: "search") {
           {
             listings {
-              __typename
               id
               pet {
                 __typename
@@ -1628,7 +1615,6 @@ fn requires_sends_the_key_of_its_own_subgraph() -> Result<(), Box<dyn Error>> {
           {
             list {
               items {
-                __typename
                 group {
                   tag
                   id
@@ -1693,7 +1679,6 @@ fn requires_jump_key_comes_from_the_subgraph_holding_the_objects() -> Result<(),
         Fetch(service: "source") {
           {
             items {
-              __typename
               code
               id
             }
@@ -1762,7 +1747,6 @@ fn requires_jump_key_only_in_the_requiring_subgraph() -> Result<(), Box<dyn Erro
         Fetch(service: "source") {
           {
             items {
-              __typename
               code
             }
           }
@@ -1838,7 +1822,6 @@ fn requires_jump_key_provided_to_the_subgraph_holding_the_objects() -> Result<()
         Fetch(service: "source") {
           {
             items {
-              __typename
               code
               id
             }
@@ -1904,7 +1887,6 @@ fn requires_jump_key_follows_progressive_override() -> Result<(), Box<dyn Error>
         Fetch(service: "source") {
           {
             items {
-              __typename
               code
               id
             }
@@ -1952,7 +1934,6 @@ fn requires_jump_key_follows_progressive_override() -> Result<(), Box<dyn Error>
         Fetch(service: "source") {
           {
             items {
-              __typename
               code
             }
           }

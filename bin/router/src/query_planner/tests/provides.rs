@@ -30,7 +30,6 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
         Fetch(service: "products") {
           {
             products {
-              __typename
               upc
             }
           }
@@ -67,7 +66,7 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "{products{__typename upc}}"
+            "operation": "{products{upc}}"
           },
           {
             "kind": "Flatten",
@@ -393,7 +392,6 @@ fn provides_fieldset_with_typename() -> Result<(), Box<dyn Error>> {
         {
           holder {
             item {
-              __typename
               label
             }
           }
@@ -474,9 +472,7 @@ fn provides_fieldset_with_nested_typename() -> Result<(), Box<dyn Error>> {
         {
           holder {
             item {
-              __typename
               nested {
-                __typename
                 label
               }
             }
@@ -513,7 +509,6 @@ fn provides_fieldset_with_typename_on_list() -> Result<(), Box<dyn Error>> {
         {
           holder {
             items {
-              __typename
               label
             }
           }

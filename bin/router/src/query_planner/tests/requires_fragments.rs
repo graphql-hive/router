@@ -27,7 +27,6 @@ fn requires_with_fragments_on_interfaces() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             userFromA {
-              __typename
               id
               profile {
                 __typename
@@ -102,7 +101,6 @@ fn requires_with_union_type_condition() -> Result<(), Box<dyn Error>> {
         Fetch(service: "catalog") {
           {
             products {
-              __typename
               id
               book {
                 title
@@ -157,7 +155,6 @@ fn requires_root_fragment_on_inapplicable_type() -> Result<(), Box<dyn Error>> {
         Fetch(service: "products") {
           {
             products {
-              __typename
               upc
               price
             }
@@ -214,14 +211,12 @@ fn conditional_requires_stay_out_of_an_unconditional_call() -> Result<(), Box<dy
         Fetch(service: "a") {
           query ($skip:Boolean!) {
             userFromA {
-              __typename
               id
               profile {
                 __typename
                 displayName
               }
               ... on User @skip(if: $skip) {
-                __typename
                 profile {
                   __typename
                   displayName
@@ -328,7 +323,6 @@ fn merged_conditional_requires_stay_out_of_an_unconditional_call() -> Result<(),
         Fetch(service: "a") {
           query ($include:Boolean!,$skip:Boolean!) {
             userFromA {
-              __typename
               id
               profile {
                 __typename
@@ -343,7 +337,6 @@ fn merged_conditional_requires_stay_out_of_an_unconditional_call() -> Result<(),
             }
           }
           fragment a on User {
-            __typename
             profile {
               __typename
               displayName
@@ -473,7 +466,6 @@ fn merged_conditional_inputs_stay_out_of_an_unconditional_call() -> Result<(), B
         Fetch(service: "a") {
           query ($include:Boolean!,$skip:Boolean!) {
             userFromA {
-              __typename
               id
               profile {
                 __typename
@@ -488,7 +480,6 @@ fn merged_conditional_inputs_stay_out_of_an_unconditional_call() -> Result<(), B
             }
           }
           fragment a on User {
-            __typename
             profile {
               __typename
               displayName
