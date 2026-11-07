@@ -47,8 +47,9 @@ pub const SEED_FETCH: i64 = i64::MIN;
 #[derive(Clone, Copy)]
 pub enum Seed<'a> {
     None,
-    /// The introspection part of the operation, which the router resolves itself
-    Introspection(&'a OperationDefinition),
+    /// Data the router has for an operation's fields: what it resolved for the introspection
+    /// part, or what a plugin's `on_execute` put in
+    Operation(&'a OperationDefinition),
     /// The subscription's own fetch: each event of its stream, before the plan resolves the
     /// event's entities
     Subscription(&'a FetchNode),
@@ -586,7 +587,7 @@ impl SlotPlan {
         }
         match seed {
             Seed::None => {}
-            Seed::Introspection(operation) => compiler.document(
+            Seed::Operation(operation) => compiler.document(
                 SEED_FETCH,
                 &operation.to_string(),
                 None,

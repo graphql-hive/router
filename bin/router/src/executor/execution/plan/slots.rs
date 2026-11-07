@@ -8,8 +8,8 @@ use crate::executor::executors::error::SubgraphExecutorError;
 use crate::executor::introspection::schema::PossibleTypes;
 use crate::executor::projection::response::serialize_value_to_buffer;
 use crate::executor::slots::compile::{
-    AliasProgram, FetchProgram, Layout, Requires, RequiresNode, SlotPlan, Step, TypenameRewrite,
-    NO_SLOT, SEED_FETCH,
+    AliasProgram, FetchProgram, Layout, Requires, RequiresNode, Seed, SlotPlan, Step,
+    TypenameRewrite, NO_SLOT, SEED_FETCH,
 };
 use crate::executor::slots::parse::{parse_aliased_body, parse_body};
 use crate::executor::slots::store::{Arena, Slot, SlotView};
@@ -95,12 +95,40 @@ pub(super) async fn execute<'exec>(
                 StartControlFlow::OnEnd(callback) => on_end_callbacks.push(callback),
             }
         }
-        // ponytail: data a plugin puts here only goes into slots when the operation has a seed
-        // (introspection, a subscription event); give the plan a seed for it if a plugin needs it
         seed = start_payload.data;
         initial_errors = start_payload.errors;
         opts.extensions.extensions = start_payload.extensions;
     }
+
+    // data a plugin put in for an operation without a seed: the request gets a plan of its own
+    // that reads it in with the operation's own shape, so the fetches merge into it like on the
+    // other pipeline
+    let with_seed;
+    let plan = if !plan.fetches.contains_key(&SEED_FETCH)
+        && matches!(&seed, Value::Object(fields) if !fields.is_empty())
+    {
+        match SlotPlan::compile(
+            opts.query_plan,
+            &opts.projection_plan,
+            &opts.introspection_context.metadata,
+            &opts.operation_type_name,
+            Seed::Operation(&opts.operation_for_plan),
+        ) {
+            Ok(compiled) => {
+                with_seed = compiled;
+                &with_seed
+            }
+            Err(reason) => {
+                tracing::warn!(
+                    reason = reason.0,
+                    "data a plugin set before execution can't be read in, it's left out"
+                );
+                plan
+            }
+        }
+    } else {
+        plan
+    };
 
     let executor = Executor {
         variable_values: &opts.variable_values.variables_map,
@@ -168,7 +196,7 @@ pub(super) async fn execute<'exec>(
                 .record_errors(|| ctx.errors.iter().map(|err| err.extensions.code.as_deref()));
         }
     }
-    summary::record(|s| s.set_partial_response(error_count > 0));
+    summary::record(|s| s.set_partial_response(error_count > 0 && run.data != Slot::Null));
     let mut response_size_estimate = ctx.response_storage.estimate_final_response_size();
     let errors = std::mem::take(&mut ctx.errors);
 
@@ -720,10 +748,12 @@ impl<'p> Run<'p> {
                 aliases.push(AliasMerge {
                     program: alias,
                     name: spec.alias.as_str(),
-                    paths: if targets.ends.is_empty() {
-                        SmallVec::new()
-                    } else {
+                    // an alias that runs keeps its paths even with nothing to send (for error
+                    // paths), like on the other pipeline
+                    paths: if executor.runs(spec.run_if.as_deref()) {
                         spec.merge_paths.iter().collect()
+                    } else {
+                        SmallVec::new()
                     },
                     targets,
                 });
@@ -1327,15 +1357,23 @@ impl<'p> Run<'p> {
             Merge::Root { program, .. } | Merge::Entities { program, .. } => *program,
         };
 
-        // an executor that can't hand over the body parsed it: write `data` back out
-        let (bytes, mut errors) = match response.bytes {
+        // an executor that can't hand over the body parsed it: write `data` back out. Then the
+        // parsed errors and extensions count, and only real subgraph bytes are counted (for
+        // cache control), like on the other pipeline.
+        let subgraph_bytes = response.bytes.clone();
+        let (bytes, mut errors, parsed_extensions, rebuilt) = match response.bytes {
             // with plugins the parsed response is what counts: a hook may have changed it
-            Some(bytes) if executor.plugin_req_state.is_none() => (bytes, None),
+            Some(bytes) if executor.plugin_req_state.is_none() => (bytes, None, None, false),
             _ => {
                 let mut body = b"{\"data\":".to_vec();
                 serialize_value_to_buffer(&response.data, &mut body);
                 body.push(b'}');
-                (bytes::Bytes::from(body), response.errors)
+                (
+                    bytes::Bytes::from(body),
+                    response.errors,
+                    response.extensions,
+                    true,
+                )
             }
         };
         let status_errors = response
@@ -1379,7 +1417,9 @@ impl<'p> Run<'p> {
             executor.handle_job_error(ctx, &error);
             return;
         };
-        ctx.response_storage.add_response(bytes.clone());
+        if let Some(subgraph_bytes) = subgraph_bytes {
+            ctx.response_storage.add_response(subgraph_bytes);
+        }
         if let Some(demand_control) = executor.demand_control_context.as_deref() {
             demand_control.record_subgraph_data_cost(
                 &mut ctx.subgraph_response_cost_tracker,
@@ -1393,7 +1433,8 @@ impl<'p> Run<'p> {
                 executor.variable_values,
             );
         }
-        if matches!(parsed.data, Slot::Missing | Slot::Null)
+        if !rebuilt
+            && matches!(parsed.data, Slot::Missing | Slot::Null)
             && parsed.errors.is_none()
             && errors.is_none()
         {
@@ -1412,7 +1453,13 @@ impl<'p> Run<'p> {
         if let Some(status_error) = status_errors {
             errors.get_or_insert_with(Vec::new).push(status_error);
         }
-        if parsed.extensions {
+        if let Some(extensions) = parsed_extensions {
+            apply_subgraph_extensions(
+                executor.extensions_plan,
+                &extensions,
+                &mut ctx.extensions_aggregator,
+            );
+        } else if parsed.extensions {
             if let Some(extensions) = SubgraphResponse::deserialize_from_bytes(bytes, None)
                 .ok()
                 .and_then(|response| response.extensions)

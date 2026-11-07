@@ -1106,3 +1106,20 @@ session scratchpad (`opt/chunked-output.patch`).
   planner doesn't make.
 - `target/profiling` (33 GB of this session's profiling builds) was deleted to make room;
   `mbx gc` keeps the in-use target directory.
+
+### 2026-11-07 — fixes from an independent review of today's ports
+
+- With plugins, subgraph `extensions` were dropped (the body rebuilt from the parsed response
+  only had `data`): they're applied from the parsed response now. Only real subgraph bytes are
+  counted for cache control, and the "malformed response" check only runs on real bodies, like
+  the other pipeline.
+- Data a plugin's `on_execute` start hook put in was dropped for operations without a seed:
+  such a request now compiles a plan of its own with the operation as the seed's shape
+  (`Seed::Operation`, which the introspection seed is too), so fetches merge into it.
+- A running batch alias whose spots are all null keeps its merge paths (error paths), and the
+  partial-response summary flag ignores responses whose `data` is null, like the other pipeline.
+- Kept on purpose: a subscription field the planner aliased is renamed back (the other
+  pipeline returned null), and spots rewritten to one interface typename with equal keys send one
+  representation instead of two (same client response).
+- Test `slot_plugins::a_plugin_keeps_subgraph_extensions_and_its_own_data_on_slots` (fails
+  without the extensions fix). `cargo test_all` 2113/2113, e2e 840/841 with slots on.
