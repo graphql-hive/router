@@ -1034,3 +1034,25 @@ session scratchpad (`opt/chunked-output.patch`).
   `an_aliased_field_is_renamed_back_like_the_value_pipeline` (the slot tests' value side now
   applies output rewrites like the executor). `cargo test_all` 2112/2112, e2e 839/840 with
   slots on and off. Bench unchanged.
+
+### 2026-11-07 — coverage: `@fromContext` on entity fetches (slot pipeline)
+
+- An entity fetch (`Flatten`) with context no longer falls back. `Run::prepare_context`:
+  - walks the path with each spot's ancestors (`walk_with_ancestors`, the objects a field
+    step read from, like `traverse_and_callback`), reads every context variable from its
+    sources (`select_value`: so many `Parent`s up, then keys and type conditions; JSON written
+    from the slots; null when none) and groups spots by their tuple of values;
+  - runs the usual `collect` once per group (`only`: other groups' spots get no entity), so
+    representations, dedupe and targets work as for any fetch;
+  - sends up to `max_context_groups` groups per request: one group as the plain operation, more
+    as the alias template's operation (`AliasedRequests::write`). An aliased response is read
+    back with `parse_aliased_body` (each `_entities_<n>` with the `_entities` shape) into one
+    list per response key, each group at its offset, padded or cut to what it sent, error paths
+    moved the same way (`Run::unaliased`, like `context::unalias_response`); the targets carry
+    the same offsets. From there the merge is the usual one.
+- Context values are JSON written from slots: an object's keys come in layout order, which can
+  differ from the `Value` pipeline's; equal for scalars, and the subgraph reads an input object
+  by key anyway.
+- e2e `context` (39 tests) all pass with slots forced on, no fallback but the batch fetches
+  with context (5, next). `cargo test_all` 2112/2112, e2e 839/840 with slots on and off. Bench
+  unchanged.

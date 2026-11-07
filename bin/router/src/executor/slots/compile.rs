@@ -660,8 +660,12 @@ impl<'p> Compiler<'p> {
         fetch: &'p FetchNode,
         flatten: Option<&'p [PathSegment]>,
     ) -> Result<(), Unsupported> {
-        if fetch.context.is_some() || fetch.operation.context_alias_template().is_some() {
-            return Err(Unsupported("context"));
+        // context: one request per group of entities with the same context values, see
+        // `Run::prepare_context`. Only an entity fetch has entities to group.
+        if (fetch.context.is_some() || fetch.operation.context_alias_template().is_some())
+            && (fetch.requires.is_none() || flatten.is_none())
+        {
+            return Err(Unsupported("context without entities"));
         }
         if matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {
             return Err(Unsupported("a subscription"));

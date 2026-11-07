@@ -11,12 +11,15 @@ use crate::executor::slots::compile::{
     AliasProgram, FetchProgram, Layout, Requires, RequiresNode, SlotPlan, Step, TypenameRewrite,
     NO_SLOT, SEED_FETCH,
 };
-use crate::executor::slots::parse::parse_body;
+use crate::executor::slots::parse::{parse_aliased_body, parse_body};
 use crate::executor::slots::store::{Arena, Slot, SlotView};
 use crate::executor::slots::write::write_response;
 use crate::executor::slots::SlotPlanCell;
 use crate::executor::utils::consts::TYPENAME_JSON_FIELD;
-use crate::query_planner::planner::plan_nodes::PathSegment;
+use crate::query_planner::ast::operation::ContextAliasTemplate;
+use crate::query_planner::planner::plan_nodes::{
+    FetchContext, FetchNodePathSegment, FlattenNode, PathSegment,
+};
 use smallvec::SmallVec;
 
 /// No entity for a spot: it's null, or it has nothing to send.
@@ -208,7 +211,18 @@ enum Merge<'exec, 'p> {
         aliases: SmallVec<[AliasMerge<'exec, 'p>; 2]>,
         /// Errors are split by alias, like a `BatchFetch`'s
         batch: bool,
+        /// The request carried several context groups under aliases
+        unalias: Option<Unaliasing<'exec>>,
     },
+}
+
+/// An aliased context request (see `ContextAliasTemplate`): its response is read back into
+/// one list of entities per response key, the groups one after another, like
+/// `context::unalias_response` does.
+struct Unaliasing<'exec> {
+    template: &'exec ContextAliasTemplate,
+    /// The representations sent per group, so each group's entities land at a fixed offset
+    counts: SmallVec<[u32; 4]>,
 }
 
 struct AliasMerge<'exec, 'p> {
@@ -278,6 +292,13 @@ impl<'p> Run<'p> {
         let mut jobs: FuturesUnordered<Job<'_, 'exec>> = FuturesUnordered::new();
         let mut merges: SmallVec<[Option<Merge<'exec, 'p>>; 4]> = SmallVec::new();
         for node in nodes {
+            if let Some((flatten, fetch)) = with_context(node) {
+                for (job, merge) in self.prepare_context(executor, flatten, fetch, merges.len()) {
+                    jobs.push(job);
+                    merges.push(Some(merge));
+                }
+                continue;
+            }
             // nothing is copied once the request has an error: a null from an error isn't data
             let reuse = ctx.errors.is_empty();
             if let Some((job, merge)) = self.prepare(executor, node, merges.len(), reuse) {
@@ -292,6 +313,238 @@ impl<'p> Run<'p> {
                 Ok(job) => self.process(executor, ctx, job, merge),
             }
         }
+    }
+
+    /// An entity fetch with `@fromContext` arguments: its entities are grouped by their
+    /// context values, and each group is a request of its own with its values as variables,
+    /// like the other pipeline sends them without aliasing. The jobs get `first_index` on.
+    fn prepare_context<'wave, 'exec>(
+        &mut self,
+        executor: &'wave Executor<'exec>,
+        flatten: &'exec FlattenNode,
+        fetch: &'exec FetchNode,
+        first_index: usize,
+    ) -> Vec<(Job<'wave, 'exec>, Merge<'exec, 'p>)> {
+        let plan = self.plan;
+        if !executor.runs(fetch.run_if.as_deref()) {
+            return Vec::new();
+        }
+        let Some(program) = plan.fetches.get(&fetch.id) else {
+            return Vec::new();
+        };
+        let Some(alias) = program.aliases.first() else {
+            return Vec::new();
+        };
+        let path = flatten.path.as_ref();
+        let possible_types = &executor.schema_metadata.possible_types;
+        let keys = executor
+            .schema_metadata
+            .entity_keys
+            .of_subgraph(&fetch.service_name);
+        let (groups, group_of_spot) = self.context_groups(alias, &fetch.context, possible_types);
+        // every group with something to send: its variables, representations, count, targets
+        let mut sent = Vec::with_capacity(groups.len());
+        for (group, variables) in groups.into_iter().enumerate() {
+            let (representations, count, targets) = self.collect(
+                alias,
+                possible_types,
+                keys,
+                false,
+                Some((&group_of_spot, group as u32)),
+            );
+            if count == 0 {
+                self.arena.give_back_targets(targets.spots);
+            } else {
+                sent.push((variables, representations, count, targets));
+            }
+        }
+        // like the other pipeline: up to `max_context_groups` per request, aliased when a
+        // request carries more than one
+        let per_request = fetch.operation.max_context_groups().max(1);
+        let template = fetch.operation.context_alias_template();
+        let mut out = Vec::new();
+        let mut sent = sent.into_iter().peekable();
+        while sent.peek().is_some() {
+            let chunk: Vec<_> = sent.by_ref().take(per_request).collect();
+            let job = |index: usize, operation, variables, custom_scalar_paths| {
+                executor
+                    .prepare_execution_job(PrepareExecutionJobOpts {
+                        subgraph_name: &fetch.service_name,
+                        variable_usages: fetch.variable_usages.as_ref(),
+                        operation_name: executor
+                            .operation_name_factory
+                            .generate(&fetch.service_name, fetch.id),
+                        operation_kind: fetch.operation_kind.as_ref(),
+                        operation,
+                        output_rewrites: None,
+                        custom_scalar_paths,
+                        raw_variable_values: Some(variables),
+                        affected_path: Some(path),
+                        raw_response: true,
+                    })
+                    .map(move |job| (index, job))
+                    .boxed()
+            };
+            let merge = |targets, unalias| Merge::Entities {
+                program,
+                aliases: smallvec::smallvec![AliasMerge {
+                    program: alias,
+                    name: "_entities",
+                    paths: smallvec::smallvec![path],
+                    targets,
+                }],
+                batch: false,
+                unalias,
+            };
+            match template.filter(|_| chunk.len() > 1) {
+                None => {
+                    for (mut variables, representations, _, targets) in chunk {
+                        variables.push(("representations", representations));
+                        let job = job(
+                            first_index + out.len(),
+                            &fetch.operation,
+                            variables,
+                            fetch.custom_scalar_paths.as_ref(),
+                        );
+                        out.push((job, merge(targets, None)));
+                    }
+                }
+                Some(template) => {
+                    // the spots of every group in the request, the entity offset by where the
+                    // group's entities start in the response read back as one list
+                    let mut counts = SmallVec::new();
+                    let mut values = Vec::with_capacity(chunk.len());
+                    let mut combined: Option<Targets> = None;
+                    let mut offset = 0;
+                    for (mut variables, representations, count, targets) in chunk {
+                        variables.push(("representations", representations));
+                        values.push(variables);
+                        counts.push(count);
+                        match &mut combined {
+                            None => {
+                                let mut targets = targets;
+                                for (_, entity) in &mut targets.spots {
+                                    if *entity != NO_ENTITY {
+                                        *entity += offset;
+                                    }
+                                }
+                                combined = Some(targets);
+                            }
+                            Some(combined) => {
+                                for (into, (_, entity)) in
+                                    combined.spots.iter_mut().zip(&targets.spots)
+                                {
+                                    if *entity != NO_ENTITY {
+                                        into.1 = *entity + offset;
+                                    }
+                                }
+                                self.arena.give_back_targets(targets.spots);
+                            }
+                        }
+                        offset += count;
+                    }
+                    let (operation, variables) = executor.aliased_requests.write(template, values);
+                    out.push((
+                        job(
+                            first_index + out.len(),
+                            operation,
+                            variables,
+                            template.custom_scalar_paths(),
+                        ),
+                        merge(
+                            combined.expect("a chunk has groups"),
+                            Some(Unaliasing { template, counts }),
+                        ),
+                    ));
+                }
+            }
+        }
+        out
+    }
+
+    /// Groups the spots of the alias's (one) path by their context values: the variables of
+    /// each group, and each spot's group in walk order (`u32::MAX` for a spot that isn't an
+    /// object). See `context::collect_context_entities`, which does this for `Value`s.
+    #[allow(clippy::type_complexity)]
+    fn context_groups<'exec>(
+        &self,
+        alias: &AliasProgram,
+        context: &'exec Option<Box<FetchContext>>,
+        possible_types: &PossibleTypes,
+    ) -> (Vec<Vec<(&'exec str, Vec<u8>)>>, Vec<u32>) {
+        let names = FetchContext::group_variables(context);
+        let rewrites = FetchContext::rewrites(context).unwrap_or_default();
+        // where each variable's value is read: so many objects up from the spot, then a path
+        let sources: Vec<Vec<(usize, &[FetchNodePathSegment])>> = names
+            .iter()
+            .map(|name| {
+                rewrites
+                    .iter()
+                    .filter(|rewrite| rewrite.rename_key_to == *name)
+                    .map(|rewrite| {
+                        let up = rewrite
+                            .path
+                            .iter()
+                            .take_while(|s| matches!(s, FetchNodePathSegment::Parent))
+                            .count();
+                        (up, &rewrite.path[up..])
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut groups: Vec<Vec<(&'exec str, Vec<u8>)>> = Vec::new();
+        let mut by_values: AHashMap<Vec<Vec<u8>>, u32> = AHashMap::default();
+        let mut group_of_spot = Vec::new();
+        let arena = &self.arena;
+        let layouts = &self.plan.layouts;
+        for path in &alias.paths {
+            walk_with_ancestors(
+                arena,
+                layouts,
+                possible_types,
+                self.data,
+                path,
+                &mut Vec::new(),
+                &mut |spot, objects| {
+                    if !matches!(spot, Slot::Object { .. }) {
+                        group_of_spot.push(u32::MAX);
+                        return;
+                    }
+                    let ancestor = |up: usize| match up {
+                        0 => Some(spot),
+                        up => objects.get(objects.len().checked_sub(up)?).copied(),
+                    };
+                    let values: Vec<Vec<u8>> = sources
+                        .iter()
+                        .map(|sources| {
+                            sources
+                                .iter()
+                                .find_map(|(up, path)| {
+                                    let mut out = Vec::new();
+                                    select_value(
+                                        arena,
+                                        layouts,
+                                        possible_types,
+                                        ancestor(*up)?,
+                                        path,
+                                        &mut out,
+                                    )
+                                    .then_some(out)
+                                })
+                                // null like Apollo; the subgraph checks the argument's
+                                // nullability
+                                .unwrap_or_else(|| b"null".to_vec())
+                        })
+                        .collect();
+                    let group = *by_values.entry(values).or_insert_with_key(|values| {
+                        groups.push(names.iter().copied().zip(values.iter().cloned()).collect());
+                        groups.len() as u32 - 1
+                    });
+                    group_of_spot.push(group);
+                },
+            );
+        }
+        (groups, group_of_spot)
     }
 
     fn prepare<'wave, 'exec>(
@@ -361,8 +614,13 @@ impl<'p> Run<'p> {
                     .schema_metadata
                     .entity_keys
                     .of_subgraph(&fetch.service_name);
-                let (representations, count, targets) =
-                    self.collect(alias, &executor.schema_metadata.possible_types, keys, reuse);
+                let (representations, count, targets) = self.collect(
+                    alias,
+                    &executor.schema_metadata.possible_types,
+                    keys,
+                    reuse,
+                    None,
+                );
                 if count == 0 {
                     return None;
                 }
@@ -381,6 +639,7 @@ impl<'p> Run<'p> {
                             targets,
                         }],
                         batch: false,
+                        unalias: None,
                     },
                 ))
             }
@@ -398,7 +657,13 @@ impl<'p> Run<'p> {
                     // an alias that's off sends `[]` and has nowhere to merge
                     let (representations, count, targets) = if executor.runs(spec.run_if.as_deref())
                     {
-                        self.collect(alias, &executor.schema_metadata.possible_types, keys, reuse)
+                        self.collect(
+                            alias,
+                            &executor.schema_metadata.possible_types,
+                            keys,
+                            reuse,
+                            None,
+                        )
                     } else {
                         (b"[]".to_vec(), 0, Targets::default())
                     };
@@ -444,6 +709,7 @@ impl<'p> Run<'p> {
                         program,
                         aliases,
                         batch: true,
+                        unalias: None,
                     },
                 ))
             }
@@ -455,12 +721,15 @@ impl<'p> Run<'p> {
     /// the representations as a JSON list, how many there are, and the entity of every spot.
     /// With `reuse`, a spot that matches an entity already in the response gets its fields
     /// copied from it instead, and no entity.
+    /// `only`: the group of every spot and the one to send, when the fetch has context (see
+    /// [`Self::prepare_context`]); spots of other groups get no entity.
     fn collect(
         &mut self,
         alias: &AliasProgram,
         possible_types: &PossibleTypes,
         keys: Option<&KeysByType>,
         reuse: bool,
+        only: Option<(&[u32], u32)>,
     ) -> (Vec<u8>, u32, Targets) {
         let layouts = &self.plan.layouts;
         let arena = &mut self.arena;
@@ -520,6 +789,7 @@ impl<'p> Run<'p> {
                 }
             }
         }
+        let mut spot_number = 0usize;
         for path in &alias.paths {
             spots.clear();
             walk(
@@ -533,6 +803,12 @@ impl<'p> Run<'p> {
             );
             let path_targets = &mut targets.spots;
             for &spot in &spots {
+                let nth = spot_number;
+                spot_number += 1;
+                if only.is_some_and(|(groups, group)| groups.get(nth) != Some(&group)) {
+                    path_targets.push((spot, NO_ENTITY));
+                    continue;
+                }
                 if let (Some(reuse), Slot::Object { layout, first }) = (reuse, spot) {
                     if layout == reuse.target_layout && !known.is_empty() {
                         // without the key mask: it depends on the layout, and the source's
@@ -671,13 +947,19 @@ impl<'p> Run<'p> {
         let layouts = &self.plan.layouts;
         // demand control counts the lists of a response, which a passed-through subtree hides
         let passthrough = executor.demand_control_context.is_none();
-        let parsed = parse_body(
-            &mut self.arena,
-            layouts,
-            &program.shape,
-            &bytes,
-            passthrough,
-        );
+        let parsed = match &merge {
+            Merge::Entities {
+                unalias: Some(unalias),
+                ..
+            } => self.unaliased(program, &bytes, passthrough, unalias),
+            _ => parse_body(
+                &mut self.arena,
+                layouts,
+                &program.shape,
+                &bytes,
+                passthrough,
+            ),
+        };
         let Some(parsed) = parsed else {
             // sonic says what's wrong with it, like it does for the other pipeline
             let error = match SubgraphResponse::deserialize_from_bytes(bytes, None) {
@@ -894,6 +1176,115 @@ impl<'p> Run<'p> {
     }
 }
 
+impl Run<'_> {
+    /// Reads the response of an aliased context request back as the fetch's own response:
+    /// for each response key, the entities of all groups in one list, each group's at its
+    /// offset, padded with null or cut to what it was sent; error paths point into that list.
+    /// See `context::unalias_response`.
+    fn unaliased(
+        &mut self,
+        program: &FetchProgram,
+        bytes: &bytes::Bytes,
+        passthrough: bool,
+        unalias: &Unaliasing<'_>,
+    ) -> Option<crate::executor::slots::parse::ParsedBody> {
+        let shape = &program.shape;
+        let layouts = &self.plan.layouts;
+        let template = unalias.template;
+        let groups = unalias.counts.len();
+        let (nodes_start, nodes_end) = shape.objects[0].nodes;
+        // the node, among `data`'s, of each response key
+        let node_of_key: SmallVec<[Option<u32>; 2]> = template
+            .response_keys
+            .iter()
+            .map(|key| {
+                (nodes_start..nodes_end)
+                    .position(|node| {
+                        let quoted = shape.key(&shape.nodes[node as usize]);
+                        &quoted[1..quoted.len() - 1] == key.as_bytes()
+                    })
+                    .map(|position| position as u32)
+            })
+            .collect();
+        let body = parse_aliased_body(
+            &mut self.arena,
+            layouts,
+            shape,
+            bytes,
+            passthrough,
+            |alias| {
+                let (key, group) = template.response_key(alias)?;
+                (group < groups).then_some((node_of_key[key]?, group))
+            },
+        )?;
+        let mut offsets: SmallVec<[u32; 5]> = SmallVec::with_capacity(groups + 1);
+        offsets.push(0);
+        for count in &unalias.counts {
+            offsets.push(offsets[offsets.len() - 1] + count);
+        }
+        let total = offsets[groups];
+        let data = if body.no_data {
+            Slot::Null
+        } else {
+            let layout = shape.objects[0].layout;
+            let first = self.arena.object(layouts[layout as usize].width());
+            for node in node_of_key.iter().flatten() {
+                let slot = shape.nodes[(nodes_start + node) as usize].slot;
+                if slot == NO_SLOT {
+                    continue;
+                }
+                let start = self.arena.items.len();
+                self.arena.items.resize(start + total as usize, Slot::Null);
+                for &(value_slot, group, value) in &body.values {
+                    if value_slot != slot as u32 {
+                        continue;
+                    }
+                    if let Slot::List { start: from, len } = value {
+                        let take = len.min(unalias.counts[group]) as usize;
+                        let to = start + offsets[group] as usize;
+                        self.arena
+                            .items
+                            .copy_within(from as usize..from as usize + take, to);
+                    }
+                }
+                self.arena.slots[first as usize + slot as usize] = Slot::List {
+                    start: start as u32,
+                    len: total,
+                };
+            }
+            Slot::Object { layout, first }
+        };
+        let mut errors = body.errors;
+        for error in errors.iter_mut().flatten() {
+            let Some(path) = error.path.as_mut() else {
+                continue;
+            };
+            let Some(GraphQLErrorPathSegment::String(first)) = path.segments.first() else {
+                continue;
+            };
+            let Some((key, group)) = template
+                .response_key(first)
+                .filter(|(_, group)| *group < groups)
+            else {
+                continue;
+            };
+            if let Some(GraphQLErrorPathSegment::Index(index)) = path.segments.get_mut(1) {
+                if *index >= unalias.counts[group] as usize {
+                    error.path = None;
+                    continue;
+                }
+                *index += offsets[group] as usize;
+            }
+            path.segments[0] = GraphQLErrorPathSegment::String(template.response_keys[key].clone());
+        }
+        Some(crate::executor::slots::parse::ParsedBody {
+            data,
+            errors,
+            extensions: body.extensions,
+        })
+    }
+}
+
 /// Collects the values at the end of `steps`, like `traverse_and_callback`: a list at the end
 /// gives its items, a missing field or a value of the wrong kind gives nothing. It goes one
 /// step at a time over all values at that depth (`frontier` is scratch space); expanding each
@@ -950,6 +1341,134 @@ fn walk(
                 value => out.push(value),
             }
         }
+    }
+}
+
+/// The flatten fetch of `node` when it has `@fromContext` arguments, see
+/// [`Run::prepare_context`]
+fn with_context(node: &PlanNode) -> Option<(&FlattenNode, &FetchNode)> {
+    let PlanNode::Flatten(flatten) = node else {
+        return None;
+    };
+    let PlanNode::Fetch(fetch) = flatten.node.as_ref() else {
+        return None;
+    };
+    (fetch.requires.is_some()
+        && (fetch.context.is_some() || fetch.operation.context_alias_template().is_some()))
+    .then_some((flatten, fetch))
+}
+
+/// [`walk`] one value at a time, with the objects a field was read from on the way (the
+/// spot's ancestors, the nearest last), like `traverse_and_callback`.
+fn walk_with_ancestors(
+    arena: &Arena,
+    layouts: &[Layout],
+    possible_types: &PossibleTypes,
+    value: Slot,
+    steps: &[Step],
+    objects: &mut Vec<Slot>,
+    found: &mut impl FnMut(Slot, &[Slot]),
+) {
+    let Some((step, rest)) = steps.split_first() else {
+        match value {
+            Slot::List { start, len } => {
+                for &item in arena.list_items(start, len) {
+                    found(item, objects);
+                }
+            }
+            value => found(value, objects),
+        }
+        return;
+    };
+    match (step, value) {
+        (Step::Field(slot), Slot::Object { first, .. }) if *slot != NO_SLOT => {
+            let child = arena.slots[(first + *slot as u32) as usize];
+            if child != Slot::Missing {
+                objects.push(value);
+                walk_with_ancestors(arena, layouts, possible_types, child, rest, objects, found);
+                objects.pop();
+            }
+        }
+        (Step::List, Slot::List { start, len }) => {
+            for &item in arena.list_items(start, len) {
+                walk_with_ancestors(arena, layouts, possible_types, item, rest, objects, found);
+            }
+        }
+        (Step::TypeCondition(condition), Slot::Object { layout, first }) => {
+            if satisfies(
+                arena,
+                layouts,
+                possible_types,
+                layout,
+                first,
+                condition.names(),
+            ) {
+                walk_with_ancestors(arena, layouts, possible_types, value, rest, objects, found);
+            }
+        }
+        (Step::TypeCondition(_), Slot::List { start, len }) => {
+            for &item in arena.list_items(start, len) {
+                walk_with_ancestors(arena, layouts, possible_types, item, steps, objects, found);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Writes the JSON of the value at `path` from `value`, for a context variable. `false` when
+/// there's none (a key missing, a type that doesn't match); then `out` is left as it was. See
+/// `context::select_value`: a list gives a list, with null for an item that has none.
+fn select_value(
+    arena: &Arena,
+    layouts: &[Layout],
+    possible_types: &PossibleTypes,
+    value: Slot,
+    path: &[FetchNodePathSegment],
+    out: &mut Vec<u8>,
+) -> bool {
+    if path.is_empty() || value == Slot::Null {
+        arena.write_whole(layouts, value, out);
+        return true;
+    }
+    match value {
+        Slot::List { start, len } => {
+            out.push(b'[');
+            for (i, &item) in arena.list_items(start, len).iter().enumerate() {
+                if i > 0 {
+                    out.push(b',');
+                }
+                if !select_value(arena, layouts, possible_types, item, path, out) {
+                    out.extend_from_slice(b"null");
+                }
+            }
+            out.push(b']');
+            true
+        }
+        Slot::Object { layout, first } => match &path[0] {
+            FetchNodePathSegment::Key(key) => {
+                let slot = layouts[layout as usize].slot(key);
+                if slot == NO_SLOT {
+                    return false;
+                }
+                match arena.slots[(first + slot as u32) as usize] {
+                    Slot::Missing => false,
+                    child => select_value(arena, layouts, possible_types, child, &path[1..], out),
+                }
+            }
+            FetchNodePathSegment::TypenameEquals(names) => {
+                let typename = layouts[layout as usize].typename;
+                let name = (typename != NO_SLOT)
+                    .then(|| arena.plain_str(arena.slots[(first + typename as u32) as usize]))
+                    .flatten();
+                name.is_some_and(|name| {
+                    names.iter().any(|condition| {
+                        possible_types.entity_satisfies_type_condition(name, condition)
+                    })
+                }) && select_value(arena, layouts, possible_types, value, &path[1..], out)
+            }
+            FetchNodePathSegment::Parent => false,
+        },
+        _ => false,
     }
 }
 

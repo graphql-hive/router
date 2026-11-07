@@ -56,6 +56,49 @@ pub fn parse_body(
     parsed
 }
 
+/// The body of an aliased context request (see `ContextAliasTemplate`): `data` has a key per
+/// response key of the fetch and group, like `_entities_3`.
+pub struct AliasedBody {
+    /// Each value under an aliased key: the slot of its response key in `data`'s layout, its
+    /// group, the value
+    pub values: Vec<(u32, usize, Slot)>,
+    /// `data` was null (or missing)
+    pub no_data: bool,
+    pub errors: Option<Vec<GraphQLError>>,
+    pub extensions: bool,
+}
+
+/// Reads an aliased context request's body: `alias` maps a key of `data` to the index of its
+/// response key's node among `data`'s nodes in `shape`, and its group. Other keys are skipped.
+/// `None` when it isn't a valid response.
+pub fn parse_aliased_body(
+    arena: &mut Arena,
+    layouts: &[Layout],
+    shape: &Shape,
+    body: &Bytes,
+    passthrough: bool,
+    alias: impl Fn(&str) -> Option<(u32, usize)>,
+) -> Option<AliasedBody> {
+    let index = arena.bodies.len() as u32;
+    arena.bodies.push(body.clone());
+    arena.failed.clear();
+    arena.failed.resize(shape.verifies.len(), false);
+    let scratch = arena.scratch.len();
+    let mut parser = Parser {
+        input: body,
+        pos: 0,
+        depth: 0,
+        shape,
+        layouts,
+        arena,
+        body: index,
+        passthrough,
+    };
+    let parsed = parser.aliased_response(&alias);
+    parser.arena.scratch.truncate(scratch);
+    parsed
+}
+
 #[cfg(not(target_arch = "aarch64"))]
 const ONES: u64 = 0x0101_0101_0101_0101;
 #[cfg(not(target_arch = "aarch64"))]
@@ -142,6 +185,99 @@ impl Parser<'_, '_> {
         }
         self.whitespace();
         (self.pos == self.input.len()).then_some(parsed)
+    }
+
+    /// [`Self::response`] for an aliased context request, see [`parse_aliased_body`]
+    fn aliased_response(
+        &mut self,
+        alias: &impl Fn(&str) -> Option<(u32, usize)>,
+    ) -> Option<AliasedBody> {
+        let mut parsed = AliasedBody {
+            values: Vec::new(),
+            no_data: true,
+            errors: None,
+            extensions: false,
+        };
+        let (mut data, mut errors) = (false, false);
+        self.whitespace();
+        if self.peek() != Some(b'{') {
+            return None;
+        }
+        self.pos += 1;
+        if !self.empty(b'}') {
+            loop {
+                self.whitespace();
+                let (start, end) = self.key()?;
+                self.expect(b':')?;
+                match &self.input[start..end] {
+                    b"data" if !data => {
+                        data = true;
+                        self.whitespace();
+                        if self.peek() == Some(b'n') {
+                            self.literal(b"null", ())?;
+                        } else {
+                            parsed.no_data = false;
+                            self.aliased_data(alias, &mut parsed.values)?;
+                        }
+                    }
+                    b"errors" if !errors => {
+                        errors = true;
+                        self.whitespace();
+                        let start = self.pos;
+                        self.skip_value()?;
+                        parsed.errors =
+                            Some(sonic_rs::from_slice(&self.input[start..self.pos]).ok()?);
+                    }
+                    b"extensions" if !parsed.extensions => {
+                        parsed.extensions = true;
+                        self.skip_value()?;
+                    }
+                    b"data" | b"errors" | b"extensions" => return None,
+                    _ => self.skip_value()?,
+                }
+                if !self.more(b'}')? {
+                    break;
+                }
+            }
+        }
+        self.whitespace();
+        (self.pos == self.input.len()).then_some(parsed)
+    }
+
+    fn aliased_data(
+        &mut self,
+        alias: &impl Fn(&str) -> Option<(u32, usize)>,
+        values: &mut Vec<(u32, usize, Slot)>,
+    ) -> Option<()> {
+        self.expect(b'{')?;
+        if self.empty(b'}') {
+            return Some(());
+        }
+        self.enter()?;
+        let shape = self.shape;
+        let (nodes_start, _) = shape.objects[0].nodes;
+        loop {
+            self.whitespace();
+            let (start, end) = self.key()?;
+            self.expect(b':')?;
+            let key = std::str::from_utf8(&self.input[start..end]).ok()?;
+            match alias(key) {
+                Some((node, group)) => {
+                    let node = shape.nodes[(nodes_start + node) as usize];
+                    let value = if node.object != NO_OBJECT {
+                        self.shaped(node.object)?
+                    } else {
+                        self.leaf()?
+                    };
+                    values.push((node.slot as u32, group, value));
+                }
+                None => self.skip_value()?,
+            }
+            if !self.more(b'}')? {
+                self.depth -= 1;
+                return Some(());
+            }
+        }
     }
 
     #[inline]
