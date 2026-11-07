@@ -62,6 +62,8 @@ pub struct Arena {
     pub prints: AHashMap<u64, u32>,
     /// Spare lists for the spots of a fetch's aliases, kept across requests
     pub targets: Vec<Vec<(Slot, u32)>>,
+    /// Entity reuse: fingerprint of an entity already in the response, its object and source
+    pub known: AHashMap<u64, (u32, u32)>,
 }
 
 /// Arenas kept for the next request on this thread. A request takes one and gives it back
@@ -114,6 +116,7 @@ impl Arena {
         self.frontier.clear();
         self.ranges.clear();
         self.prints.clear();
+        self.known.clear();
     }
 
     #[inline]

@@ -231,7 +231,9 @@ impl<'p> Run<'p> {
         let mut jobs: FuturesUnordered<Job<'_, 'exec>> = FuturesUnordered::new();
         let mut merges: SmallVec<[Option<Merge<'exec, 'p>>; 4]> = SmallVec::new();
         for node in nodes {
-            if let Some((job, merge)) = self.prepare(executor, node, merges.len()) {
+            // nothing is copied once the request has an error: a null from an error isn't data
+            let reuse = ctx.errors.is_empty();
+            if let Some((job, merge)) = self.prepare(executor, node, merges.len(), reuse) {
                 jobs.push(job);
                 merges.push(Some(merge));
             }
@@ -250,6 +252,7 @@ impl<'p> Run<'p> {
         executor: &'wave Executor<'exec>,
         node: &'exec PlanNode,
         index: usize,
+        reuse: bool,
     ) -> Option<(Job<'wave, 'exec>, Merge<'exec, 'p>)> {
         let plan = self.plan;
         let send = |fetch: &'exec FetchNode,
@@ -312,7 +315,7 @@ impl<'p> Run<'p> {
                     .entity_keys
                     .of_subgraph(&fetch.service_name);
                 let (representations, count, targets) =
-                    self.collect(alias, &executor.schema_metadata.possible_types, keys);
+                    self.collect(alias, &executor.schema_metadata.possible_types, keys, reuse);
                 if count == 0 {
                     return None;
                 }
@@ -348,7 +351,7 @@ impl<'p> Run<'p> {
                     // an alias that's off sends `[]` and has nowhere to merge
                     let (representations, count, targets) = if executor.runs(spec.run_if.as_deref())
                     {
-                        self.collect(alias, &executor.schema_metadata.possible_types, keys)
+                        self.collect(alias, &executor.schema_metadata.possible_types, keys, reuse)
                     } else {
                         (b"[]".to_vec(), 0, Targets::default())
                     };
@@ -403,11 +406,14 @@ impl<'p> Run<'p> {
 
     /// Walks the alias's paths and writes a representation for every distinct entity. Returns
     /// the representations as a JSON list, how many there are, and the entity of every spot.
+    /// With `reuse`, a spot that matches an entity already in the response gets its fields
+    /// copied from it instead, and no entity.
     fn collect(
         &mut self,
         alias: &AliasProgram,
         possible_types: &PossibleTypes,
         keys: Option<&KeysByType>,
+        reuse: bool,
     ) -> (Vec<u8>, u32, Targets) {
         let layouts = &self.plan.layouts;
         let arena = &mut self.arena;
@@ -427,6 +433,45 @@ impl<'p> Run<'p> {
             spots: arena.targets.pop().unwrap_or_default(),
             ends: SmallVec::new(),
         };
+        let mut known = std::mem::take(&mut arena.known);
+        known.clear();
+        let reuse = alias.reuse.as_ref().filter(|_| reuse);
+        if let Some(reuse) = reuse {
+            // the entities already in the response, by what their representation would read
+            for (index, source) in reuse.sources.iter().enumerate() {
+                walk(
+                    arena,
+                    layouts,
+                    possible_types,
+                    self.data,
+                    &source.path,
+                    &mut spots,
+                    &mut frontier,
+                );
+                for &object in &spots {
+                    let Slot::Object { first, .. } = object else {
+                        continue;
+                    };
+                    if !holds_representation(arena, &source.requires, first)
+                        || source.copy.iter().any(|&slot| {
+                            arena.slots[(first + slot as u32) as usize] == Slot::Missing
+                        })
+                    {
+                        continue;
+                    }
+                    let mut print = Fingerprint {
+                        arena,
+                        layouts,
+                        requires: &source.requires,
+                        hasher: Mix::new(),
+                    };
+                    print.value(object, source.requires.reads_root.clone(), None);
+                    known
+                        .entry(print.hasher.finish())
+                        .or_insert((first, index as u32));
+                }
+            }
+        }
         for path in &alias.paths {
             spots.clear();
             walk(
@@ -440,6 +485,28 @@ impl<'p> Run<'p> {
             );
             let path_targets = &mut targets.spots;
             for &spot in &spots {
+                if let (Some(reuse), Slot::Object { layout, first }) = (reuse, spot) {
+                    if layout == reuse.target_layout && !known.is_empty() {
+                        // without the key mask: it depends on the layout, and the source's
+                        // isn't the spot's
+                        let mut print = Fingerprint {
+                            arena,
+                            layouts,
+                            requires: &alias.requires,
+                            hasher: Mix::new(),
+                        };
+                        print.value(spot, alias.requires.reads_root.clone(), None);
+                        if let Some(&(from, source)) = known.get(&print.hasher.finish()) {
+                            let from_slots = &reuse.sources[source as usize].copy;
+                            for (&to, &from_slot) in reuse.copy.iter().zip(from_slots.iter()) {
+                                arena.slots[(first + to as u32) as usize] =
+                                    arena.slots[(from + from_slot as u32) as usize];
+                            }
+                            path_targets.push((spot, NO_ENTITY));
+                            continue;
+                        }
+                    }
+                }
                 let entity = match spot {
                     Slot::Null | Slot::Missing => NO_ENTITY,
                     _ => {
@@ -510,6 +577,7 @@ impl<'p> Run<'p> {
         arena.seen = seen;
         arena.ranges = ranges;
         arena.prints = prints;
+        arena.known = known;
         (reps, count, targets)
     }
 
@@ -1163,6 +1231,22 @@ impl<'r> Representation<'r> {
         }
         applied
     }
+}
+
+/// Whether every field a representation reads at the top is in the object and not null. One
+/// with a missing or null field can't be told apart from another one like it, so nothing is
+/// copied from it.
+fn holds_representation(arena: &Arena, requires: &Requires, first: u32) -> bool {
+    requires.reads[requires.reads_root.start as usize..requires.reads_root.end as usize]
+        .iter()
+        .all(|read| {
+            let get = |slot: u16| {
+                (slot != NO_SLOT)
+                    .then(|| arena.slots[(first + slot as u32) as usize])
+                    .filter(|value| *value != Slot::Missing)
+            };
+            matches!(get(read.by_name).or_else(|| get(read.by_alias)), Some(value) if value != Slot::Null)
+        })
 }
 
 /// Hashes everything [`Representation`] reads to write a spot: its `__typename`, which key
