@@ -53,6 +53,10 @@ pub type OnSubgraphExecuteStartHookResult<'exec> = StartHookResult<
 pub struct OnSubgraphExecuteEndHookPayload<'exec> {
     /// The execution result from the subgraph execution for the incoming GraphQL request.
     /// Plugins can modify the execution result before it is sent back to the client.
+    // TODO: the same as `OnExecuteEndHookPayload::data`: expose the subgraph's data through an
+    // API of our own rather than the executor's `SubgraphResponse`/`Value`, so the router can
+    // change how it reads subgraph responses (the slot pipeline reads the body straight into
+    // slots), and so a plugin can't make the data stop matching what the fetch asked for.
     pub execution_result: SubgraphResponse<'exec>,
     /// The context object that can be used to share data across different plugin hooks for the same request.
     /// It is unique per request and is dropped after the response is sent.

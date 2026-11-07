@@ -180,6 +180,14 @@ pub type OnExecuteStartHookResult<'exec> = StartHookResult<
 pub struct OnExecuteEndHookPayload<'exec> {
     /// The final value of the execution result. This will be sent to the client as the "data" field in the GraphQL response.
     /// Plugins can modify this value before proceeding, and the modified value will be sent to the client.
+    // TODO: expose the response data through an API of our own instead of `Value`. Handing out
+    // the executor's internal type ties plugins to how the router stores responses, so it can't
+    // change (the slot pipeline doesn't build a `Value` at all, which is why a plugin hooking
+    // execution sends every request to the old pipeline). The API should let a plugin read
+    // fields and change them only in ways that keep the response matching the client's
+    // operation: set a value of the right kind, null a nullable field, add an error. It must not
+    // add or remove fields, change their order, or put a value of the wrong type where the
+    // operation expects another, which the request <-> response contract doesn't allow.
     pub data: Value<'exec>,
     /// The final list of GraphQL errors in the execution result.
     /// This will be sent to the client as the "errors" field in the GraphQL response.
