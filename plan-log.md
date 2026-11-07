@@ -710,3 +710,37 @@ fewer requests in flight to the subgraphs: `max_connections_per_host` 100 → 48
 128–129 ms; 64 → 424–428 MB, p99 118–124 ms (better than Fusion AOT), same req/s, no cost at
 c=50. The rest of the gap is hyper's legacy pool racing a new connect against a returning
 connection and keeping both.
+
+## 2026-11-07 — Strict HTTP/1 pool (why Hive opens so many subgraph connections)
+
+**Why so many connections.** Probed sockets every 2s at c=500 (ChilliCream subgraphs, reuse on). No churn: distinct sockets seen == peak, so it's all pool growth.
+- hyper's legacy pool: a checkout that finds no idle connection starts a connect and keeps it even if an idle one comes back first. A finished connection only returns to the pool from a task spawned after the response, so checkouts miss constantly. With `max_connections_per_host: 64` (≤256 in flight) it still opened 1,646 sockets.
+- `per_worker` multiplies that by 10 pools: 2,924 sockets (per_worker) vs 1,221 (shared) vs Fusion 256 (one .NET pool).
+- Each idle socket costs ~184KB RSS, mostly hyper's adaptive read buffer (grows to 128–256KB on big responses, never shrinks).
+
+**What was tried** (c=500, mcph 100, rps / router CPU µs/req / peak RSS):
+| variant | CPU | RSS | note |
+|---|---|---|---|
+| legacy hyper pool | ~410 | ~490MB | 1,100+ sockets |
+| strict per-worker pool | ~398 | ~350MB | ~900 sockets |
+| + origin-wide cap = mcph | ~520 | ~235MB | +25% CPU: at saturation idle conns are on other workers, borrowing wakes two threads per exchange |
+| cap + return to home worker | ~520 | ~235MB | barely helps, borrows are constant |
+| strict pool + 64KB max read buffer | ~405 | ~287MB | **kept** |
+| strict pool + 32KB | ~395 | ~272MB | rps −2% |
+The 3MB `ct` workload: 2,640 → 2,630 µs/req, no cost from the 64KB buffer.
+
+**Kept:** `executors/h1_pool.rs`, per-worker strict pool for plain `http://`, opt-in via `HIVE_EXP_POOL=1` on `per_worker` mode (https and `allow_only_http2` stay on hyper's client).
+
+**Final** (3 rounds, medians):
+| | legacy | pool | Fusion AOT |
+|---|---|---|---|
+| c=500 rps | 5,535 | 5,712 | 4,759 |
+| c=500 p99 | 131ms | 128ms | 131ms |
+| c=500 CPU µs/req | 416 | 407 | 780 |
+| c=500 peak RSS | 524MB | 287MB | 233MB |
+| c=50 rps | 5,614 | 5,703 | 4,680 |
+| c=50 CPU µs/req | 455 | 442 | 808 |
+| c=50 peak RSS | 128MB | 102MB | 120MB |
+
+Checks: e2e with the pool forced everywhere 833/839 → 838/839 after matching the connect error wording (only `file_watch_works` left); `test_all` 2105/2105; clippy clean on touched files.
+Known limits: idle connections expire only when the worker uses that origin again; a response head over 64KB would fail (hyper's default allows ~400KB).

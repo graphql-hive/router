@@ -6,6 +6,7 @@ use crate::config::traffic_shaping::{
     TrafficShapingSubgraphRequestCompressionConfig,
 };
 use crate::executor::executors::dedupe::unique_leader_fingerprint;
+use crate::executor::executors::h1_pool::H1Pool;
 use crate::executor::executors::inflight::InFlightRole;
 use crate::executor::executors::map::InflightRequestsMap;
 use crate::executor::executors::multipart_subscribe;
@@ -88,13 +89,17 @@ pub struct WorkerLocalClients {
     builder: hyper_util::client::legacy::Builder,
     connector: HttpsConnector<HttpConnector>,
     clients: ThreadLocal<HttpClient>,
+    /// Pools for plain `http://` subgraphs, see [`H1Pool`]. `None` keeps hyper's pool.
+    pools: Option<(Duration, ThreadLocal<H1Pool>)>,
 }
 
 impl HttpClientProvider {
+    /// `strict_pool` is the idle timeout of [`H1Pool`]s, `None` when HTTP/1 can't be used.
     pub fn new(
         mode: HttpClientMode,
         builder: hyper_util::client::legacy::Builder,
         connector: HttpsConnector<HttpConnector>,
+        strict_pool: Option<Duration>,
     ) -> Self {
         match mode {
             HttpClientMode::Shared => Self::Shared(builder.build(connector)),
@@ -102,7 +107,20 @@ impl HttpClientProvider {
                 builder,
                 connector,
                 clients: ThreadLocal::new(),
+                pools: strict_pool
+                    .filter(|_| std::env::var_os("HIVE_EXP_POOL").is_some())
+                    .map(|idle_timeout| (idle_timeout, ThreadLocal::new())),
             }),
+        }
+    }
+
+    fn pool(&self) -> Option<&H1Pool> {
+        match self {
+            Self::Shared(_) => None,
+            Self::PerWorker(local) => local
+                .pools
+                .as_ref()
+                .map(|(idle_timeout, pools)| pools.get_or(|| H1Pool::new(*idle_timeout))),
         }
     }
 
@@ -254,7 +272,7 @@ impl HTTPSubgraphExecutor {
 }
 
 pub struct SendRequestOpts<'a> {
-    pub http_client: &'a HttpClient,
+    pub http_client: &'a HttpClientProvider,
     pub endpoint: &'a http::Uri,
     pub subgraph_name: &'a str,
     pub method: http::Method,
@@ -362,9 +380,20 @@ async fn send_request<'a>(
         //       should be part of the fingerprint or not.
         telemetry_context.inject_context_into_http_headers(req.headers_mut());
 
-        let res_fut = http_client.request(req);
+        let pool = http_client
+            .pool()
+            .filter(|_| endpoint.scheme() == Some(&http::uri::Scheme::HTTP));
+        let res_fut = async {
+            match pool {
+                Some(pool) => pool
+                    .request(req)
+                    .await
+                    .map(|(res, lease)| (res, Some(lease))),
+                None => Ok((http_client.client().request(req).await?, None)),
+            }
+        };
 
-        let res = if let Some(timeout_duration) = timeout {
+        let (res, lease) = if let Some(timeout_duration) = timeout {
             tokio::time::timeout(timeout_duration, res_fut).await?
         } else {
             res_fut.await
@@ -384,7 +413,12 @@ async fn send_request<'a>(
         let (parts, body) = res.into_parts();
 
         let body = match read_body(body).await {
-            Ok(body) => body,
+            Ok(body) => {
+                if let Some(lease) = lease {
+                    lease.release();
+                }
+                body
+            }
             Err(err) => {
                 return Err(SubgraphExecutorError::ResponseBodyReadFailure(
                     endpoint.to_string(),
@@ -528,7 +562,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             Some(resp) => resp,
             None => {
                 let send_request_opts = SendRequestOpts {
-                    http_client: self.http_client.client(),
+                    http_client: &self.http_client,
                     endpoint: &self.endpoint,
                     subgraph_name: &self.subgraph_name,
                     method,
