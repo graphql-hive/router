@@ -906,3 +906,22 @@ subgraphs, 0 validation failures):
 
 The pipeline is a part of the router's work: ct also pays for reading and sending 3 MB over
 HTTP, the bench op for 7 subgraph calls (pipeline ≈ 55 of ~250 µs).
+
+### 2026-11-07 — chunked output (prototype, dropped)
+
+Tried: the slot writer left raw values past a threshold out of its buffer and the response
+went out as pieces (the buffer between them, slices of the subgraph body), as an internal
+`QueryPlanExecutionResult::Chunked`, only with no coprocessor and no plugins. Whole router, one
+worker, against the commit before it:
+- ct, subgraph in the new fetch order (one 3 MB piece): 1,351 → 1,266 µs CPU/req (−6.3%),
+  740 → 790 req/s.
+- ct in the old order: unchanged at a 64 KB threshold; at 4 KB it got hundreds of pieces and
+  was 17% slower (each piece goes through the HTTP writer on its own).
+- bench op: unchanged (no value that big).
+- Pitfalls: `ntex::util::Bytes` over external storage copies on `slice`/`split`/advance
+  (`set_start`/`set_end` copy), so slices had to be cut from `bytes::Bytes` and wrapped one by
+  one; ntex still copies the rest of a piece after a partial socket write.
+
+Dropped by the user's call: −6% on one shape of response isn't worth a second body type in the
+pipeline and the HTTP layer. `PlanExecutionOutput::body` stays `Vec<u8>`. Patch kept in the
+session scratchpad (`opt/chunked-output.patch`).
