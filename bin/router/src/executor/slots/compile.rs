@@ -618,18 +618,12 @@ impl<'p> Compiler<'p> {
                 _ => Err(Unsupported("flatten of something other than a fetch")),
             },
             PlanNode::BatchFetch(batch) => {
-                if batch.operation.context_alias_template().is_some() {
-                    return Err(Unsupported("context alias template"));
-                }
                 if matches!(batch.operation_kind, Some(OperationKind::Subscription)) {
                     return Err(Unsupported("a subscription"));
                 }
                 let mut aliases = Vec::new();
                 let mut alias_renames = Vec::new();
                 for alias in &batch.entity_batch.aliases {
-                    if alias.context.is_some() {
-                        return Err(Unsupported("context on a batch alias"));
-                    }
                     alias_renames.extend(renames(
                         alias.output_rewrites.as_deref(),
                         &[alias.alias.as_str()],

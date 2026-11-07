@@ -18,7 +18,7 @@ use crate::executor::slots::SlotPlanCell;
 use crate::executor::utils::consts::TYPENAME_JSON_FIELD;
 use crate::query_planner::ast::operation::ContextAliasTemplate;
 use crate::query_planner::planner::plan_nodes::{
-    FetchContext, FetchNodePathSegment, FlattenNode, PathSegment,
+    BatchFetchNode, FetchContext, FetchNodePathSegment, FlattenNode, PathSegment,
 };
 use smallvec::SmallVec;
 
@@ -221,8 +221,24 @@ enum Merge<'exec, 'p> {
 /// `context::unalias_response` does.
 struct Unaliasing<'exec> {
     template: &'exec ContextAliasTemplate,
-    /// The representations sent per group, so each group's entities land at a fixed offset
-    counts: SmallVec<[u32; 4]>,
+    groups: usize,
+    /// For each response key of the template, the representations sent per group, so each
+    /// group's entities land at a fixed offset
+    counts: Vec<SmallVec<[u32; 4]>>,
+}
+
+impl Unaliasing<'_> {
+    /// Where each group's entities start in the list of response key `key`, and where the
+    /// last group's end
+    fn offsets(&self, key: usize) -> SmallVec<[u32; 5]> {
+        let mut offsets = SmallVec::with_capacity(self.groups + 1);
+        offsets.push(0);
+        for group in 0..self.groups {
+            let count = self.counts[key].get(group).copied().unwrap_or(0);
+            offsets.push(offsets[group] + count);
+        }
+        offsets
+    }
 }
 
 struct AliasMerge<'exec, 'p> {
@@ -292,6 +308,15 @@ impl<'p> Run<'p> {
         let mut jobs: FuturesUnordered<Job<'_, 'exec>> = FuturesUnordered::new();
         let mut merges: SmallVec<[Option<Merge<'exec, 'p>>; 4]> = SmallVec::new();
         for node in nodes {
+            if let PlanNode::BatchFetch(batch) = node {
+                if batch_with_context(batch) {
+                    for (job, merge) in self.prepare_batch_context(executor, batch, merges.len()) {
+                        jobs.push(job);
+                        merges.push(Some(merge));
+                    }
+                    continue;
+                }
+            }
             if let Some((flatten, fetch)) = with_context(node) {
                 for (job, merge) in self.prepare_context(executor, flatten, fetch, merges.len()) {
                     jobs.push(job);
@@ -453,7 +478,11 @@ impl<'p> Run<'p> {
                         ),
                         merge(
                             combined.expect("a chunk has groups"),
-                            Some(Unaliasing { template, counts }),
+                            Some(Unaliasing {
+                                template,
+                                groups: counts.len(),
+                                counts: vec![counts; template.response_keys.len()],
+                            }),
                         ),
                     ));
                 }
@@ -462,7 +491,221 @@ impl<'p> Run<'p> {
         out
     }
 
-    /// Groups the spots of the alias's (one) path by their context values: the variables of
+    /// A `BatchFetch` whose aliases have `@fromContext` arguments, like the other pipeline: each
+    /// alias groups its spots by their context values, and wave `n` sends group `n` of every
+    /// alias (an alias with fewer groups sends its first group's values and no
+    /// representations). Up to `max_context_groups` waves go in one request, aliased when
+    /// there's more than one. The jobs get `first_index` on.
+    fn prepare_batch_context<'wave, 'exec>(
+        &mut self,
+        executor: &'wave Executor<'exec>,
+        batch: &'exec BatchFetchNode,
+        first_index: usize,
+    ) -> Vec<(Job<'wave, 'exec>, Merge<'exec, 'p>)> {
+        let plan = self.plan;
+        let Some(program) = plan.fetches.get(&batch.id) else {
+            return Vec::new();
+        };
+        let possible_types = &executor.schema_metadata.possible_types;
+        let keys = executor
+            .schema_metadata
+            .entity_keys
+            .of_subgraph(&batch.service_name);
+        let specs = &batch.entity_batch.aliases;
+        // each alias's groups and the group of each of its spots, none when it's off
+        let grouped: Vec<_> = specs
+            .iter()
+            .zip(&program.aliases)
+            .map(|(spec, alias)| {
+                if executor.runs(spec.run_if.as_deref()) {
+                    self.context_groups(alias, &spec.context, possible_types)
+                } else {
+                    (Vec::new(), Vec::new())
+                }
+            })
+            .collect();
+        let wave_count = grouped
+            .iter()
+            .map(|(groups, _)| groups.len())
+            .max()
+            .unwrap_or(0);
+        // every wave: its variables, its aliases' merges and how many entities each sends
+        let mut waves = Vec::with_capacity(wave_count);
+        for wave in 0..wave_count {
+            let mut variables: Vec<(&'exec str, Vec<u8>)> = Vec::new();
+            let mut aliases: SmallVec<[AliasMerge<'exec, 'p>; 2]> = SmallVec::new();
+            let mut counts: SmallVec<[u32; 4]> = SmallVec::new();
+            let mut any = false;
+            for ((spec, alias), (groups, group_of_spot)) in
+                specs.iter().zip(&program.aliases).zip(&grouped)
+            {
+                match groups.get(wave).or(groups.first()) {
+                    Some(values) => variables.extend(values.iter().cloned()),
+                    None => {
+                        for name in FetchContext::group_variables(&spec.context) {
+                            if !variables.iter().any(|(existing, _)| *existing == name) {
+                                variables.push((name, b"null".to_vec()));
+                            }
+                        }
+                    }
+                }
+                let (representations, count, targets) = if wave < groups.len() {
+                    self.collect(
+                        alias,
+                        possible_types,
+                        keys,
+                        false,
+                        Some((group_of_spot, wave as u32)),
+                    )
+                } else {
+                    (b"[]".to_vec(), 0, Targets::default())
+                };
+                any |= count > 0;
+                let name = spec.representations_variable_name.as_str();
+                if !variables.iter().any(|(existing, _)| *existing == name) {
+                    variables.push((name, representations));
+                }
+                counts.push(count);
+                aliases.push(AliasMerge {
+                    program: alias,
+                    name: spec.alias.as_str(),
+                    paths: if targets.ends.is_empty() {
+                        SmallVec::new()
+                    } else {
+                        spec.merge_paths.iter().collect()
+                    },
+                    targets,
+                });
+            }
+            if any {
+                waves.push((variables, aliases, counts));
+            } else {
+                for alias in aliases {
+                    self.arena.give_back_targets(alias.targets.spots);
+                }
+            }
+        }
+
+        let per_request = batch.operation.max_context_groups().max(1);
+        let template = batch.operation.context_alias_template();
+        let job = |index: usize, operation, variables, custom_scalar_paths| {
+            executor
+                .prepare_execution_job(PrepareExecutionJobOpts {
+                    subgraph_name: &batch.service_name,
+                    variable_usages: batch.variable_usages.as_ref(),
+                    operation_name: executor
+                        .operation_name_factory
+                        .generate(&batch.service_name, batch.id),
+                    operation_kind: batch.operation_kind.as_ref(),
+                    operation,
+                    output_rewrites: None,
+                    custom_scalar_paths,
+                    raw_variable_values: Some(variables),
+                    affected_path: None,
+                    raw_response: true,
+                })
+                .map(move |job| (index, job))
+                .boxed()
+        };
+        let mut out = Vec::new();
+        let mut waves = waves.into_iter().peekable();
+        while waves.peek().is_some() {
+            let chunk: Vec<_> = waves.by_ref().take(per_request).collect();
+            let Some(template) = template.filter(|_| chunk.len() > 1) else {
+                for (variables, aliases, _) in chunk {
+                    let job = job(
+                        first_index + out.len(),
+                        &batch.operation,
+                        variables,
+                        batch.custom_scalar_paths.as_ref(),
+                    );
+                    out.push((
+                        job,
+                        Merge::Entities {
+                            program,
+                            aliases,
+                            batch: true,
+                            unalias: None,
+                        },
+                    ));
+                }
+                continue;
+            };
+            // the aliases of the first wave take the entities of the others, at offsets
+            let groups = chunk.len();
+            let mut values = Vec::with_capacity(groups);
+            let mut merged: SmallVec<[AliasMerge<'exec, 'p>; 2]> = SmallVec::new();
+            // representations per alias and wave
+            let mut alias_counts: Vec<SmallVec<[u32; 4]>> = vec![SmallVec::new(); specs.len()];
+            for (wave, (variables, aliases, counts)) in chunk.into_iter().enumerate() {
+                values.push(variables);
+                for (index, (alias, count)) in aliases.into_iter().zip(counts).enumerate() {
+                    let offset: u32 = alias_counts[index].iter().sum();
+                    alias_counts[index].push(count);
+                    if wave == 0 {
+                        merged.push(alias);
+                        continue;
+                    }
+                    let into = &mut merged[index];
+                    if into.targets.spots.is_empty() {
+                        // the first wave had nothing for this alias: these spots stand in
+                        let mut targets = alias.targets;
+                        for (_, entity) in &mut targets.spots {
+                            if *entity != NO_ENTITY {
+                                *entity += offset;
+                            }
+                        }
+                        into.targets = targets;
+                        into.paths = alias.paths;
+                        continue;
+                    }
+                    for (target, (_, entity)) in
+                        into.targets.spots.iter_mut().zip(&alias.targets.spots)
+                    {
+                        if *entity != NO_ENTITY {
+                            target.1 = *entity + offset;
+                        }
+                    }
+                    self.arena.give_back_targets(alias.targets.spots);
+                }
+            }
+            let counts = template
+                .response_keys
+                .iter()
+                .map(|key| {
+                    specs
+                        .iter()
+                        .position(|spec| spec.alias == *key)
+                        .map_or_else(
+                            || smallvec::smallvec![0; groups],
+                            |alias| std::mem::take(&mut alias_counts[alias]),
+                        )
+                })
+                .collect();
+            let (operation, variables) = executor.aliased_requests.write(template, values);
+            out.push((
+                job(
+                    first_index + out.len(),
+                    operation,
+                    variables,
+                    template.custom_scalar_paths(),
+                ),
+                Merge::Entities {
+                    program,
+                    aliases: merged,
+                    batch: true,
+                    unalias: Some(Unaliasing {
+                        template,
+                        groups,
+                        counts,
+                    }),
+                },
+            ));
+        }
+        out
+    }
+
+    /// Groups the spots of the alias's paths by their context values: the variables of
     /// each group, and each spot's group in walk order (`u32::MAX` for a spot that isn't an
     /// object). See `context::collect_context_entities`, which does this for `Value`s.
     #[allow(clippy::type_complexity)]
@@ -1191,7 +1434,7 @@ impl Run<'_> {
         let shape = &program.shape;
         let layouts = &self.plan.layouts;
         let template = unalias.template;
-        let groups = unalias.counts.len();
+        let groups = unalias.groups;
         let (nodes_start, nodes_end) = shape.objects[0].nodes;
         // the node, among `data`'s, of each response key
         let node_of_key: SmallVec<[Option<u32>; 2]> = template
@@ -1217,22 +1460,21 @@ impl Run<'_> {
                 (group < groups).then_some((node_of_key[key]?, group))
             },
         )?;
-        let mut offsets: SmallVec<[u32; 5]> = SmallVec::with_capacity(groups + 1);
-        offsets.push(0);
-        for count in &unalias.counts {
-            offsets.push(offsets[offsets.len() - 1] + count);
-        }
-        let total = offsets[groups];
         let data = if body.no_data {
             Slot::Null
         } else {
             let layout = shape.objects[0].layout;
             let first = self.arena.object(layouts[layout as usize].width());
-            for node in node_of_key.iter().flatten() {
+            for (key, node) in node_of_key.iter().enumerate() {
+                let Some(node) = node else {
+                    continue;
+                };
                 let slot = shape.nodes[(nodes_start + node) as usize].slot;
                 if slot == NO_SLOT {
                     continue;
                 }
+                let offsets = unalias.offsets(key);
+                let total = offsets[groups];
                 let start = self.arena.items.len();
                 self.arena.items.resize(start + total as usize, Slot::Null);
                 for &(value_slot, group, value) in &body.values {
@@ -1240,7 +1482,7 @@ impl Run<'_> {
                         continue;
                     }
                     if let Slot::List { start: from, len } = value {
-                        let take = len.min(unalias.counts[group]) as usize;
+                        let take = len.min(offsets[group + 1] - offsets[group]) as usize;
                         let to = start + offsets[group] as usize;
                         self.arena
                             .items
@@ -1269,7 +1511,8 @@ impl Run<'_> {
                 continue;
             };
             if let Some(GraphQLErrorPathSegment::Index(index)) = path.segments.get_mut(1) {
-                if *index >= unalias.counts[group] as usize {
+                let offsets = unalias.offsets(key);
+                if *index >= (offsets[group + 1] - offsets[group]) as usize {
                     error.path = None;
                     continue;
                 }
@@ -1356,6 +1599,17 @@ fn with_context(node: &PlanNode) -> Option<(&FlattenNode, &FetchNode)> {
     (fetch.requires.is_some()
         && (fetch.context.is_some() || fetch.operation.context_alias_template().is_some()))
     .then_some((flatten, fetch))
+}
+
+/// Whether the batch's aliases have `@fromContext` arguments, see
+/// [`Run::prepare_batch_context`]
+fn batch_with_context(batch: &BatchFetchNode) -> bool {
+    batch.operation.context_alias_template().is_some()
+        || batch
+            .entity_batch
+            .aliases
+            .iter()
+            .any(|alias| alias.context.is_some())
 }
 
 /// [`walk`] one value at a time, with the objects a field was read from on the way (the
