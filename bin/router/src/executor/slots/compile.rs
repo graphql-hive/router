@@ -503,11 +503,8 @@ impl<'p> Compiler<'p> {
                 if batch.operation.context_alias_template().is_some() {
                     return Err(Unsupported("context alias template"));
                 }
-                if matches!(
-                    batch.operation_kind,
-                    Some(OperationKind::Subscription) | Some(OperationKind::Mutation)
-                ) {
-                    return Err(Unsupported("not a query"));
+                if matches!(batch.operation_kind, Some(OperationKind::Subscription)) {
+                    return Err(Unsupported("a subscription"));
                 }
                 let mut aliases = Vec::new();
                 for alias in &batch.entity_batch.aliases {
@@ -547,11 +544,8 @@ impl<'p> Compiler<'p> {
         if fetch.context.is_some() || fetch.operation.context_alias_template().is_some() {
             return Err(Unsupported("context"));
         }
-        if matches!(
-            fetch.operation_kind,
-            Some(OperationKind::Subscription) | Some(OperationKind::Mutation)
-        ) {
-            return Err(Unsupported("not a query"));
+        if matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {
+            return Err(Unsupported("a subscription"));
         }
         match (&fetch.requires, flatten) {
             (Some(requires), Some(path)) => self.document(
@@ -604,8 +598,11 @@ impl<'p> Compiler<'p> {
                     }
                     operation = Some(match op {
                         gql::OperationDefinition::Query(q) => &q.selection_set,
+                        gql::OperationDefinition::Mutation(m) => &m.selection_set,
                         gql::OperationDefinition::SelectionSet(s) => s,
-                        _ => return Err(Unsupported("not a query")),
+                        gql::OperationDefinition::Subscription(_) => {
+                            return Err(Unsupported("a subscription"))
+                        }
                     });
                 }
                 gql::Definition::Fragment(fragment) => fragments.push(fragment),

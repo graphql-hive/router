@@ -23,12 +23,12 @@ const NO_ENTITY: u32 = u32::MAX;
 
 /// Whether this request can run on the slot pipeline. The plan decides most of it when it's
 /// compiled; what's left is per router and per request.
-pub(super) fn usable<'o>(opts: &'o QueryPlanExecutionOpts<'_>) -> Option<&'o SlotPlan> {
+pub(super) fn usable(opts: &QueryPlanExecutionOpts<'_>) -> Option<Arc<SlotPlan>> {
     if !crate::executor::slots::enabled()
         || opts.plugin_req_state.is_some()
         || opts.demand_control_context.is_some()
         || opts.introspection_context.query.is_some()
-        || !opts.operation_kind.is_query()
+        || !(opts.operation_kind.is_query() || opts.operation_kind.is_mutation())
     {
         return None;
     }
@@ -42,19 +42,12 @@ pub(super) fn usable<'o>(opts: &'o QueryPlanExecutionOpts<'_>) -> Option<&'o Slo
     })
 }
 
+/// Runs the plan on the slot pipeline, with the slot plan [`usable`] gave
 pub(super) async fn execute<'exec>(
     mut opts: QueryPlanExecutionOpts<'exec>,
+    plan: Arc<SlotPlan>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
-    // `usable` said yes, so this is the compiled plan
-    let cell = opts.slot_plan.clone().expect("checked by `usable`");
-    let plan = cell
-        .get(
-            opts.query_plan,
-            &opts.projection_plan,
-            &opts.introspection_context.metadata,
-            &opts.operation_type_name,
-        )
-        .expect("checked by `usable`");
+    let plan = &*plan;
     let aliased_requests = AliasedRequests::default();
     let executor = Executor {
         variable_values: &opts.variable_values.variables_map,
@@ -64,7 +57,8 @@ pub(super) async fn execute<'exec>(
         headers_plan: &opts.headers_plan,
         extensions_plan: &opts.extensions_plan,
         jwt_forwarding_plan: opts.jwt_auth_forwarding.clone(),
-        dedupe_subgraph_requests: true,
+        // a mutation's subgraph calls each run, like on the other pipeline
+        dedupe_subgraph_requests: opts.operation_kind.is_query(),
         demand_control_context: None,
         plugin_req_state: None,
         operation_name_factory: &opts.operation_name_factory,
@@ -103,7 +97,8 @@ pub(super) async fn execute<'exec>(
 
     cache_control::finalize(
         &mut ctx.response_headers_aggregator,
-        !errors.is_empty(),
+        // force no-store for mutations and errors, like the other pipeline
+        opts.operation_kind.is_mutation() || !errors.is_empty(),
         ctx.response_storage.len(),
     );
     opts.response_header_sink
