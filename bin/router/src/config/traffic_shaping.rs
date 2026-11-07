@@ -32,6 +32,15 @@ pub struct TrafficShapingConfig {
     /// Can also be set via the `ROUTER_TRAFFIC_SHAPING_ENTITY_REUSE` environment variable.
     #[serde(default)]
     pub entity_reuse: bool,
+    /// Talk to plain `http://` subgraphs through the router's own HTTP/1 connection pool, one
+    /// per worker, instead of hyper's. It opens a new connection only when every connection of
+    /// the worker is busy, and keeps smaller read buffers, so far fewer sockets and less memory
+    /// stay around under load. Experimental, off by default. Works with either
+    /// `http_client_mode`. `https://` subgraphs and `allow_only_http2` keep hyper's client.
+    ///
+    /// Can also be set using the `ROUTER_TRAFFIC_SHAPING_EXPERIMENTAL_HTTP1_POOL` environment variable.
+    #[serde(default)]
+    pub experimental_http1_pool: bool,
 
     #[serde(default)]
     /// Configuration for the router itself, e.g., for handling incoming requests, or other router-level traffic shaping configurations.
@@ -46,6 +55,7 @@ impl Default for TrafficShapingConfig {
             max_connections_per_host: default_max_connections_per_host(),
             http_client_mode: HttpClientMode::default(),
             entity_reuse: false,
+            experimental_http1_pool: false,
             router: TrafficShapingRouterConfig::default(),
         }
     }
@@ -60,6 +70,7 @@ pub struct SupergraphTrafficShapingConfig {
     pub max_connections_per_host: usize,
     pub http_client_mode: HttpClientMode,
     pub entity_reuse: bool,
+    pub experimental_http1_pool: bool,
 }
 
 impl SupergraphTrafficShapingConfig {
@@ -148,6 +159,7 @@ impl Default for SupergraphTrafficShapingConfig {
             max_connections_per_host: default_max_connections_per_host(),
             http_client_mode: HttpClientMode::default(),
             entity_reuse: false,
+            experimental_http1_pool: false,
         }
     }
 }
@@ -160,6 +172,7 @@ impl From<&TrafficShapingConfig> for SupergraphTrafficShapingConfig {
             max_connections_per_host: config.max_connections_per_host,
             http_client_mode: config.http_client_mode,
             entity_reuse: config.entity_reuse,
+            experimental_http1_pool: config.experimental_http1_pool,
         }
     }
 }

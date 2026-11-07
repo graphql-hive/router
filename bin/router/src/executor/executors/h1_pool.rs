@@ -1,4 +1,5 @@
 //! A strict HTTP/1 connection pool for plain `http://` subgraphs, one per worker.
+//! On with `traffic_shaping.experimental_http1_pool`.
 //!
 //! hyper's legacy pool races a fresh connect against every checkout that finds no idle
 //! connection, and keeps the new connection even when an idle one came back first. A finished

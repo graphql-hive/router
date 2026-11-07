@@ -77,8 +77,15 @@ const OPERATION_NAME_STR: &[u8] = b",\"operationName\":";
 
 pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
 
+pub struct HttpClientProvider {
+    clients: HttpClients,
+    /// Our own pools for plain `http://` subgraphs, one per worker, see [`H1Pool`].
+    /// `None` leaves those subgraphs to hyper's client too.
+    pools: Option<(Duration, ThreadLocal<H1Pool>)>,
+}
+
 #[allow(clippy::large_enum_variant)]
-pub enum HttpClientProvider {
+enum HttpClients {
     /// One client for all workers.
     Shared(HttpClient),
     /// One client per worker thread.
@@ -89,46 +96,42 @@ pub struct WorkerLocalClients {
     builder: hyper_util::client::legacy::Builder,
     connector: HttpsConnector<HttpConnector>,
     clients: ThreadLocal<HttpClient>,
-    /// Pools for plain `http://` subgraphs, see [`H1Pool`]. `None` keeps hyper's pool.
-    pools: Option<(Duration, ThreadLocal<H1Pool>)>,
 }
 
 impl HttpClientProvider {
-    /// `strict_pool` is the idle timeout of [`H1Pool`]s, `None` when HTTP/1 can't be used.
+    /// `http1_pool` is the idle timeout of [`H1Pool`]s, `None` to not use them.
     pub fn new(
         mode: HttpClientMode,
         builder: hyper_util::client::legacy::Builder,
         connector: HttpsConnector<HttpConnector>,
-        strict_pool: Option<Duration>,
+        http1_pool: Option<Duration>,
     ) -> Self {
-        match mode {
-            HttpClientMode::Shared => Self::Shared(builder.build(connector)),
-            HttpClientMode::PerWorker => Self::PerWorker(WorkerLocalClients {
+        let clients = match mode {
+            HttpClientMode::Shared => HttpClients::Shared(builder.build(connector)),
+            HttpClientMode::PerWorker => HttpClients::PerWorker(WorkerLocalClients {
                 builder,
                 connector,
                 clients: ThreadLocal::new(),
-                pools: strict_pool
-                    .filter(|_| std::env::var_os("HIVE_EXP_POOL").is_some())
-                    .map(|idle_timeout| (idle_timeout, ThreadLocal::new())),
             }),
+        };
+        Self {
+            clients,
+            pools: http1_pool.map(|idle_timeout| (idle_timeout, ThreadLocal::new())),
         }
     }
 
+    /// The pool of the current thread, when the pool is on.
     fn pool(&self) -> Option<&H1Pool> {
-        match self {
-            Self::Shared(_) => None,
-            Self::PerWorker(local) => local
-                .pools
-                .as_ref()
-                .map(|(idle_timeout, pools)| pools.get_or(|| H1Pool::new(*idle_timeout))),
-        }
+        self.pools
+            .as_ref()
+            .map(|(idle_timeout, pools)| pools.get_or(|| H1Pool::new(*idle_timeout)))
     }
 
     /// The client for the current thread.
     pub fn client(&self) -> &HttpClient {
-        match self {
-            Self::Shared(client) => client,
-            Self::PerWorker(local) => local
+        match &self.clients {
+            HttpClients::Shared(client) => client,
+            HttpClients::PerWorker(local) => local
                 .clients
                 .get_or(|| local.builder.build(local.connector.clone())),
         }

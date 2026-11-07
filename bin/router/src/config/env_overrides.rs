@@ -44,6 +44,8 @@ pub struct EnvVarOverrides {
     // Traffic shaping overrides
     #[envconfig(from = "ROUTER_TRAFFIC_SHAPING_ENTITY_REUSE")]
     pub traffic_shaping_entity_reuse: Option<bool>,
+    #[envconfig(from = "ROUTER_TRAFFIC_SHAPING_EXPERIMENTAL_HTTP1_POOL")]
+    pub traffic_shaping_experimental_http1_pool: Option<bool>,
 
     // Cache overrides
     #[envconfig(from = "ROUTER_CACHE_PLUGIN_SUPERGRAPH_RUNTIMES")]
@@ -155,6 +157,11 @@ impl EnvVarOverrides {
         if let Some(entity_reuse) = self.traffic_shaping_entity_reuse.take() {
             debug!(target: CONFIG_LOGGING_TARGET, value = entity_reuse, "overriding 'traffic_shaping.entity_reuse'");
             config = config.set_override("traffic_shaping.entity_reuse", entity_reuse)?;
+        }
+
+        if let Some(http1_pool) = self.traffic_shaping_experimental_http1_pool.take() {
+            debug!(target: CONFIG_LOGGING_TARGET, value = http1_pool, "overriding 'traffic_shaping.experimental_http1_pool'");
+            config = config.set_override("traffic_shaping.experimental_http1_pool", http1_pool)?;
         }
 
         if let Some(plugin_supergraph_runtimes) = self.plugin_supergraph_runtimes.take() {
@@ -362,6 +369,28 @@ telemetry:
         .unwrap();
 
         assert_eq!(config.telemetry.tracing.collect.sampling, 0.1);
+    }
+
+    #[test]
+    fn experimental_http1_pool_override_wins_over_config_file_value() {
+        let config = EnvVarOverrides {
+            traffic_shaping_experimental_http1_pool: Some(true),
+            ..Default::default()
+        }
+        .apply_overrides(Config::builder().add_source(File::from_str(
+            r#"
+traffic_shaping:
+  experimental_http1_pool: false
+"#,
+            FileFormat::Yaml,
+        )))
+        .unwrap()
+        .build()
+        .unwrap()
+        .try_deserialize::<HiveRouterConfig>()
+        .unwrap();
+
+        assert!(config.traffic_shaping.experimental_http1_pool);
     }
 
     #[test]

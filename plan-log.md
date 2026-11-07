@@ -744,3 +744,19 @@ The 3MB `ct` workload: 2,640 → 2,630 µs/req, no cost from the 64KB buffer.
 
 Checks: e2e with the pool forced everywhere 833/839 → 838/839 after matching the connect error wording (only `file_watch_works` left); `test_all` 2105/2105; clippy clean on touched files.
 Known limits: idle connections expire only when the worker uses that origin again; a response head over 64KB would fail (hyper's default allows ~400KB).
+
+### 2026-11-07 — the pool as config: `traffic_shaping.experimental_http1_pool`
+`HIVE_EXP_POOL` replaced by `traffic_shaping.experimental_http1_pool` / `ROUTER_EXPERIMENTAL_HTTP1_POOL`. The pools sit next to either client mode now, so shared mode (the default) can use them too.
+
+ChilliCream subgraphs, reuse on, mcph 100, 3 rounds:
+| | shared | shared + pool | per_worker | per_worker + pool |
+|---|---|---|---|---|
+| c=500 rps | 5,363 | 5,794 | 5,730 | 5,851 |
+| c=500 p99 | 157ms | 128ms | 126ms | 125ms |
+| c=500 CPU µs/req | 543 | 403 | 411 | 398 |
+| c=500 peak RSS | 362MB | 290MB | 491MB | 288MB |
+| c=50 CPU µs/req | 599 | 444 | 456 | 442 |
+| c=50 peak RSS | 117MB | 101MB | 123MB | 101MB |
+Shared + pool keeps more sockets than shared alone (~850 vs ~190) since they're per worker, yet uses less memory and 26% less CPU: no cross-thread wakeups.
+
+New e2e `http1_pool` runs the bench op 24 times (8 at once) in both modes with the flag on; checked it fails when the pool panics. test_all 2106/2106, e2e 839/840 (only file_watch_works).
