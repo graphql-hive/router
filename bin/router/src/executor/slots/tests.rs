@@ -126,7 +126,7 @@ fn both_with(types: &str, query: &str, body: &str) -> (String, String, usize, Ve
     let width = slots.layouts[slots.root_layout as usize].width();
     let first = arena.object(width);
     let mut raw = Vec::new();
-    let new = match parse_body(&mut arena, &slots.layouts, &program.shape, &bytes) {
+    let new = match parse_body(&mut arena, &slots.layouts, &program.shape, &bytes, true) {
         Some(parsed) => {
             if let Slot::Object {
                 layout,
@@ -347,7 +347,7 @@ fn a_rewritten_projection_plan_gets_a_slot_plan_of_its_own() {
         .plan_from_normalized_operation(&operation, Default::default(), &CancellationToken::new())
         .expect("plans")
         .into_executable(&planner.supergraph);
-    let Some(PlanNode::Fetch(fetch)) = &plan.node else {
+    let Some(PlanNode::Fetch(fetch)) = plan.node() else {
         panic!("one root fetch");
     };
     // what authorization does when the client may not see `products.name`: a new plan with
@@ -409,10 +409,11 @@ fn a_rewritten_projection_plan_gets_a_slot_plan_of_its_own() {
     )
     .expect("projects");
 
-    let program = &slots.fetches[&fetch.id];
+    let program = &slots.fetches[&i64::from(fetch.id.0)];
     let mut arena = Arena::default();
     let first = arena.object(slots.layouts[slots.root_layout as usize].width());
-    let parsed = parse_body(&mut arena, &slots.layouts, &program.shape, &body).expect("parses");
+    let parsed =
+        parse_body(&mut arena, &slots.layouts, &program.shape, &body, true).expect("parses");
     if let Slot::Object {
         layout,
         first: data,

@@ -263,3 +263,58 @@ impl Arena {
         }
     }
 }
+
+/// A value in the slots, read the way demand control counts the actual cost of a response
+/// (see `CostData`). Objects find a field by its response key in their layout.
+#[derive(Clone, Copy)]
+pub struct SlotView<'a> {
+    pub arena: &'a Arena,
+    pub layouts: &'a [Layout],
+    pub slot: Slot,
+}
+
+impl<'a> crate::executor::execution::demand_control::CostData<'a> for SlotView<'a> {
+    fn field(self, key: &str) -> Option<Self> {
+        let Slot::Object { layout, first } = self.slot else {
+            return None;
+        };
+        // ponytail: a linear search of the layout's keys per field, only while demand control
+        // counts the actual cost; resolve the cost plan to slots when that shows in a profile
+        let slot = self.layouts[layout as usize].slot(key);
+        if slot == super::compile::NO_SLOT {
+            return None;
+        }
+        match self.arena.slots[(first + slot as u32) as usize] {
+            Slot::Missing => None,
+            slot => Some(Self { slot, ..self }),
+        }
+    }
+
+    fn items(self) -> Option<impl Iterator<Item = Self>> {
+        let Slot::List { start, len } = self.slot else {
+            return None;
+        };
+        Some(
+            self.arena
+                .list_items(start, len)
+                .iter()
+                .map(move |&slot| Self { slot, ..self }),
+        )
+    }
+
+    fn is_null(self) -> bool {
+        self.slot == Slot::Null
+    }
+
+    fn typename(self) -> Option<&'a str> {
+        let Slot::Object { layout, first } = self.slot else {
+            return None;
+        };
+        let slot = self.layouts[layout as usize].typename;
+        if slot == super::compile::NO_SLOT {
+            return None;
+        }
+        self.arena
+            .plain_str(self.arena.slots[(first + slot as u32) as usize])
+    }
+}

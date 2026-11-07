@@ -125,9 +125,9 @@ impl DemandControlExecutionContext {
     }
 
     #[inline]
-    pub fn calculate_actual_cost(
+    pub fn calculate_actual_cost<'a, D: CostData<'a>>(
         &self,
-        data: &Value<'_>,
+        data: D,
         variable_values: &Option<HashMap<String, sonic_rs::Value>>,
         subgraph_response_cost_tracker: &SubgraphResponseCostTracker,
     ) -> u64 {
@@ -151,29 +151,41 @@ impl DemandControlExecutionContext {
         job: &ExecutionJob<'exec>,
         variables_map: &'exec Option<VariablesMap>,
     ) {
+        self.record_subgraph_data_cost(
+            subgraph_response_tracker,
+            job.subgraph_name(),
+            job.operation().hash,
+            &job.response_ref().data,
+            variables_map,
+        );
+    }
+
+    /// [`Self::record_subgraph_response_cost`] for any response data, see [`CostData`]
+    #[inline]
+    pub fn record_subgraph_data_cost<'exec, 'a, D: CostData<'a>>(
+        &self,
+        subgraph_response_tracker: &mut SubgraphResponseCostTracker<'exec>,
+        subgraph_name: &'exec str,
+        fetch_step_hash: u64,
+        data: D,
+        variables_map: &Option<VariablesMap>,
+    ) {
         if let CompiledActualCostPlan::BySubgraph(actual_subgraph_plans_by_fetch_hash) =
             self.actual.cost_plan.as_ref()
         {
-            let fetch_step_hash = job.operation().hash;
-            let response_ref = job.response_ref();
-
             let fetch_step_cost_actual = actual_subgraph_plans_by_fetch_hash
                 .get(&fetch_step_hash)
                 .map(|plan| {
                     estimate_actual_subgraph_response_cost_with_compiled_plan(
                         plan,
-                        &response_ref.data,
+                        data,
                         variables_map,
                         &self.actual.supergraph,
                     )
                 })
                 .unwrap_or(0);
 
-            subgraph_response_tracker.track(
-                job.subgraph_name(),
-                fetch_step_hash,
-                fetch_step_cost_actual,
-            );
+            subgraph_response_tracker.track(subgraph_name, fetch_step_hash, fetch_step_cost_actual);
         }
     }
 
@@ -373,9 +385,43 @@ fn collect_entity_root_type_conditions(selection_set: &SelectionSet, out: &mut A
     }
 }
 
-pub fn estimate_actual_subgraph_response_cost_with_compiled_plan(
+/// Response data the actual cost is counted over: the `Value` tree, or the slot pipeline's
+/// slots (`slots::store::SlotView`). One walk for both, so they can't count differently.
+pub trait CostData<'a>: Copy {
+    /// The value of a field, when this is an object that has it
+    fn field(self, key: &str) -> Option<Self>;
+    /// The items, when this is a list
+    fn items(self) -> Option<impl Iterator<Item = Self>>;
+    fn is_null(self) -> bool;
+    /// `__typename`, when this is an object that has it
+    fn typename(self) -> Option<&'a str>;
+}
+
+impl<'a> CostData<'a> for &'a Value<'a> {
+    fn field(self, key: &str) -> Option<Self> {
+        self.as_object()
+            .and_then(|obj| response_object_get(obj, key))
+    }
+
+    fn items(self) -> Option<impl Iterator<Item = Self>> {
+        match self {
+            Value::Array(items) => Some(items.iter()),
+            _ => None,
+        }
+    }
+
+    fn is_null(self) -> bool {
+        Value::is_null(self)
+    }
+
+    fn typename(self) -> Option<&'a str> {
+        self.field("__typename").and_then(|value| value.as_str())
+    }
+}
+
+pub fn estimate_actual_subgraph_response_cost_with_compiled_plan<'a, D: CostData<'a>>(
     plan: &CompiledSubgraphActualCostPlan,
-    response_data: &Value<'_>,
+    response_data: D,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     supergraph: &SupergraphState,
 ) -> u64 {
@@ -392,22 +438,15 @@ pub fn estimate_actual_subgraph_response_cost_with_compiled_plan(
             let mut total = 0_u64;
             for group in groups {
                 let entities = response_data
-                    .as_object()
-                    .and_then(|obj| response_object_get(obj, group.response_key.as_str()))
-                    .and_then(|value| match value {
-                        Value::Array(items) => Some(items),
-                        _ => None,
-                    });
+                    .field(group.response_key.as_str())
+                    .and_then(|value| value.items());
 
                 let Some(entities) = entities else {
                     continue;
                 };
 
-                for entity in entities.iter() {
-                    let entity_type = entity
-                        .as_object()
-                        .and_then(|obj| response_object_get(obj, "__typename"))
-                        .and_then(|value| value.as_str());
+                for entity in entities {
+                    let entity_type = entity.typename();
 
                     // If typename is present, look it up in the map. Otherwise, when the map
                     // has exactly one entry (the common federation case where each _entities fetch
@@ -445,9 +484,9 @@ pub fn estimate_actual_subgraph_response_cost_with_compiled_plan(
     }
 }
 
-pub fn estimate_actual_response_shape_cost_with_compiled_plan(
+pub fn estimate_actual_response_shape_cost_with_compiled_plan<'a, D: CostData<'a>>(
     plan: &CompiledResponseShapeActualCostPlan,
-    response_data: &Value<'_>,
+    response_data: D,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     supergraph: &SupergraphState,
 ) -> u64 {
@@ -578,9 +617,9 @@ fn compile_field_actual_cost_plan(
     }
 }
 
-fn evaluate_selection_set_actual_cost_plan(
+fn evaluate_selection_set_actual_cost_plan<'a, D: CostData<'a>>(
     plan: &CompiledSelectionSetActualCostPlan,
-    parent_value: &Value<'_>,
+    parent_value: D,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     supergraph: &SupergraphState,
 ) -> u64 {
@@ -614,9 +653,9 @@ fn evaluate_selection_set_actual_cost_plan(
     total_cost
 }
 
-fn evaluate_field_actual_cost_plan(
+fn evaluate_field_actual_cost_plan<'a, D: CostData<'a>>(
     field: &CompiledFieldActualCostPlan,
-    parent_value: &Value<'_>,
+    parent_value: D,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     supergraph: &SupergraphState,
 ) -> u64 {
@@ -640,12 +679,10 @@ fn evaluate_field_actual_cost_plan(
         },
     );
 
-    let value = parent_value
-        .as_object()
-        .and_then(|obj| response_object_get(obj, field.response_key.as_str()));
+    let value = parent_value.field(field.response_key.as_str());
 
     if field.list_depth > 0 {
-        let Some(Value::Array(items)) = value else {
+        let Some(items) = value.and_then(|v| v.items()) else {
             return field_base_cost;
         };
 
@@ -677,48 +714,50 @@ fn evaluate_field_actual_cost_plan(
 /// The items of a list `depth` lists deep, like 2 for `[[Product]]`. Only the innermost items
 /// cost, the lists around them are free, and so is a `null`, in place of an inner list or of an
 /// item, like a `null` field outside a list.
-fn evaluate_list_items_actual_cost(
+fn evaluate_list_items_actual_cost<'a, D: CostData<'a>>(
     field: &CompiledFieldActualCostPlan,
-    items: &[Value<'_>],
+    items: impl Iterator<Item = D>,
     depth: usize,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     supergraph: &SupergraphState,
 ) -> u64 {
-    items.iter().fold(0_u64, |total, item| {
-        let cost = match item {
-            Value::Array(inner) if depth > 1 => evaluate_list_items_actual_cost(
-                field,
-                inner,
-                depth - 1,
-                variable_values,
-                supergraph,
-            ),
-            _ if depth > 1 => 0,
-            Value::Null => 0,
-            item => field
+    items.fold(0_u64, |total, item| {
+        let cost = if depth > 1 {
+            match item.items() {
+                Some(inner) => evaluate_list_items_actual_cost(
+                    field,
+                    inner,
+                    depth - 1,
+                    variable_values,
+                    supergraph,
+                ),
+                None => 0,
+            }
+        } else if item.is_null() {
+            0
+        } else {
+            field
                 .return_type_cost
                 .saturating_add(evaluate_selection_set_actual_cost_plan(
                     &field.child,
                     item,
                     variable_values,
                     supergraph,
-                )),
+                ))
         };
         total.saturating_add(cost)
     })
 }
 
-fn inline_fragment_applies(
-    parent_value: &Value<'_>,
+fn inline_fragment_applies<'a, D: CostData<'a>>(
+    parent_value: D,
     applies_to: Option<&AHashSet<String>>,
 ) -> bool {
     let Some(applies_to) = applies_to else {
         return true;
     };
     parent_value
-        .as_object()
-        .and_then(|obj| response_object_get(obj, "__typename"))
-        .and_then(|value| value.as_str())
+        .typename()
         .is_some_and(|typename| applies_to.contains(typename))
 }
 

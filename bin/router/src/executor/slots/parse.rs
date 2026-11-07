@@ -25,12 +25,15 @@ pub struct ParsedBody {
     pub extensions: bool,
 }
 
-/// Reads `body` with `shape`. `None` when it isn't a valid response.
+/// Reads `body` with `shape`. `None` when it isn't a valid response. Without `passthrough`,
+/// every value goes into slots, also where the client would get a subtree as it came (demand
+/// control counts the lists in it).
 pub fn parse_body(
     arena: &mut Arena,
     layouts: &[Layout],
     shape: &Shape,
     body: &Bytes,
+    passthrough: bool,
 ) -> Option<ParsedBody> {
     let index = arena.bodies.len() as u32;
     arena.bodies.push(body.clone());
@@ -45,6 +48,7 @@ pub fn parse_body(
         layouts,
         arena,
         body: index,
+        passthrough,
     };
     let parsed = parser.response();
     // a failed parse can leave items behind
@@ -89,6 +93,7 @@ struct Parser<'a, 'p> {
     layouts: &'p [Layout],
     arena: &'p mut Arena,
     body: u32,
+    passthrough: bool,
 }
 
 impl Parser<'_, '_> {
@@ -310,7 +315,7 @@ impl Parser<'_, '_> {
             let start = self.pos;
             self.skip_value()?;
             self.raw_slot(start)
-        } else if node.verify != NO_OBJECT {
+        } else if node.verify != NO_OBJECT && self.passthrough {
             self.passthrough(node.verify, node.object)?
         } else if node.object != NO_OBJECT {
             self.shaped(node.object)?
