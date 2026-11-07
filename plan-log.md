@@ -760,3 +760,18 @@ ChilliCream subgraphs, reuse on, mcph 100, 3 rounds:
 Shared + pool keeps more sockets than shared alone (~850 vs ~190) since they're per worker, yet uses less memory and 26% less CPU: no cross-thread wakeups.
 
 New e2e `http1_pool` runs the bench op 24 times (8 at once) in both modes with the flag on; checked it fails when the pool panics. test_all 2106/2106, e2e 839/840 (only file_watch_works).
+
+### 2026-11-07 — the pool follows `http_client_mode`
+`shared` now gets one pool for all workers, `per_worker` keeps one per worker.
+
+ChilliCream subgraphs, reuse on, mcph 100, 3 rounds, medians:
+| | shared | shared + one pool | per_worker + pools |
+|---|---|---|---|
+| c=500 rps | 5,317 | 5,404 | 5,662 |
+| c=500 p99 | 152ms | 152ms | 129ms |
+| c=500 CPU µs/req | 551 | 523 | 407 |
+| c=500 peak RSS | 394MB | 233MB | 296MB |
+| c=500 subgraph sockets | ~200 | ~190 | ~830 |
+| c=50 CPU µs/req | 618 | 591 | 451 |
+| c=50 peak RSS | 117MB | 95MB | 104MB |
+One shared pool matches Fusion AOT's memory (233MB) and socket count, but responses wake other threads again: 523 vs 403 µs/req with per-worker pools in shared mode. `per_worker` + pool stays the fast setup.
