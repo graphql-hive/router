@@ -1056,3 +1056,19 @@ session scratchpad (`opt/chunked-output.patch`).
 - e2e `context` (39 tests) all pass with slots forced on, no fallback but the batch fetches
   with context (5, next). `cargo test_all` 2112/2112, e2e 839/840 with slots on and off. Bench
   unchanged.
+
+### 2026-11-07 — coverage: `@fromContext` on batch fetches; no compile fallbacks left
+
+- A `BatchFetch` whose aliases have context no longer falls back (`Run::prepare_batch_context`),
+  like `prepare_batch_fetch_job_state` + `prepare_batch_requests`: each alias groups its spots
+  (`context_groups` over all its paths), wave `n` sends group `n` of every alias (one with
+  fewer groups sends its first group's values and `[]`, aliases sharing a representations
+  variable send it once), waves go up to `max_context_groups` per request, aliased when more
+  than one; the first wave's alias merges take the later waves' entities at per-alias offsets.
+  `Unaliasing` now keeps counts per response key (batch aliases send different numbers).
+- e2e with slots forced on and a temporary tally: 1099 queries, 425 subscription events, 27
+  mutations on slots, no compile failure. The only fallback left is a router with plugins that
+  hook execution (see the TODO on `OnExecuteEndHookPayload::data`). `cargo test_all`
+  2112/2112, e2e 839/840 with slots on and off. Bench unchanged.
+- The disk filled up during this round (`target/` is 120+ GB); the session's scratch binaries
+  and profiles were deleted to make room.
