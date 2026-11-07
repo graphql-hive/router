@@ -93,6 +93,8 @@ mod router_timeout;
 #[cfg(test)]
 mod skip_entity_fetch;
 #[cfg(test)]
+mod slot_plugins;
+#[cfg(test)]
 mod storage;
 #[cfg(test)]
 mod subgraph_compression;

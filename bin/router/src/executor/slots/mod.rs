@@ -103,7 +103,7 @@ impl SlotPlanCell {
         root_type: &str,
         introspection: Option<&OperationDefinition>,
     ) -> Option<Arc<SlotPlan>> {
-        let seed = introspection.map_or(Seed::None, Seed::Introspection);
+        let seed = introspection.map_or(Seed::None, Seed::Operation);
         let compile = || compile_or_log(plan, projection, schema, root_type, seed);
         let first = self.first.get_or_init(compile).as_ref()?;
         if first.projection.same_as(projection) {
