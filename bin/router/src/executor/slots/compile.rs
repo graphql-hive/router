@@ -48,6 +48,8 @@ pub struct SlotPlan {
     /// For each field of the projection plan, its slot in the layout of the object it's read
     /// from, and the layout of the objects under it.
     pub fields: Box<[FieldSlot]>,
+    /// Whether the root fields can take the writer's fast loop, see [`FieldSlot::SIMPLE`]
+    pub root_simple: bool,
     /// For each field of the projection plan, its type in the schema when the object it's read
     /// from is of a known object type. Saves the writer two schema lookups per object for a
     /// type condition on the field's value.
@@ -61,6 +63,8 @@ pub struct FieldSlot {
     /// `"key":` padded to a fixed window, so the writer copies it with one fixed-size store.
     /// `key_len` is 0 when the key doesn't fit, then the writer writes it the slow way.
     pub key_len: u8,
+    /// [`FieldSlot::SIMPLE`]
+    pub flags: u8,
     pub key: [u8; KEY_WINDOW],
 }
 
@@ -68,6 +72,10 @@ pub struct FieldSlot {
 pub const KEY_WINDOW: usize = 24;
 
 impl FieldSlot {
+    /// The field's children can take the writer's fast loop: none of them has a type guard,
+    /// a condition or is `__typename`, and every key fits the window.
+    pub const SIMPLE: u8 = 1;
+
     fn new(slot: u16, key: &str) -> Self {
         let mut window = [0; KEY_WINDOW];
         let len = key.len() + 3;
@@ -75,6 +83,7 @@ impl FieldSlot {
             return Self {
                 slot,
                 key_len: 0,
+                flags: 0,
                 key: window,
             };
         }
@@ -85,6 +94,7 @@ impl FieldSlot {
         Self {
             slot,
             key_len: len as u8,
+            flags: 0,
             key: window,
         }
     }
@@ -265,6 +275,9 @@ pub struct ShapeObject {
 pub struct ShapeNode {
     /// First 8 bytes of the quoted key, zero padded
     pub prefix: u64,
+    /// `"key":`, zero padded, when it fits in 16 bytes; 0 when it doesn't
+    pub key_colon: u128,
+
     pub key_start: u32,
     pub key_len: u32,
     pub slot: u16,
@@ -292,6 +305,8 @@ pub struct Verify {
     pub object: u32,
     /// For an enum: the values a string may be
     pub enum_values: Option<Box<[Box<str>]>>,
+    /// A custom scalar, kept as the JSON it came as: any value but a null where it's non-null
+    pub any: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -730,6 +745,26 @@ impl<'p> Compiler<'p> {
             &mut field_types,
         );
 
+        let simple = |range: crate::executor::projection::plan::Range, fields: &[FieldSlot]| {
+            projection
+                .fields(range)
+                .iter()
+                .enumerate()
+                .all(|(offset, field)| {
+                    field.parent_guard.is_none()
+                        && field.condition.is_none()
+                        && !field.is_typename()
+                        && fields[range.start as usize + offset].key_len != 0
+                })
+        };
+        let root_simple = simple(projection.root_range(), &fields);
+        for index in 0..fields.len() {
+            let record = projection.field_at(index);
+            if record.has_children() && simple(record.children, &fields) {
+                fields[index].flags |= FieldSlot::SIMPLE;
+            }
+        }
+
         // subtrees the client gets as the subgraph sends them
         let mut writers: AHashMap<u32, Vec<(i64, u32)>> = AHashMap::default();
         for (id, program) in &fetches {
@@ -755,6 +790,7 @@ impl<'p> Compiler<'p> {
             layouts: layouts.into(),
             root_layout,
             fields: fields.into(),
+            root_simple,
             field_types: field_types.into(),
             fetches,
         })
@@ -1115,14 +1151,15 @@ impl Passthrough<'_> {
         let mut verify_object = VerifyObject::default();
         for (offset, child) in fields.iter().enumerate() {
             let node = start + offset as u32;
-            let child_object = self.fetches[&id].shape.nodes[node as usize].object;
+            let child_node = self.fetches[&id].shape.nodes[node as usize];
             let verify = if child.has_children() {
-                self.verify(child, id, child_object)
+                self.verify(child, id, child_node.object)
             } else {
                 Verify {
                     shape: plan.shape(child.nullability()).into(),
                     object: NO_OBJECT,
                     enum_values: self.enum_values(child),
+                    any: child_node.raw,
                 }
             };
             verify_object.fields.push((node, verify));
@@ -1134,6 +1171,7 @@ impl Passthrough<'_> {
             shape: plan.shape(field.nullability()).into(),
             object: index,
             enum_values: None,
+            any: false,
         }
     }
 }
@@ -1175,8 +1213,14 @@ impl<'d, 'a> ShapeBuilder<'d, 'a> {
             let mut prefix = [0u8; 8];
             let head = quoted.len().min(8);
             prefix[..head].copy_from_slice(&quoted.as_bytes()[..head]);
+            let mut key_colon = [0u8; 16];
+            if quoted.len() < 16 {
+                key_colon[..quoted.len()].copy_from_slice(quoted.as_bytes());
+                key_colon[quoted.len()] = b':';
+            }
             self.shape.nodes.push(ShapeNode {
                 prefix: u64::from_le_bytes(prefix),
+                key_colon: u128::from_le_bytes(key_colon),
                 key_start,
                 key_len: quoted.len() as u32,
                 slot: NO_SLOT,

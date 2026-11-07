@@ -283,6 +283,12 @@ impl ProjectionPlan {
             / size_of::<FieldRecord>()
     }
 
+    /// The field at `index` in the field table
+    #[inline]
+    pub(crate) fn field_at(&self, index: usize) -> &FieldRecord {
+        &self.fields[index]
+    }
+
     /// How many fields the plan has, at all levels
     #[inline]
     pub(crate) fn field_count(&self) -> usize {

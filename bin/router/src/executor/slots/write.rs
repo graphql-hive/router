@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use bytes::BufMut;
 use sonic_rs::JsonValueTrait;
 
-use super::compile::{FieldSlot, SlotPlan, NO_SLOT};
+use super::compile::{FieldSlot, SlotPlan, KEY_WINDOW, NO_SLOT};
 use super::store::{Arena, Slot};
 use crate::executor::execution::plan::ExecutionResultExtensions;
 use crate::executor::introspection::schema::SchemaMetadata;
@@ -87,12 +87,12 @@ pub fn write_response(
     if let Slot::Object { first, .. } = data {
         let checkpoint = out.buffer.len();
         let mut opened = false;
-        let null = out.object_fields(
-            first,
-            plan.root_range(),
-            &TypeName::Resolved(operation_type_name),
-            &mut opened,
-        )?;
+        let type_name = TypeName::Resolved(operation_type_name);
+        let null = if slots.root_simple {
+            out.simple_fields(first, plan.root_range(), &type_name, &mut opened)?
+        } else {
+            out.object_fields(first, plan.root_range(), &type_name, &mut opened)?
+        };
         if null == Null::Bubble {
             out.buffer.truncate(checkpoint);
             out.buffer.extend_from_slice(b"null");
@@ -216,7 +216,13 @@ impl<'a> Writer<'a> {
                     cached: OnceCell::new(),
                 };
                 let mut opened = false;
-                let null = self.object_fields(first, field.children, &type_name, &mut opened)?;
+                let simple =
+                    self.slots.fields[self.plan.field_index(field)].flags & FieldSlot::SIMPLE != 0;
+                let null = if simple {
+                    self.simple_fields(first, field.children, &type_name, &mut opened)?
+                } else {
+                    self.object_fields(first, field.children, &type_name, &mut opened)?
+                };
                 if null == Null::Bubble {
                     self.buffer.truncate(checkpoint);
                     self.buffer.extend_from_slice(b"null");
@@ -264,6 +270,86 @@ impl<'a> Writer<'a> {
                 );
                 Ok(Null::Keep)
             }
+        }
+    }
+
+    /// [`Self::object_fields`] for fields with no type guards, conditions or `__typename`
+    /// (see [`FieldSlot::SIMPLE`]): nothing to check before writing, and scalars are copied
+    /// right here.
+    fn simple_fields(
+        &mut self,
+        first: u32,
+        range: Range,
+        parent: &TypeName<'a, '_>,
+        opened: &mut bool,
+    ) -> Result<Null, ProjectionError> {
+        let plan = self.plan;
+        let fields = plan.fields(range);
+        let field_slots = &self.slots.fields[range.start as usize..][..fields.len()];
+        for (field, field_slot) in fields.iter().zip(field_slots) {
+            let value = if field_slot.slot == NO_SLOT {
+                Slot::Missing
+            } else {
+                self.arena.slots[(first + field_slot.slot as u32) as usize]
+            };
+            // one reservation for the separator, the key and a short value, then plain stores
+            self.buffer.reserve(1 + KEY_WINDOW + VALUE_WINDOW);
+            let separator = if *opened { b',' } else { b'{' };
+            *opened = true;
+            // SAFETY: reserved above, and every byte is written before the length covers it
+            unsafe {
+                let end = self.buffer.as_mut_ptr().add(self.buffer.len());
+                end.write(separator);
+                std::ptr::copy_nonoverlapping(field_slot.key.as_ptr(), end.add(1), KEY_WINDOW);
+                self.buffer
+                    .set_len(self.buffer.len() + 1 + field_slot.key_len as usize);
+            }
+            let null = if field.is_null_value() {
+                self.put_reserved(b"null");
+                Null::Bubble
+            } else {
+                match value {
+                    Slot::Raw(raw) => {
+                        let body = &self.arena.bodies[raw.body as usize];
+                        let (start, len) = (raw.start as usize, raw.len as usize);
+                        match body.get(start..start + VALUE_WINDOW) {
+                            // SAFETY: reserved above, and only `len` bytes are counted
+                            Some(window) if len <= VALUE_WINDOW => unsafe {
+                                let end = self.buffer.as_mut_ptr().add(self.buffer.len());
+                                std::ptr::copy_nonoverlapping(window.as_ptr(), end, VALUE_WINDOW);
+                                self.buffer.set_len(self.buffer.len() + len);
+                            },
+                            _ => self.buffer.extend_from_slice(&body[start..start + len]),
+                        }
+                        Null::Keep
+                    }
+                    Slot::Null | Slot::Missing => {
+                        self.put_reserved(b"null");
+                        Null::Bubble
+                    }
+                    _ => {
+                        let nullability = matches!(value, Slot::List { .. })
+                            .then(|| ShapeCursor::new(plan.shape(field.nullability())));
+                        self.value(value, field, parent, nullability)?
+                    }
+                }
+            };
+            if null == Null::Bubble && field.is_non_null() {
+                return Ok(Null::Bubble);
+            }
+        }
+        Ok(Null::Keep)
+    }
+
+    /// Appends a few bytes the caller already reserved room for
+    #[inline(always)]
+    fn put_reserved(&mut self, bytes: &[u8; 4]) {
+        debug_assert!(self.buffer.capacity() - self.buffer.len() >= 4);
+        // SAFETY: the caller reserved the room
+        unsafe {
+            let end = self.buffer.as_mut_ptr().add(self.buffer.len());
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), end, 4);
+            self.buffer.set_len(self.buffer.len() + 4);
         }
     }
 

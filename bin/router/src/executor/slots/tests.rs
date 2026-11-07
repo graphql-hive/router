@@ -69,12 +69,9 @@ enum State @join__type(graph: A) {
 "#;
 
 /// Runs `body` as the response of the only fetch of `query`, through both pipelines. Also
-/// returns how many subtrees the slot plan may pass through.
-fn both(query: &str, body: &str) -> (String, String, usize) {
-    both_with(TYPES, query, body)
-}
-
-fn both_with(types: &str, query: &str, body: &str) -> (String, String, usize) {
+/// returns how many subtrees the slot plan may pass through, and which root fields of `data`
+/// the parser kept as one raw range (passed through).
+fn both_with(types: &str, query: &str, body: &str) -> (String, String, usize, Vec<String>) {
     let sdl = format!("{HEADER}{types}");
     let supergraph = Supergraph::from_sdl("test", &sdl, Default::default()).expect("builds");
     let planner = &supergraph.planner;
@@ -123,6 +120,7 @@ fn both_with(types: &str, query: &str, body: &str) -> (String, String, usize) {
     let mut arena = Arena::default();
     let width = slots.layouts[slots.root_layout as usize].width();
     let first = arena.object(width);
+    let mut raw = Vec::new();
     let new = match parse_body(&mut arena, &slots.layouts, &program.shape, &bytes) {
         Some(parsed) => {
             if let Slot::Object {
@@ -130,6 +128,11 @@ fn both_with(types: &str, query: &str, body: &str) -> (String, String, usize) {
                 first: data,
             } = parsed.data
             {
+                for (slot, key) in slots.layouts[layout as usize].keys.iter().enumerate() {
+                    if let Slot::Raw(_) = arena.slots[data as usize + slot] {
+                        raw.push(key.to_string());
+                    }
+                }
                 arena.merge_object(&slots.layouts, layout, first, data);
             }
             let output = write_response(
@@ -151,7 +154,7 @@ fn both_with(types: &str, query: &str, body: &str) -> (String, String, usize) {
         }
         None => "invalid".to_string(),
     };
-    (old, new, passthroughs)
+    (old, new, passthroughs, raw)
 }
 
 fn json_equal(a: &sonic_rs::Value, b: &sonic_rs::Value) -> bool {
@@ -173,10 +176,16 @@ fn json_equal(a: &sonic_rs::Value, b: &sonic_rs::Value) -> bool {
 
 #[track_caller]
 fn same(query: &str, body: &str) -> usize {
-    let (old, new, passthroughs) = both(query, body);
+    same_with(TYPES, query, body).0
+}
+
+/// [`same`] for other types. Also returns the root fields that were passed through.
+#[track_caller]
+fn same_with(types: &str, query: &str, body: &str) -> (usize, Vec<String>) {
+    let (old, new, passthroughs, raw) = both_with(types, query, body);
     if old == "invalid" || new == "invalid" {
         assert_eq!(old, new, "one pipeline rejected the body\nbody: {body}");
-        return passthroughs;
+        return (passthroughs, raw);
     }
     let a: sonic_rs::Value = sonic_rs::from_str(&old).expect("old output is JSON");
     let b: sonic_rs::Value = sonic_rs::from_str(&new).expect("new output is JSON");
@@ -184,7 +193,7 @@ fn same(query: &str, body: &str) -> usize {
         json_equal(&a, &b),
         "outputs differ\nbody: {body}\nold:  {old}\nnew:  {new}"
     );
-    passthroughs
+    (passthroughs, raw)
 }
 
 const QUERY: &str = "{ products { id name price state tags variants { sku size } meta { label states } } product { id } }";
@@ -266,8 +275,50 @@ fn a_position_two_fields_read_is_never_passed_through() {
         {"__typename":"Gadget","detail":{"__typename":"BasicDetail","meta":{"a":"A2"}}},
         {"__typename":"Widget","detail":{"__typename":"RichDetail","meta":{"a":"A3","b":"B3"}}}
     ]}}"#;
-    let (old, new, _) = both_with(ABSTRACT, query, body);
+    let (old, new, _, _) = both_with(ABSTRACT, query, body);
     let a: sonic_rs::Value = sonic_rs::from_str(&old).expect("JSON");
     let b: sonic_rs::Value = sonic_rs::from_str(&new).expect("JSON");
     assert!(json_equal(&a, &b), "old: {old}\nnew: {new}");
+}
+
+const JSON_SCALAR: &str = r#"
+scalar JSON @join__type(graph: A)
+type Query @join__type(graph: A) { products: [Product!]! }
+type Product @join__type(graph: A) { id: ID! attrs: [Attr!]! }
+type Attr @join__type(graph: A) { name: String! value: JSON! }
+"#;
+
+#[test]
+fn a_custom_scalar_passes_through_whatever_json_it_holds() {
+    let query = "{ products { id attrs { name value } } }";
+    let attrs = |value: &str| {
+        format!(
+            r#"{{"data":{{"products":[{{"id":"1","attrs":[{{"name":"a","value":{value}}}]}}]}}}}"#
+        )
+    };
+    for value in [
+        r#""text""#,
+        "1.5",
+        r#"["a",{"b":[1]}]"#,
+        r#"{"x":null}"#,
+        "true",
+    ] {
+        let (_, raw) = same_with(JSON_SCALAR, query, &attrs(value));
+        assert_eq!(raw, ["products"], "passed through with value {value}");
+    }
+    // null where the scalar is non-null bubbles, so it can't be passed through
+    let (_, raw) = same_with(JSON_SCALAR, query, &attrs("null"));
+    assert!(raw.is_empty());
+}
+
+#[test]
+fn a_list_keeps_its_items_right_after_a_failed_check() {
+    // the first item's keys come in another order: the check fails, and the parser reads the
+    // rest of the list the normal way without checking again; the output is the same
+    let body = r#"{"data":{"products":[
+        {"name":"a","id":"1","price":1,"state":"ACTIVE","tags":[],"variants":[],"meta":null},
+        {"id":"2","name":"b","price":2,"state":"RETIRED","tags":["t"],"variants":[{"sku":"s","size":1}],"meta":{"label":"l","states":[]}},
+        {"id":"3","name":"c","price":3,"state":"NOPE","tags":null,"variants":[],"meta":null}
+    ],"product":null}}"#;
+    assert_eq!(same(QUERY, body), 4);
 }
