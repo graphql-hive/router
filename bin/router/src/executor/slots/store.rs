@@ -64,6 +64,8 @@ pub struct Arena {
     pub targets: Vec<Vec<(Slot, u32)>>,
     /// Entity reuse: fingerprint of an entity already in the response, its object and source
     pub known: AHashMap<u64, (u32, u32)>,
+    /// Passthrough checks that failed in the body being parsed, by `Shape::verifies` index
+    pub failed: Vec<bool>,
 }
 
 /// Arenas kept for the next request on this thread. A request takes one and gives it back
@@ -117,6 +119,7 @@ impl Arena {
         self.ranges.clear();
         self.prints.clear();
         self.known.clear();
+        self.failed.clear();
     }
 
     #[inline]

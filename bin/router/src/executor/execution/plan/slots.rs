@@ -435,6 +435,7 @@ impl<'p> Run<'p> {
         };
         let mut known = std::mem::take(&mut arena.known);
         known.clear();
+        let mut key_slot_cache = SmallVec::new();
         let reuse = alias.reuse.as_ref().filter(|_| reuse);
         if let Some(reuse) = reuse {
             // the entities already in the response, by what their representation would read
@@ -518,7 +519,13 @@ impl<'p> Run<'p> {
                             requires: &alias.requires,
                             hasher: Mix::new(),
                         };
-                        print.value(spot, alias.requires.reads_root.clone(), keys);
+                        let key_slots = match (keys, spot) {
+                            (Some(keys), Slot::Object { layout, .. }) => {
+                                Some(key_slots(&mut key_slot_cache, layouts, keys, layout))
+                            }
+                            _ => None,
+                        };
+                        print.value(spot, alias.requires.reads_root.clone(), key_slots);
                         let fingerprint = print.hasher.finish();
                         if let Some(&entity) = prints.get(&fingerprint) {
                             path_targets.push((spot, entity));
@@ -1249,6 +1256,35 @@ fn holds_representation(arena: &Arena, requires: &Requires, first: u32) -> bool 
         })
 }
 
+/// The slots in `layout` of every key field of every type in `keys`, sorted. A spot's
+/// complete-key check reads the presence of some of these, depending on its type.
+fn key_slots<'c>(
+    cache: &'c mut SmallVec<[(u32, Vec<u16>); 2]>,
+    layouts: &[Layout],
+    keys: &KeysByType,
+    layout: u32,
+) -> &'c [u16] {
+    let index = match cache.iter().position(|(cached, _)| *cached == layout) {
+        Some(index) => index,
+        None => {
+            let layout_keys = &layouts[layout as usize];
+            let mut slots: Vec<u16> = keys
+                .values()
+                .flatten()
+                .flatten()
+                .map(|field| layout_keys.slot(field))
+                // a key field the layout has no slot for is never there
+                .filter(|slot| *slot != NO_SLOT)
+                .collect();
+            slots.sort_unstable();
+            slots.dedup();
+            cache.push((layout, slots));
+            cache.len() - 1
+        }
+    };
+    &cache[index].1
+}
+
 /// Hashes everything [`Representation`] reads to write a spot: its `__typename`, which key
 /// fields it has, and the values of the selected fields, recursively. The writer is a function
 /// of these, so two spots with the same fingerprint get the same representation (64-bit hash,
@@ -1262,7 +1298,8 @@ struct Fingerprint<'r> {
 
 impl<'r> Fingerprint<'r> {
     /// `reads` are the fields to hash when `value` is an object, see `Requires::reads`
-    fn value(&mut self, value: Slot, reads: std::ops::Range<u32>, keys: Option<&KeysByType>) {
+    /// `key_slots`: the spot's slots of every key field of the subgraph, see [`key_slots`]
+    fn value(&mut self, value: Slot, reads: std::ops::Range<u32>, key_slots: Option<&[u16]>) {
         match value {
             Slot::Missing => self.hasher.word(0),
             Slot::Null => self.hasher.word(1),
@@ -1273,7 +1310,7 @@ impl<'r> Fingerprint<'r> {
                 self.hasher.word(5 | (len as u64) << 8);
                 for i in 0..len {
                     let item = self.arena.items[(start + i) as usize];
-                    self.value(item, reads.clone(), keys);
+                    self.value(item, reads.clone(), key_slots);
                 }
             }
             Slot::Object { layout, first } => {
@@ -1296,17 +1333,21 @@ impl<'r> Fingerprint<'r> {
                     Some(Slot::Raw(raw)) => self.hasher.bytes(7, self.arena.raw(raw)),
                     _ => self.hasher.word(8),
                 }
-                // which slots the object has: covers the complete-key check, which reads the
-                // key fields' presence, without looking the type's keys up for every spot
-                if keys.is_some() {
-                    let slots = &self.arena.slots[first as usize..(first + width) as usize];
-                    for chunk in slots.chunks(64) {
-                        let mut mask = 0u64;
-                        for (bit, slot) in chunk.iter().enumerate() {
-                            mask |= ((*slot != Slot::Missing) as u64) << bit;
+                // what else the representation looks at: whether the object has anything at
+                // all, and which key fields it has (the complete-key check)
+                if let Some(key_slots) = key_slots {
+                    let block = &self.arena.slots[first as usize..(first + width) as usize];
+                    let mut mask = block.iter().any(|slot| *slot != Slot::Missing) as u64;
+                    let mut bit = 1;
+                    for &slot in key_slots {
+                        if bit == 64 {
+                            self.hasher.word(mask);
+                            (mask, bit) = (0, 0);
                         }
-                        self.hasher.word(mask);
+                        mask |= ((block[slot as usize] != Slot::Missing) as u64) << bit;
+                        bit += 1;
                     }
+                    self.hasher.word(mask);
                 }
                 let requires = self.requires;
                 for read in &requires.reads[reads.start as usize..reads.end as usize] {

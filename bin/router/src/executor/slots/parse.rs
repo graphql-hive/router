@@ -34,6 +34,8 @@ pub fn parse_body(
 ) -> Option<ParsedBody> {
     let index = arena.bodies.len() as u32;
     arena.bodies.push(body.clone());
+    arena.failed.clear();
+    arena.failed.resize(shape.verifies.len(), false);
     let scratch = arena.scratch.len();
     let mut parser = Parser {
         input: body,
@@ -50,7 +52,9 @@ pub fn parse_body(
     parsed
 }
 
+#[cfg(not(target_arch = "aarch64"))]
 const ONES: u64 = 0x0101_0101_0101_0101;
+#[cfg(not(target_arch = "aarch64"))]
 const HIGH: u64 = 0x8080_8080_8080_8080;
 
 #[inline(always)]
@@ -67,6 +71,7 @@ fn word(input: &[u8], pos: usize) -> u64 {
 }
 
 /// The index of the first quote, backslash or control byte in the chunk, 8 when none.
+#[cfg(not(target_arch = "aarch64"))]
 #[inline(always)]
 fn special(chunk: u64) -> usize {
     let zero = |bytes: u64| bytes.wrapping_sub(ONES) & !bytes & HIGH;
@@ -137,6 +142,11 @@ impl Parser<'_, '_> {
     #[inline]
     fn peek(&self) -> Option<u8> {
         self.input.get(self.pos).copied()
+    }
+
+    #[inline]
+    fn peek_at(&self, pos: usize) -> Option<u8> {
+        self.input.get(pos).copied()
     }
 
     #[inline]
@@ -247,6 +257,17 @@ impl Parser<'_, '_> {
         let nodes = &shape.nodes[start as usize..end as usize];
         let mut next = 0usize;
         loop {
+            // compact JSON, fields in the order asked: the next key and its colon are here
+            if let Some(node) = nodes.get(next).filter(|node| self.at_key_colon(node)) {
+                self.pos += node.key_len as usize + 1;
+                next += 1;
+                self.field(node, first)?;
+                if !self.more(b'}')? {
+                    self.depth -= 1;
+                    return Some(result);
+                }
+                continue;
+            }
             self.whitespace();
             let word = word(self.input, self.pos);
             let found = if next < nodes.len() && self.starts_with_key(word, &nodes[next]) {
@@ -265,21 +286,7 @@ impl Parser<'_, '_> {
                     next = index + 1;
                     self.pos += node.key_len as usize;
                     self.expect(b':')?;
-                    let value = if node.raw {
-                        self.whitespace();
-                        let start = self.pos;
-                        self.skip_value()?;
-                        self.raw_slot(start)
-                    } else if node.verify != NO_OBJECT {
-                        self.passthrough(node.verify, node.object)?
-                    } else if node.object != NO_OBJECT {
-                        self.shaped(node.object)?
-                    } else {
-                        self.leaf()?
-                    };
-                    if node.slot != NO_SLOT {
-                        self.arena.slots[(first + node.slot as u32) as usize] = value;
-                    }
+                    self.field(&node, first)?;
                 }
                 None => {
                     // a key we didn't ask for
@@ -295,19 +302,54 @@ impl Parser<'_, '_> {
         }
     }
 
+    /// Reads a field's value, after its key, into its slot of the object at `first`
+    #[inline]
+    fn field(&mut self, node: &ShapeNode, first: u32) -> Option<()> {
+        let value = if node.raw {
+            self.whitespace();
+            let start = self.pos;
+            self.skip_value()?;
+            self.raw_slot(start)
+        } else if node.verify != NO_OBJECT {
+            self.passthrough(node.verify, node.object)?
+        } else if node.object != NO_OBJECT {
+            self.shaped(node.object)?
+        } else {
+            self.leaf()?
+        };
+        if node.slot != NO_SLOT {
+            self.arena.slots[(first + node.slot as u32) as usize] = value;
+        }
+        Some(())
+    }
+
     /// A value the client may get as the subgraph sent it (see `compile::Verify`): kept as
     /// one raw range when it checks out, read the normal way when it doesn't.
     fn passthrough(&mut self, verify: u32, object: u32) -> Option<Slot> {
+        // a check that failed once in this body likely fails for the next item of the list
+        // too (a subgraph that sends another key order, say): don't read every one twice
+        if self.arena.failed[verify as usize] {
+            return self.shaped(object);
+        }
         self.whitespace();
         let (start, depth) = (self.pos, self.depth);
         let shape = self.shape;
+        let index = verify;
         let verify = &shape.verifies[verify as usize];
         if self.peek() != Some(b'n')
             && self
-                .check(&verify.shape, verify.object, verify.enum_values.as_deref())
+                .check(
+                    &verify.shape,
+                    verify.object,
+                    verify.enum_values.as_deref(),
+                    verify.any,
+                )
                 .is_some()
         {
             return Some(self.raw_slot(start));
+        }
+        if self.peek_at(start) != Some(b'n') {
+            self.arena.failed[index as usize] = true;
         }
         self.pos = start;
         self.depth = depth;
@@ -321,6 +363,7 @@ impl Parser<'_, '_> {
         nullability: &[u8],
         object: u32,
         enum_values: Option<&[Box<str>]>,
+        any: bool,
     ) -> Option<()> {
         // see `ShapeFlags`
         const LIST: u8 = 1;
@@ -332,6 +375,8 @@ impl Parser<'_, '_> {
                 self.literal(b"null", ())?;
                 (flags & NON_NULL == 0).then_some(())
             }
+            // a custom scalar can be any JSON, a list or an object too
+            _ if any => self.skip_value(),
             b'[' => {
                 if flags & LIST == 0 {
                     return None;
@@ -342,7 +387,7 @@ impl Parser<'_, '_> {
                 }
                 self.enter()?;
                 loop {
-                    self.check(&nullability[1..], object, enum_values)?;
+                    self.check(&nullability[1..], object, enum_values, false)?;
                     if !self.more(b']')? {
                         break;
                     }
@@ -369,14 +414,32 @@ impl Parser<'_, '_> {
                 let shape = self.shape;
                 let fields = &shape.verify_objects[object as usize].fields;
                 for (index, (node, verify)) in fields.iter().enumerate() {
-                    self.whitespace();
                     let node = &shape.nodes[*node as usize];
-                    if !self.starts_with_key(word(self.input, self.pos), node) {
-                        return None;
+                    if self.at_key_colon(node) {
+                        // compact JSON: the key and the colon in one compare
+                        self.pos += node.key_len as usize + 1;
+                    } else {
+                        self.whitespace();
+                        if !self.starts_with_key(word(self.input, self.pos), node) {
+                            return None;
+                        }
+                        self.pos += node.key_len as usize;
+                        self.expect(b':')?;
                     }
-                    self.pos += node.key_len as usize;
-                    self.expect(b':')?;
-                    self.check(&verify.shape, verify.object, verify.enum_values.as_deref())?;
+                    if verify.object == NO_OBJECT
+                        && verify.enum_values.is_none()
+                        && self.peek() == Some(b'"')
+                    {
+                        // most values are plain strings: straight to the scan
+                        self.string()?;
+                    } else {
+                        self.check(
+                            &verify.shape,
+                            verify.object,
+                            verify.enum_values.as_deref(),
+                            verify.any,
+                        )?;
+                    }
                     // a key after the last one, or the end before it
                     if self.more(b'}')? == (index + 1 == fields.len()) {
                         return None;
@@ -387,6 +450,20 @@ impl Parser<'_, '_> {
             }
             _ => self.skip_value(),
         }
+    }
+
+    /// Whether the input at `pos` is the node's `"key":`
+    #[inline(always)]
+    fn at_key_colon(&self, node: &ShapeNode) -> bool {
+        if node.key_colon == 0 {
+            return false;
+        }
+        let Some(bytes) = self.input.get(self.pos..self.pos + 16) else {
+            return false;
+        };
+        let word = u128::from_le_bytes(bytes.try_into().expect("16 bytes"));
+        let len = node.key_len as usize + 1;
+        word & (u128::MAX >> (128 - 8 * len)) == node.key_colon
     }
 
     /// Whether the input at `pos` starts with the node's quoted key, see
@@ -500,30 +577,20 @@ impl Parser<'_, '_> {
         let mut end = start;
         let mut escaped = false;
         let mut non_ascii = false;
-        let mut steps = 2;
+        let mut first = true;
         loop {
-            if steps > 0 {
-                steps -= 1;
-                let chunk = word(self.input, end);
-                non_ascii |= chunk & HIGH != 0;
-                let at = special(chunk);
+            if first {
+                // most strings are short: one 16 byte step, then the long scan
+                first = false;
+                let (at, high) = chunk16(self.input, end);
+                non_ascii |= high;
                 end += at;
-                if at == 8 {
+                if at == 16 {
                     continue;
                 }
             } else {
-                let from = end;
-                end += memchr::memchr2(b'"', b'\\', self.input.get(end..)?)?;
-                // a min/max reduction, which the compiler vectorizes (a loop of `|=` on bools
-                // it didn't)
-                let (low, high) = self.input[from..end]
-                    .iter()
-                    .fold((u8::MAX, 0u8), |(low, high), &byte| {
-                        (low.min(byte), high.max(byte))
-                    });
-                if low < 0x20 {
-                    return None;
-                }
+                let mut high = 0;
+                end = scan(self.input, end, &mut high)?;
                 non_ascii |= high >= 0x80;
             }
             match *self.input.get(end)? {
@@ -601,6 +668,139 @@ impl Parser<'_, '_> {
         }
         Some(())
     }
+}
+
+/// Where the first quote, backslash or control byte is in the 16 bytes at `pos` (16 when
+/// none), and whether any byte before it is non-ASCII. Past the end of the input reads as a
+/// control byte.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn chunk16(input: &[u8], pos: usize) -> (usize, bool) {
+    use std::arch::aarch64::*;
+    let Some(bytes) = input.get(pos..pos + 16) else {
+        let mut padded = [0u8; 16];
+        let rest = input.get(pos..).unwrap_or_default();
+        padded[..rest.len()].copy_from_slice(rest);
+        return chunk16(&padded, 0);
+    };
+    // SAFETY: 16 bytes in bounds
+    unsafe {
+        let v = vld1q_u8(bytes.as_ptr());
+        let special = vorrq_u8(
+            vorrq_u8(
+                vceqq_u8(v, vdupq_n_u8(b'"')),
+                vceqq_u8(v, vdupq_n_u8(b'\\')),
+            ),
+            vcltq_u8(v, vdupq_n_u8(0x20)),
+        );
+        let found = nibbles(special);
+        let high = nibbles(vcgeq_u8(v, vdupq_n_u8(0x80)));
+        if found == 0 {
+            return (16, high != 0);
+        }
+        let zeros = found.trailing_zeros();
+        // the high bits of the bytes before the special one
+        (zeros as usize / 4, high & ((1u64 << zeros) - 1) != 0)
+    }
+}
+
+/// 4 bits per byte of a mask, see the ARM blog post "Porting x86 vector bitmask optimizations
+/// to Arm NEON"
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn nibbles(mask: std::arch::aarch64::uint8x16_t) -> u64 {
+    use std::arch::aarch64::*;
+    vget_lane_u64::<0>(vreinterpret_u64_u8(vshrn_n_u16::<4>(vreinterpretq_u16_u8(
+        mask,
+    ))))
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+#[inline(always)]
+fn chunk16(input: &[u8], pos: usize) -> (usize, bool) {
+    let a = word(input, pos);
+    let at = special(a);
+    if at < 8 {
+        return (at, a & HIGH != 0);
+    }
+    let b = word(input, pos + 8);
+    (8 + special(b), (a | b) & HIGH != 0)
+}
+
+/// The first quote, backslash or control byte at or after `pos`, in one pass. ORs the bytes
+/// it looked at into `high`, for the non-ASCII check; that can take in a few bytes past the
+/// one it found, which only means the UTF-8 check runs when it didn't have to.
+/// (`memchr2` and a separate check pass read every byte twice: 4% slower on ct.)
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn scan(input: &[u8], mut pos: usize, high: &mut u8) -> Option<usize> {
+    use std::arch::aarch64::*;
+    // a lane per byte, 0xff where the byte is special
+    #[inline(always)]
+    unsafe fn specials(v: uint8x16_t) -> uint8x16_t {
+        vorrq_u8(
+            vorrq_u8(
+                vceqq_u8(v, vdupq_n_u8(b'"')),
+                vceqq_u8(v, vdupq_n_u8(b'\\')),
+            ),
+            vcltq_u8(v, vdupq_n_u8(0x20)),
+        )
+    }
+    // SAFETY: every load reads 16 bytes that are in bounds
+    unsafe {
+        let mut acc = vdupq_n_u8(0);
+        while pos + 32 <= input.len() {
+            let a = vld1q_u8(input.as_ptr().add(pos));
+            let b = vld1q_u8(input.as_ptr().add(pos + 16));
+            acc = vorrq_u8(acc, vorrq_u8(a, b));
+            let (ma, mb) = (specials(a), specials(b));
+            // a narrowing shift makes the mask one u64: cheaper to test than a max across lanes
+            if nibbles(vorrq_u8(ma, mb)) != 0 {
+                *high |= vmaxvq_u8(acc);
+                let found = nibbles(ma);
+                return Some(if found != 0 {
+                    pos + (found.trailing_zeros() / 4) as usize
+                } else {
+                    pos + 16 + (nibbles(mb).trailing_zeros() / 4) as usize
+                });
+            }
+            pos += 32;
+        }
+        *high |= vmaxvq_u8(acc);
+    }
+    scan_tail(input, pos, high)
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+#[inline]
+fn scan(input: &[u8], pos: usize, high: &mut u8) -> Option<usize> {
+    let end = pos + memchr::memchr2(b'"', b'\\', input.get(pos..)?)?;
+    let (low, max) = input[pos..end]
+        .iter()
+        .fold((u8::MAX, 0u8), |(low, high), &byte| {
+            (low.min(byte), high.max(byte))
+        });
+    *high |= max;
+    if low < 0x20 {
+        // a control byte before the end: point at it, the caller rejects it
+        return input[pos..end]
+            .iter()
+            .position(|&b| b < 0x20)
+            .map(|at| pos + at);
+    }
+    Some(end)
+}
+
+#[cfg(target_arch = "aarch64")]
+fn scan_tail(input: &[u8], mut pos: usize, high: &mut u8) -> Option<usize> {
+    while let Some(&byte) = input.get(pos) {
+        if byte == b'"' || byte == b'\\' || byte < 0x20 {
+            return Some(pos);
+        }
+        *high |= byte;
+        pos += 1;
+    }
+    None
 }
 
 /// Checks the escapes of a string, without the quotes: each is one of `"\/bfnrt` or `u` and

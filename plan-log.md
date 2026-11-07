@@ -796,3 +796,113 @@ Fusion: `DOTNET_PROCESSOR_COUNT=1`, which is not a cap: it still used 1.2–2.4 
 | | fusion-net-11 | 2,035 | 30.2ms | 265MB | 1.25 | 615 |
 | | fusion-aot-11 | 1,928 | 31.9ms | 98MB | 1.22 | 628 |
 0 failed requests.
+
+### 2026-11-07 — where parse / write / representations time goes, and projection-in-data probes
+
+Profile (samply, LTO bench build, timed loop only, inline-aware phase split):
+
+| phase | bench_op reuse on (55.6 µs) | bench_op reuse off (59.8 µs) | ct (759 µs) |
+|---|---|---|---|
+| parse subgraph bodies | 38% | 32% | 76% |
+| write client response | 29% | 29% | 23% (a quarter of it memcpy) |
+| representations | 24% | 23% | 0% |
+| merge | 0.2% | 3.3% | 0% |
+| other (plumbing) | 8% | 11% | 1% |
+
+Floors, measured in the same request (non-LTO): bench_op input 80.6 KB in 7 bodies, one NEON
+pass over every byte 4.5 µs (parse ~20 µs), copying the 87 KB output once 1.6 µs (write ~17 µs).
+ct 3 MB: scan 152 µs (parse ~578), copy 50 µs (write ~180). Both phases cost per value, not per
+byte: bench_op parse runs at ~4 GB/s, ct at ~5 GB/s, about simdjson's range.
+
+Writer probes (`WRITE_EXTRA=<mode>:<n>` writes the response n more times per request; patch in
+the scratchpad, not committed), µs per write, 3 rounds:
+
+| writer | bench_op | ct |
+|---|---|---|
+| current (projection plan + slot table) | 16.9 | 180 |
+| bitmask: walk each block in slot order, a visible/non-null flag per slot, no plan | 14.1 (−17%) | 153 (−15%) |
+| `write_whole` (no projection) | 17.9 | 170 |
+| splice: scalars adjacent in the body with exactly `,"key":` between join one memcpy | −5% | −8% |
+
+- The bitmask writer is an upper bound: per-layout flags can't express positions that share a
+  layout but select different fields (deviation 1), so it wrote 2% too many bytes on bench_op.
+- Memoizing written objects by (object, selection): 0 hits. All 389 objects bench_op writes are
+  distinct blocks; the 93% of output bytes that repeat earlier subtrees are equal values, a
+  property of the fixture data, not shared objects.
+- Splice: only 21% (bench_op) / 25% (ct) of walked scalars join a run, the client order
+  interleaves subgraphs and hidden key fields.
+
+Parser probe: one NEON pass for quote / backslash / control / non-ASCII instead of `memchr2`
++ the min/max check pass, for strings past 16 bytes (`PARSE_FUSED=1`): ct 804 → 772 µs (−4%,
+3 rounds), bench_op unchanged (short strings take the 8-byte steps). Slot tests pass with it on.
+
+### 2026-11-07 — toward −50%: kept changes (paired, non-LTO, 3 rounds)
+
+Harness: `pipeline_benches`, a baseline binary of HEAD vs the working tree, both checking client
+output and subgraph request bodies against the references. ct's body is the 3 MB payload in
+the order the fetch asks for (a subgraph answers in that order); the old recorded payload is
+also measured ("old order").
+
+| workload | before | after | change |
+|---|---|---|---|
+| bench_op | 61.6 µs | 54.4 µs | −11.7% |
+| bench_op, entity reuse | 56.8 µs | 50.2 µs | −11.6% |
+| ct | 790 µs | 477 µs | −39.6% |
+| ct, body in the old fetch order | 789 µs | 624 µs | −21% |
+
+Peak bytes and allocations per request are unchanged (ct: 3.5 MB, mostly the output buffer).
+
+What did it, in order:
+- **Writer fast loop** (`Writer::simple_fields`, `FieldSlot::SIMPLE`): children with no type
+  guard, condition or `__typename` skip those checks, copy scalars inline, and reserve once per
+  field for separator + key + short value. bench_op −3.5 µs, then −1 µs.
+- **String scan in one NEON pass** (`scan`, `chunk16`): a 16-byte step first, then 32 bytes per
+  step, looking for quote / backslash / control and collecting the high bits for the UTF-8
+  check. Replaces two SWAR steps + `memchr2` + a min/max check pass. ct −10–15%.
+- **Custom scalars in passthrough subtrees** (`Verify::any`): a JSON scalar holding a list or an
+  object failed the passthrough check, and the parser re-read the subtree. ct did that 4,500 times
+  per request (`attributesRaw.value`).
+- **Failed-check memo** (`Arena::failed`): after a passthrough check fails once in a body, the
+  rest of the body skips it. A subgraph that orders keys differently costs one failed check, not
+  one per list item (ct with mismatched order: 803 → 723 µs at that point).
+- **Order-dependent fragment minification** (`minification/selection_id.rs`, planner): fetch
+  documents shared one fragment between `{ value locale }` and `{ locale value }`, so the subgraph
+  answered in the first order and nothing above those leaves could pass through. Now only
+  identical, same-order selection sets share a fragment. ct's fetch document grows by 45 bytes
+  (one more fragment); one planner snapshot changed (`requires_fragments.rs`). With it, all of
+  ct passes through: the writer is one 3 MB copy.
+- **`"key":` in one 16-byte compare** (`ShapeNode::key_colon`, `at_key_colon`) in the passthrough
+  check and in `shaped_object`: ct −4.5%, bench_op −0.6 µs.
+- **Plain strings straight to the scan** in the passthrough check: ct −6.5%.
+- **Fingerprint presence mask over key slots only** (`key_slots`): the representation reads the
+  presence of key fields (and whether the object has anything), so only those are hashed, not
+  every slot of the layout. bench_op ~−1 µs.
+
+Tried and dropped (no gain or a loss): a 64-byte scan, a 16-byte-only scan, a SWAR 8-byte step
+before the NEON one (ct +40 µs), `,"key":` with the comma in `shaped_object` (ct +6 µs),
+conditions in the writer fast loop, flags and body slices in `FieldSlot`, a numbers fast path in
+the check, a string fast path in `field`.
+
+Not done: zero-copy output (slices of the subgraph body instead of a copy; would save ct's
+50 µs copy and the 3 MB buffer) needs `PlanExecutionOutput::body` to stop being a `Vec<u8>`,
+which plugin hooks see. bench_op is near per-value floors in parse, write and representations
+(every object there is merged from several subgraphs, so nothing passes through).
+
+Tests: `cargo test_all` 2109/2109, `HIVE_SLOT_PIPELINE=1 cargo test_e2e` 839/840 (only
+`file_watch_works`), slot tests 5/5 (new: `a_custom_scalar_passes_through_whatever_json_it_holds`,
+fails without the fix; `a_list_keeps_its_items_right_after_a_failed_check`), minification test
+`selection_sets_in_another_order_get_their_own_fragment`. The non-ARM fallbacks were built and
+run on this Mac by swapping the `cfg`s: same outputs, slot tests pass.
+
+Whole router (non-LTO release, `http.workers: 1`, slot pipeline on, HEAD `steps/r-cfg2` vs this
+tree, 3 alternating rounds × 15 s; ct through `serve-payload.mjs`, bench op through the bench
+subgraphs, 0 validation failures):
+
+| workload | HEAD CPU µs/req | now | req/s |
+|---|---|---|---|
+| ct, the subgraph answers in the new fetch order | 1,649 | 1,346 (−18%) | 607 → 744 (+23%) |
+| ct, the subgraph answers in the old order | 1,640 | 1,472 (−10%) | 610 → 680 (+11%) |
+| bench op | 250.7 | 246.4 (−1.7%) | 3,966 → 4,027 |
+
+The pipeline is a part of the router's work: ct also pays for reading and sending 3 MB over
+HTTP, the bench op for 7 subgraph calls (pipeline ≈ 55 of ~250 µs).
