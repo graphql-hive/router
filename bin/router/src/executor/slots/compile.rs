@@ -154,8 +154,9 @@ pub struct AliasProgram {
     pub requires: Requires,
     /// Where entities of this alias may already be in the response, when entity reuse is on
     pub reuse: Option<ReuseProgram>,
-    /// The `__typename` a spot's representation says instead of its own (planner input rewrite)
-    pub typename: Option<TypenameRewrite>,
+    /// The `__typename` a spot's representation says instead of its own (planner input
+    /// rewrites), applied in order
+    pub typename: Box<[TypenameRewrite]>,
 }
 
 /// An entity sent as another type: the planner's input rewrite that sets `__typename` of an
@@ -176,19 +177,19 @@ struct Rename {
     to: Box<str>,
 }
 
-/// The input rewrites of an entity fetch, as a [`TypenameRewrite`]: the only kind the planner
-/// makes
+/// The input rewrites of an entity fetch, as [`TypenameRewrite`]s: the only kind the planner
+/// makes. A fetch merged from others can have one per interface.
 fn typename_rewrite(
     rewrites: Option<&[FetchRewrite]>,
-) -> Result<Option<TypenameRewrite>, Unsupported> {
-    let mut found = None;
+) -> Result<Box<[TypenameRewrite]>, Unsupported> {
+    let mut found = Vec::new();
     for rewrite in rewrites.into_iter().flatten() {
         match rewrite {
-            FetchRewrite::ValueSetter(setter) if found.is_none() => match setter.path.as_slice() {
+            FetchRewrite::ValueSetter(setter) => match setter.path.as_slice() {
                 [FetchNodePathSegment::TypenameEquals(types), FetchNodePathSegment::Key(key)]
                     if key == "__typename" =>
                 {
-                    found = Some(TypenameRewrite {
+                    found.push(TypenameRewrite {
                         types: types.iter().map(|name| name.as_str().into()).collect(),
                         to: setter.set_value_to.as_str().into(),
                     })
@@ -198,7 +199,7 @@ fn typename_rewrite(
             _ => return Err(Unsupported("an input rewrite of this kind")),
         }
     }
-    Ok(found)
+    Ok(found.into())
 }
 
 /// The output rewrites of a fetch as [`Rename`]s. `under` is where they apply: `data` for a root
@@ -549,7 +550,7 @@ type PendingAlias<'p> = (
     Vec<&'p [PathSegment]>,
     &'p RequiresSelectionSet,
     Option<&'p EntityReuse>,
-    Option<TypenameRewrite>,
+    Box<[TypenameRewrite]>,
 );
 
 /// An entity alias as the plan has it: its key in `data`, merge paths, requires selection and
@@ -559,7 +560,7 @@ type PlanAlias<'p> = (
     Vec<&'p [PathSegment]>,
     &'p RequiresSelectionSet,
     Option<&'p EntityReuse>,
-    Option<TypenameRewrite>,
+    Box<[TypenameRewrite]>,
 );
 
 struct PendingFetch<'p> {
