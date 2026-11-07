@@ -100,7 +100,12 @@ fn both_with(types: &str, query: &str, body: &str) -> (String, String, usize, Ve
         fetch.operation.response_shape.as_deref().expect("a shape"),
         fetch.custom_scalar_paths.as_ref(),
     ) {
-        Ok(response) => {
+        Ok(mut response) => {
+            // like the executor: output rewrites before the merge
+            for rewrite in fetch.output_rewrites.iter().flatten() {
+                use crate::executor::execution::rewrites::FetchRewriteExt;
+                rewrite.rewrite(&metadata.possible_types, &mut response.data);
+            }
             let mut data = Value::Object(Vec::new());
             deep_merge(&mut data, response.data);
             let output = project_by_operation(
@@ -468,5 +473,33 @@ type Mutation @join__type(graph: A) {
         r#"{"data":null,"errors":[{"message":"boom","path":["addProduct"]}]}"#,
     ] {
         same_with(&types, query, body);
+    }
+}
+
+const MISMATCH: &str = r#"
+type Query @join__type(graph: A) { i: [I] }
+interface I @join__type(graph: A) { id: ID }
+type TypeA implements I @join__type(graph: A) @join__implements(graph: A, interface: "I") {
+  id: ID
+  strField: String
+}
+type TypeB implements I @join__type(graph: A) @join__implements(graph: A, interface: "I") {
+  id: ID
+  strField: [String]
+}
+"#;
+
+#[test]
+fn an_aliased_field_is_renamed_back_like_the_value_pipeline() {
+    // `strField` has two types, so the planner aliases it for `TypeB` and renames it back in the
+    // response (an output rewrite)
+    let query = "{ i { ... on TypeA { strField } ... on TypeB { strField } } }";
+    for body in [
+        r#"{"data":{"i":[{"__typename":"TypeA","strField":"a"},{"__typename":"TypeB","_internal_qp_alias_0":["b","c"]}]}}"#,
+        r#"{"data":{"i":[{"__typename":"TypeB","_internal_qp_alias_0":null},{"__typename":"TypeA","strField":null}]}}"#,
+        r#"{"data":{"i":null}}"#,
+    ] {
+        let (old, new, _, _) = both_with(MISMATCH, query, body);
+        assert_eq!(new, old, "body: {body}");
     }
 }

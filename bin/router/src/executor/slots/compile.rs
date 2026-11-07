@@ -29,7 +29,8 @@ use crate::query_planner::ast::requires::{
     RequiresSelection, RequiresSelectionSet, RequiresSelectionSetRef,
 };
 use crate::query_planner::planner::plan_nodes::{
-    CustomScalarPaths, EntityReuse, FetchNode, PathSegment, PlanNode, QueryPlan, TypeCondition,
+    CustomScalarPaths, EntityReuse, FetchNode, FetchNodePathSegment, FetchRewrite, PathSegment,
+    PlanNode, QueryPlan, TypeCondition,
 };
 use crate::query_planner::state::supergraph_state::OperationKind;
 
@@ -152,6 +153,82 @@ pub struct AliasProgram {
     pub requires: Requires,
     /// Where entities of this alias may already be in the response, when entity reuse is on
     pub reuse: Option<ReuseProgram>,
+    /// The `__typename` a spot's representation says instead of its own (planner input rewrite)
+    pub typename: Option<TypenameRewrite>,
+}
+
+/// An entity sent as another type: the planner's input rewrite that sets `__typename` of an
+/// `@interfaceObject` (or interface) entity to the interface. It applies when the spot has a
+/// `__typename` that is one of `types` (or implements one).
+#[derive(Debug, Clone)]
+pub struct TypenameRewrite {
+    pub types: Box<[Box<str>]>,
+    pub to: Box<str>,
+}
+
+/// A field the fetch aliases and the response has under its own key: the planner's output
+/// rewrite for fields whose types differ between subgraphs. `parent` are the keys from `data` to
+/// the object, as the fetch document has them.
+struct Rename {
+    parent: Vec<Box<str>>,
+    wire: Box<str>,
+    to: Box<str>,
+}
+
+/// The input rewrites of an entity fetch, as a [`TypenameRewrite`]: the only kind the planner
+/// makes
+fn typename_rewrite(
+    rewrites: Option<&[FetchRewrite]>,
+) -> Result<Option<TypenameRewrite>, Unsupported> {
+    let mut found = None;
+    for rewrite in rewrites.into_iter().flatten() {
+        match rewrite {
+            FetchRewrite::ValueSetter(setter) if found.is_none() => match setter.path.as_slice() {
+                [FetchNodePathSegment::TypenameEquals(types), FetchNodePathSegment::Key(key)]
+                    if key == "__typename" =>
+                {
+                    found = Some(TypenameRewrite {
+                        types: types.iter().map(|name| name.as_str().into()).collect(),
+                        to: setter.set_value_to.as_str().into(),
+                    })
+                }
+                _ => return Err(Unsupported("an input rewrite of this kind")),
+            },
+            _ => return Err(Unsupported("an input rewrite of this kind")),
+        }
+    }
+    Ok(found)
+}
+
+/// The output rewrites of a fetch as [`Rename`]s. `under` is where they apply: `data` for a root
+/// fetch, the entity alias for an entity fetch. Type conditions on the way don't matter: a
+/// shape object has the fields of all its types.
+fn renames(rewrites: Option<&[FetchRewrite]>, under: &[&str]) -> Result<Vec<Rename>, Unsupported> {
+    let mut out = Vec::new();
+    for rewrite in rewrites.into_iter().flatten() {
+        let FetchRewrite::KeyRenamer(renamer) = rewrite else {
+            return Err(Unsupported("an output rewrite of this kind"));
+        };
+        let mut keys: Vec<Box<str>> = under.iter().map(|key| (*key).into()).collect();
+        for segment in &renamer.path {
+            match segment {
+                FetchNodePathSegment::Key(key) => keys.push(key.as_str().into()),
+                FetchNodePathSegment::TypenameEquals(_) => {}
+                FetchNodePathSegment::Parent => {
+                    return Err(Unsupported("an output rewrite of this kind"))
+                }
+            }
+        }
+        let Some(wire) = keys.pop() else {
+            return Err(Unsupported("an output rewrite of this kind"));
+        };
+        out.push(Rename {
+            parent: keys,
+            wire,
+            to: renamer.rename_key_to.as_str().into(),
+        });
+    }
+    Ok(out)
 }
 
 /// An alias's planner `EntityReuse`, resolved to slots. A spot whose representation matches an
@@ -275,6 +352,9 @@ pub struct Shape {
     pub objects: Vec<ShapeObject>,
     pub nodes: Vec<ShapeNode>,
     pub text: Vec<u8>,
+    /// Nodes whose value goes under another key than the one the subgraph sends (see
+    /// [`Rename`]), by node index
+    renamed: AHashMap<u32, Box<str>>,
     pub verifies: Vec<Verify>,
     pub verify_objects: Vec<VerifyObject>,
 }
@@ -468,6 +548,7 @@ type PendingAlias<'p> = (
     Vec<&'p [PathSegment]>,
     &'p RequiresSelectionSet,
     Option<&'p EntityReuse>,
+    Option<TypenameRewrite>,
 );
 
 /// An entity alias as the plan has it: its key in `data`, merge paths, requires selection and
@@ -477,6 +558,7 @@ type PlanAlias<'p> = (
     Vec<&'p [PathSegment]>,
     &'p RequiresSelectionSet,
     Option<&'p EntityReuse>,
+    Option<TypenameRewrite>,
 );
 
 struct PendingFetch<'p> {
@@ -504,15 +586,21 @@ impl SlotPlan {
         }
         match seed {
             Seed::None => {}
-            Seed::Introspection(operation) => {
-                compiler.document(SEED_FETCH, &operation.to_string(), None, None, None)?
-            }
+            Seed::Introspection(operation) => compiler.document(
+                SEED_FETCH,
+                &operation.to_string(),
+                None,
+                None,
+                None,
+                Vec::new(),
+            )?,
             Seed::Subscription(fetch) => compiler.document(
                 SEED_FETCH,
                 &fetch.operation.document_str,
                 fetch.custom_scalar_paths.as_ref(),
                 None,
                 None,
+                renames(fetch.output_rewrites.as_deref(), &[])?,
             )?,
         }
         compiler.finish(projection, schema, root_type)
@@ -537,18 +625,21 @@ impl<'p> Compiler<'p> {
                     return Err(Unsupported("a subscription"));
                 }
                 let mut aliases = Vec::new();
+                let mut alias_renames = Vec::new();
                 for alias in &batch.entity_batch.aliases {
-                    if alias.input_rewrites.is_some()
-                        || alias.output_rewrites.is_some()
-                        || alias.context.is_some()
-                    {
-                        return Err(Unsupported("rewrites or context on a batch alias"));
+                    if alias.context.is_some() {
+                        return Err(Unsupported("context on a batch alias"));
                     }
+                    alias_renames.extend(renames(
+                        alias.output_rewrites.as_deref(),
+                        &[alias.alias.as_str()],
+                    )?);
                     aliases.push((
                         alias.alias.as_str().into(),
                         alias.merge_paths.iter().map(|p| p.as_slice()).collect(),
                         &alias.requires,
                         alias.entity_reuse.as_deref(),
+                        typename_rewrite(alias.input_rewrites.as_deref())?,
                     ));
                 }
                 self.document(
@@ -557,6 +648,7 @@ impl<'p> Compiler<'p> {
                     batch.custom_scalar_paths.as_ref(),
                     Some(aliases),
                     None,
+                    alias_renames,
                 )
             }
             _ => Err(Unsupported("plan node kind")),
@@ -568,9 +660,6 @@ impl<'p> Compiler<'p> {
         fetch: &'p FetchNode,
         flatten: Option<&'p [PathSegment]>,
     ) -> Result<(), Unsupported> {
-        if fetch.input_rewrites.is_some() || fetch.output_rewrites.is_some() {
-            return Err(Unsupported("rewrites"));
-        }
         if fetch.context.is_some() || fetch.operation.context_alias_template().is_some() {
             return Err(Unsupported("context"));
         }
@@ -587,16 +676,21 @@ impl<'p> Compiler<'p> {
                     vec![path],
                     requires,
                     fetch.entity_reuse.as_deref(),
+                    typename_rewrite(fetch.input_rewrites.as_deref())?,
                 )]),
                 None,
+                renames(fetch.output_rewrites.as_deref(), &["_entities"])?,
             ),
             (Some(_), None) => Err(Unsupported("requires without a path")),
+            // input rewrites change representations, and a fetch without requires has none:
+            // the other pipeline doesn't use them either
             (None, merge_path) => self.document(
                 fetch.id,
                 &fetch.operation.document_str,
                 fetch.custom_scalar_paths.as_ref(),
                 None,
                 merge_path,
+                renames(fetch.output_rewrites.as_deref(), &[])?,
             ),
         }
     }
@@ -611,6 +705,7 @@ impl<'p> Compiler<'p> {
         paths: Option<&CustomScalarPaths>,
         aliases: Option<Vec<PlanAlias<'p>>>,
         merge_path: Option<&'p [PathSegment]>,
+        renames: Vec<Rename>,
     ) -> Result<(), Unsupported> {
         let paths = paths.filter(|paths| !paths.is_empty());
         if paths.is_some_and(|paths| paths.group_suffixed || paths.terminal) {
@@ -640,6 +735,8 @@ impl<'p> Compiler<'p> {
         let operation = operation.ok_or(Unsupported("no operation"))?;
         let mut builder = ShapeBuilder {
             fragments: &fragments,
+            renames: &renames,
+            trail: Vec::new(),
             shape: Shape::default(),
         };
 
@@ -652,7 +749,7 @@ impl<'p> Compiler<'p> {
         builder.object(&mut self.positions, &[operation], data_position, paths)?;
 
         let mut pending_aliases = Vec::new();
-        for (key, merge_paths, requires, reuse) in aliases.into_iter().flatten() {
+        for (key, merge_paths, requires, reuse, typename) in aliases.into_iter().flatten() {
             let Some(items) = self.positions.existing_child(data_position, &key) else {
                 return Err(Unsupported("entity alias not in the fetch document"));
             };
@@ -660,7 +757,7 @@ impl<'p> Compiler<'p> {
                 let target = self.positions.at_path(self.root, path);
                 self.positions.union(target, items);
             }
-            pending_aliases.push((key, items, merge_paths, requires, reuse));
+            pending_aliases.push((key, items, merge_paths, requires, reuse, typename));
         }
         self.fetches.push((
             id,
@@ -721,9 +818,14 @@ impl<'p> Compiler<'p> {
                 let (start, end) = shape.objects[index].nodes;
                 for node_index in start..end {
                     let node = shape.nodes[node_index as usize];
-                    let key = &shape.text
-                        [node.key_start as usize + 1..(node.key_start + node.key_len) as usize - 1];
-                    let key = std::str::from_utf8(key).expect("keys come from a str");
+                    let key = match shape.renamed.get(&node_index) {
+                        Some(renamed) => renamed,
+                        None => std::str::from_utf8(
+                            &shape.text[node.key_start as usize + 1
+                                ..(node.key_start + node.key_len) as usize - 1],
+                        )
+                        .expect("keys come from a str"),
+                    };
                     shape.nodes[node_index as usize].slot = keys.slot(key);
                 }
             }
@@ -731,7 +833,7 @@ impl<'p> Compiler<'p> {
             let aliases = pending
                 .aliases
                 .into_iter()
-                .map(|(key, items, merge_paths, requires, reuse)| {
+                .map(|(key, items, merge_paths, requires, reuse, typename)| {
                     let mut program = Requires::default();
                     program.root =
                         ctx.requires(&mut program, Some(items), requires.root_selections());
@@ -744,6 +846,7 @@ impl<'p> Compiler<'p> {
                         paths: merge_paths.iter().map(|path| ctx.path(path)).collect(),
                         requires: program,
                         reuse,
+                        typename,
                     }
                 })
                 .collect();
@@ -1204,6 +1307,9 @@ impl Passthrough<'_> {
 
 struct ShapeBuilder<'d, 'a> {
     fragments: &'d [&'d gql::FragmentDefinition<'a, &'a str>],
+    renames: &'d [Rename],
+    /// The keys from `data` to the object being built
+    trail: Vec<&'a str>,
     shape: Shape,
 }
 
@@ -1228,8 +1334,25 @@ impl<'d, 'a> ShapeBuilder<'d, 'a> {
             self.collect(set, &mut fields)?;
         }
         let start = self.shape.nodes.len() as u32;
-        for (key, _) in &fields {
-            positions.add_key(position, key);
+        // an aliased field the response has under its own key: the key the subgraph sends is
+        // matched, its value goes where the field's own key is
+        let logical = |trail: &[&str], key: &'a str| -> Option<&'d str> {
+            self.renames
+                .iter()
+                .find(|rename| {
+                    &*rename.wire == key
+                        && rename.parent.len() == trail.len()
+                        && rename.parent.iter().zip(trail).all(|(a, b)| &**a == *b)
+                })
+                .map(|rename| &*rename.to)
+        };
+        for (offset, (key, _)) in fields.iter().enumerate() {
+            if let Some(renamed) = logical(&self.trail, key) {
+                self.shape
+                    .renamed
+                    .insert(start + offset as u32, renamed.into());
+            }
+            positions.add_key(position, logical(&self.trail, key).unwrap_or(key));
             let quoted = format!("\"{key}\"");
             if quoted.len() > u16::MAX as usize {
                 return Err(Unsupported("key too long"));
@@ -1271,10 +1394,13 @@ impl<'d, 'a> ShapeBuilder<'d, 'a> {
                 }
                 continue;
             }
-            let child_position = positions.child(position, key);
+            let child_position =
+                positions.child(position, logical(&self.trail, key).unwrap_or(key));
             let child_paths = paths.and_then(|paths| paths.child(key));
-            let object = self.object(positions, sets, child_position, child_paths)?;
-            self.shape.nodes[node].object = object;
+            self.trail.push(key);
+            let object = self.object(positions, sets, child_position, child_paths);
+            self.trail.pop();
+            self.shape.nodes[node].object = object?;
         }
         Ok(index)
     }

@@ -1010,3 +1010,27 @@ session scratchpad (`opt/chunked-output.patch`).
   mutations on slots; left: 38 queries + 1 mutation (`@fromContext`, context alias templates,
   rewrites) and plugins. `cargo test_all` 2111/2111, e2e 839/840 with slots on and off. Bench
   unchanged.
+
+### 2026-11-07 — coverage: fetch rewrites on the slot pipeline
+
+- Input and output rewrites no longer fall back. The planner makes two kinds, both resolved when
+  the slot plan is compiled:
+  - **Output `KeyRenamer`** (a field aliased because its type differs between types, e.g.
+    `_internal_qp_alias_0: strField`): the shape node keeps the alias as the key it matches in
+    the subgraph's JSON, and its value goes to the position and slot of the field's own key
+    (`Shape::renamed`). Type conditions on the path don't matter, a shape object has all its
+    types' fields. Paths are from `data` for root fetches and from each entity for entity
+    fetches and batch aliases, like the other pipeline applies them. Such an object isn't
+    passed through (its bytes have the alias).
+  - **Input `ValueSetter` of `__typename`** (an `@interfaceObject`/interface entity sent as the
+    interface): `AliasProgram::typename`. The representation writer uses the rewritten name for
+    the spot when it has a `__typename` that matches, for `__typename`, the key check and the
+    fragments, as the other pipeline sees the rewritten entity. Fingerprints hash the original
+    name, which is finer and so safe; equal representations still dedupe by their bytes.
+  - Input rewrites on a fetch without requires are ignored, as on the other pipeline. Other
+    rewrite forms (the planner makes none) stay `Unsupported`.
+- e2e with slots forced on and a temporary tally: no rewrite fallbacks; left: `@fromContext`
+  (23 compiles) and context alias templates (5). New test
+  `an_aliased_field_is_renamed_back_like_the_value_pipeline` (the slot tests' value side now
+  applies output rewrites like the executor). `cargo test_all` 2112/2112, e2e 839/840 with
+  slots on and off. Bench unchanged.
