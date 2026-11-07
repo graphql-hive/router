@@ -8,7 +8,8 @@ use crate::executor::executors::error::SubgraphExecutorError;
 use crate::executor::introspection::schema::PossibleTypes;
 use crate::executor::projection::response::serialize_value_to_buffer;
 use crate::executor::slots::compile::{
-    AliasProgram, FetchProgram, Layout, Requires, RequiresNode, SlotPlan, Step, NO_SLOT, SEED_FETCH,
+    AliasProgram, FetchProgram, Layout, Requires, RequiresNode, SlotPlan, Step, TypenameRewrite,
+    NO_SLOT, SEED_FETCH,
 };
 use crate::executor::slots::parse::parse_body;
 use crate::executor::slots::store::{Arena, Slot, SlotView};
@@ -584,6 +585,7 @@ impl<'p> Run<'p> {
                             layouts,
                             requires: &alias.requires,
                             possible_types,
+                            typename_rewrite: alias.typename.as_ref(),
                             buffer: &mut reps,
                         }
                         .value(
@@ -1084,6 +1086,8 @@ struct Representation<'r> {
     layouts: &'r [Layout],
     requires: &'r Requires,
     possible_types: &'r PossibleTypes,
+    /// The planner's input rewrite of the spot's `__typename`, see [`TypenameRewrite`]
+    typename_rewrite: Option<&'r TypenameRewrite>,
     buffer: &'r mut Vec<u8>,
 }
 
@@ -1162,7 +1166,19 @@ impl<'r> Representation<'r> {
                 }
                 let parent_first = first;
                 let mut first = true;
-                let type_name = self.typename_of(layout, object);
+                let mut type_name = self.typename_of(layout, object);
+                // the spot is sent as another type (an `@interfaceObject`'s interface), like the
+                // other pipeline's input rewrite: when it has a `__typename` that matches
+                if let Some(rewrite) = self.typename_rewrite.filter(|_| !nested) {
+                    if type_name.is_some_and(|name| {
+                        rewrite.types.iter().any(|condition| {
+                            self.possible_types
+                                .entity_satisfies_type_condition(name, condition)
+                        })
+                    }) {
+                        type_name = Some(&rewrite.to);
+                    }
+                }
                 let type_keys =
                     keys.and_then(|keys| type_name.and_then(|type_name| keys.get(type_name)));
                 let start = self.buffer.len();
