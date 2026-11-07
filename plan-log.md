@@ -994,3 +994,19 @@ session scratchpad (`opt/chunked-output.patch`).
   `OnSubgraphExecuteEndHookPayload::execution_result` for a data API of our own instead of
   `Value`, one that keeps the response matching the operation; until then a plugin hooking
   execution keeps the request on the old pipeline.
+
+### 2026-11-07 — coverage: subscriptions on the slot pipeline
+
+- Each subscription event runs on the slot pipeline. The reserved root fetch is now a general
+  seed (`compile::Seed`, `SEED_FETCH`): the introspection result, or a subscription event. A
+  stream's slot plan is compiled once when it starts (`SlotPlanCell::for_subscription`): the
+  per-event plan (the nodes after the subscription's own fetch) plus that fetch's document as
+  the seed's shape. Per event, the event's `data` is written back as JSON, parsed with it and
+  merged into the root; the entity fetches and the writer run as for a query. An event without
+  `data` (only errors, e.g. `SUBGRAPH_GONE` on a callback heartbeat timeout) gives `data: null`,
+  like the other pipeline (`http_callback::complete_active_subscription_on_heartbeat_timeout`
+  caught the first cut leaving `data` an object).
+- e2e with slots forced on and a temporary tally: 422 subscription events, 1061 queries, 26
+  mutations on slots; left: 38 queries + 1 mutation (`@fromContext`, context alias templates,
+  rewrites) and plugins. `cargo test_all` 2111/2111, e2e 839/840 with slots on and off. Bench
+  unchanged.
