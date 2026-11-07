@@ -12,7 +12,7 @@ pub mod store;
 pub mod write;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, OnceLock};
+use std::sync::{Arc, LazyLock, OnceLock, RwLock};
 
 use crate::executor::introspection::schema::SchemaMetadata;
 use crate::executor::projection::plan::ProjectionPlan;
@@ -49,36 +49,70 @@ pub fn entity_reuse() -> bool {
     ENTITY_REUSE.load(Ordering::Relaxed)
 }
 
-/// The slot plan of a cached query plan, compiled by the first request that needs it.
+/// The slot plans of a cached query plan, compiled by the first request that needs each.
+///
+/// A slot plan is compiled for one projection plan. Most requests of a query plan have the
+/// same one; an authorization rewrite (fields the client may not see, forced to null) gives a
+/// request its own copy, and different client operations can share a query plan. Those get a
+/// slot plan of their own, found by the projection plan's content.
 #[derive(Default)]
-pub struct SlotPlanCell(OnceLock<Option<SlotPlan>>);
+pub struct SlotPlanCell {
+    first: OnceLock<Option<Arc<SlotPlan>>>,
+    others: RwLock<Vec<Arc<SlotPlan>>>,
+}
+
+/// Slot plans kept for projection plans other than the first one. Past this, a request with
+/// yet another projection plan compiles one for itself.
+const MAX_OTHERS: usize = 16;
 
 impl SlotPlanCell {
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
 
-    /// The slot plan, when the query plan is supported and was compiled with this projection
-    /// plan.
+    /// The slot plan for this projection plan, `None` when the query plan isn't supported.
     pub fn get(
         &self,
         plan: &QueryPlan,
         projection: &Arc<ProjectionPlan>,
         schema: &SchemaMetadata,
         root_type: &str,
-    ) -> Option<&SlotPlan> {
-        self.0
-            .get_or_init(
-                || match SlotPlan::compile(plan, projection, schema, root_type) {
-                    Ok(compiled) => Some(compiled),
-                    Err(reason) => {
-                        tracing::debug!(reason = reason.0, "the slot pipeline can't run this plan");
-                        None
-                    }
-                },
-            )
-            .as_ref()
-            .filter(|compiled| Arc::ptr_eq(&compiled.projection, projection))
+    ) -> Option<Arc<SlotPlan>> {
+        let compile = || match SlotPlan::compile(plan, projection, schema, root_type) {
+            Ok(compiled) => Some(Arc::new(compiled)),
+            Err(reason) => {
+                tracing::debug!(reason = reason.0, "the slot pipeline can't run this plan");
+                None
+            }
+        };
+        let first = self.first.get_or_init(compile).as_ref()?;
+        if first.projection.same_as(projection) {
+            return Some(Arc::clone(first));
+        }
+        let read = self
+            .others
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(found) = read
+            .iter()
+            .find(|other| other.projection.same_as(projection))
+        {
+            return Some(Arc::clone(found));
+        }
+        drop(read);
+        let compiled = compile()?;
+        let mut others = self
+            .others
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if others.len() < MAX_OTHERS
+            && !others
+                .iter()
+                .any(|other| other.projection.same_as(projection))
+        {
+            others.push(Arc::clone(&compiled));
+        }
+        Some(compiled)
     }
 }
 

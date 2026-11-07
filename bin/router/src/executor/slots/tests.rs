@@ -72,7 +72,12 @@ enum State @join__type(graph: A) {
 /// returns how many subtrees the slot plan may pass through, and which root fields of `data`
 /// the parser kept as one raw range (passed through).
 fn both_with(types: &str, query: &str, body: &str) -> (String, String, usize, Vec<String>) {
-    let sdl = format!("{HEADER}{types}");
+    let header = if types.contains("type Mutation") {
+        HEADER.replace("{ query: Query }", "{ query: Query mutation: Mutation }")
+    } else {
+        HEADER.to_string()
+    };
+    let sdl = format!("{header}{types}");
     let supergraph = Supergraph::from_sdl("test", &sdl, Default::default()).expect("builds");
     let planner = &supergraph.planner;
     let metadata = Arc::clone(&supergraph.metadata);
@@ -321,4 +326,139 @@ fn a_list_keeps_its_items_right_after_a_failed_check() {
         {"id":"3","name":"c","price":3,"state":"NOPE","tags":null,"variants":[],"meta":null}
     ],"product":null}}"#;
     assert_eq!(same(QUERY, body), 4);
+}
+
+#[test]
+fn a_rewritten_projection_plan_gets_a_slot_plan_of_its_own() {
+    use crate::executor::operation_filter::PathSegment;
+    use crate::executor::slots::SlotPlanCell;
+    use crate::pipeline::trie::Trie;
+
+    let sdl = format!("{HEADER}{TYPES}");
+    let supergraph = Supergraph::from_sdl("test", &sdl, Default::default()).expect("builds");
+    let planner = &supergraph.planner;
+    let metadata = Arc::clone(&supergraph.metadata);
+    let document = parse_operation("{ products { id name } }");
+    let normalized = normalize_operation(&planner.supergraph, &document, None).expect("normalizes");
+    let (root, projection) = ProjectionPlan::from_operation(&normalized.operation, &metadata);
+    let projection = Arc::new(projection);
+    let operation = partition_operation(normalized.operation).downstream_operation;
+    let plan = planner
+        .plan_from_normalized_operation(&operation, Default::default(), &CancellationToken::new())
+        .expect("plans")
+        .into_executable(&planner.supergraph);
+    let Some(PlanNode::Fetch(fetch)) = &plan.node else {
+        panic!("one root fetch");
+    };
+    // what authorization does when the client may not see `products.name`: a new plan with
+    // the field forced to null, for every request
+    let rewrite = || {
+        projection.rewrite(&Trie::from_paths(&[vec![
+            PathSegment::Field("products"),
+            PathSegment::Field("name"),
+        ]]))
+    };
+
+    let cell = SlotPlanCell::default();
+    let original = cell
+        .get(&plan, &projection, &metadata, root)
+        .expect("compiles");
+    let rewritten = rewrite();
+    let slots = cell
+        .get(&plan, &rewritten, &metadata, root)
+        .expect("compiles");
+    assert!(
+        !Arc::ptr_eq(&slots, &original),
+        "another projection, another slot plan"
+    );
+    assert!(
+        Arc::ptr_eq(
+            &cell
+                .get(&plan, &rewrite(), &metadata, root)
+                .expect("compiles"),
+            &slots
+        ),
+        "the next request with the same rewrite reuses it"
+    );
+    assert!(Arc::ptr_eq(
+        &cell
+            .get(&plan, &projection, &metadata, root)
+            .expect("compiles"),
+        &original
+    ));
+
+    // and it writes what the other pipeline writes: `name` null
+    let body = Bytes::from_static(br#"{"data":{"products":[{"id":"1","name":"a"}]}}"#);
+    let response = SubgraphResponse::deserialize_with_shape(
+        body.clone(),
+        fetch.operation.response_shape.as_deref().expect("a shape"),
+        fetch.custom_scalar_paths.as_ref(),
+    )
+    .expect("parses");
+    let mut data = Value::Object(Vec::new());
+    deep_merge(&mut data, response.data);
+    let old = project_by_operation(
+        &data,
+        Vec::new(),
+        &Default::default(),
+        root,
+        &rewritten,
+        &None,
+        0,
+        &metadata,
+    )
+    .expect("projects");
+
+    let program = &slots.fetches[&fetch.id];
+    let mut arena = Arena::default();
+    let first = arena.object(slots.layouts[slots.root_layout as usize].width());
+    let parsed = parse_body(&mut arena, &slots.layouts, &program.shape, &body).expect("parses");
+    if let Slot::Object {
+        layout,
+        first: data,
+    } = parsed.data
+    {
+        arena.merge_object(&slots.layouts, layout, first, data);
+    }
+    let new = write_response(
+        &arena,
+        &slots,
+        Slot::Object {
+            layout: slots.root_layout,
+            first,
+        },
+        Vec::new(),
+        &Default::default(),
+        root,
+        &None,
+        0,
+        &metadata,
+    )
+    .expect("writes");
+    assert_eq!(String::from_utf8_lossy(&new), String::from_utf8_lossy(&old));
+    assert_eq!(
+        String::from_utf8_lossy(&new),
+        r#"{"data":{"products":[{"id":"1","name":null}]}}"#
+    );
+}
+
+#[test]
+fn a_mutation_matches_the_value_pipeline() {
+    let types = format!(
+        "{TYPES}{}",
+        r#"
+type Mutation @join__type(graph: A) {
+  addProduct(name: String!): Product!
+}
+"#
+    );
+    let query = r#"mutation { addProduct(name: "a") { id name price variants { sku } } }"#;
+    for body in [
+        r#"{"data":{"addProduct":{"id":"1","name":"a","price":1.5,"variants":[{"sku":"s"}]}}}"#,
+        // a null in a non-null field bubbles up to `data`
+        r#"{"data":{"addProduct":{"id":"1","name":"a","price":null,"variants":[]}}}"#,
+        r#"{"data":null,"errors":[{"message":"boom","path":["addProduct"]}]}"#,
+    ] {
+        same_with(&types, query, body);
+    }
 }

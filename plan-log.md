@@ -925,3 +925,32 @@ worker, against the commit before it:
 Dropped by the user's call: −6% on one shape of response isn't worth a second body type in the
 pipeline and the HTTP layer. `PlanExecutionOutput::body` stays `Vec<u8>`. Patch kept in the
 session scratchpad (`opt/chunked-output.patch`).
+
+### 2026-11-07 — coverage: mutations and rewritten projection plans on the slot pipeline
+
+- **Mutations** run on the slot pipeline. Fetch documents may be `mutation`s; like the other
+  pipeline, a mutation's subgraph calls aren't deduplicated and its response is `no-store`.
+  Subscriptions still fall back.
+- **Rewritten projection plans** (authorization nulling fields the client may not see) no
+  longer fall back. `SlotPlanCell` keeps the first slot plan plus up to 16 more, one per
+  projection plan, matched by content (`ProjectionPlan::same_as`: same fields over the same
+  tables), since a rewrite builds a new plan for every request and different client operations
+  can share a query plan. Each is compiled with its own projection plan, so a nulled field is
+  never inside a passthrough subtree. Past 16 a request compiles one for itself (no fallback).
+- e2e with the slot pipeline forced on, counted per request with a temporary tally (not
+  committed): 916 queries and 20 mutations on slots. Fallbacks left: subscriptions 418, demand
+  control 105, introspection 42, plugins 15, `@fromContext` / context alias templates / rewrites
+  39. Nothing for mutations or projection plans.
+- Tests: `a_mutation_matches_the_value_pipeline`,
+  `a_rewritten_projection_plan_gets_a_slot_plan_of_its_own` (own slot plan, reused by the next
+  request with the same rewrite, output equal to the other pipeline's with the field null);
+  `cargo test_all` 2111/2111, e2e 839/840 with slots on and off (only `file_watch_works`).
+  Bench unchanged.
+- **To do: benchmark rewritten requests.** Not measured yet. `router_benches`
+  (`authorization_benchmark`) only times `apply_authorization_to_operation`, the rewrite itself,
+  which this change doesn't touch. What changed is executing a rewritten request (slot pipeline
+  instead of a fallback to the `Value` pipeline). Measure that with a `pipeline_benches` workload
+  that applies an authorization-style rewrite to the bench op's projection plan (HEAD vs this
+  change), or through the router on `e2e/supergraph-authz.graphql`: the bench op without a token
+  (13 errors, most of the tree nulled) and with a `read:price`-only token (only
+  `shippingEstimate` nulled). Both routers gave byte-identical responses for the no-token case.

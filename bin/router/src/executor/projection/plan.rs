@@ -283,6 +283,15 @@ impl ProjectionPlan {
             / size_of::<FieldRecord>()
     }
 
+    /// Whether `other` projects the same way: the same fields (an authorization rewrite
+    /// changes some to null) over the same tables. Cheap for the same plan.
+    pub(crate) fn same_as(&self, other: &ProjectionPlan) -> bool {
+        std::ptr::eq(self, other)
+            || (Arc::ptr_eq(&self.tables, &other.tables)
+                && self.roots == other.roots
+                && self.fields == other.fields)
+    }
+
     /// The field at `index` in the field table
     #[inline]
     pub(crate) fn field_at(&self, index: usize) -> &FieldRecord {
