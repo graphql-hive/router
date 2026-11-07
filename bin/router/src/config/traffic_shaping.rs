@@ -33,11 +33,21 @@ pub struct TrafficShapingConfig {
     /// Can also be set using the `ROUTER_EXPERIMENTAL_ENTITY_REUSE` environment variable.
     #[serde(default)]
     pub experimental_entity_reuse: bool,
-    /// Talk to plain `http://` subgraphs through the router's own HTTP/1 connection pool, one
-    /// per worker, instead of hyper's. It opens a new connection only when every connection of
-    /// the worker is busy, and keeps smaller read buffers, so far fewer sockets and less memory
-    /// stay around under load. Experimental, off by default. Works with either
-    /// `http_client_mode`. `https://` subgraphs and `allow_only_http2` keep hyper's client.
+    /// Talk to plain `http://` subgraphs through the router's own HTTP/1 connection pool
+    /// instead of hyper's. Experimental, off by default.
+    ///
+    /// The pool opens a new connection only when every connection of the pool is busy, and
+    /// keeps smaller read buffers, so less memory stays around under load.
+    ///
+    /// It follows `http_client_mode`:
+    /// - `shared`: one pool for all workers, the fewest connections.
+    /// - `per_worker`: one pool per worker. More connections, since a worker can't use another
+    ///   worker's connection, but a response never has to wake up another thread, so it uses
+    ///   less CPU. If a subgraph limits how many connections it accepts, count on up to one
+    ///   pool per worker.
+    ///
+    /// `max_connections_per_host` still caps the requests in flight. `https://` subgraphs,
+    /// `allow_only_http2` and HTTP subscriptions keep hyper's client and `http_client_mode`.
     ///
     /// Can also be set using the `ROUTER_EXPERIMENTAL_HTTP1_POOL` environment variable.
     #[serde(default)]

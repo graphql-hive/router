@@ -1,12 +1,13 @@
-//! A strict HTTP/1 connection pool for plain `http://` subgraphs, one per worker.
-//! On with `traffic_shaping.experimental_http1_pool`.
+//! A strict HTTP/1 connection pool for plain `http://` subgraphs.
+//! On with `traffic_shaping.experimental_http1_pool`, one for all workers or one per worker,
+//! following `traffic_shaping.http_client_mode`.
 //!
 //! hyper's legacy pool races a fresh connect against every checkout that finds no idle
 //! connection, and keeps the new connection even when an idle one came back first. A finished
 //! connection only goes back to its pool from a task spawned after the response, so under load
 //! checkouts miss all the time and the pool grows to thousands of sockets. Here a connection
 //! goes back to the idle list right after its response body is read, so a request only
-//! connects when every connection of its worker is busy.
+//! connects when every connection of its pool is busy.
 //!
 //! Every connection also keeps its read buffer for good, and hyper grows it up to ~400KB while
 //! reading big responses. We cap it at 64KB, which takes a few more reads for a big response
@@ -36,8 +37,9 @@ type Sender = SendRequest<Full<Bytes>>;
 
 pub struct H1Pool {
     idle_timeout: Duration,
-    /// Idle connections per origin, the most recently used last. Only this worker touches it,
-    /// the lock is there because request futures have to be `Send`.
+    /// Idle connections per origin, the most recently used last. A per-worker pool only takes
+    /// the lock from its own thread, the lock is there for the shared one and because request
+    /// futures have to be `Send`.
     idle: Mutex<AHashMap<Authority, Vec<(Sender, Instant)>>>,
 }
 
@@ -125,8 +127,8 @@ impl H1Pool {
     }
 }
 
-// ponytail: expired connections are only dropped when this worker touches the origin again,
-// so a worker that goes quiet keeps its idle sockets. Add a timer if that shows up.
+// ponytail: expired connections are only dropped when the pool touches the origin again,
+// so a pool that goes quiet keeps its idle sockets. Add a timer if that shows up.
 fn evict_expired(list: &mut Vec<(Sender, Instant)>, idle_timeout: Duration) {
     let now = Instant::now();
     let expired = list.partition_point(|(_, since)| now - *since >= idle_timeout);

@@ -79,9 +79,16 @@ pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
 
 pub struct HttpClientProvider {
     clients: HttpClients,
-    /// Our own pools for plain `http://` subgraphs, one per worker, see [`H1Pool`].
+    /// Our own pools for plain `http://` subgraphs, see [`H1Pool`].
     /// `None` leaves those subgraphs to hyper's client too.
-    pools: Option<(Duration, ThreadLocal<H1Pool>)>,
+    pools: Option<H1Pools>,
+}
+
+/// Follows [`HttpClientMode`], like the clients.
+#[allow(clippy::large_enum_variant)]
+enum H1Pools {
+    Shared(H1Pool),
+    PerWorker(Duration, ThreadLocal<H1Pool>),
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -106,6 +113,10 @@ impl HttpClientProvider {
         connector: HttpsConnector<HttpConnector>,
         http1_pool: Option<Duration>,
     ) -> Self {
+        let pools = http1_pool.map(|idle_timeout| match mode {
+            HttpClientMode::Shared => H1Pools::Shared(H1Pool::new(idle_timeout)),
+            HttpClientMode::PerWorker => H1Pools::PerWorker(idle_timeout, ThreadLocal::new()),
+        });
         let clients = match mode {
             HttpClientMode::Shared => HttpClients::Shared(builder.build(connector)),
             HttpClientMode::PerWorker => HttpClients::PerWorker(WorkerLocalClients {
@@ -114,17 +125,17 @@ impl HttpClientProvider {
                 clients: ThreadLocal::new(),
             }),
         };
-        Self {
-            clients,
-            pools: http1_pool.map(|idle_timeout| (idle_timeout, ThreadLocal::new())),
-        }
+        Self { clients, pools }
     }
 
-    /// The pool of the current thread, when the pool is on.
+    /// The pool for the current thread, when the pool is on.
     fn pool(&self) -> Option<&H1Pool> {
-        self.pools
-            .as_ref()
-            .map(|(idle_timeout, pools)| pools.get_or(|| H1Pool::new(*idle_timeout)))
+        match self.pools.as_ref()? {
+            H1Pools::Shared(pool) => Some(pool),
+            H1Pools::PerWorker(idle_timeout, pools) => {
+                Some(pools.get_or(|| H1Pool::new(*idle_timeout)))
+            }
+        }
     }
 
     /// The client for the current thread.
