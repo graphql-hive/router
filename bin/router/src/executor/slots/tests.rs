@@ -503,3 +503,28 @@ fn an_aliased_field_is_renamed_back_like_the_value_pipeline() {
         assert_eq!(new, old, "body: {body}");
     }
 }
+
+#[test]
+fn a_wide_object_runs_on_slots() {
+    // past the 512 keys that used to send a plan to the other pipeline
+    let fields: Vec<String> = (0..600).map(|i| format!("f{i}")).collect();
+    let types = format!(
+        "type Query @join__type(graph: A) {{ w: Wide }}\ntype Wide @join__type(graph: A) {{ {} }}\n",
+        fields
+            .iter()
+            .map(|field| format!("{field}: Int"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let query = format!("{{ w {{ {} }} }}", fields.join(" "));
+    let body = format!(
+        r#"{{"data":{{"w":{{{}}}}}}}"#,
+        fields
+            .iter()
+            .enumerate()
+            .map(|(i, field)| format!(r#""{field}":{i}"#))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    same_with(&types, &query, &body);
+}

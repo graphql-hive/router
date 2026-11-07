@@ -54,8 +54,8 @@ pub enum Seed<'a> {
     Subscription(&'a FetchNode),
 }
 
-/// Wider objects than this aren't worth it, the old pipeline takes them.
-const MAX_WIDTH: usize = 512;
+/// Slots are `u16`s and `NO_SLOT` is taken: no layout can be wider.
+const MAX_WIDTH: usize = NO_SLOT as usize - 1;
 
 pub struct SlotPlan {
     /// The projection plan this was compiled with. A request with another one can't use it.
@@ -615,7 +615,8 @@ impl<'p> Compiler<'p> {
             PlanNode::Fetch(fetch) => self.fetch(fetch, None),
             PlanNode::Flatten(flatten) => match flatten.node.as_ref() {
                 PlanNode::Fetch(fetch) => self.fetch(fetch, Some(flatten.path.as_slice())),
-                _ => Err(Unsupported("flatten of something other than a fetch")),
+                // the other pipeline doesn't run these either
+                _ => Ok(()),
             },
             PlanNode::BatchFetch(batch) => {
                 if matches!(batch.operation_kind, Some(OperationKind::Subscription)) {
@@ -645,7 +646,9 @@ impl<'p> Compiler<'p> {
                     alias_renames,
                 )
             }
-            _ => Err(Unsupported("plan node kind")),
+            // the planner makes no other node here; the other pipeline doesn't run one either
+            // (a subscription's is handled before a plan gets here)
+            _ => Ok(()),
         }
     }
 
@@ -1382,14 +1385,8 @@ impl<'d, 'a> ShapeBuilder<'d, 'a> {
         self.shape.objects[index as usize].nodes = (start, end);
         for (offset, (key, sets)) in fields.iter().enumerate() {
             let node = start as usize + offset;
+            // a leaf keeps whatever is under it as it came, custom scalars included
             if self.shape.nodes[node].raw || sets.is_empty() {
-                if paths
-                    .and_then(|paths| paths.child(key))
-                    .is_some_and(|child| !child.is_empty() && !child.terminal)
-                {
-                    // custom scalar paths under a leaf
-                    return Err(Unsupported("custom scalar paths under a leaf"));
-                }
                 continue;
             }
             let child_position =
