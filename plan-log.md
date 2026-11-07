@@ -1123,3 +1123,14 @@ session scratchpad (`opt/chunked-output.patch`).
   representation instead of two (same client response).
 - Test `slot_plugins::a_plugin_keeps_subgraph_extensions_and_its_own_data_on_slots` (fails
   without the extensions fix). `cargo test_all` 2113/2113, e2e 840/841 with slots on.
+
+### 2026-11-07 — several `__typename` input rewrites on one fetch
+
+- The planner merges entity steps with their input rewrites (`perform_fetch_step_merge`), so a fetch
+  can carry one `__typename` setter per interface. The slot compiler took only one and turned
+  the fetch away otherwise; an alias now keeps them all and a representation applies them in
+  order, like the other pipeline's `ValueSetter`s.
+- With that, nothing the planner makes is `Unsupported`; what's left are the invariants listed
+  in the entry before. What remains before the `Value` pipeline can go: plugin end hooks still
+  get a `Value` (see the TODO on `OnExecuteEndHookPayload::data`), CI doesn't run e2e with slots
+  on, and `experimental_slot_pipeline` is off by default.

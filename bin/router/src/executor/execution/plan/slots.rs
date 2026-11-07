@@ -1288,7 +1288,7 @@ impl<'p> Run<'p> {
                             layouts,
                             requires: &alias.requires,
                             possible_types,
-                            typename_rewrite: alias.typename.as_ref(),
+                            typename_rewrite: &alias.typename,
                             buffer: &mut reps,
                         }
                         .value(
@@ -2062,7 +2062,7 @@ struct Representation<'r> {
     requires: &'r Requires,
     possible_types: &'r PossibleTypes,
     /// The planner's input rewrite of the spot's `__typename`, see [`TypenameRewrite`]
-    typename_rewrite: Option<&'r TypenameRewrite>,
+    typename_rewrite: &'r [TypenameRewrite],
     buffer: &'r mut Vec<u8>,
 }
 
@@ -2143,8 +2143,8 @@ impl<'r> Representation<'r> {
                 let mut first = true;
                 let mut type_name = self.typename_of(layout, object);
                 // the spot is sent as another type (an `@interfaceObject`'s interface), like the
-                // other pipeline's input rewrite: when it has a `__typename` that matches
-                if let Some(rewrite) = self.typename_rewrite.filter(|_| !nested) {
+                // other pipeline's input rewrites: when it has a `__typename` that matches
+                for rewrite in self.typename_rewrite.iter().filter(|_| !nested) {
                     if type_name.is_some_and(|name| {
                         rewrite.types.iter().any(|condition| {
                             self.possible_types
