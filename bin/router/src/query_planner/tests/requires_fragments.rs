@@ -335,28 +335,32 @@ fn merged_conditional_requires_stay_out_of_an_unconditional_call() -> Result<(),
                 displayName
               }
               ... on User @skip(if: $skip) {
-                ...a
+                __typename
+                profile {
+                  ...a
+                }
+                id
               }
             }
             userFromA @include(if: $include) {
-              ...a
+              __typename
+              id
+              profile {
+                ...a
+              }
             }
           }
-          fragment a on User {
+          fragment a on Profile {
             __typename
-            profile {
-              __typename
-              displayName
-              ... on GuestAccount {
-                guestToken
-                accountType
-              }
-              ... on AdminAccount {
-                adminLevel
-                accountType
-              }
+            displayName
+            ... on GuestAccount {
+              guestToken
+              accountType
             }
-            id
+            ... on AdminAccount {
+              adminLevel
+              accountType
+            }
           }
         },
         BatchFetch(service: "b") {

@@ -326,4 +326,67 @@ mod tests {
         "
         );
     }
+
+    #[test]
+    fn selection_sets_in_another_order_get_their_own_fragment() {
+        let schema = parse_schema(
+            r#"
+            type Query {
+              a: Text
+              b: Text
+              c: Text
+            }
+
+            type Text {
+              locale: String
+              value: String
+            }
+        "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+        let document: Document<'static, String> = parse_query(
+            r#"
+        {
+          a { locale value }
+          b { value locale }
+          c { value locale }
+          d: a { locale value }
+        }
+        "#,
+        )
+        .expect("Failed to parse query");
+        let operation = normalize_operation(&supergraph, &document, None)
+            .expect("Failed to normalized")
+            .operation;
+        let document = minify_operation(operation, &supergraph).expect("Failed to minify");
+
+        // a subgraph answers in the order the fragment has: sharing one fragment between
+        // `{ locale value }` and `{ value locale }` would give the router fields to reorder
+        insta::assert_snapshot!(pretty_query(document.to_string()), @r"
+        {
+          a {
+            ...a
+          }
+          b {
+            ...b
+          }
+          c {
+            ...b
+          }
+          d: a {
+            ...a
+          }
+        }
+
+        fragment a on Text {
+          locale
+          value
+        }
+
+        fragment b on Text {
+          value
+          locale
+        }
+        ");
+    }
 }
