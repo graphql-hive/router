@@ -16,7 +16,7 @@ use crate::executor::projection::error::ProjectionError;
 use crate::executor::projection::plan::{
     Condition, ConditionId, FieldRecord, ProjectionPlan, Range,
 };
-use crate::executor::projection::response::{trim_error_paths, ShapeCursor};
+use crate::executor::projection::response::{finish_response, ShapeCursor};
 use crate::executor::response::graphql_error::GraphQLError;
 
 /// Whether a value that was written as `null` has to bubble up
@@ -73,6 +73,31 @@ pub fn write_response(
     size_hint: usize,
     schema: &SchemaMetadata,
 ) -> Result<Vec<u8>, ProjectionError> {
+    let (buffer, errors) = write_data(
+        arena,
+        slots,
+        data,
+        errors,
+        operation_type_name,
+        variables,
+        size_hint,
+        schema,
+    )?;
+    finish_response(buffer, errors, extensions, &slots.projection)
+}
+
+/// Writes `{"data":` and the data from the slots, like `project_data` does from a `Value`.
+#[allow(clippy::too_many_arguments)]
+pub fn write_data(
+    arena: &Arena,
+    slots: &SlotPlan,
+    data: Slot,
+    errors: Vec<GraphQLError>,
+    operation_type_name: &str,
+    variables: &Option<HashMap<String, sonic_rs::Value>>,
+    size_hint: usize,
+    schema: &SchemaMetadata,
+) -> Result<(Vec<u8>, Vec<GraphQLError>), ProjectionError> {
     let plan = &*slots.projection;
     let mut out = Writer {
         arena,
@@ -104,20 +129,7 @@ pub fn write_response(
     } else {
         out.buffer.extend_from_slice(b"null");
     }
-
-    if !out.errors.is_empty() {
-        trim_error_paths(&mut out.errors, plan);
-        out.buffer.extend_from_slice(b",\"errors\":");
-        sonic_rs::to_writer(&mut out.buffer, &out.errors)
-            .map_err(|e| ProjectionError::ErrorsSerializationFailure(e.to_string()))?;
-    }
-    if !extensions.is_empty() {
-        out.buffer.extend_from_slice(b",\"extensions\":");
-        sonic_rs::to_writer(&mut out.buffer, extensions)
-            .map_err(|e| ProjectionError::ExtensionsSerializationFailure(e.to_string()))?;
-    }
-    out.buffer.push(b'}');
-    Ok(out.buffer)
+    Ok((out.buffer, out.errors))
 }
 
 impl<'a> Writer<'a> {

@@ -139,6 +139,30 @@ pub fn project_by_operation(
     response_size_estimate: usize,
     schema_metadata: &SchemaMetadata,
 ) -> Result<Vec<u8>, ProjectionError> {
+    let (buffer, errors) = project_data(
+        data,
+        errors,
+        operation_type_name,
+        plan,
+        variable_values,
+        response_size_estimate,
+        schema_metadata,
+    )?;
+    finish_response(buffer, errors, extensions, plan)
+}
+
+/// Writes `{"data":` and the data the client asked for, the start of a response.
+/// [`finish_response`] writes the rest. The data can add errors (invalid enum values), so the
+/// errors come back with it.
+pub fn project_data(
+    data: &Value,
+    errors: Vec<GraphQLError>,
+    operation_type_name: &str,
+    plan: &ProjectionPlan,
+    variable_values: &Option<HashMap<String, sonic_rs::Value>>,
+    response_size_estimate: usize,
+    schema_metadata: &SchemaMetadata,
+) -> Result<(Vec<u8>, Vec<GraphQLError>), ProjectionError> {
     let mut out = Projector {
         plan,
         schema: schema_metadata,
@@ -177,32 +201,30 @@ pub fn project_by_operation(
     } else {
         out.buffer.put(NULL);
     }
+    Ok((out.buffer, out.errors))
+}
 
-    if !out.errors.is_empty() {
-        trim_error_paths(&mut out.errors, plan);
-        let serialized = sonic_rs::to_vec(&out.errors)
+/// Ends a response that [`project_data`] (or the slot pipeline's writer) started: the errors
+/// and the extensions.
+pub fn finish_response(
+    mut buffer: Vec<u8>,
+    mut errors: Vec<GraphQLError>,
+    extensions: &ExecutionResultExtensions<'_>,
+    plan: &ProjectionPlan,
+) -> Result<Vec<u8>, ProjectionError> {
+    if !errors.is_empty() {
+        trim_error_paths(&mut errors, plan);
+        buffer.extend_from_slice(b",\"errors\":");
+        sonic_rs::to_writer(&mut buffer, &errors)
             .map_err(|e| ProjectionError::ErrorsSerializationFailure(e.to_string()))?;
-        out.buffer.put(COMMA);
-        out.buffer.put(QUOTE);
-        out.buffer.put("errors".as_bytes());
-        out.buffer.put(QUOTE);
-        out.buffer.put(COLON);
-        out.buffer.put_slice(&serialized);
     }
-
     if !extensions.is_empty() {
-        let serialized_extensions = sonic_rs::to_vec(extensions)
+        buffer.extend_from_slice(b",\"extensions\":");
+        sonic_rs::to_writer(&mut buffer, extensions)
             .map_err(|e| ProjectionError::ExtensionsSerializationFailure(e.to_string()))?;
-        out.buffer.put(COMMA);
-        out.buffer.put(QUOTE);
-        out.buffer.put("extensions".as_bytes());
-        out.buffer.put(QUOTE);
-        out.buffer.put(COLON);
-        out.buffer.put_slice(&serialized_extensions);
     }
-
-    out.buffer.put(CLOSE_BRACE);
-    Ok(out.buffer)
+    buffer.push(b'}');
+    Ok(buffer)
 }
 
 /// Cuts error paths at the first key the client didn't ask for. A subgraph's path can go into a

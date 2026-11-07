@@ -153,4 +153,4 @@ fn compile_or_log(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

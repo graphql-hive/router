@@ -6,6 +6,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::vec;
 
+use crate::executor::plugins::response_data::ResponseData;
 use crate::query_planner::ast::operation::{ContextAliasTemplate, SubgraphFetchOperation};
 use crate::query_planner::planner::plan_nodes::{
     BatchFetchNode, ConditionGroup, CustomScalarPaths, FetchContext, FetchNode, FlattenNode,
@@ -73,7 +74,10 @@ use crate::executor::{
     plugin_context::PluginRequestState,
     plugin_trait::{EarlyHTTPResponse, EndControlFlow, StartControlFlow},
     plugins::hooks,
-    projection::{plan::ProjectionPlan, response::project_by_operation},
+    projection::{
+        plan::ProjectionPlan,
+        response::{finish_response, project_by_operation, project_data},
+    },
     response::{
         graphql_error::{GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment},
         merge::{deep_merge, deep_merge_from, EntityMerger},
@@ -588,11 +592,11 @@ async fn execute_query_plan_with_data<'exec>(
         }
     }
 
-    let mut data = exec_ctx.data;
-    let mut errors = exec_ctx.errors;
+    let data = exec_ctx.data;
+    let errors = exec_ctx.errors;
 
     summary::record(|s| s.set_partial_response(error_count > 0 && !data.is_null()));
-    let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
+    let response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
 
     let mut demand_control_cost = None;
     if let Some(demand_control) = executor.demand_control_context {
@@ -648,9 +652,31 @@ async fn execute_query_plan_with_data<'exec>(
     std::mem::take(&mut exec_ctx.extensions_aggregator).merge_into(&mut opts.extensions.extensions);
 
     // TODO: coprocessor.on_execution_response
-    if !on_end_callbacks.is_empty() {
+    // plugins that asked to see the result get the data as the client will (see
+    // `ResponseData`), so it's written first and the rest of the response after them
+    let (data_body, mut errors) = if on_end_callbacks.is_empty() {
+        (None, errors)
+    } else {
+        let (body, errors) = project_data(
+            &data,
+            errors,
+            opts.operation_type_name.as_str(),
+            &opts.projection_plan,
+            &opts.variable_values.variables_map,
+            response_size_estimate,
+            &opts.introspection_context.metadata,
+        )
+        .with_plan_context(LazyPlanContext {
+            subgraph_name: || None,
+            affected_path: || None,
+        })?;
         let mut end_payload = OnExecuteEndHookPayload {
-            data,
+            data: ResponseData::new(
+                body,
+                &opts.operation_for_plan,
+                opts.operation_type_name.as_str(),
+                &opts.introspection_context.metadata,
+            ),
             errors,
             extensions: opts.extensions.extensions,
             response_size_estimate,
@@ -680,11 +706,9 @@ async fn execute_query_plan_with_data<'exec>(
         }
 
         // Give the ownership back to variables
-        data = end_payload.data;
-        errors = end_payload.errors;
         opts.extensions.extensions = end_payload.extensions;
-        response_size_estimate = end_payload.response_size_estimate;
-    }
+        (Some(end_payload.data.into_body()), end_payload.errors)
+    };
 
     let mut status_code = StatusCode::OK;
 
@@ -709,16 +733,21 @@ async fn execute_query_plan_with_data<'exec>(
         }
     }
 
-    let body = project_by_operation(
-        &data,
-        errors,
-        &opts.extensions,
-        opts.operation_type_name.as_str(),
-        &opts.projection_plan,
-        &opts.variable_values.variables_map,
-        response_size_estimate,
-        &opts.introspection_context.metadata,
-    )
+    let body = match data_body {
+        Some(data_body) => {
+            finish_response(data_body, errors, &opts.extensions, &opts.projection_plan)
+        }
+        None => project_by_operation(
+            &data,
+            errors,
+            &opts.extensions,
+            opts.operation_type_name.as_str(),
+            &opts.projection_plan,
+            &opts.variable_values.variables_map,
+            response_size_estimate,
+            &opts.introspection_context.metadata,
+        ),
+    }
     .with_plan_context(LazyPlanContext {
         subgraph_name: || None,
         affected_path: || None,

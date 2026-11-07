@@ -25,7 +25,7 @@ use crate::query_planner::planner::plan_nodes::PlanNode;
 use crate::query_planner::utils::cancellation::CancellationToken;
 use crate::query_planner::utils::parsing::parse_operation;
 
-const HEADER: &str = r#"
+pub(crate) const HEADER: &str = r#"
 schema @link(url: "https://specs.apollo.dev/link/v1.0") @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) { query: Query }
 directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
 directive @join__graph(name: String!, url: String!) on ENUM_VALUE

@@ -6,6 +6,7 @@
 use super::*;
 use crate::executor::executors::error::SubgraphExecutorError;
 use crate::executor::introspection::schema::PossibleTypes;
+use crate::executor::projection::response::finish_response;
 use crate::executor::projection::response::serialize_value_to_buffer;
 use crate::executor::slots::compile::{
     AliasProgram, FetchProgram, Layout, Requires, RequiresNode, Seed, SlotPlan, Step,
@@ -13,7 +14,7 @@ use crate::executor::slots::compile::{
 };
 use crate::executor::slots::parse::{parse_aliased_body, parse_body};
 use crate::executor::slots::store::{Arena, Slot, SlotView};
-use crate::executor::slots::write::write_response;
+use crate::executor::slots::write::{write_data, write_response};
 use crate::executor::slots::SlotPlanCell;
 use crate::executor::utils::consts::TYPENAME_JSON_FIELD;
 use crate::query_planner::ast::operation::ContextAliasTemplate;
@@ -197,7 +198,7 @@ pub(super) async fn execute<'exec>(
         }
     }
     summary::record(|s| s.set_partial_response(error_count > 0 && run.data != Slot::Null));
-    let mut response_size_estimate = ctx.response_storage.estimate_final_response_size();
+    let response_size_estimate = ctx.response_storage.estimate_final_response_size();
     let errors = std::mem::take(&mut ctx.errors);
 
     let mut demand_control_cost = None;
@@ -244,26 +245,31 @@ pub(super) async fn execute<'exec>(
         .store(std::mem::take(&mut ctx.response_headers_aggregator));
     std::mem::take(&mut ctx.extensions_aggregator).merge_into(&mut opts.extensions.extensions);
 
-    // plugins that asked to see the result get it as a `Value`, and the response is projected
-    // from what they leave, like on the other pipeline
-    // TODO: a data API of our own for plugins (see `OnExecuteEndHookPayload::data`), so this
-    // doesn't need a `Value`
+    // plugins that asked to see the result get the data as the client will (see
+    // `ResponseData`), so it's written first and the rest of the response after them
     if !on_end_callbacks.is_empty() {
-        let mut body = b"{\"data\":".to_vec();
-        run.arena.write_whole(&plan.layouts, run.data, &mut body);
-        body.push(b'}');
+        let (body, errors) = write_data(
+            &run.arena,
+            plan,
+            run.data,
+            errors,
+            opts.operation_type_name.as_str(),
+            &opts.variable_values.variables_map,
+            response_size_estimate,
+            &opts.introspection_context.metadata,
+        )
+        .with_plan_context(LazyPlanContext {
+            subgraph_name: || None,
+            affected_path: || None,
+        })?;
         run.arena.give_back();
-        let response = SubgraphResponse::deserialize_from_bytes(bytes::Bytes::from(body), None)
-            .with_plan_context(LazyPlanContext {
-                subgraph_name: || None,
-                affected_path: || None,
-            })?;
-        if let Some(bytes) = response.bytes {
-            // the `Value` borrows from it
-            ctx.response_storage.add_response(bytes);
-        }
         let mut end_payload = OnExecuteEndHookPayload {
-            data: response.data,
+            data: ResponseData::new(
+                body,
+                &opts.operation_for_plan,
+                opts.operation_type_name.as_str(),
+                &opts.introspection_context.metadata,
+            ),
             errors,
             extensions: opts.extensions.extensions,
             response_size_estimate,
@@ -290,20 +296,14 @@ pub(super) async fn execute<'exec>(
                 },
             }
         }
-        let data = end_payload.data;
         opts.extensions.extensions = end_payload.extensions;
-        response_size_estimate = end_payload.response_size_estimate;
         let (errors, status_code) = plugin_errors(&opts, end_payload.errors);
         let errors = masked(&opts, errors);
-        let body = project_by_operation(
-            &data,
+        let body = finish_response(
+            end_payload.data.into_body(),
             errors,
             &opts.extensions,
-            opts.operation_type_name.as_str(),
-            &opts.projection_plan,
-            &opts.variable_values.variables_map,
-            response_size_estimate,
-            &opts.introspection_context.metadata,
+            &plan.projection,
         )
         .with_plan_context(LazyPlanContext {
             subgraph_name: || None,
