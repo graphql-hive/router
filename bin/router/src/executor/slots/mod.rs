@@ -16,6 +16,7 @@ use std::sync::{Arc, LazyLock, OnceLock, RwLock};
 
 use crate::executor::introspection::schema::SchemaMetadata;
 use crate::executor::projection::plan::ProjectionPlan;
+use crate::query_planner::ast::operation::OperationDefinition;
 use crate::query_planner::planner::plan_nodes::QueryPlan;
 use compile::SlotPlan;
 
@@ -51,7 +52,8 @@ pub fn entity_reuse() -> bool {
 
 /// The slot plans of a cached query plan, compiled by the first request that needs each.
 ///
-/// A slot plan is compiled for one projection plan. Most requests of a query plan have the
+/// A slot plan is compiled for one projection plan (and the introspection part of the
+/// operation that goes with it). Most requests of a query plan have the
 /// same one; an authorization rewrite (fields the client may not see, forced to null) gives a
 /// request its own copy, and different client operations can share a query plan. Those get a
 /// slot plan of their own, found by the projection plan's content.
@@ -77,8 +79,10 @@ impl SlotPlanCell {
         projection: &Arc<ProjectionPlan>,
         schema: &SchemaMetadata,
         root_type: &str,
+        introspection: Option<&OperationDefinition>,
     ) -> Option<Arc<SlotPlan>> {
-        let compile = || match SlotPlan::compile(plan, projection, schema, root_type) {
+        let compile = || match SlotPlan::compile(plan, projection, schema, root_type, introspection)
+        {
             Ok(compiled) => Some(Arc::new(compiled)),
             Err(reason) => {
                 tracing::debug!(reason = reason.0, "the slot pipeline can't run this plan");

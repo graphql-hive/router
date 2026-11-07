@@ -973,3 +973,24 @@ session scratchpad (`opt/chunked-output.patch`).
   `file_watch_works`). Bench unchanged (no demand control there).
 - ponytail: `SlotView::field` searches the layout's keys linearly per field; resolve the cost
   plan to slots if that shows in a profile.
+
+### 2026-11-07 — coverage: introspection on the slot pipeline
+
+- Operations with introspection fields no longer fall back. The introspection part (what
+  `partition_operation` splits off) is compiled like a root fetch under a reserved id
+  (`compile::INTROSPECTION_FETCH`): its printed document gives the shape and root slots. At run
+  time the router's resolved introspection `Value` is written as `{"data":…}`, parsed with that
+  shape and merged into the root before the plan runs, as the other pipeline starts from it.
+  The writer then does conditions, aliases, `__typename` and null bubbling the usual way. An
+  introspection-only operation (no downstream fetches) works the same.
+- Different introspection parts over one downstream plan get their own slot plans: their
+  projection plans differ (see `SlotPlanCell`), and the cell now compiles with the introspection
+  operation too.
+- e2e with the slot pipeline forced on and a temporary tally: every introspection request (45)
+  on slots; the fallbacks left are 38, all `@fromContext` / context alias templates / rewrites
+  (subscriptions and plugins aside). `cargo test_all` 2111/2111, e2e 839/840 with slots on and
+  off. Bench unchanged.
+- Plugin hooks: TODOs on `OnExecuteEndHookPayload::data` and
+  `OnSubgraphExecuteEndHookPayload::execution_result` for a data API of our own instead of
+  `Value`, one that keeps the response matching the operation; until then a plugin hooking
+  execution keeps the request on the old pipeline.
