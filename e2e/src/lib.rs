@@ -53,6 +53,8 @@ mod hive_cdn_supergraph;
 #[cfg(test)]
 mod http;
 #[cfg(test)]
+mod http1_pool;
+#[cfg(test)]
 mod http2;
 #[cfg(test)]
 mod http_callback;

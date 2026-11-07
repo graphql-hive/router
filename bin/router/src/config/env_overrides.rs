@@ -80,6 +80,8 @@ pub struct EnvVarOverrides {
     // Executor overrides
     #[envconfig(from = "ROUTER_EXPERIMENTAL_ENTITY_REUSE")]
     pub experimental_entity_reuse: Option<bool>,
+    #[envconfig(from = "ROUTER_EXPERIMENTAL_HTTP1_POOL")]
+    pub experimental_http1_pool: Option<bool>,
 
     // Error masking
     #[envconfig(from = "DISABLE_SUBGRAPH_ERROR_MASKING")]
@@ -285,6 +287,14 @@ impl EnvVarOverrides {
             config = config.set_override(
                 "traffic_shaping.experimental_entity_reuse",
                 experimental_entity_reuse,
+            )?;
+        }
+
+        if let Some(experimental_http1_pool) = self.experimental_http1_pool.take() {
+            debug!(target: CONFIG_LOGGING_TARGET, value = experimental_http1_pool, "overriding 'traffic_shaping.experimental_http1_pool'");
+            config = config.set_override(
+                "traffic_shaping.experimental_http1_pool",
+                experimental_http1_pool,
             )?;
         }
 
@@ -574,6 +584,28 @@ traffic_shaping:
         .unwrap();
 
         assert!(config.traffic_shaping.experimental_entity_reuse);
+    }
+
+    #[test]
+    fn experimental_http1_pool_override_wins_over_config_file_value() {
+        let config = EnvVarOverrides {
+            experimental_http1_pool: Some(true),
+            ..Default::default()
+        }
+        .apply_overrides(Config::builder().add_source(File::from_str(
+            r#"
+traffic_shaping:
+  experimental_http1_pool: false
+"#,
+            FileFormat::Yaml,
+        )))
+        .unwrap()
+        .build()
+        .unwrap()
+        .try_deserialize::<HiveRouterConfig>()
+        .unwrap();
+
+        assert!(config.traffic_shaping.experimental_http1_pool);
     }
 
     #[test]
