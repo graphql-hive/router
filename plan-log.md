@@ -775,3 +775,24 @@ ChilliCream subgraphs, reuse on, mcph 100, 3 rounds, medians:
 | c=50 CPU µs/req | 618 | 591 | 451 |
 | c=50 peak RSS | 117MB | 95MB | 104MB |
 One shared pool matches Fusion AOT's memory (233MB) and socket count, but responses wake other threads again: 523 vs 403 µs/req with per-worker pools in shared mode. `per_worker` + pool stays the fast setup.
+
+### 2026-11-07 — ChilliCream benchmark, routers on one core
+Their runner (apollo-federation family, HotChocolate subgraphs), 1 warmup + 3 × 60 s runs, 30 s cooldown, no pinning on macOS.
+Hive: `http.workers: 1` (main LTO `ea661773`; HEAD LTO `0decd6b8` with slots, entity reuse and the HTTP/1 pool). Under load one thread does ~99% of the router's CPU: ntex runs a current-thread tokio runtime per worker, so hyper's and the pool's connection tasks stay on the worker; only short-lived blocking threads (DNS on connect, startup) sit outside.
+Fusion: `DOTNET_PROCESSOR_COUNT=1`, which is not a cap: it still used 1.2–2.4 cores.
+
+| scenario | gateway | req/s | p95 | peak RSS | cores used | CPU µs/req |
+|---|---|---|---|---|---|---|
+| synthetic | hive-main | 2,132 | 28.0ms | 97MB | 0.93 | 436 |
+| | hive-head | 3,650 | 17.5ms | 80MB | 0.93 | 256 |
+| | fusion-net-11 | 3,080 | 22.0ms | 286MB | 1.96 | 614 |
+| | fusion-aot-11 | 3,169 | 21.4ms | 103MB | 1.93 | 615 |
+| burst | hive-main | 1,719 | 286ms | 271MB | 0.95 | 551 |
+| | hive-head | 3,205 | 151ms | 225MB | 0.93 | 290 |
+| | fusion-net-11 | 3,172 | 149ms | 290MB | 2.33 | 735 |
+| | fusion-aot-11 | 3,124 | 151ms | 121MB | 2.38 | 754 |
+| real-world | hive-main | 1,557 | 39.4ms | 88MB | 0.78 | 498 |
+| | hive-head | 2,501 | 26.5ms | 82MB | 0.67 | 266 |
+| | fusion-net-11 | 2,035 | 30.2ms | 265MB | 1.25 | 615 |
+| | fusion-aot-11 | 1,928 | 31.9ms | 98MB | 1.22 | 628 |
+0 failed requests.
