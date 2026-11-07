@@ -206,6 +206,8 @@ impl SubgraphExecutorMap {
             config.traffic_shaping.http_client_mode,
             client_builder,
             build_https_connector(config.traffic_shaping.all.tls.as_ref())?,
+            (!config.traffic_shaping.all.allow_only_http2)
+                .then_some(config.traffic_shaping.all.pool_idle_timeout),
         );
 
         let max_connections_per_host = config.traffic_shaping.max_connections_per_host;
@@ -1033,6 +1035,7 @@ impl SubgraphExecutorMap {
                 self.config.traffic_shaping.http_client_mode,
                 client_builder,
                 build_https_connector(tls_config.as_ref())?,
+                (!subgraph_allow_only_http2).then_some(pool_idle_timeout),
             ));
         }
 
