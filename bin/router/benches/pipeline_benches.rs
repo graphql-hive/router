@@ -723,7 +723,7 @@ fn main() {
                 &workload.projection_plan,
                 &workload.introspection.metadata,
                 &workload.root_type_name,
-                None,
+                hive_router::executor::slots::compile::Seed::None,
             )
             .err()
             .map(|reason| format!(" (slots can't: {})", reason.0))

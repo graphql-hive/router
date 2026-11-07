@@ -119,7 +119,14 @@ fn both_with(types: &str, query: &str, body: &str) -> (String, String, usize, Ve
         Err(_) => "invalid".to_string(),
     };
 
-    let slots = SlotPlan::compile(&plan, &projection, &metadata, root, None).expect("compiles");
+    let slots = SlotPlan::compile(
+        &plan,
+        &projection,
+        &metadata,
+        root,
+        super::compile::Seed::None,
+    )
+    .expect("compiles");
     let program = &slots.fetches[&fetch.id];
     let passthroughs = program.shape.verifies.len();
     let mut arena = Arena::default();

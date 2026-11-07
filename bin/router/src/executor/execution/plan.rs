@@ -287,6 +287,18 @@ pub async fn execute_query_plan<'exec>(
             }),
         });
 
+        // the slot pipeline runs each event: the plan above, with the event read in like the
+        // subscription fetch's response, compiled once for the stream
+        let slot_plan = crate::executor::slots::enabled().then(|| {
+            crate::executor::slots::SlotPlanCell::for_subscription(
+                &query_plan,
+                &opts.projection_plan,
+                &opts.introspection_context.metadata,
+                &opts.operation_type_name,
+                fetch_node,
+            )
+        });
+
         // we perform a regular subgraph request to the subscription subgraph
         // the only difference is that we get back a stream of results
         let mut headers_map = HeaderMap::new();
@@ -436,7 +448,7 @@ pub async fn execute_query_plan<'exec>(
                     response_header_sink: response_header_sink.clone(),
                     error_masking_runtime: opts.error_masking_runtime.clone(),
                     connection_fingerprint: opts.connection_fingerprint,
-                    slot_plan: None,
+                    slot_plan: slot_plan.clone(),
                 };
                 match execute_query_plan_with_data(response.data, opts).await {
                     Ok(result) => yield result.body,

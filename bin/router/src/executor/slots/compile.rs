@@ -38,9 +38,20 @@ pub const NO_SLOT: u16 = u16::MAX;
 /// A shape node without an object under it.
 pub const NO_OBJECT: u32 = u32::MAX;
 
-/// The fetch id of the introspection part of an operation in [`SlotPlan::fetches`]: the router
-/// resolves it itself, and its result is read into slots like a root fetch's.
-pub const INTROSPECTION_FETCH: i64 = i64::MIN;
+/// The fetch id, in [`SlotPlan::fetches`], of the data the router has before the plan runs (see
+/// [`Seed`]). It's read into slots like a root fetch's response.
+pub const SEED_FETCH: i64 = i64::MIN;
+
+/// Data the router has before the plan runs, read into the root first
+#[derive(Clone, Copy)]
+pub enum Seed<'a> {
+    None,
+    /// The introspection part of the operation, which the router resolves itself
+    Introspection(&'a OperationDefinition),
+    /// The subscription's own fetch: each event of its stream, before the plan resolves the
+    /// event's entities
+    Subscription(&'a FetchNode),
+}
 
 /// Wider objects than this aren't worth it, the old pipeline takes them.
 const MAX_WIDTH: usize = 512;
@@ -475,13 +486,12 @@ struct PendingFetch<'p> {
 }
 
 impl SlotPlan {
-    /// `introspection`: the introspection part of the operation, when it has one
     pub fn compile(
         plan: &QueryPlan,
         projection: &Arc<ProjectionPlan>,
         schema: &SchemaMetadata,
         root_type: &str,
-        introspection: Option<&OperationDefinition>,
+        seed: Seed,
     ) -> Result<SlotPlan, Unsupported> {
         let mut compiler = Compiler {
             positions: Positions::default(),
@@ -492,14 +502,18 @@ impl SlotPlan {
         if let Some(node) = &plan.node {
             compiler.node(node)?;
         }
-        if let Some(introspection) = introspection {
-            compiler.document(
-                INTROSPECTION_FETCH,
-                &introspection.to_string(),
+        match seed {
+            Seed::None => {}
+            Seed::Introspection(operation) => {
+                compiler.document(SEED_FETCH, &operation.to_string(), None, None, None)?
+            }
+            Seed::Subscription(fetch) => compiler.document(
+                SEED_FETCH,
+                &fetch.operation.document_str,
+                fetch.custom_scalar_paths.as_ref(),
                 None,
                 None,
-                None,
-            )?;
+            )?,
         }
         compiler.finish(projection, schema, root_type)
     }
@@ -616,9 +630,8 @@ impl<'p> Compiler<'p> {
                         gql::OperationDefinition::Query(q) => &q.selection_set,
                         gql::OperationDefinition::Mutation(m) => &m.selection_set,
                         gql::OperationDefinition::SelectionSet(s) => s,
-                        gql::OperationDefinition::Subscription(_) => {
-                            return Err(Unsupported("a subscription"))
-                        }
+                        // only as a seed: plan nodes of a subscription are rejected before
+                        gql::OperationDefinition::Subscription(s) => &s.selection_set,
                     });
                 }
                 gql::Definition::Fragment(fragment) => fragments.push(fragment),

@@ -8,8 +8,7 @@ use crate::executor::executors::error::SubgraphExecutorError;
 use crate::executor::introspection::schema::PossibleTypes;
 use crate::executor::projection::response::serialize_value_to_buffer;
 use crate::executor::slots::compile::{
-    AliasProgram, FetchProgram, Layout, Requires, RequiresNode, SlotPlan, Step,
-    INTROSPECTION_FETCH, NO_SLOT,
+    AliasProgram, FetchProgram, Layout, Requires, RequiresNode, SlotPlan, Step, NO_SLOT, SEED_FETCH,
 };
 use crate::executor::slots::parse::parse_body;
 use crate::executor::slots::store::{Arena, Slot, SlotView};
@@ -25,10 +24,7 @@ const NO_ENTITY: u32 = u32::MAX;
 /// Whether this request can run on the slot pipeline. The plan decides most of it when it's
 /// compiled; what's left is per router and per request.
 pub(super) fn usable(opts: &QueryPlanExecutionOpts<'_>) -> Option<Arc<SlotPlan>> {
-    if !crate::executor::slots::enabled()
-        || opts.plugin_req_state.is_some()
-        || !(opts.operation_kind.is_query() || opts.operation_kind.is_mutation())
-    {
+    if !crate::executor::slots::enabled() || opts.plugin_req_state.is_some() {
         return None;
     }
     opts.slot_plan.as_deref().and_then(|cell: &SlotPlanCell| {
@@ -42,13 +38,13 @@ pub(super) fn usable(opts: &QueryPlanExecutionOpts<'_>) -> Option<Arc<SlotPlan>>
     })
 }
 
-/// Runs the plan on the slot pipeline, with the slot plan [`usable`] gave. `introspection` is
-/// what the router resolved for the introspection part of the operation (an empty object when
-/// there's none).
+/// Runs the plan on the slot pipeline, with the slot plan [`usable`] gave. `seed` is the data
+/// the router has before the plan runs (see `compile::Seed`): the introspection result, or a
+/// subscription's event; an empty object when there's none.
 pub(super) async fn execute<'exec>(
     mut opts: QueryPlanExecutionOpts<'exec>,
     plan: Arc<SlotPlan>,
-    introspection: Value<'exec>,
+    seed: Value<'exec>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
     let plan = &*plan;
     let aliased_requests = AliasedRequests::default();
@@ -80,10 +76,10 @@ pub(super) async fn execute<'exec>(
         first: run.arena.object(width),
     };
 
-    // the introspection result goes into slots like a root fetch's response
-    if let Some(program) = plan.fetches.get(&INTROSPECTION_FETCH) {
+    // the seed goes into slots like a root fetch's response
+    if let Some(program) = plan.fetches.get(&SEED_FETCH) {
         let mut body = b"{\"data\":".to_vec();
-        serialize_value_to_buffer(&introspection, &mut body);
+        serialize_value_to_buffer(&seed, &mut body);
         body.push(b'}');
         let passthrough = opts.demand_control_context.is_none();
         let parsed = parse_body(
@@ -97,7 +93,10 @@ pub(super) async fn execute<'exec>(
             (Some(Slot::Object { layout, first }), Slot::Object { first: root, .. }) => {
                 run.arena.merge_object(&plan.layouts, layout, root, first)
             }
-            _ => debug_assert!(false, "the router's own introspection result reads back"),
+            // an event without `data` (only errors) is a response with `data: null`, like on the
+            // other pipeline
+            (Some(Slot::Null | Slot::Missing), _) => run.data = Slot::Null,
+            _ => debug_assert!(false, "a seed the router serialized reads back"),
         }
     }
 

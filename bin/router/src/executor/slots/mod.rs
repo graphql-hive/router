@@ -17,8 +17,8 @@ use std::sync::{Arc, LazyLock, OnceLock, RwLock};
 use crate::executor::introspection::schema::SchemaMetadata;
 use crate::executor::projection::plan::ProjectionPlan;
 use crate::query_planner::ast::operation::OperationDefinition;
-use crate::query_planner::planner::plan_nodes::QueryPlan;
-use compile::SlotPlan;
+use crate::query_planner::planner::plan_nodes::{FetchNode, QueryPlan};
+use compile::{Seed, SlotPlan};
 
 /// Whether requests may use the slot pipeline, from the router config. Off by default.
 static ENABLED: AtomicBool = AtomicBool::new(false);
@@ -72,6 +72,28 @@ impl SlotPlanCell {
         Arc::new(Self::default())
     }
 
+    /// The cell of a subscription's stream: the plan that runs for each event (`plan`, the
+    /// nodes after the subscription's own fetch) with each event read in like a fetch's
+    /// response, compiled now for the whole stream.
+    pub fn for_subscription(
+        plan: &QueryPlan,
+        projection: &Arc<ProjectionPlan>,
+        schema: &SchemaMetadata,
+        root_type: &str,
+        subscription: &FetchNode,
+    ) -> Arc<Self> {
+        let cell = Self::default();
+        let compiled = compile_or_log(
+            plan,
+            projection,
+            schema,
+            root_type,
+            Seed::Subscription(subscription),
+        );
+        let _ = cell.first.set(compiled);
+        Arc::new(cell)
+    }
+
     /// The slot plan for this projection plan, `None` when the query plan isn't supported.
     pub fn get(
         &self,
@@ -81,14 +103,8 @@ impl SlotPlanCell {
         root_type: &str,
         introspection: Option<&OperationDefinition>,
     ) -> Option<Arc<SlotPlan>> {
-        let compile = || match SlotPlan::compile(plan, projection, schema, root_type, introspection)
-        {
-            Ok(compiled) => Some(Arc::new(compiled)),
-            Err(reason) => {
-                tracing::debug!(reason = reason.0, "the slot pipeline can't run this plan");
-                None
-            }
-        };
+        let seed = introspection.map_or(Seed::None, Seed::Introspection);
+        let compile = || compile_or_log(plan, projection, schema, root_type, seed);
         let first = self.first.get_or_init(compile).as_ref()?;
         if first.projection.same_as(projection) {
             return Some(Arc::clone(first));
@@ -117,6 +133,22 @@ impl SlotPlanCell {
             others.push(Arc::clone(&compiled));
         }
         Some(compiled)
+    }
+}
+
+fn compile_or_log(
+    plan: &QueryPlan,
+    projection: &Arc<ProjectionPlan>,
+    schema: &SchemaMetadata,
+    root_type: &str,
+    seed: Seed,
+) -> Option<Arc<SlotPlan>> {
+    match SlotPlan::compile(plan, projection, schema, root_type, seed) {
+        Ok(compiled) => Some(Arc::new(compiled)),
+        Err(reason) => {
+            tracing::debug!(reason = reason.0, "the slot pipeline can't run this plan");
+            None
+        }
     }
 }
 
