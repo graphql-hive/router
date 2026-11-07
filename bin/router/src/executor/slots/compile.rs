@@ -24,6 +24,7 @@ use graphql_tools::parser::query as gql;
 
 use crate::executor::introspection::schema::SchemaMetadata;
 use crate::executor::projection::plan::{Condition, ConditionId, FieldRecord, ProjectionPlan};
+use crate::query_planner::ast::operation::OperationDefinition;
 use crate::query_planner::ast::requires::{
     RequiresSelection, RequiresSelectionSet, RequiresSelectionSetRef,
 };
@@ -36,6 +37,10 @@ use crate::query_planner::state::supergraph_state::OperationKind;
 pub const NO_SLOT: u16 = u16::MAX;
 /// A shape node without an object under it.
 pub const NO_OBJECT: u32 = u32::MAX;
+
+/// The fetch id of the introspection part of an operation in [`SlotPlan::fetches`]: the router
+/// resolves it itself, and its result is read into slots like a root fetch's.
+pub const INTROSPECTION_FETCH: i64 = i64::MIN;
 
 /// Wider objects than this aren't worth it, the old pipeline takes them.
 const MAX_WIDTH: usize = 512;
@@ -470,11 +475,13 @@ struct PendingFetch<'p> {
 }
 
 impl SlotPlan {
+    /// `introspection`: the introspection part of the operation, when it has one
     pub fn compile(
         plan: &QueryPlan,
         projection: &Arc<ProjectionPlan>,
         schema: &SchemaMetadata,
         root_type: &str,
+        introspection: Option<&OperationDefinition>,
     ) -> Result<SlotPlan, Unsupported> {
         let mut compiler = Compiler {
             positions: Positions::default(),
@@ -484,6 +491,15 @@ impl SlotPlan {
         compiler.root = compiler.positions.new_position();
         if let Some(node) = &plan.node {
             compiler.node(node)?;
+        }
+        if let Some(introspection) = introspection {
+            compiler.document(
+                INTROSPECTION_FETCH,
+                &introspection.to_string(),
+                None,
+                None,
+                None,
+            )?;
         }
         compiler.finish(projection, schema, root_type)
     }

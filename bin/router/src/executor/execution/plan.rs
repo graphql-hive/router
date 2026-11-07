@@ -477,7 +477,7 @@ async fn execute_query_plan_with_data<'exec>(
     mut opts: QueryPlanExecutionOpts<'exec>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
     if let Some(slot_plan) = slots::usable(&opts) {
-        return slots::execute(opts, slot_plan).await;
+        return slots::execute(opts, slot_plan, data).await;
     }
     // declared first so it outlives everything that borrows from it
     let aliased_requests = AliasedRequests::default();

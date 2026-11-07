@@ -119,7 +119,7 @@ fn both_with(types: &str, query: &str, body: &str) -> (String, String, usize, Ve
         Err(_) => "invalid".to_string(),
     };
 
-    let slots = SlotPlan::compile(&plan, &projection, &metadata, root).expect("compiles");
+    let slots = SlotPlan::compile(&plan, &projection, &metadata, root, None).expect("compiles");
     let program = &slots.fetches[&fetch.id];
     let passthroughs = program.shape.verifies.len();
     let mut arena = Arena::default();
@@ -361,11 +361,11 @@ fn a_rewritten_projection_plan_gets_a_slot_plan_of_its_own() {
 
     let cell = SlotPlanCell::default();
     let original = cell
-        .get(&plan, &projection, &metadata, root)
+        .get(&plan, &projection, &metadata, root, None)
         .expect("compiles");
     let rewritten = rewrite();
     let slots = cell
-        .get(&plan, &rewritten, &metadata, root)
+        .get(&plan, &rewritten, &metadata, root, None)
         .expect("compiles");
     assert!(
         !Arc::ptr_eq(&slots, &original),
@@ -374,7 +374,7 @@ fn a_rewritten_projection_plan_gets_a_slot_plan_of_its_own() {
     assert!(
         Arc::ptr_eq(
             &cell
-                .get(&plan, &rewrite(), &metadata, root)
+                .get(&plan, &rewrite(), &metadata, root, None)
                 .expect("compiles"),
             &slots
         ),
@@ -382,7 +382,7 @@ fn a_rewritten_projection_plan_gets_a_slot_plan_of_its_own() {
     );
     assert!(Arc::ptr_eq(
         &cell
-            .get(&plan, &projection, &metadata, root)
+            .get(&plan, &projection, &metadata, root, None)
             .expect("compiles"),
         &original
     ));

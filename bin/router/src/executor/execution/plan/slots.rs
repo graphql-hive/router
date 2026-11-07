@@ -8,7 +8,8 @@ use crate::executor::executors::error::SubgraphExecutorError;
 use crate::executor::introspection::schema::PossibleTypes;
 use crate::executor::projection::response::serialize_value_to_buffer;
 use crate::executor::slots::compile::{
-    AliasProgram, FetchProgram, Layout, Requires, RequiresNode, SlotPlan, Step, NO_SLOT,
+    AliasProgram, FetchProgram, Layout, Requires, RequiresNode, SlotPlan, Step,
+    INTROSPECTION_FETCH, NO_SLOT,
 };
 use crate::executor::slots::parse::parse_body;
 use crate::executor::slots::store::{Arena, Slot, SlotView};
@@ -26,7 +27,6 @@ const NO_ENTITY: u32 = u32::MAX;
 pub(super) fn usable(opts: &QueryPlanExecutionOpts<'_>) -> Option<Arc<SlotPlan>> {
     if !crate::executor::slots::enabled()
         || opts.plugin_req_state.is_some()
-        || opts.introspection_context.query.is_some()
         || !(opts.operation_kind.is_query() || opts.operation_kind.is_mutation())
     {
         return None;
@@ -37,14 +37,18 @@ pub(super) fn usable(opts: &QueryPlanExecutionOpts<'_>) -> Option<Arc<SlotPlan>>
             &opts.projection_plan,
             &opts.introspection_context.metadata,
             &opts.operation_type_name,
+            opts.introspection_context.query.as_deref(),
         )
     })
 }
 
-/// Runs the plan on the slot pipeline, with the slot plan [`usable`] gave
+/// Runs the plan on the slot pipeline, with the slot plan [`usable`] gave. `introspection` is
+/// what the router resolved for the introspection part of the operation (an empty object when
+/// there's none).
 pub(super) async fn execute<'exec>(
     mut opts: QueryPlanExecutionOpts<'exec>,
     plan: Arc<SlotPlan>,
+    introspection: Value<'exec>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
     let plan = &*plan;
     let aliased_requests = AliasedRequests::default();
@@ -75,6 +79,27 @@ pub(super) async fn execute<'exec>(
         layout: plan.root_layout,
         first: run.arena.object(width),
     };
+
+    // the introspection result goes into slots like a root fetch's response
+    if let Some(program) = plan.fetches.get(&INTROSPECTION_FETCH) {
+        let mut body = b"{\"data\":".to_vec();
+        serialize_value_to_buffer(&introspection, &mut body);
+        body.push(b'}');
+        let passthrough = opts.demand_control_context.is_none();
+        let parsed = parse_body(
+            &mut run.arena,
+            &plan.layouts,
+            &program.shape,
+            &bytes::Bytes::from(body),
+            passthrough,
+        );
+        match (parsed.map(|parsed| parsed.data), run.data) {
+            (Some(Slot::Object { layout, first }), Slot::Object { first: root, .. }) => {
+                run.arena.merge_object(&plan.layouts, layout, root, first)
+            }
+            _ => debug_assert!(false, "the router's own introspection result reads back"),
+        }
+    }
 
     if let Some(node) = &opts.query_plan.node {
         run.node(&executor, &mut ctx, node).await;

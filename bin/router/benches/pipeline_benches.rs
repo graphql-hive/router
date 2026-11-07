@@ -711,6 +711,7 @@ fn main() {
                     &workload.projection_plan,
                     &workload.introspection.metadata,
                     &workload.root_type_name,
+                    None,
                 )
                 .is_some();
         println!(
@@ -722,6 +723,7 @@ fn main() {
                 &workload.projection_plan,
                 &workload.introspection.metadata,
                 &workload.root_type_name,
+                None,
             )
             .err()
             .map(|reason| format!(" (slots can't: {})", reason.0))
