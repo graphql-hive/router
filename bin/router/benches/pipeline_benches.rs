@@ -18,6 +18,9 @@
 //! before anything is timed, JSON-equal: same keys in the same order, numbers by value.
 //! `--bless` writes the references instead.
 //!
+//! `PIPELINE_ENTITY_REUSE=1` turns entity reuse on: the output is checked against the same
+//! reference, the request bodies against `requests-reuse.json`.
+//!
 //! Per request it prints thread CPU time (median, p10, p90), allocations and peak bytes over
 //! the live heap at the start of the request. Teardown is inside the measured region.
 
@@ -486,7 +489,12 @@ fn parse_json(bytes: &[u8], what: &str) -> serde_json::Value {
 fn check_or_bless(workload: &Workload, output: &[u8], requests: &[(String, Vec<u8>)], bless: bool) {
     let dir = &workload.references;
     let output_path = dir.join("output.json");
-    let requests_path = dir.join("requests.json");
+    // entity reuse sends fewer requests for the same output
+    let requests_path = dir.join(if hive_router::executor::slots::entity_reuse() {
+        "requests-reuse.json"
+    } else {
+        "requests.json"
+    });
     let requests_json = serde_json::Value::Array(
         requests
             .iter()
@@ -501,7 +509,9 @@ fn check_or_bless(workload: &Workload, output: &[u8], requests: &[(String, Vec<u
 
     if bless {
         std::fs::create_dir_all(dir).unwrap();
-        std::fs::write(&output_path, output).unwrap();
+        if !hive_router::executor::slots::entity_reuse() {
+            std::fs::write(&output_path, output).unwrap();
+        }
         std::fs::write(
             &requests_path,
             serde_json::to_vec_pretty(&requests_json).unwrap(),
@@ -613,6 +623,9 @@ fn main() {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
+    hive_router::executor::slots::set_entity_reuse(
+        std::env::var("PIPELINE_ENTITY_REUSE").is_ok_and(|value| value == "1"),
+    );
     let bless = args.iter().any(|arg| arg == "--bless");
     let iterations = args
         .iter()

@@ -72,7 +72,7 @@ use crate::query_planner::{
     planner::error::QueryPlanError,
     planner::plan_nodes::planning::{
         custom_scalar_paths_for_entities_selection, BatchFetchNode, ConditionGroup,
-        CustomScalarPaths, EntityBatch, EntityBatchAlias, FetchContext, FetchRewrite,
+        CustomScalarPaths, EntityBatch, EntityBatchAlias, EntityReuse, FetchContext, FetchRewrite,
         FlattenNodePath, PlanNode,
     },
     planner::QueryPlannerOptions,
@@ -198,6 +198,7 @@ impl<'a> BatchFetchBuilder<'a> {
             output_rewrites: representative.output_rewrites.clone(),
             context: representative.context.clone(),
             run_if: representative.run_if.clone(),
+            entity_reuse: representative.entity_reuse.clone(),
         });
 
         Ok(())
@@ -273,6 +274,27 @@ impl<'a> BatchFetchBuilder<'a> {
     ) -> Result<BatchFetchNode, QueryPlanError> {
         self.operation_variable_definitions
             .extend(self.merged_non_representation_variables.iter().cloned());
+
+        // Aliases that send the same list share one variable, and only the first one's list
+        // goes out. Copying could leave different entities out of each, so they don't copy.
+        let shares_variable: Vec<bool> = self
+            .batched_aliases
+            .iter()
+            .map(|alias| {
+                self.batched_aliases
+                    .iter()
+                    .filter(|other| {
+                        other.representations_variable_name == alias.representations_variable_name
+                    })
+                    .count()
+                    > 1
+            })
+            .collect();
+        for (alias, shares_variable) in self.batched_aliases.iter_mut().zip(shares_variable) {
+            if shares_variable {
+                alias.entity_reuse = None;
+            }
+        }
 
         let operation_definition = OperationDefinition {
             name: None,
@@ -360,6 +382,7 @@ struct EntityFetch {
     run_if: Option<Vec<ConditionGroup>>,
     shape_key: ShapeKey,
     non_representations_variable_definitions: Vec<VariableDefinition>,
+    entity_reuse: Option<Box<EntityReuse>>,
 }
 
 impl EntityFetch {
@@ -489,6 +512,7 @@ impl EntityFetch {
             run_if: fetch_node.run_if.clone(),
             shape_key,
             non_representations_variable_definitions,
+            entity_reuse: fetch_node.entity_reuse.clone(),
         }))
     }
 }
@@ -968,8 +992,8 @@ mod tests {
             selection_item::SelectionItem,
         },
         planner::plan_nodes::planning::{
-            ConditionGroup, FetchNode, FetchNodePathSegment, FetchRewrite, FlattenNode,
-            FlattenNodePath, PlanNode, QueryPlan, ValueSetter,
+            ConditionGroup, EntityReuse, FetchNode, FetchNodePathSegment, FetchRewrite,
+            FlattenNode, FlattenNodePath, PathSegment, PlanNode, QueryPlan, ValueSetter,
         },
         planner::QueryPlannerOptions,
         state::supergraph_state::{OperationKind, SupergraphState},
@@ -1900,6 +1924,51 @@ mod tests {
         "#);
     }
 
+    #[test]
+    fn optimize_parallel_node_drops_entity_reuse_of_aliases_sharing_a_variable() {
+        let supergraph = test_supergraph_state();
+        let requires_query = "query { ... on Product { upc } }";
+        let fetch = |id, field: &str| {
+            let mut node = flatten_entity_fetch_node(
+                id,
+                "inventory",
+                "products",
+                requires_query,
+                &format!(
+                    "query($representations:[_Any!]!) {{ _entities(representations: $representations) {{ ... on Product {{ {field} }} }} }}"
+                ),
+            );
+            if let PlanNode::Flatten(flatten) = &mut node {
+                if let PlanNode::Fetch(fetch) = flatten.node.as_mut() {
+                    fetch.entity_reuse = Some(Box::new(EntityReuse {
+                        sources: vec![FlattenNodePath::from(vec![
+                            PathSegment::Field("topProducts".into()),
+                            PathSegment::List,
+                        ])],
+                        copy: Default::default(),
+                    }));
+                }
+            }
+            node
+        };
+
+        let optimized = optimize_root_node(
+            PlanNode::parallel(vec![fetch(1, "shippingEstimate"), fetch(2, "inStock")]),
+            &supergraph,
+            &Default::default(),
+        )
+        .expect("optimize should work");
+
+        let PlanNode::BatchFetch(batch) = optimized else {
+            panic!("expected a batch fetch");
+        };
+        assert_eq!(batch.entity_batch.aliases.len(), 2);
+        for alias in &batch.entity_batch.aliases {
+            assert_eq!(alias.representations_variable_name, "__batch_reps_0");
+            assert!(alias.entity_reuse.is_none());
+        }
+    }
+
     /// Different requires should prevent sharing the representations variable.
     #[test]
     fn optimize_parallel_node_does_not_share_representations_variable_when_requires_differs() {
@@ -2785,6 +2854,7 @@ mod tests {
             output_rewrites: None,
             context: None,
             run_if: None,
+            entity_reuse: None,
         };
 
         let path = FlattenNodePath::from(&MergePath::new(vec![
@@ -2866,6 +2936,7 @@ mod tests {
             output_rewrites: None,
             context: None,
             run_if: None,
+            entity_reuse: None,
         }
     }
 

@@ -2258,6 +2258,7 @@ mod tests {
                     output_rewrites: None,
                     context: None,
                     run_if: None,
+                    entity_reuse: None,
                 },
                 EntityBatchAlias {
                     alias: "_e1".to_string(),
@@ -2268,6 +2269,7 @@ mod tests {
                     output_rewrites: None,
                     context: None,
                     run_if: None,
+                    entity_reuse: None,
                 },
             ],
         };
@@ -2445,6 +2447,7 @@ mod tests {
                             service_name: "subgraph_a".to_string(),
                             context: None,
                             run_if: None,
+                            entity_reuse: None,
                             operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_a }"),
                             )
@@ -2462,6 +2465,7 @@ mod tests {
                             service_name: "subgraph_b".to_string(),
                             context: None,
                             run_if: None,
+                            entity_reuse: None,
                             operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_b }"),
                             )

@@ -28,7 +28,7 @@ use crate::query_planner::ast::requires::{
     RequiresSelection, RequiresSelectionSet, RequiresSelectionSetRef,
 };
 use crate::query_planner::planner::plan_nodes::{
-    CustomScalarPaths, FetchNode, PathSegment, PlanNode, QueryPlan, TypeCondition,
+    CustomScalarPaths, EntityReuse, FetchNode, PathSegment, PlanNode, QueryPlan, TypeCondition,
 };
 use crate::query_planner::state::supergraph_state::OperationKind;
 
@@ -124,6 +124,27 @@ pub struct AliasProgram {
     pub slot: u16,
     pub paths: Vec<PathProgram>,
     pub requires: Requires,
+    /// Where entities of this alias may already be in the response, when entity reuse is on
+    pub reuse: Option<ReuseProgram>,
+}
+
+/// An alias's planner `EntityReuse`, resolved to slots. A spot whose representation matches an
+/// object at one of the sources is the same entity with the same inputs: the copied fields go
+/// from that object's slots into the spot's, and the spot isn't sent.
+pub struct ReuseProgram {
+    /// The layout of the alias's spots
+    pub target_layout: u32,
+    /// The slot of each copied field in the spots
+    pub copy: Box<[u16]>,
+    pub sources: Vec<ReuseSource>,
+}
+
+pub struct ReuseSource {
+    pub path: PathProgram,
+    /// The alias's representation, read at the source's position
+    pub requires: Requires,
+    /// The slot of each copied field at the source, in `ReuseProgram::copy` order
+    pub copy: Box<[u16]>,
 }
 
 pub type PathProgram = Box<[Step]>;
@@ -375,6 +396,29 @@ impl Positions {
     }
 }
 
+/// The response keys of a copy selection, when it's only leaf fields (inline fragments of the
+/// entity's type flattened).
+fn copy_keys<'s>(selections: RequiresSelectionSetRef<'s>, keys: &mut Vec<&'s str>) -> Option<()> {
+    for selection in selections.iter() {
+        match selection {
+            RequiresSelection::Field {
+                name,
+                alias,
+                selections,
+                ..
+            } => {
+                if !selections.is_empty() {
+                    return None;
+                }
+                keys.push(alias.unwrap_or(name));
+            }
+            RequiresSelection::InlineFragment { selections, .. } => copy_keys(selections, keys)?,
+            RequiresSelection::FragmentSpread(_) => return None,
+        }
+    }
+    Some(())
+}
+
 /// Why a plan can't use the slot pipeline. Only for logs and tests.
 #[derive(Debug)]
 pub struct Unsupported(pub &'static str);
@@ -392,6 +436,16 @@ type PendingAlias<'p> = (
     u32,
     Vec<&'p [PathSegment]>,
     &'p RequiresSelectionSet,
+    Option<&'p EntityReuse>,
+);
+
+/// An entity alias as the plan has it: its key in `data`, merge paths, requires selection and
+/// where its entities may already be.
+type PlanAlias<'p> = (
+    Box<str>,
+    Vec<&'p [PathSegment]>,
+    &'p RequiresSelectionSet,
+    Option<&'p EntityReuse>,
 );
 
 struct PendingFetch<'p> {
@@ -452,6 +506,7 @@ impl<'p> Compiler<'p> {
                         alias.alias.as_str().into(),
                         alias.merge_paths.iter().map(|p| p.as_slice()).collect(),
                         &alias.requires,
+                        alias.entity_reuse.as_deref(),
                     ));
                 }
                 self.document(
@@ -488,7 +543,12 @@ impl<'p> Compiler<'p> {
                 fetch.id,
                 &fetch.operation.document_str,
                 fetch.custom_scalar_paths.as_ref(),
-                Some(vec![("_entities".into(), vec![path], requires)]),
+                Some(vec![(
+                    "_entities".into(),
+                    vec![path],
+                    requires,
+                    fetch.entity_reuse.as_deref(),
+                )]),
                 None,
             ),
             (Some(_), None) => Err(Unsupported("requires without a path")),
@@ -510,7 +570,7 @@ impl<'p> Compiler<'p> {
         id: i64,
         document: &str,
         paths: Option<&CustomScalarPaths>,
-        aliases: Option<Vec<(Box<str>, Vec<&'p [PathSegment]>, &'p RequiresSelectionSet)>>,
+        aliases: Option<Vec<PlanAlias<'p>>>,
         merge_path: Option<&'p [PathSegment]>,
     ) -> Result<(), Unsupported> {
         let paths = paths.filter(|paths| !paths.is_empty());
@@ -551,7 +611,7 @@ impl<'p> Compiler<'p> {
         builder.object(&mut self.positions, &[operation], data_position, paths)?;
 
         let mut pending_aliases = Vec::new();
-        for (key, merge_paths, requires) in aliases.into_iter().flatten() {
+        for (key, merge_paths, requires, reuse) in aliases.into_iter().flatten() {
             let Some(items) = self.positions.existing_child(data_position, &key) else {
                 return Err(Unsupported("entity alias not in the fetch document"));
             };
@@ -559,7 +619,7 @@ impl<'p> Compiler<'p> {
                 let target = self.positions.at_path(self.root, path);
                 self.positions.union(target, items);
             }
-            pending_aliases.push((key, items, merge_paths, requires));
+            pending_aliases.push((key, items, merge_paths, requires, reuse));
         }
         self.fetches.push((
             id,
@@ -630,15 +690,19 @@ impl<'p> Compiler<'p> {
             let aliases = pending
                 .aliases
                 .into_iter()
-                .map(|(key, items, merge_paths, requires)| {
+                .map(|(key, items, merge_paths, requires, reuse)| {
                     let mut program = Requires::default();
                     program.root =
                         ctx.requires(&mut program, Some(items), requires.root_selections());
                     program.reads_root = program.flatten(program.root.clone());
+                    let reuse = reuse
+                        .filter(|_| super::entity_reuse())
+                        .and_then(|reuse| ctx.reuse(items, requires, reuse));
                     AliasProgram {
                         slot: layouts[data_layout].slot(&key),
                         paths: merge_paths.iter().map(|path| ctx.path(path)).collect(),
                         requires: program,
+                        reuse,
                     }
                 })
                 .collect();
@@ -740,6 +804,55 @@ impl Resolved<'_> {
             }
         }
         steps.into()
+    }
+
+    /// Resolves an alias's `EntityReuse`. None when the copy isn't plain leaf fields, or no
+    /// source has a slot for every one of them.
+    fn reuse(
+        &mut self,
+        items: u32,
+        requires: &RequiresSelectionSet,
+        reuse: &EntityReuse,
+    ) -> Option<ReuseProgram> {
+        let target_layout = self.layout(items)?;
+        let mut keys = Vec::new();
+        copy_keys(reuse.copy.root_selections(), &mut keys)?;
+        let slots_of = |layout: u32, layouts: &[Layout]| -> Option<Box<[u16]>> {
+            let slots: Box<[u16]> = keys
+                .iter()
+                .map(|key| layouts[layout as usize].slot(key))
+                .collect();
+            (!slots.contains(&NO_SLOT)).then_some(slots)
+        };
+        let copy = slots_of(target_layout, self.layouts)?;
+        let mut sources = Vec::new();
+        for source in &reuse.sources {
+            let mut p = Some(self.root);
+            for segment in source.as_slice() {
+                if let PathSegment::Field(key) = segment {
+                    p = p.and_then(|p| self.positions.existing_child(p, key));
+                }
+            }
+            let Some(layout) = p.and_then(|p| self.layout(p)) else {
+                continue;
+            };
+            let Some(source_copy) = slots_of(layout, self.layouts) else {
+                continue;
+            };
+            let mut program = Requires::default();
+            program.root = self.requires(&mut program, p, requires.root_selections());
+            program.reads_root = program.flatten(program.root.clone());
+            sources.push(ReuseSource {
+                path: self.path(source.as_slice()),
+                requires: program,
+                copy: source_copy,
+            });
+        }
+        (!sources.is_empty()).then_some(ReuseProgram {
+            target_layout,
+            copy,
+            sources,
+        })
     }
 
     fn requires(

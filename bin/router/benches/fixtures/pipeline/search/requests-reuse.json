@@ -1,0 +1,77 @@
+[
+  {
+    "subgraph": "search",
+    "body": {
+      "query": "{listings{__typename id pet{__typename id}}}"
+    }
+  },
+  {
+    "subgraph": "catalog",
+    "body": {
+      "query": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Animal{__typename ...on Cat{whiskers} ...on Dog{tricks}}} _e1: _entities(representations: $__batch_reps_1){...on Bird{name} ...on Cat{name whiskers} ...on Dog{name tricks}}}",
+      "variables": {
+        "__batch_reps_0": [
+          {
+            "__typename": "Animal",
+            "id": "c1"
+          },
+          {
+            "__typename": "Animal",
+            "id": "d1"
+          },
+          {
+            "__typename": "Animal",
+            "id": "b1"
+          }
+        ],
+        "__batch_reps_1": [
+          {
+            "__typename": "Cat",
+            "id": "c1"
+          },
+          {
+            "__typename": "Dog",
+            "id": "d1"
+          },
+          {
+            "__typename": "Bird",
+            "id": "b1"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "subgraph": "ranking",
+    "body": {
+      "query": "query($representations:[_Any!]!){_entities(representations: $representations){...on Listing{rank}}}",
+      "variables": {
+        "representations": [
+          {
+            "__typename": "Listing",
+            "pet": {
+              "__typename": "Cat",
+              "whiskers": 12
+            },
+            "id": "l1"
+          },
+          {
+            "__typename": "Listing",
+            "pet": {
+              "__typename": "Dog",
+              "tricks": 3
+            },
+            "id": "l2"
+          },
+          {
+            "__typename": "Listing",
+            "pet": {
+              "__typename": "Bird"
+            },
+            "id": "l3"
+          }
+        ]
+      }
+    }
+  }
+]

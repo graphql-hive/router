@@ -488,3 +488,225 @@ Files: `bin/router/src/executor/slots/{mod,compile,store,parse,write,tests}.rs`,
 `pipeline/{mod,execution,query_plan}.rs`, `config/query_planner.rs`, `shared_state.rs`; bench
 `bin/router/benches/pipeline_benches.rs` + `benches/fixtures/pipeline/`;
 `bench/cpu-per-request.sh`. Nothing committed.
+
+### 2026-11-06 — `per_worker` client mode, and against `origin/main`
+
+Config for all runs below: no-dedupe + `traffic_shaping.http_client_mode: per_worker`
+(`bench/configs/no-deduplication.config.yaml` plus that line), optionally `http.workers: 1`.
+
+**Same branch binary, slots off vs on** (non-LTO build, 3 paired rounds):
+
+| workload | workers | CPU µs/req off → on | req/s off → on | RSS off → on |
+|---|---|---|---|---|
+| bench op | all | 539 → 407 (−24.5%) | 4790 → 4993 (+4.2%) | ~88.2 → ~88.6 MB |
+| bench op | 1 | 328 → 251 (−23.3%) | 3038 → 3935 (+29.5%) | ~79.6 → ~78.6 MB |
+| ct | all | 3251 → 2181 (−33%) | 1195 → 1286 (+7.6%) | ~166 → ~146 MB (−12%) |
+| ct | 1 | 2634 → 1665 (−37%) | 380 → 601 (+58%) | ~108 → ~115 MB (+6%) |
+
+**`origin/main` (`ea661773`) vs this branch** (`447728d3` = main + 3 shaped-parser commits from
+`kamil-perf-runtime-pr7` + the slot pipeline). Both built with LTO forced the same way
+(`CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1`, since the branch's
+`Cargo.toml` has the release profile commented out and main's doesn't); main from a temporary
+detached worktree. 3 alternating rounds, 0 validation failures:
+
+| workload | workers | origin/main | branch, slots off | branch, slots on | slots on vs main |
+|---|---|---|---|---|---|
+| bench op CPU µs/req | all | 549 / 549 / 554 | 518 / 520 / 523 | 389 / 390 / 387 | **−29%** |
+| bench op req/s | all | 4900 / 4980 / 4983 | 5059 / 5077 / 5040 | 5194 / 5262 / 5334 | +6% |
+| bench op RSS | all | ~90.2 MB | ~84.6 MB | ~84.9 MB | −6% |
+| bench op CPU µs/req | 1 | 347 / 361 / 349 | 322 / 328 / 322 | 241 / 244 / 241 | **−31%** |
+| bench op req/s | 1 | 2874 / 2665 / 2856 | 3092 / 3009 / 3097 | 4094 / 4026 / 4107 | **+43–46%** |
+| ct CPU µs/req | all | 4252 / 4232 / 4276 | 3126 / 3153 / 3151 | 2135 / 2142 / 2137 | **−50%** |
+| ct req/s | all | 1161 / 1164 / 1162 | 1207 / 1199 / 1197 | 1290 / 1290 / 1285 | +11% |
+| ct RSS | all | ~163.6 MB | ~155.3 MB | ~143.0 MB | −13% |
+| ct CPU µs/req | 1 | 3495 / 3473 / 3484 | 2550 / 2546 / 2536 | 1631 / 1631 / 1646 | **−53%** |
+| ct req/s | 1 | 287 / 288 / 286 | 393 / 393 / 395 | 612 / 613 / 607 | **2.13x** |
+
+**Why req/s barely moves with all workers (user question: "is there a mutex/lock/wait?").**
+Measured, bench op, all workers (`<scratchpad>/steps/who.sh`):
+
+| | connections | req/s | p50 | router cores | subgraph cores |
+|---|---|---|---|---|---|
+| origin/main | 50 | 4790 | 9.3 ms | 2.62 | 5.86 |
+| slots | 50 | 5140 | 8.8 ms | 1.98 | 6.33 |
+| origin/main | 200 | 4791 | 40.7 ms | 3.17 | 5.26 |
+| slots | 200 | 5125 | 38.1 ms | 2.42 | 5.79 |
+
+`top` during a run: **0.0% idle**, subgraphs ~5.3–6.5 cores, router ~1.6–2.0, wrk ~0.5 on
+the 10-core laptop (8 P + 2 E). 4x the connections gives the same req/s and 4x the latency:
+the machine is saturated, mostly by the bench subgraphs. A router-side lock would show as idle
+CPU with growing latency; there is none. CPU the router stops using goes to the subgraphs
+(5.86 → 6.33 cores), so all-workers req/s moves only ~6–11%. With one router worker the
+router is the bottleneck and req/s follows its CPU per request (+43% bench op, 2.13x ct).
+Showing the all-workers gain needs the subgraphs and load generator on other machines.
+
+### 2026-11-06 — worker count sweep (origin/main vs branch with slots)
+
+Same LTO binaries and no-dedupe + `per_worker` config as above, `http.workers` 2 / 4 / 8,
+3 alternating rounds, 0 validation failures (`<scratchpad>/steps/workers.sh`). Averages:
+
+| workload | workers | CPU µs/req main → slots | req/s main → slots | RSS main → slots | router cores used (req/s × CPU/req) main / slots |
+|---|---|---|---|---|---|
+| bench op | 1 | 352 → 242 (−31%) | 2798 → 4076 (**+46%**) | ~74.5 → ~75.4 MB | 0.98 / 0.99 |
+| bench op | 2 | 369 → 283 (−23%) | 4763 → 5271 (+10.7%) | ~78.0 → ~79.6 MB | 1.76 / 1.49 |
+| bench op | 4 | 488 → 379 (−22%) | 5092 → 5505 (+8.1%) | ~76.5 → ~82.7 MB | 2.48 / 2.09 |
+| bench op | 8 | 552 → 389 (−29.5%) | 5145 → 5410 (+5.2%) | ~87.7 → ~86.7 MB | 2.84 / 2.10 |
+| ct | 1 | 3484 → 1636 (−53%) | 287 → 611 (**2.13x**) | ~111.5 → ~110.5 MB | 1.00 / 1.00 |
+| ct | 2 | 3453 → 1689 (−51%) | 578 → 1180 (**2.04x**) | ~136 → ~122 MB | 2.00 / 1.99 |
+| ct | 4 | 3762 → 2018 (−46%) | 1001 → 1339 (+34%) | ~140 → ~129 MB | 3.77 / 2.70 |
+| ct | 8 | 4239 → 2106 (−50%) | 1156 → 1298 (+12%) | ~154 → ~137 MB | 4.90 / 2.73 |
+
+p99, bench op: 2 workers 15.9 → 18.9 ms, 4 workers 32.1 → 18.3 ms, 8 workers 23.1 → 19.1 ms.
+
+Reading it: req/s follows the CPU saving exactly while the router is the bottleneck (its used
+cores ≈ its worker count: bench op at 1 worker, ct at 1–2 workers, main's ct at 4). Past that
+the cap is outside the router: the bench op tops out at ~5.3–5.5k req/s with the laptop at 0%
+idle (bench subgraphs ~6 cores), ct with slots tops out at ~1.3k req/s for 4 and 8 workers
+while the router uses only ~2.7 cores, which points at the single-threaded Node payload server
+(~3.9 GB/s out). CPU per request also grows with the worker count on both builds (bench op main
+352 → 552 µs, slots 242 → 389 µs): idle workers polling `kevent`, seen in the first router
+profile.
+
+### 2026-11-06 — ChilliCream graphql-federation-benchmarks: Hive vs Fusion
+
+Their repo (`~/Work/chillicream/graphql-federation-benchmarks` @ c7c822c, apollo-federation
+family, HotChocolate 16.7.0 subgraphs on .NET 10), on this laptop (M1 Max, 10 cores, no CPU
+pinning: gateway, subgraphs and k6 share the cores). 1 warmup + 3 measured runs, 30 s
+cooldown (no temperature sensor on macOS). Gateways:
+- hive-main: `origin/main` LTO binary; hive-slots: branch LTO binary with `HIVE_SLOT_PIPELINE=1`.
+  Both use the repo's config plus `per_worker`, subgraph dedupe off,
+  `max_connections_per_host: 256`.
+- fusion-net-11 / fusion-aot-11: HotChocolate Fusion 16.7.3 (latest stable), .NET 11 preview
+  JIT with runtime-async / Native AOT, the repo's `fusion-fed` gateway.
+
+Medians of 3 runs (CPU from `ps %cpu`, approximate on macOS):
+
+| scenario | gateway | req/s | p95 ms | peak RSS MB | gateway cores | CPU µs/req |
+|---|---|---|---|---|---|---|
+| synthetic (`constant`) | hive-main | 3267 | 23.0 | 126 | 2.47 | 757 |
+| | hive-slots | 3464 | 21.3 | 132 | 2.11 | 609 |
+| | fusion-net-11 | 3899 | 18.5 | 328 | 3.11 | 798 |
+| | fusion-aot-11 | 3834 | 18.4 | 126 | 3.16 | 821 |
+| burst | hive-main | 3322 | 160.6 | 462 | 2.34 | 706 |
+| | hive-slots | 3563 | 153.1 | 458 | 1.96 | 548 |
+| | fusion-net-11 | 3844 | 121.3 | 321 | 3.01 | 784 |
+| | fusion-aot-11 | 3839 | 120.6 | 173 | 3.11 | 810 |
+| real-world (`constant-latency`, 4 ms per subgraph call) | hive-main | 1653 | 37.9 | 118 | 1.44 | 871 |
+| | hive-slots | 1667 | 37.9 | 120 | 1.22 | 734 |
+| | fusion-net-11 | 1931 | 32.2 | 294 | 1.60 | 829 |
+| | fusion-aot-11 | 1924 | 32.3 | 128 | 1.68 | 871 |
+
+0 failed requests anywhere; no leftover monitor/watch processes.
+
+Why Fusion is ahead (measured with a counting proxy in front of the subgraphs, one request):
+Hive makes 7 subgraph calls in 4 sequential steps (products+accounts → inventory+reviews →
+products+accounts → inventory, the last one because inventory `@requires` price and weight),
+Fusion 4 calls in 2 steps. Fusion's entity reuse skips the last two steps (accounts `name`,
+products `name price weight`, inventory `inStock shippingEstimate` of the nested entities,
+which it already has from the first step).
+Same client response (87,327 B, JSON-equal). Real-world: 50 VUs / req/s gives ~30 ms per
+request for Hive vs ~26 ms for Fusion (two extra 4 ms round trips on Hive's critical path). Synthetic and burst: the laptop
+is shared and saturated, and 7 vs 4 HotChocolate calls per request cost subgraph CPU.
+
+The query, the four subgraphs and the 87,327 B response are the same as our `bench_op`
+(`bench/operation.graphql`), so perf work iterates on our own bench.
+
+### 2026-11-06 — round 2: beat Fusion without entity reuse? (non-LTO release from here on)
+
+All on our own bench (`bench_op` is the ChilliCream query, byte-identical response), non-LTO
+release builds, no-dedupe + `per_worker`, 1 worker unless noted.
+
+Whole-router samply profile (bench_op, slots, 1 worker, ~248 µs/req): syscalls 32%
+(`writev` 17%, `recv` 15%; about 3/4 of it on the hyper client to the subgraphs), hyper
+client machinery ~15%, ntex ~10%, the slot pipeline ~27% (parse 10%, collect 7.4%, write 6.6%,
+merge 1.8%), allocator ~5%, request handling outside execution ~4.5%. No single hotspot: the
+cost is per HTTP exchange (8 per request).
+
+Experiments (3 alternating rounds, CPU µs/req):
+- hyper `http1_writev(false)`: 249–251 vs 247–249 base. No change. Reverted.
+- hyper `http1_read_buf_exact_size(64 KiB)`: 250–252, more RSS. Reverted.
+- Memory at 500 connections (wrk -c500, all workers): peak RSS 282–288 MB (`per_worker`),
+  235 MB (`shared`), 80 MB at 50 connections. dhat at 500 concurrent: t-gmax 179 MB, of which
+  hyper's read buffers 58 MB (a body read in one chunk keeps the connection's whole adaptive
+  buffer alive for the request), our `read_body` copies 24 MB, response buffers ~36 MB.
+- `http1_read_buf_exact_size(16 KiB)`: peak RSS at c=500 −17% (282–288 → 234–237 MB), CPU on
+  bench_op unchanged (249 vs 248), but ct (3 MB) +14% CPU / −20% req/s (1625 → 1847 µs).
+  8 KiB: −24% RSS, +2% CPU on bench_op. 32 KiB: no RSS gain. `http1_max_buf_size(128 KiB)`:
+  no RSS gain. Rejected: the ct regression.
+
+Conclusion: without entity reuse the remaining router costs are per subgraph exchange, and the
+gap to Fusion is the 3 extra exchanges (7 vs 4) and 2 extra sequential steps. Moving to entity
+reuse, opt-in.
+
+### 2026-11-06 — entity reuse on the slot pipeline (opt-in)
+
+User rule: try without entity reuse first; if that makes no progress, implement it behind an
+opt-in flag. It didn't (round 2 above), so:
+
+- Planner part ported from the earlier `Value`-pipeline work on `kamil-perf-runtime-pr5/pr6`
+  (a882fa65, 9f62826b, 1b866e5a, 77fedafc): every eligible entity fetch (query, one entity type,
+  plain output fields, no context/rewrites) gets `EntityReuse { sources, copy }`, the positions
+  earlier waves filled with that type and those fields. Mutations, aliased keys and aliases
+  sharing a representations variable are left out. `#[serde(skip)]`, plans serialize as before.
+- Config ported from 1fc64b3c: `traffic_shaping.experimental_entity_reuse` (default false),
+  env `ROUTER_EXPERIMENTAL_ENTITY_REUSE=true`. Process-wide like the slot pipeline switch
+  (`slots::set_entity_reuse`), only the slot pipeline copies.
+- Slot compile: with the flag on, an alias whose copy selection is leaf fields gets a
+  `ReuseProgram`: the target layout, the copied fields' slots, and per source a path program,
+  the alias's representation reads resolved at the source position, and the source's slots of
+  the copied fields. With the flag off nothing is compiled, so plans are exactly as before.
+- Slot runtime (`collect`): sources are walked and every object whose top-level representation
+  fields are all present and non-null and that has every copied field is indexed by its
+  fingerprint (no key mask: the mask depends on the layout). A spot of the target layout whose
+  fingerprint matches gets the fields copied slot to slot and no entity; when no spot is left
+  the fetch isn't sent. Nothing is copied once the request has an error.
+
+Checks:
+- `pipeline_benches` (`PIPELINE_ENTITY_REUSE=1`): bench_op output JSON-equal to the same
+  reference with 4 subgraph requests instead of 7 (`requests-reuse.json`); search unchanged.
+  In process: 62.5 → 57.6 µs/req.
+- e2e with slots and reuse forced on (`HIVE_SLOT_PIPELINE=1 ROUTER_EXPERIMENTAL_ENTITY_REUSE=true`):
+  836/839, the 2 extra failures are the entity_batching call-count snapshots (7 → 4 calls, data
+  equal) plus the known file_watch_works. Default e2e 838/839 (file_watch_works), test_all
+  2105/2105, new e2e `entity_reuse` (3 tests, from the old branch, on the slot pipeline),
+  planner tests (5).
+- graphql-diff vs the old pipeline without reuse: 2000/2000 (default config, dedupe on) and
+  3000/3000 (no dedupe), data only.
+
+Router, bench_op, non-LTO release, 3 alternating rounds, CPU µs/req and req/s:
+
+| setup | reuse off | reuse on |
+|---|---|---|
+| 1 worker | 249.4 µs, 3988 req/s | 187.5 µs (−25%), 5221 req/s (+31%) |
+| all workers | ~404 µs, ~5388 req/s | ~278 µs (−31%), ~6385 req/s (+18%) |
+| all workers, subgraphs delayed 4 ms | ~457 µs, ~1715 req/s, p99 ~33 ms | ~323 µs, ~2917 req/s (+70%), p99 ~21 ms |
+
+Flag off vs the build before the change (`r-base`): 249.4 vs 249.5 µs, no regression.
+
+### 2026-11-07 — Hive (slots + reuse) vs Fusion, own harness
+
+ChilliCream's k6 runner is too slow to iterate with, so `<scratchpad>/cc/quick.sh`: the same
+HotChocolate subgraphs (`BENCHMARK_SUBGRAPH_DELAY_MS` for the real-world delay), the same Fusion
+16.7.3 builds, Hive non-LTO release with the benchmark's config (`max_connections_per_host: 256`,
+`per_worker`, dedupe off), `wrk` + `bench/wrk.lua` (every response validated against the
+identical expected JSON), a discarded 20 s warm-up through one gateway, then 20 s runs,
+gateways alternating, 3 rounds. Medians:
+
+| scenario | Hive slots | Hive slots + reuse | Fusion AOT |
+|---|---|---|---|
+| synthetic, c=50 | 4144 req/s, p99 20.6 ms, ~619 µs | **5611**, p99 16.0, ~452 µs | 4716, p99 15.8, ~808 µs |
+| real-world (4 ms), c=50 | 1783, p99 35.0 | **2900**, p99 22.5 | 1984, p99 29.2 |
+| c=500 | 4081, p99 211, 952 MB | **5546**, p99 156, 748 MB | 4812, p99 129, 258 MB |
+
+Fusion JIT only got ~2.6k req/s here (3.9k in their runner): its JIT needs a longer warm-up than
+5 s, so it's left out; AOT is the reference.
+
+Memory at c=500 follows the subgraph connection count: Hive ~1.7–3.7k connections
+(`per_worker`, 256 per host), `shared` ~470–510, Fusion 84; ~0.3 MB per connection. dhat on
+this setup: hyper read buffers and per-request response buffers dominate, 113 MB still live
+after the load. Read buffer knobs don't fix it (exact 16/32 KiB, max 64 KiB: same MB per
+connection); capping idle connections per pool makes it churn (26: ~2k req/s). What works is
+fewer requests in flight to the subgraphs: `max_connections_per_host` 100 → 489–512 MB, p99
+128–129 ms; 64 → 424–428 MB, p99 118–124 ms (better than Fusion AOT), same req/s, no cost at
+c=50. The rest of the gap is hyper's legacy pool racing a new connect against a returning
+connection and keeping both.

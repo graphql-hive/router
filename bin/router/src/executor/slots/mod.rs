@@ -36,6 +36,19 @@ pub fn enabled() -> bool {
     ENABLED.load(Ordering::Relaxed) || *FROM_ENV
 }
 
+/// Whether entity fetches may copy entities that are already in the response
+/// (`traffic_shaping.experimental_entity_reuse`). Off by default. Slot plans compiled while it's
+/// off have no reuse programs, so it costs nothing then.
+static ENTITY_REUSE: AtomicBool = AtomicBool::new(false);
+
+pub fn set_entity_reuse(enabled: bool) {
+    ENTITY_REUSE.store(enabled, Ordering::Relaxed);
+}
+
+pub fn entity_reuse() -> bool {
+    ENTITY_REUSE.load(Ordering::Relaxed)
+}
+
 /// The slot plan of a cached query plan, compiled by the first request that needs it.
 #[derive(Default)]
 pub struct SlotPlanCell(OnceLock<Option<SlotPlan>>);
