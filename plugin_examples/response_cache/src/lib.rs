@@ -100,7 +100,8 @@ impl RouterPlugin for ResponseCachePlugin {
                     return payload.proceed();
                 }
 
-                if let Ok(serialized) = sonic_rs::to_vec(&payload.data) {
+                {
+                    let serialized = payload.data.to_json().into_owned();
                     let ttl_per_type = self.ttl_per_type.load();
                     trace!("Caching response for key: {}", key);
                     // Decide on the ttl somehow
@@ -108,15 +109,13 @@ impl RouterPlugin for ResponseCachePlugin {
                     let mut max_ttl = 0;
 
                     // Imagine this code is traversing the response data to find type names
-                    if let Some(obj) = payload.data.as_object() {
-                        if let Some(typename) = obj
-                            .iter()
-                            .position(|(k, _)| k == &"__typename")
-                            .and_then(|idx| obj[idx].1.as_str())
-                        {
-                            if let Some(ttl) = ttl_per_type.get(typename) {
-                                max_ttl = max_ttl.max(*ttl);
-                            }
+                    if let Some(typename) = payload
+                        .data
+                        .get(&["__typename".into()])
+                        .and_then(|typename| typename.as_str())
+                    {
+                        if let Some(ttl) = ttl_per_type.get(typename) {
+                            max_ttl = max_ttl.max(*ttl);
                         }
                     }
 

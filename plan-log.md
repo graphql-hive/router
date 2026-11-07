@@ -1134,3 +1134,23 @@ session scratchpad (`opt/chunked-output.patch`).
   in the entry before. What remains before the `Value` pipeline can go: plugin end hooks still
   get a `Value` (see the TODO on `OnExecuteEndHookPayload::data`), CI doesn't run e2e with slots
   on, and `experimental_slot_pipeline` is off by default.
+
+### 2026-11-07 — a data API for the `on_execute` end hook
+
+- `OnExecuteEndHookPayload::data` is a `ResponseData` (`executor::plugins::response_data`)
+  instead of a `Value`: the data as the client gets it, read with `get`/`to_json`, changed
+  only with `set` (a scalar or enum, checked against the field's type) and `set_null` (nullable
+  positions only). Paths are response keys and list indexes; the field's type comes from the
+  client operation and the schema. `__typename` and fields that change type with the object's
+  type (`... on A { x: a } ... on B { x: b }`) are refused.
+- Both pipelines write the client data first (`project_data` / `write_data`, the old writers
+  split in two), hand it to the end hooks, then write errors and extensions after
+  (`finish_response`). The slot pipeline no longer turns its slots into a `Value` for plugins.
+  Data no plugin read stays the bytes the writer wrote; data a plugin changed is serialized
+  again from a `serde_json::Value` (`preserve_order`, sonic-rs objects reorder their keys once
+  changed, the unit test caught it).
+- Behaviour change on the end-hook path: errors the writer adds (invalid enum values) now reach
+  the hooks, the plugins' error handling and masking, like the subgraph errors do.
+- Tests: `response_data::tests::edits_keep_the_response_matching_the_operation`,
+  e2e `slot_plugins::a_plugin_changes_the_data_the_same_way_on_both_pipelines`. The subgraph
+  end hook's TODO (`OnSubgraphExecuteEndHookPayload::execution_result`) is still open.

@@ -38,7 +38,7 @@ pub struct FieldTypeInfo {
 }
 
 /// The nullability shape of a field's type. Similar to the GraphQL type wrappers.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldNullability {
     Leaf {
         non_null: bool,
