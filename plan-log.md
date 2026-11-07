@@ -1072,3 +1072,21 @@ session scratchpad (`opt/chunked-output.patch`).
   2112/2112, e2e 839/840 with slots on and off. Bench unchanged.
 - The disk filled up during this round (`target/` is 120+ GB); the session's scratch binaries
   and profiles were deleted to make room.
+
+### 2026-11-07 — coverage: plugins on the slot pipeline; nothing falls back in e2e
+
+- A router with plugins no longer sends requests to the old pipeline:
+  - `on_execute` start hooks run first, like on the other pipeline: they may change the data
+    the plan starts from (it goes into slots when the operation has a seed), the errors and
+    the extensions, answer instead, or register end callbacks;
+  - subgraph hooks run in the executor map as before; with plugins the executors return the
+    parsed response (`raw_response: false`) and the slot path reads `data` from it, so a hook's
+    changes count;
+  - end callbacks, when any, get the result as a `Value` (the slots written as JSON and read
+    back, its bytes kept for the execution) and the response is projected from what they
+    leave with `project_by_operation`; without end callbacks the slot writer runs;
+  - plugin error handling (status code) and error masking apply on both paths.
+- e2e with slots forced on and a temporary tally: 1101 queries, 422 subscription events, 27
+  mutations and the 15 plugin requests on slots, **no fallback**. `cargo test_all` 2112/2112,
+  e2e 839/840 with slots on and off. Bench unchanged.
+- ponytail: data a start hook puts in only reaches slots when the operation has a seed.
