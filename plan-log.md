@@ -1090,3 +1090,19 @@ session scratchpad (`opt/chunked-output.patch`).
   mutations and the 15 plugin requests on slots, **no fallback**. `cargo test_all` 2112/2112,
   e2e 839/840 with slots on and off. Bench unchanged.
 - ponytail: data a start hook puts in only reaches slots when the operation has a seed.
+
+### 2026-11-07 — slot compiler: defensive limits that only mirrored nothing
+
+- Plan nodes the slot pipeline didn't know (a `Flatten` over something other than a fetch,
+  `Defer`, a nested `Subscription`) were `Unsupported`; the other pipeline doesn't run them
+  either (`prepare_job_future` returns no job), so the slot compiler now skips them the same way.
+- `MAX_WIDTH` was 512 keys per layout, a performance cut-off; it's now the `u16` slot limit.
+  Test `a_wide_object_runs_on_slots` (600 fields, equal to the other pipeline).
+- Custom scalar paths under a leaf were `Unsupported`; a leaf keeps everything under it as the
+  bytes it came as, which is what a custom scalar needs.
+- Left as `Unsupported`, as invariants the planner keeps: a fetch document that doesn't parse,
+  no or several operations, an unknown fragment, a key longer than 64 KB, requires without a
+  path, context without entities, an entity alias missing from its document, rewrite forms the
+  planner doesn't make.
+- `target/profiling` (33 GB of this session's profiling builds) was deleted to make room;
+  `mbx gc` keeps the in-use target directory.
