@@ -126,7 +126,7 @@ fn both_with(types: &str, query: &str, body: &str) -> (String, String, usize, Ve
     let width = slots.layouts[slots.root_layout as usize].width();
     let first = arena.object(width);
     let mut raw = Vec::new();
-    let new = match parse_body(&mut arena, &slots.layouts, &program.shape, &bytes) {
+    let new = match parse_body(&mut arena, &slots.layouts, &program.shape, &bytes, true) {
         Some(parsed) => {
             if let Slot::Object {
                 layout,
@@ -412,7 +412,8 @@ fn a_rewritten_projection_plan_gets_a_slot_plan_of_its_own() {
     let program = &slots.fetches[&fetch.id];
     let mut arena = Arena::default();
     let first = arena.object(slots.layouts[slots.root_layout as usize].width());
-    let parsed = parse_body(&mut arena, &slots.layouts, &program.shape, &body).expect("parses");
+    let parsed =
+        parse_body(&mut arena, &slots.layouts, &program.shape, &body, true).expect("parses");
     if let Slot::Object {
         layout,
         first: data,

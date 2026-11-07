@@ -954,3 +954,22 @@ session scratchpad (`opt/chunked-output.patch`).
   change), or through the router on `e2e/supergraph-authz.graphql`: the bench op without a token
   (13 errors, most of the tree nulled) and with a `read:price`-only token (only
   `shippingEstimate` nulled). Both routers gave byte-identical responses for the no-token case.
+
+### 2026-11-07 — coverage: demand control on the slot pipeline
+
+- Requests with demand control no longer fall back. The actual-cost walk is generic over the
+  data it reads (`demand_control::CostData`): the `Value` tree as before, or `slots::store::
+  SlotView` (an object finds a field by its response key in its layout). One walk for both, so
+  they count the same.
+- `BySubgraph` costs are recorded from each parsed body (before it's merged), `ByResponseShape`
+  from the final slots; telemetry, the "actual cost exceeds max cost" warning and the exposed
+  cost headers run at the same point as on the other pipeline. Subgraph budgets already worked:
+  the slot path shares job preparation and now passes the context to the executor map.
+- With demand control on, the parser doesn't pass subtrees through (`parse_body(..,
+  passthrough)`): their lists would be bytes the cost can't count.
+- e2e `demand_control` (144 tests, incl. the parity suites) with the slot pipeline forced on:
+  all pass, and a temporary tally showed all 99 of its demand-controlled requests on slots, no
+  fallback. `cargo test_all` 2111/2111, e2e 839/840 with slots on and off (only
+  `file_watch_works`). Bench unchanged (no demand control there).
+- ponytail: `SlotView::field` searches the layout's keys linearly per field; resolve the cost
+  plan to slots if that shows in a profile.

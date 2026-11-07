@@ -11,7 +11,7 @@ use crate::executor::slots::compile::{
     AliasProgram, FetchProgram, Layout, Requires, RequiresNode, SlotPlan, Step, NO_SLOT,
 };
 use crate::executor::slots::parse::parse_body;
-use crate::executor::slots::store::{Arena, Slot};
+use crate::executor::slots::store::{Arena, Slot, SlotView};
 use crate::executor::slots::write::write_response;
 use crate::executor::slots::SlotPlanCell;
 use crate::executor::utils::consts::TYPENAME_JSON_FIELD;
@@ -26,7 +26,6 @@ const NO_ENTITY: u32 = u32::MAX;
 pub(super) fn usable(opts: &QueryPlanExecutionOpts<'_>) -> Option<Arc<SlotPlan>> {
     if !crate::executor::slots::enabled()
         || opts.plugin_req_state.is_some()
-        || opts.demand_control_context.is_some()
         || opts.introspection_context.query.is_some()
         || !(opts.operation_kind.is_query() || opts.operation_kind.is_mutation())
     {
@@ -59,7 +58,7 @@ pub(super) async fn execute<'exec>(
         jwt_forwarding_plan: opts.jwt_auth_forwarding.clone(),
         // a mutation's subgraph calls each run, like on the other pipeline
         dedupe_subgraph_requests: opts.operation_kind.is_query(),
-        demand_control_context: None,
+        demand_control_context: opts.demand_control_context.clone(),
         plugin_req_state: None,
         operation_name_factory: &opts.operation_name_factory,
         connection_fingerprint: opts.connection_fingerprint,
@@ -94,6 +93,34 @@ pub(super) async fn execute<'exec>(
     summary::record(|s| s.set_partial_response(error_count > 0));
     let response_size_estimate = ctx.response_storage.estimate_final_response_size();
     let mut errors = std::mem::take(&mut ctx.errors);
+
+    if let Some(demand_control) = executor.demand_control_context.as_deref() {
+        let actual = demand_control.calculate_actual_cost(
+            SlotView {
+                arena: &run.arena,
+                layouts: &plan.layouts,
+                slot: run.data,
+            },
+            &opts.variable_values.variables_map,
+            &ctx.subgraph_response_cost_tracker,
+        );
+        if actual > demand_control.operation.operation_max_cost {
+            warn!(
+                target: targets::DEMAND_CONTROL,
+                operation_name = ?opts.operation_for_plan.name.as_deref(),
+                actual_cost = actual,
+                estimated_cost = demand_control.evaluation.estimated_cost,
+                max_cost = demand_control.operation.operation_max_cost,
+                "actual cost exceeds max cost (not enforced)"
+            );
+        }
+        demand_control.report_telemetry(
+            actual,
+            opts.operation_for_plan.name.as_deref(),
+            &opts.span,
+        );
+        demand_control.apply_expose_headers(&mut ctx.response_headers_aggregator, actual);
+    }
 
     cache_control::finalize(
         &mut ctx.response_headers_aggregator,
@@ -592,6 +619,7 @@ impl<'p> Run<'p> {
     ) {
         let subgraph_name = job.subgraph_name();
         let affected_path = job.affected_path();
+        let fetch_hash = job.operation().hash;
         let response = job.response();
         if let Some(ref headers) = response.headers {
             executor.apply_job_headers(ctx, subgraph_name, affected_path, headers);
@@ -615,7 +643,15 @@ impl<'p> Run<'p> {
             .filter(|status| !status.is_success())
             .map(|status| GraphQLError::create_from_status_code(&status, subgraph_name));
         let layouts = &self.plan.layouts;
-        let parsed = parse_body(&mut self.arena, layouts, &program.shape, &bytes);
+        // demand control counts the lists of a response, which a passed-through subtree hides
+        let passthrough = executor.demand_control_context.is_none();
+        let parsed = parse_body(
+            &mut self.arena,
+            layouts,
+            &program.shape,
+            &bytes,
+            passthrough,
+        );
         let Some(parsed) = parsed else {
             // sonic says what's wrong with it, like it does for the other pipeline
             let error = match SubgraphResponse::deserialize_from_bytes(bytes, None) {
@@ -638,6 +674,19 @@ impl<'p> Run<'p> {
             return;
         };
         ctx.response_storage.add_response(bytes.clone());
+        if let Some(demand_control) = executor.demand_control_context.as_deref() {
+            demand_control.record_subgraph_data_cost(
+                &mut ctx.subgraph_response_cost_tracker,
+                subgraph_name,
+                fetch_hash,
+                SlotView {
+                    arena: &self.arena,
+                    layouts,
+                    slot: parsed.data,
+                },
+                executor.variable_values,
+            );
+        }
         if matches!(parsed.data, Slot::Missing | Slot::Null)
             && parsed.errors.is_none()
             && errors.is_none()
