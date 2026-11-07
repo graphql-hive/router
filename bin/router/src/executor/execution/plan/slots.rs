@@ -28,7 +28,7 @@ const NO_ENTITY: u32 = u32::MAX;
 /// Whether this request can run on the slot pipeline. The plan decides most of it when it's
 /// compiled; what's left is per router and per request.
 pub(super) fn usable(opts: &QueryPlanExecutionOpts<'_>) -> Option<Arc<SlotPlan>> {
-    if !crate::executor::slots::enabled() || opts.plugin_req_state.is_some() {
+    if !crate::executor::slots::enabled() {
         return None;
     }
     opts.slot_plan.as_deref().and_then(|cell: &SlotPlanCell| {
@@ -48,10 +48,60 @@ pub(super) fn usable(opts: &QueryPlanExecutionOpts<'_>) -> Option<Arc<SlotPlan>>
 pub(super) async fn execute<'exec>(
     mut opts: QueryPlanExecutionOpts<'exec>,
     plan: Arc<SlotPlan>,
-    seed: Value<'exec>,
+    mut seed: Value<'exec>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
     let plan = &*plan;
     let aliased_requests = AliasedRequests::default();
+    let mut initial_errors = std::mem::take(&mut opts.initial_errors);
+
+    // plugins' `on_execute`, like the other pipeline: they may change the data the plan starts
+    // from, the errors and the extensions, answer instead, or ask to see the result
+    let mut on_end_callbacks = vec![];
+    if let Some(plugin_req_state) = opts.plugin_req_state.as_ref() {
+        let mut start_payload = OnExecuteStartHookPayload {
+            router_http_request: &plugin_req_state.router_http_request,
+            context: &plugin_req_state.context,
+            request_context: plugin_req_state
+                .request_context
+                .for_plugin::<hooks::OnExecute>(),
+            query_plan: opts.query_plan,
+            operation_for_plan: &opts.operation_for_plan,
+            data: seed,
+            errors: initial_errors,
+            extensions: opts.extensions.extensions,
+            variable_values: &opts.variable_values.variables_map,
+            dedupe_subgraph_requests: opts.operation_kind.is_query(),
+            demand_control_estimate: opts.demand_control_context.as_ref().map(|dc| {
+                DemandControlEstimatedCost {
+                    estimated: dc.evaluation.estimated_cost,
+                    max: dc.operation.operation_max_cost,
+                }
+            }),
+        };
+        for plugin in plugin_req_state.plugins.as_ref() {
+            let result = plugin.on_execute(start_payload).await;
+            start_payload = result.payload;
+            match result.control_flow {
+                StartControlFlow::Proceed => {}
+                StartControlFlow::EndWithResponse(response) => match response {
+                    OnExecuteResponse::Output(response) => return Ok(response),
+                    OnExecuteResponse::EarlyResponse(response) => {
+                        return Ok(early_http_response_into_execution_output(
+                            response,
+                            &opts.response_header_sink,
+                        ));
+                    }
+                },
+                StartControlFlow::OnEnd(callback) => on_end_callbacks.push(callback),
+            }
+        }
+        // ponytail: data a plugin puts here only goes into slots when the operation has a seed
+        // (introspection, a subscription event); give the plan a seed for it if a plugin needs it
+        seed = start_payload.data;
+        initial_errors = start_payload.errors;
+        opts.extensions.extensions = start_payload.extensions;
+    }
+
     let executor = Executor {
         variable_values: &opts.variable_values.variables_map,
         schema_metadata: &opts.introspection_context.metadata,
@@ -63,12 +113,12 @@ pub(super) async fn execute<'exec>(
         // a mutation's subgraph calls each run, like on the other pipeline
         dedupe_subgraph_requests: opts.operation_kind.is_query(),
         demand_control_context: opts.demand_control_context.clone(),
-        plugin_req_state: None,
+        plugin_req_state: opts.plugin_req_state.as_ref(),
         operation_name_factory: &opts.operation_name_factory,
         connection_fingerprint: opts.connection_fingerprint,
         aliased_requests: &aliased_requests,
     };
-    let mut ctx = ExecutionContext::new(Value::Null, std::mem::take(&mut opts.initial_errors));
+    let mut ctx = ExecutionContext::new(Value::Null, initial_errors);
     let mut run = Run {
         plan,
         arena: Arena::take(),
@@ -119,9 +169,10 @@ pub(super) async fn execute<'exec>(
         }
     }
     summary::record(|s| s.set_partial_response(error_count > 0));
-    let response_size_estimate = ctx.response_storage.estimate_final_response_size();
-    let mut errors = std::mem::take(&mut ctx.errors);
+    let mut response_size_estimate = ctx.response_storage.estimate_final_response_size();
+    let errors = std::mem::take(&mut ctx.errors);
 
+    let mut demand_control_cost = None;
     if let Some(demand_control) = executor.demand_control_context.as_deref() {
         let actual = demand_control.calculate_actual_cost(
             SlotView {
@@ -148,6 +199,11 @@ pub(super) async fn execute<'exec>(
             &opts.span,
         );
         demand_control.apply_expose_headers(&mut ctx.response_headers_aggregator, actual);
+        demand_control_cost = Some(DemandControlCost {
+            estimated: demand_control.evaluation.estimated_cost,
+            max: demand_control.operation.operation_max_cost,
+            actual,
+        });
     }
 
     cache_control::finalize(
@@ -160,12 +216,80 @@ pub(super) async fn execute<'exec>(
         .store(std::mem::take(&mut ctx.response_headers_aggregator));
     std::mem::take(&mut ctx.extensions_aggregator).merge_into(&mut opts.extensions.extensions);
 
-    if let Some(error_masking_runtime) = opts.error_masking_runtime.as_ref() {
-        for error in &mut errors {
-            error_masking_runtime.apply(error);
+    // plugins that asked to see the result get it as a `Value`, and the response is projected
+    // from what they leave, like on the other pipeline
+    // TODO: a data API of our own for plugins (see `OnExecuteEndHookPayload::data`), so this
+    // doesn't need a `Value`
+    if !on_end_callbacks.is_empty() {
+        let mut body = b"{\"data\":".to_vec();
+        run.arena.write_whole(&plan.layouts, run.data, &mut body);
+        body.push(b'}');
+        run.arena.give_back();
+        let response = SubgraphResponse::deserialize_from_bytes(bytes::Bytes::from(body), None)
+            .with_plan_context(LazyPlanContext {
+                subgraph_name: || None,
+                affected_path: || None,
+            })?;
+        if let Some(bytes) = response.bytes {
+            // the `Value` borrows from it
+            ctx.response_storage.add_response(bytes);
         }
+        let mut end_payload = OnExecuteEndHookPayload {
+            data: response.data,
+            errors,
+            extensions: opts.extensions.extensions,
+            response_size_estimate,
+            request_context: opts
+                .plugin_req_state
+                .as_ref()
+                .map(|state| state.request_context.for_plugin::<hooks::OnExecute>())
+                .expect("end callbacks come from plugins"),
+            demand_control_cost,
+        };
+        for callback in on_end_callbacks {
+            let result = callback(end_payload);
+            end_payload = result.payload;
+            match result.control_flow {
+                EndControlFlow::Proceed => {}
+                EndControlFlow::EndWithResponse(response) => match response {
+                    OnExecuteResponse::Output(response) => return Ok(response),
+                    OnExecuteResponse::EarlyResponse(response) => {
+                        return Ok(early_http_response_into_execution_output(
+                            response,
+                            &opts.response_header_sink,
+                        ));
+                    }
+                },
+            }
+        }
+        let data = end_payload.data;
+        opts.extensions.extensions = end_payload.extensions;
+        response_size_estimate = end_payload.response_size_estimate;
+        let (errors, status_code) = plugin_errors(&opts, end_payload.errors);
+        let errors = masked(&opts, errors);
+        let body = project_by_operation(
+            &data,
+            errors,
+            &opts.extensions,
+            opts.operation_type_name.as_str(),
+            &opts.projection_plan,
+            &opts.variable_values.variables_map,
+            response_size_estimate,
+            &opts.introspection_context.metadata,
+        )
+        .with_plan_context(LazyPlanContext {
+            subgraph_name: || None,
+            affected_path: || None,
+        })?;
+        return Ok(PlanExecutionOutput {
+            body,
+            error_count,
+            status_code,
+        });
     }
 
+    let (errors, status_code) = plugin_errors(&opts, errors);
+    let errors = masked(&opts, errors);
     let body = write_response(
         &run.arena,
         plan,
@@ -186,8 +310,34 @@ pub(super) async fn execute<'exec>(
     Ok(PlanExecutionOutput {
         body,
         error_count,
-        status_code: StatusCode::OK,
+        status_code,
     })
+}
+
+/// The plugins' say on the errors and the status code, like on the other pipeline
+fn plugin_errors(
+    opts: &QueryPlanExecutionOpts<'_>,
+    errors: Vec<GraphQLError>,
+) -> (Vec<GraphQLError>, StatusCode) {
+    match opts.plugin_req_state.as_ref() {
+        Some(plugin_req_state) if !errors.is_empty() => handle_graphql_errors_with_plugins(
+            plugin_req_state.plugins.as_ref(),
+            plugin_req_state.context.as_ref(),
+            &plugin_req_state.request_context,
+            errors,
+            StatusCode::OK,
+        ),
+        _ => (errors, StatusCode::OK),
+    }
+}
+
+fn masked(opts: &QueryPlanExecutionOpts<'_>, mut errors: Vec<GraphQLError>) -> Vec<GraphQLError> {
+    if let Some(error_masking_runtime) = opts.error_masking_runtime.as_ref() {
+        for error in &mut errors {
+            error_masking_runtime.apply(error);
+        }
+    }
+    errors
 }
 
 struct Run<'p> {
@@ -405,7 +555,8 @@ impl<'p> Run<'p> {
                         custom_scalar_paths,
                         raw_variable_values: Some(variables),
                         affected_path: Some(path),
-                        raw_response: true,
+                        // a plugin's subgraph hooks get (and may change) the parsed response
+                        raw_response: executor.plugin_req_state.is_none(),
                     })
                     .map(move |job| (index, job))
                     .boxed()
@@ -602,7 +753,8 @@ impl<'p> Run<'p> {
                     custom_scalar_paths,
                     raw_variable_values: Some(variables),
                     affected_path: None,
-                    raw_response: true,
+                    // a plugin's subgraph hooks get (and may change) the parsed response
+                    raw_response: executor.plugin_req_state.is_none(),
                 })
                 .map(move |job| (index, job))
                 .boxed()
@@ -815,7 +967,8 @@ impl<'p> Run<'p> {
                     custom_scalar_paths: fetch.custom_scalar_paths.as_ref(),
                     raw_variable_values: variables,
                     affected_path,
-                    raw_response: true,
+                    // a plugin's subgraph hooks get (and may change) the parsed response
+                    raw_response: executor.plugin_req_state.is_none(),
                 })
                 .map(move |job| (index, job))
                 .boxed()
@@ -942,7 +1095,8 @@ impl<'p> Run<'p> {
                         custom_scalar_paths: batch.custom_scalar_paths.as_ref(),
                         raw_variable_values: Some(variables),
                         affected_path: None,
-                        raw_response: true,
+                        // a plugin's subgraph hooks get (and may change) the parsed response
+                        raw_response: executor.plugin_req_state.is_none(),
                     })
                     .map(move |job| (index, job))
                     .boxed();
@@ -1175,8 +1329,9 @@ impl<'p> Run<'p> {
 
         // an executor that can't hand over the body parsed it: write `data` back out
         let (bytes, mut errors) = match response.bytes {
-            Some(bytes) => (bytes, None),
-            None => {
+            // with plugins the parsed response is what counts: a hook may have changed it
+            Some(bytes) if executor.plugin_req_state.is_none() => (bytes, None),
+            _ => {
                 let mut body = b"{\"data\":".to_vec();
                 serialize_value_to_buffer(&response.data, &mut body);
                 body.push(b'}');
