@@ -49,6 +49,17 @@ impl SubgraphResponse<'_> {
             && self.extensions.is_none()
     }
 
+    /// The `extensions` value at `range` of a body (see `ParsedBody::extensions`), read on its
+    /// own. The value borrows from `bytes`: the caller keeps that body alive for as long as the
+    /// value, like the request's response storage keeps every subgraph body it read.
+    pub(crate) fn read_extensions(bytes: &Bytes, range: (u32, u32)) -> Option<Value<'static>> {
+        let slice = bytes.get(range.0 as usize..range.1 as usize)?;
+        // SAFETY: see above, the same as `deserialize_from_bytes`'s values borrowing from the
+        // body: the slot pipeline adds the body to the response storage before reading this
+        let slice: &'static [u8] = unsafe { std::mem::transmute::<&[u8], _>(slice) };
+        sonic_rs::from_slice(slice).ok()
+    }
+
     pub fn append_error(&mut self, error: GraphQLError) {
         if let Some(errors) = &mut self.errors {
             errors.push(error);

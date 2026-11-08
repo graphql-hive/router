@@ -1252,3 +1252,16 @@ Redesigned with the user instead of patching it:
   246.5 → 246.4; a plugin whose subgraph hooks only proceed 306.5 → 252.1 (−18%, req/s 3251 →
   3946). Tests: e2e `a_subgraph_hook_changes_the_data_the_same_way_on_both_pipelines` (root
   fetch, error at `users.1.id`) and `…_entities_…` (usernames changed in `_entities`), off = on.
+
+### 2026-11-08 — subgraph extensions and malformed bodies without a second full parse
+
+- The slot parser records where `extensions` is (`ParsedBody::extensions`, a range) instead of
+  only that it's there. The slot pipeline reads that range on its own, and only when
+  `response_extensions` propagation is configured; before, a body with extensions was read
+  again whole, `data` included. The values borrow from the body, kept in the response storage
+  for the request, like before (`SubgraphResponse::read_extensions`).
+- A body the slot parser rejects: sonic checks the JSON without building anything; only a valid
+  body that isn't a response goes through `deserialize_from_bytes` to be told apart, so the
+  errors read the same.
+- Left with a `Value` on the slot pipeline: the seed (introspection result, subscription events,
+  data an `on_execute` start hook puts in), and the extensions aggregator itself.

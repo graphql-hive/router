@@ -1429,8 +1429,12 @@ impl<'p> Run<'p> {
             ),
         };
         let Some(parsed) = parsed else {
-            // sonic says what's wrong with it, like it does for the other pipeline
-            let error = match SubgraphResponse::deserialize_from_bytes(bytes, None) {
+            // sonic says what's wrong with it, like it does for the other pipeline: it only
+            // checks the JSON, and a valid body that isn't a response is told apart like there
+            let checked = sonic_rs::from_slice::<serde::de::IgnoredAny>(&bytes)
+                .map_err(|err| SubgraphExecutorError::ResponseDeserializationFailure(err, None));
+            let read = checked.and_then(|_| SubgraphResponse::deserialize_from_bytes(bytes, None));
+            let error = match read {
                 Err(SubgraphExecutorError::ResponseDeserializationFailure(err, _)) => {
                     SubgraphExecutorError::ResponseDeserializationFailure(
                         err,
@@ -1527,11 +1531,12 @@ impl<'p> Run<'p> {
                 &extensions,
                 &mut ctx.extensions_aggregator,
             );
-        } else if parsed.extensions {
-            if let Some(extensions) = SubgraphResponse::deserialize_from_bytes(bytes, None)
-                .ok()
-                .and_then(|response| response.extensions)
-            {
+        } else if let (Some(range), Some(_)) = (
+            parsed.extensions,
+            executor.extensions_plan.propagate.as_ref(),
+        ) {
+            // only the extensions, and only when the router passes them on
+            if let Some(extensions) = SubgraphResponse::read_extensions(&bytes, range) {
                 apply_subgraph_extensions(
                     executor.extensions_plan,
                     &extensions,
