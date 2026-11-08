@@ -1386,3 +1386,30 @@ Every difference is within the round-to-round spread (±0.2 µs).
 
 Tests: `test_all` 2117/2117; e2e 847/848 (`file_watch_works`) after every step. With the indexed
 pipeline and reuse forced on: 844/848, the same four as before the rename.
+
+## Rename, second batch
+
+Naming only: `Step` → `PathStep`, `AliasProgram` → `CompiledEntityAlias`, `Merge` →
+`PendingMerge`, `TypeName` (indexed writer) → `LazyTypename`, `Processing` →
+`FetchProcessingContext`, `Representation` → `RepresentationWriter`, `Applied` →
+`AppliedSelections`, `Unaliasing` → `ContextGroupPartition`. `FetchProgram`, `PathProgram`,
+`Requires` and `ReuseProgram` stay for now. `PendingMerge` is per job: built with the request,
+parked while it's in flight, taken once when it finishes and consumed by the merge (it also says
+how to read the body), so it's a merge waiting on a response rather than only a destination.
+
+Tests: fmt, workspace build, `test_all` 2117/2117, e2e 847/848 (`file_watch_works`), forced-on
+e2e 844/848 with the four baseline failures (see `indexed-pipeline-glossary.md`).
+
+Pipeline bench, release without LTO (16 codegen units), CPU p50 µs, medians of 3 paired rounds,
+59e584efa → this commit:
+
+| config | bench_op | search |
+|---|---|---|
+| Value pipeline | 124.2 → 124.3 | 9.4 → 9.7 |
+| indexed | 56.1 → 56.5 | 6.6 → 7.4 |
+| indexed + entity reuse | 51.1 → 51.3 | 6.7 → 7.4 |
+
+Allocations and peak bytes identical. The shift is consistent across rounds and also hits the
+Value pipeline, which the batch doesn't touch, so it reads as code layout from 16 codegen units
+re-partitioned by the renamed items, not a cost the rename adds. It wasn't measured with LTO and
+one codegen unit (the production profile); the user accepted it as is.

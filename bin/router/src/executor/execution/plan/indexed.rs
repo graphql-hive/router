@@ -7,8 +7,8 @@ use super::*;
 use crate::executor::executors::error::SubgraphExecutorError;
 use crate::executor::extensions::aggregator::apply_subgraph_extensions_json;
 use crate::executor::indexed::compile::{
-    AliasProgram, FetchProgram, IndexedResponsePlan, ObjectLayout, Requires, RequiresNode, Seed,
-    Step, TypenameRewrite, NO_FIELD, SEED_FETCH,
+    CompiledEntityAlias, FetchProgram, IndexedResponsePlan, ObjectLayout, PathStep, Requires,
+    RequiresNode, Seed, TypenameRewrite, NO_FIELD, SEED_FETCH,
 };
 use crate::executor::indexed::parse::{parse_aliased_body, parse_body, parse_data};
 use crate::executor::indexed::store::{Arena, CellView, ValueCell};
@@ -381,7 +381,7 @@ fn masked(opts: &QueryPlanExecutionOpts<'_>, mut errors: Vec<GraphQLError>) -> V
 
 /// What [`Run::process_response`] needs of a job besides its response
 #[derive(Clone, Copy)]
-struct Processing<'exec> {
+struct FetchProcessingContext<'exec> {
     subgraph_name: &'exec str,
     affected_path: Option<ResponsePathRef<'exec>>,
     fetch_hash: u64,
@@ -403,13 +403,13 @@ struct Run<'p> {
 /// What a job's response gets merged with. One per job in flight, so the size difference
 /// between the variants doesn't matter.
 #[allow(clippy::large_enum_variant)]
-enum Merge<'exec, 'p> {
+enum PendingMerge<'exec, 'p> {
     /// Into the root, or the objects at a root re-entry's path
     Root {
         program: &'p FetchProgram,
         /// The fetch's id in the plan, for plugins' end hooks (see `SubgraphData`)
         fetch: i64,
-        merge_path: Option<&'p [Step]>,
+        merge_path: Option<&'p [PathStep]>,
     },
     Entities {
         program: &'p FetchProgram,
@@ -418,14 +418,14 @@ enum Merge<'exec, 'p> {
         /// Errors are split by alias, like a `BatchFetch`'s
         batch: bool,
         /// The request carried several context groups under aliases
-        unalias: Option<Unaliasing<'exec>>,
+        unalias: Option<ContextGroupPartition<'exec>>,
     },
 }
 
 /// An aliased context request (see `ContextAliasTemplate`): its response is read back into
 /// one list of entities per response key, the groups one after another, like
 /// `context::unalias_response` does.
-struct Unaliasing<'exec> {
+struct ContextGroupPartition<'exec> {
     template: &'exec ContextAliasTemplate,
     groups: usize,
     /// For each response key of the template, the representations sent per group, so each
@@ -433,7 +433,7 @@ struct Unaliasing<'exec> {
     counts: Vec<SmallVec<[u32; 4]>>,
 }
 
-impl Unaliasing<'_> {
+impl ContextGroupPartition<'_> {
     /// Where each group's entities start in the list of response key `key`, and where the
     /// last group's end
     fn offsets(&self, key: usize) -> SmallVec<[u32; 5]> {
@@ -448,7 +448,7 @@ impl Unaliasing<'_> {
 }
 
 struct AliasMerge<'exec, 'p> {
-    program: &'p AliasProgram,
+    program: &'p CompiledEntityAlias,
     /// The alias in the response, for errors
     name: &'exec str,
     paths: SmallVec<[ResponsePathRef<'exec>; 4]>,
@@ -512,7 +512,7 @@ impl<'p> Run<'p> {
         nodes: impl Iterator<Item = &'exec PlanNode>,
     ) {
         let mut jobs: FuturesUnordered<Job<'_, 'exec>> = FuturesUnordered::new();
-        let mut merges: SmallVec<[Option<Merge<'exec, 'p>>; 4]> = SmallVec::new();
+        let mut merges: SmallVec<[Option<PendingMerge<'exec, 'p>>; 4]> = SmallVec::new();
         for node in nodes {
             if let PlanNode::BatchFetch(batch) = node {
                 if batch_with_context(batch) {
@@ -555,7 +555,7 @@ impl<'p> Run<'p> {
         flatten: &'exec FlattenNode,
         fetch: &'exec FetchNode,
         first_index: usize,
-    ) -> Vec<(Job<'wave, 'exec>, Merge<'exec, 'p>)> {
+    ) -> Vec<(Job<'wave, 'exec>, PendingMerge<'exec, 'p>)> {
         let plan = self.plan;
         if !executor.runs(fetch.run_if.as_deref()) {
             return Vec::new();
@@ -617,7 +617,7 @@ impl<'p> Run<'p> {
                     .map(move |job| (index, job))
                     .boxed()
             };
-            let merge = |targets, unalias| Merge::Entities {
+            let merge = |targets, unalias| PendingMerge::Entities {
                 program,
                 fetch: fetch.id,
                 aliases: smallvec::smallvec![AliasMerge {
@@ -686,7 +686,7 @@ impl<'p> Run<'p> {
                         ),
                         merge(
                             combined.expect("a chunk has groups"),
-                            Some(Unaliasing {
+                            Some(ContextGroupPartition {
                                 template,
                                 groups: counts.len(),
                                 counts: vec![counts; template.response_keys.len()],
@@ -709,7 +709,7 @@ impl<'p> Run<'p> {
         executor: &'wave Executor<'exec>,
         batch: &'exec BatchFetchNode,
         first_index: usize,
-    ) -> Vec<(Job<'wave, 'exec>, Merge<'exec, 'p>)> {
+    ) -> Vec<(Job<'wave, 'exec>, PendingMerge<'exec, 'p>)> {
         let plan = self.plan;
         let Some(program) = plan.fetches.get(&batch.id) else {
             return Vec::new();
@@ -832,7 +832,7 @@ impl<'p> Run<'p> {
                     );
                     out.push((
                         job,
-                        Merge::Entities {
+                        PendingMerge::Entities {
                             program,
                             fetch: batch.id,
                             aliases,
@@ -902,12 +902,12 @@ impl<'p> Run<'p> {
                     variables,
                     template.custom_scalar_paths(),
                 ),
-                Merge::Entities {
+                PendingMerge::Entities {
                     program,
                     fetch: batch.id,
                     aliases: merged,
                     batch: true,
-                    unalias: Some(Unaliasing {
+                    unalias: Some(ContextGroupPartition {
                         template,
                         groups,
                         counts,
@@ -924,7 +924,7 @@ impl<'p> Run<'p> {
     #[allow(clippy::type_complexity)]
     fn context_groups<'exec>(
         &self,
-        alias: &AliasProgram,
+        alias: &CompiledEntityAlias,
         context: &'exec Option<Box<FetchContext>>,
         possible_types: &PossibleTypes,
     ) -> (Vec<Vec<(&'exec str, Vec<u8>)>>, Vec<u32>) {
@@ -1009,7 +1009,7 @@ impl<'p> Run<'p> {
         node: &'exec PlanNode,
         index: usize,
         reuse: bool,
-    ) -> Option<(Job<'wave, 'exec>, Merge<'exec, 'p>)> {
+    ) -> Option<(Job<'wave, 'exec>, PendingMerge<'exec, 'p>)> {
         let plan = self.plan;
         let send = |fetch: &'exec FetchNode,
                     variables: Option<Vec<(&'exec str, Vec<u8>)>>,
@@ -1042,7 +1042,7 @@ impl<'p> Run<'p> {
                 let program = plan.fetches.get(&fetch.id)?;
                 Some((
                     send(fetch, None, None),
-                    Merge::Root {
+                    PendingMerge::Root {
                         program,
                         fetch: fetch.id,
                         merge_path: None,
@@ -1061,7 +1061,7 @@ impl<'p> Run<'p> {
                 if fetch.requires.is_none() {
                     return Some((
                         send(fetch, None, Some(path)),
-                        Merge::Root {
+                        PendingMerge::Root {
                             program,
                             fetch: fetch.id,
                             merge_path: program.merge_path.as_deref(),
@@ -1090,7 +1090,7 @@ impl<'p> Run<'p> {
                         Some(vec![("representations", representations)]),
                         Some(path),
                     ),
-                    Merge::Entities {
+                    PendingMerge::Entities {
                         program,
                         fetch: fetch.id,
                         aliases: smallvec::smallvec![AliasMerge {
@@ -1170,7 +1170,7 @@ impl<'p> Run<'p> {
                     .boxed();
                 Some((
                     job,
-                    Merge::Entities {
+                    PendingMerge::Entities {
                         program,
                         fetch: batch.id,
                         aliases,
@@ -1191,7 +1191,7 @@ impl<'p> Run<'p> {
     /// [`Self::prepare_context`]); entity targets of other groups get no entity.
     fn collect(
         &mut self,
-        alias: &AliasProgram,
+        alias: &CompiledEntityAlias,
         possible_types: &PossibleTypes,
         keys: Option<&KeysByType>,
         reuse: bool,
@@ -1322,7 +1322,7 @@ impl<'p> Run<'p> {
                         }
                         let before = reps.len();
                         let first_rep = count == 0;
-                        let written = Representation {
+                        let written = RepresentationWriter {
                             arena,
                             layouts,
                             requires: &alias.requires,
@@ -1383,7 +1383,7 @@ impl<'p> Run<'p> {
         executor: &Executor<'exec>,
         ctx: &mut ExecutionContext<'exec>,
         job: ExecutionJob<'exec>,
-        merge: Merge<'exec, 'p>,
+        merge: PendingMerge<'exec, 'p>,
     ) {
         let subgraph_name = job.subgraph_name();
         let affected_path = job.affected_path();
@@ -1392,7 +1392,7 @@ impl<'p> Run<'p> {
         self.process_response(
             executor,
             ctx,
-            Processing {
+            FetchProcessingContext {
                 subgraph_name,
                 affected_path,
                 fetch_hash,
@@ -1437,12 +1437,12 @@ impl<'p> Run<'p> {
         &mut self,
         executor: &Executor<'exec>,
         ctx: &mut ExecutionContext<'exec>,
-        job: Processing<'exec>,
+        job: FetchProcessingContext<'exec>,
         response: SubgraphResponse<'exec>,
         end_hooks: Vec<OnSubgraphExecuteEndCallback<'exec>>,
-        merge: Merge<'exec, 'p>,
+        merge: PendingMerge<'exec, 'p>,
     ) {
-        let Processing {
+        let FetchProcessingContext {
             subgraph_name,
             affected_path,
             fetch_hash,
@@ -1457,7 +1457,7 @@ impl<'p> Run<'p> {
             }
         }
         let program = match &merge {
-            Merge::Root { program, .. } | Merge::Entities { program, .. } => *program,
+            PendingMerge::Root { program, .. } | PendingMerge::Entities { program, .. } => *program,
         };
 
         // a response with no body is one the router made, errors and no data: nothing to read,
@@ -1482,7 +1482,7 @@ impl<'p> Run<'p> {
         // and end hooks walk it
         let passthrough = self.passthrough && end_hooks.is_empty();
         let parsed = match &merge {
-            Merge::Entities {
+            PendingMerge::Entities {
                 unalias: Some(unalias),
                 ..
             } => self.unaliased(program, &bytes, passthrough, unalias),
@@ -1551,7 +1551,7 @@ impl<'p> Run<'p> {
             self.shared.clone(),
         ) {
             let fetch = match &merge {
-                Merge::Root { fetch, .. } | Merge::Entities { fetch, .. } => *fetch,
+                PendingMerge::Root { fetch, .. } | PendingMerge::Entities { fetch, .. } => *fetch,
             };
             let subgraph_data = SubgraphData::from_cells(
                 std::mem::take(&mut self.arena),
@@ -1611,7 +1611,7 @@ impl<'p> Run<'p> {
         }
 
         match merge {
-            Merge::Root { merge_path, .. } => {
+            PendingMerge::Root { merge_path, .. } => {
                 let source = data;
                 match merge_path {
                     None => {
@@ -1659,7 +1659,7 @@ impl<'p> Run<'p> {
                 }
                 ctx.handle_errors(subgraph_name, affected_path, errors, None);
             }
-            Merge::Entities { aliases, batch, .. } => {
+            PendingMerge::Entities { aliases, batch, .. } => {
                 let mut by_alias: SmallVec<[Option<Vec<GraphQLError>>; 4]> =
                     smallvec::smallvec![None; aliases.len()];
                 let mut unmatched = Vec::new();
@@ -1785,7 +1785,7 @@ impl Run<'_> {
         program: &FetchProgram,
         bytes: &bytes::Bytes,
         passthrough: bool,
-        unalias: &Unaliasing<'_>,
+        unalias: &ContextGroupPartition<'_>,
     ) -> Option<crate::executor::indexed::parse::ParsedBody> {
         let shape = &program.shape;
         let layouts = &self.plan.layouts;
@@ -1895,7 +1895,7 @@ fn walk(
     layouts: &[ObjectLayout],
     possible_types: &PossibleTypes,
     root: ValueCell,
-    steps: &[Step],
+    steps: &[PathStep],
     out: &mut Vec<ValueCell>,
     frontier: &mut Vec<ValueCell>,
 ) {
@@ -1906,7 +1906,7 @@ fn walk(
         out.clear();
         for &value in frontier.iter() {
             match step {
-                Step::Field(field_index) => {
+                PathStep::Field(field_index) => {
                     if let ValueCell::Object { first, .. } = value {
                         if *field_index != NO_FIELD {
                             let child = arena.cells[(first + *field_index as u32) as usize];
@@ -1916,12 +1916,12 @@ fn walk(
                         }
                     }
                 }
-                Step::List => {
+                PathStep::List => {
                     if let ValueCell::List { start, len } = value {
                         out.extend_from_slice(arena.list_items(start, len));
                     }
                 }
-                Step::TypeCondition(condition) => type_condition(
+                PathStep::TypeCondition(condition) => type_condition(
                     arena,
                     layouts,
                     possible_types,
@@ -1982,7 +1982,7 @@ fn walk_with_ancestors(
     layouts: &[ObjectLayout],
     possible_types: &PossibleTypes,
     value: ValueCell,
-    steps: &[Step],
+    steps: &[PathStep],
     objects: &mut Vec<ValueCell>,
     found: &mut impl FnMut(ValueCell, &[ValueCell]),
 ) {
@@ -1998,7 +1998,9 @@ fn walk_with_ancestors(
         return;
     };
     match (step, value) {
-        (Step::Field(field_index), ValueCell::Object { first, .. }) if *field_index != NO_FIELD => {
+        (PathStep::Field(field_index), ValueCell::Object { first, .. })
+            if *field_index != NO_FIELD =>
+        {
             let child = arena.cells[(first + *field_index as u32) as usize];
             if child != ValueCell::Missing {
                 objects.push(value);
@@ -2006,12 +2008,12 @@ fn walk_with_ancestors(
                 objects.pop();
             }
         }
-        (Step::List, ValueCell::List { start, len }) => {
+        (PathStep::List, ValueCell::List { start, len }) => {
             for &item in arena.list_items(start, len) {
                 walk_with_ancestors(arena, layouts, possible_types, item, rest, objects, found);
             }
         }
-        (Step::TypeCondition(condition), ValueCell::Object { layout, first }) => {
+        (PathStep::TypeCondition(condition), ValueCell::Object { layout, first }) => {
             if satisfies(
                 arena,
                 layouts,
@@ -2023,7 +2025,7 @@ fn walk_with_ancestors(
                 walk_with_ancestors(arena, layouts, possible_types, value, rest, objects, found);
             }
         }
-        (Step::TypeCondition(_), ValueCell::List { start, len }) => {
+        (PathStep::TypeCondition(_), ValueCell::List { start, len }) => {
             for &item in arena.list_items(start, len) {
                 walk_with_ancestors(arena, layouts, possible_types, item, steps, objects, found);
             }
@@ -2210,14 +2212,14 @@ fn satisfies(
 
 /// What the selections that apply to an object asked for, see `projection::request`.
 #[derive(Default)]
-struct Applied {
+struct AppliedSelections {
     typename: bool,
     missing_field: bool,
 }
 
 /// Writes representations from cells. A port of `projection::request::project_requires`: the
 /// same rules, read from cells.
-struct Representation<'r> {
+struct RepresentationWriter<'r> {
     arena: &'r Arena,
     layouts: &'r [ObjectLayout],
     requires: &'r Requires,
@@ -2227,7 +2229,7 @@ struct Representation<'r> {
     buffer: &'r mut Vec<u8>,
 }
 
-impl<'r> Representation<'r> {
+impl<'r> RepresentationWriter<'r> {
     fn key(&mut self, first: bool, response_key: Option<&str>) {
         if !first {
             self.buffer.push(b',');
@@ -2371,8 +2373,8 @@ impl<'r> Representation<'r> {
         parent_key: Option<&str>,
         parent_first: bool,
         keys_known: bool,
-    ) -> Applied {
-        let mut applied = Applied::default();
+    ) -> AppliedSelections {
+        let mut applied = AppliedSelections::default();
         let requires = self.requires;
         for node in &requires.nodes[selections.start as usize..selections.end as usize] {
             match node {
@@ -2507,7 +2509,7 @@ fn key_fields<'c>(
     &cache[index].1
 }
 
-/// Hashes everything [`Representation`] reads to write an entity target: its `__typename`, which key
+/// Hashes everything [`RepresentationWriter`] reads to write an entity target: its `__typename`, which key
 /// fields it has, and the values of the selected fields, recursively. The writer is a function
 /// of these, so two entity targets with the same fingerprint get the same representation (64-bit hash,
 /// the same trust `Value::to_hash` gets today).

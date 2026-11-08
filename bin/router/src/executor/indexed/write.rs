@@ -41,12 +41,12 @@ impl From<ProjectionError> for Failure {
 }
 
 /// A type name that is known, or found when first needed (see `projection::response`).
-pub(super) enum TypeName<'a, 'c> {
+pub(super) enum LazyTypename<'a, 'c> {
     Resolved(&'a str),
     Deferred {
         field: &'a FieldRecord,
         value: ValueCell,
-        parent: &'c TypeName<'a, 'c>,
+        parent: &'c LazyTypename<'a, 'c>,
         cached: OnceCell<Result<&'a str, ProjectionError>>,
     },
 }
@@ -112,7 +112,7 @@ pub fn write_data(
     if let ValueCell::Object { first, .. } = data {
         let checkpoint = out.buffer.len();
         let mut opened = false;
-        let type_name = TypeName::Resolved(operation_type_name);
+        let type_name = LazyTypename::Resolved(operation_type_name);
         let null = if indexed.root_simple {
             out.simple_fields(first, plan.root_range(), &type_name, &mut opened)?
         } else {
@@ -151,10 +151,10 @@ impl<'a> Writer<'a> {
         }
     }
 
-    fn type_name(&self, name: &TypeName<'a, '_>) -> Result<&'a str, ProjectionError> {
+    fn type_name(&self, name: &LazyTypename<'a, '_>) -> Result<&'a str, ProjectionError> {
         match name {
-            TypeName::Resolved(name) => Ok(name),
-            TypeName::Deferred {
+            LazyTypename::Resolved(name) => Ok(name),
+            LazyTypename::Deferred {
                 field,
                 value,
                 parent,
@@ -171,7 +171,7 @@ impl<'a> Writer<'a> {
         &self,
         field: &'a FieldRecord,
         value: ValueCell,
-        parent: &TypeName<'a, '_>,
+        parent: &LazyTypename<'a, '_>,
     ) -> Result<&'a str, ProjectionError> {
         if field.is_typename() {
             return Ok("String");
@@ -213,7 +213,7 @@ impl<'a> Writer<'a> {
         &mut self,
         value: ValueCell,
         field: &'a FieldRecord,
-        parent: &TypeName<'a, '_>,
+        parent: &LazyTypename<'a, '_>,
         nullability: Option<ShapeCursor<'_>>,
     ) -> Result<Null, ProjectionError> {
         match value {
@@ -239,7 +239,7 @@ impl<'a> Writer<'a> {
             }
             ValueCell::Object { first, .. } if field.has_children() => {
                 let checkpoint = self.buffer.len();
-                let type_name = TypeName::Deferred {
+                let type_name = LazyTypename::Deferred {
                     field,
                     value,
                     parent,
@@ -311,7 +311,7 @@ impl<'a> Writer<'a> {
         &mut self,
         first: u32,
         range: Range,
-        parent: &TypeName<'a, '_>,
+        parent: &LazyTypename<'a, '_>,
         opened: &mut bool,
     ) -> Result<Null, ProjectionError> {
         let plan = self.plan;
@@ -388,7 +388,7 @@ impl<'a> Writer<'a> {
         &mut self,
         first: u32,
         range: Range,
-        parent: &TypeName<'a, '_>,
+        parent: &LazyTypename<'a, '_>,
         opened: &mut bool,
     ) -> Result<Null, ProjectionError> {
         let plan = self.plan;
@@ -478,7 +478,7 @@ impl<'a> Writer<'a> {
         id: ConditionId,
         field: &'a FieldRecord,
         value: ValueCell,
-        parent: &TypeName<'a, '_>,
+        parent: &LazyTypename<'a, '_>,
         field_type: &OnceCell<Result<&'a str, ProjectionError>>,
     ) -> Result<(), Failure> {
         let plan = self.plan;
