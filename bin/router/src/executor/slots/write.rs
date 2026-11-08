@@ -501,14 +501,7 @@ impl<'a> Writer<'a> {
             }
             Condition::FieldType(guard) => {
                 let name = field_type
-                    .get_or_init(|| {
-                        let value = if value == Slot::Missing {
-                            Slot::Missing
-                        } else {
-                            value
-                        };
-                        self.resolve_type_name(field, value, parent)
-                    })
+                    .get_or_init(|| self.resolve_type_name(field, value, parent))
                     .clone()?;
                 if plan.guard_matches(guard, name) {
                     Ok(())

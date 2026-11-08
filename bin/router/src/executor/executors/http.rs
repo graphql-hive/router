@@ -932,8 +932,15 @@ fn finish_capture_from_subgraph_result(
     transport_duration: Duration,
     response_result: &Result<SubgraphResponse<'_>, SubgraphExecutorError>,
 ) {
+    // nothing to record without metrics, don't look into a body for them
+    if capture.as_mut().is_none() {
+        return;
+    }
     let error_code = response_result.as_ref().err().map(|err| err.error_code());
     let graphql_response_status = if response_result.as_ref().is_ok_and(|response| {
+        if response.is_raw() {
+            return !response.bytes.as_deref().is_some_and(raw_body_has_errors);
+        }
         response
             .errors
             .as_ref()
@@ -950,6 +957,17 @@ fn finish_capture_from_subgraph_result(
         graphql_response_status,
         error_code,
     );
+}
+
+/// Whether a body the pipeline reads itself has GraphQL errors, for metrics: a quick search
+/// for the key, and the body is only looked into when it's there
+pub(crate) fn raw_body_has_errors(body: &[u8]) -> bool {
+    memchr::memmem::find(body, b"\"errors\"").is_some()
+        && sonic_rs::get_from_slice(body, &["errors"]).is_ok_and(|errors| {
+            let raw = errors.as_raw_str().as_bytes();
+            raw.first() == Some(&b'[')
+                && raw[1..].iter().find(|byte| !byte.is_ascii_whitespace()) != Some(&b']')
+        })
 }
 
 #[derive(Default, Clone)]
@@ -1079,5 +1097,19 @@ mod tests {
                 "operationName": "GetMe_accounts_0",
             })
         );
+    }
+
+    #[test]
+    fn raw_body_has_errors_reads_only_top_level_non_empty_errors() {
+        use super::raw_body_has_errors;
+        assert!(raw_body_has_errors(
+            br#"{"errors":[{"message":"x"}],"data":null}"#
+        ));
+        assert!(raw_body_has_errors(
+            br#"{"data":{"a":1}, "errors" : [ {"message":"x"} ]}"#
+        ));
+        assert!(!raw_body_has_errors(br#"{"data":{"a":1}}"#));
+        assert!(!raw_body_has_errors(br#"{"data":{"a":1},"errors":[ ]}"#));
+        assert!(!raw_body_has_errors(br#"{"data":{"errors":[1]}}"#));
     }
 }

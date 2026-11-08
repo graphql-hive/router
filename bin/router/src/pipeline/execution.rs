@@ -162,7 +162,13 @@ pub async fn execute_plan<'exec>(
             response_header_sink,
             error_masking_runtime: supergraph.runtime.error_masking.clone(),
             connection_fingerprint: planned_request.connection_fingerprint,
-            slot_plan: planned_request.slot_plan,
+            // the slot pipeline runs only when this router has it on
+            slot_plan: planned_request.slot_plan.filter(|_| {
+                app_state
+                    .router_config
+                    .query_planner
+                    .experimental_slot_pipeline
+            }),
         })
         .await?;
 

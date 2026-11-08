@@ -164,6 +164,7 @@ fn both_edited(
         &metadata,
         root,
         super::compile::Seed::None,
+        false,
     )
     .expect("compiles");
     let slots = Arc::new(slots);
@@ -433,11 +434,11 @@ fn a_rewritten_projection_plan_gets_a_slot_plan_of_its_own() {
 
     let cell = SlotPlanCell::default();
     let original = cell
-        .get(&plan, &projection, &metadata, root, None)
+        .get(&plan, &projection, &metadata, root, None, false)
         .expect("compiles");
     let rewritten = rewrite();
     let slots = cell
-        .get(&plan, &rewritten, &metadata, root, None)
+        .get(&plan, &rewritten, &metadata, root, None, false)
         .expect("compiles");
     assert!(
         !Arc::ptr_eq(&slots, &original),
@@ -446,7 +447,7 @@ fn a_rewritten_projection_plan_gets_a_slot_plan_of_its_own() {
     assert!(
         Arc::ptr_eq(
             &cell
-                .get(&plan, &rewrite(), &metadata, root, None)
+                .get(&plan, &rewrite(), &metadata, root, None, false)
                 .expect("compiles"),
             &slots
         ),
@@ -454,7 +455,7 @@ fn a_rewritten_projection_plan_gets_a_slot_plan_of_its_own() {
     );
     assert!(Arc::ptr_eq(
         &cell
-            .get(&plan, &projection, &metadata, root, None)
+            .get(&plan, &projection, &metadata, root, None, false)
             .expect("compiles"),
         &original
     ));

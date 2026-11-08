@@ -149,6 +149,31 @@ mod slot_plugins_e2e_tests {
         }
     }
 
+    /// Puts `null` in before the plan runs: not an object, so it's left out too
+    #[derive(Default)]
+    struct NullSeedPlugin;
+
+    #[async_trait]
+    impl RouterPlugin for NullSeedPlugin {
+        type Config = ();
+
+        fn plugin_name() -> &'static str {
+            "test_null_seed"
+        }
+
+        fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
+            payload.initialize_plugin_with_defaults()
+        }
+
+        async fn on_execute<'exec>(
+            &'exec self,
+            mut payload: OnExecuteStartHookPayload<'exec>,
+        ) -> OnExecuteStartHookResult<'exec> {
+            payload.data = Some(Bytes::from_static(b"null"));
+            payload.proceed()
+        }
+    }
+
     /// Answers instead of the subgraph, with a JSON body
     #[derive(Default)]
     struct SubgraphAnswerPlugin;
@@ -169,9 +194,12 @@ mod slot_plugins_e2e_tests {
             &'exec self,
             payload: OnSubgraphExecuteStartHookPayload<'exec>,
         ) -> OnSubgraphExecuteStartHookResult<'exec> {
-            payload.end_with_response(SubgraphResponse::from_json(Bytes::from_static(
+            let mut response = SubgraphResponse::from_json(Bytes::from_static(
                 br#"{"data":{"users":[{"id":"9","username":"from-plugin"}]},"errors":[{"message":"answered by a plugin"}]}"#,
-            )))
+            ));
+            // errors next to the body come after the body's
+            response.errors = Some(vec![GraphQLError::from("set next to the body")]);
+            payload.end_with_response(response)
         }
     }
 
@@ -263,6 +291,7 @@ mod slot_plugins_e2e_tests {
                 .register_plugin::<EditPlugin>()
                 .register_plugin::<SubgraphEditPlugin>()
                 .register_plugin::<BadSeedPlugin>()
+                .register_plugin::<NullSeedPlugin>()
                 .register_plugin::<SubgraphAnswerPlugin>()
                 .register_plugin::<SubgraphExtensionsPlugin>()
                 .build()
@@ -384,6 +413,18 @@ mod slot_plugins_e2e_tests {
     }
 
     #[ntex::test]
+    async fn null_data_a_plugin_sets_is_left_out_on_both_pipelines() {
+        let (off, on) = both_pipelines("test_null_seed", "", "{ users { id username } }").await;
+        assert_eq!(on, off, "slot pipeline response differs");
+        let body: sonic_rs::Value = sonic_rs::from_str(&on).expect("json");
+        assert_eq!(
+            body["data"],
+            json!({ "users": [{ "id": "1", "username": "a" }, { "id": "2", "username": "b" }] }),
+            "the subgraph's data, not null: {on}"
+        );
+    }
+
+    #[ntex::test]
     async fn a_plugins_json_answer_is_read_like_a_subgraphs_on_both_pipelines() {
         let (off, on) = both_pipelines(
             "test_subgraph_answer",
@@ -401,6 +442,11 @@ mod slot_plugins_e2e_tests {
         assert_eq!(
             body["errors"][0]["message"],
             json!("answered by a plugin"),
+            "{on}"
+        );
+        assert_eq!(
+            body["errors"][1]["message"],
+            json!("set next to the body"),
             "{on}"
         );
     }
