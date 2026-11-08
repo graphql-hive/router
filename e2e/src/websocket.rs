@@ -136,7 +136,7 @@ mod websocket_e2e_tests {
         let response = stream.next().await.expect("Expected a response");
 
         assert!(response.errors.is_none(), "Expected no errors");
-        assert!(!response.data.is_null(), "Expected data");
+        assert!(!response.data().is_null(), "Expected data");
 
         let next = stream.next().await;
         assert!(next.is_none(), "Expected stream to complete after query");
@@ -205,7 +205,7 @@ mod websocket_e2e_tests {
             .map(|response| response.expect("WebSocket response failed"))
             .expect("Expected a response");
         assert!(response.errors.is_none(), "Expected no errors");
-        assert!(!response.data.is_null(), "Expected data");
+        assert!(!response.data().is_null(), "Expected data");
         assert!(stream.next().await.is_none(), "Expected stream to complete");
     }
 
@@ -253,7 +253,7 @@ mod websocket_e2e_tests {
             .map(|response| response.expect("WebSocket response failed"))
             .expect("Expected a response");
         assert!(response.errors.is_none(), "Expected no errors");
-        assert!(!response.data.is_null(), "Expected data");
+        assert!(!response.data().is_null(), "Expected data");
         assert!(stream.next().await.is_none(), "Expected stream to complete");
     }
 
@@ -357,7 +357,7 @@ mod websocket_e2e_tests {
         let mut received_count = 0;
         while let Some(response) = stream.next().await {
             assert!(response.errors.is_none(), "Expected no errors");
-            assert!(!response.data.is_null(), "Expected data");
+            assert!(!response.data().is_null(), "Expected data");
             received_count += 1;
         }
 

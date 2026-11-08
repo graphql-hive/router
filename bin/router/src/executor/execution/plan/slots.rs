@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::executor::executors::error::SubgraphExecutorError;
+use crate::executor::extensions::aggregator::apply_subgraph_extensions_json;
 use crate::executor::introspection::schema::PossibleTypes;
 use crate::executor::projection::response::serialize_value_to_buffer;
 use crate::executor::slots::compile::{
@@ -1389,20 +1390,17 @@ impl<'p> Run<'p> {
             Merge::Root { program, .. } | Merge::Entities { program, .. } => *program,
         };
 
-        // an executor that can't hand over the body parsed it: write `data` back out. Then the
-        // parsed errors and extensions count, and only real subgraph bytes are counted (for
-        // cache control), like on the other pipeline.
+        // a response with no body is one the router made, errors and no data: nothing to read,
+        // and only real subgraph bytes are counted (for cache control), like on the other
+        // pipeline
         let subgraph_bytes = response.bytes.clone();
-        let (bytes, mut errors, parsed_extensions, rebuilt) = match response.bytes {
-            Some(bytes) => (bytes, None, None, false),
-            _ => {
-                let mut body = b"{\"data\":".to_vec();
-                serialize_value_to_buffer(&response.data, &mut body);
-                body.push(b'}');
+        let (bytes, mut errors, rebuilt) = match response.bytes {
+            Some(bytes) => (bytes, None, false),
+            None => {
+                debug_assert!(response.data.is_null(), "a response with data has its body");
                 (
-                    bytes::Bytes::from(body),
+                    bytes::Bytes::from_static(b"{\"data\":null}"),
                     response.errors,
-                    response.extensions,
                     true,
                 )
             }
@@ -1429,19 +1427,13 @@ impl<'p> Run<'p> {
             ),
         };
         let Some(parsed) = parsed else {
-            // sonic says what's wrong with it, like it does for the other pipeline: it only
-            // checks the JSON, and a valid body that isn't a response is told apart like there
-            let checked = sonic_rs::from_slice::<serde::de::IgnoredAny>(&bytes)
-                .map_err(|err| SubgraphExecutorError::ResponseDeserializationFailure(err, None));
-            let read = checked.and_then(|_| SubgraphResponse::deserialize_from_bytes(bytes, None));
-            let error = match read {
-                Err(SubgraphExecutorError::ResponseDeserializationFailure(err, _)) => {
-                    SubgraphExecutorError::ResponseDeserializationFailure(
-                        err,
-                        response.headers.clone(),
-                    )
-                }
-                Err(other) => other,
+            // sonic says what's wrong with the JSON, like it does for the other pipeline, without
+            // building anything; JSON that isn't a response is malformed
+            let error = match sonic_rs::from_slice::<serde::de::IgnoredAny>(&bytes) {
+                Err(err) => SubgraphExecutorError::ResponseDeserializationFailure(
+                    err,
+                    response.headers.clone(),
+                ),
                 Ok(_) => SubgraphExecutorError::MalformedResponse(response.headers.clone()),
             };
             let error = Err::<(), _>(error)
@@ -1525,24 +1517,13 @@ impl<'p> Run<'p> {
         if let Some(status_error) = status_errors {
             errors.get_or_insert_with(Vec::new).push(status_error);
         }
-        if let Some(extensions) = parsed_extensions {
-            apply_subgraph_extensions(
+        if let Some((start, end)) = parsed.extensions {
+            // only the extensions, and only when the router passes them on
+            apply_subgraph_extensions_json(
                 executor.extensions_plan,
-                &extensions,
+                &bytes[start as usize..end as usize],
                 &mut ctx.extensions_aggregator,
             );
-        } else if let (Some(range), Some(_)) = (
-            parsed.extensions,
-            executor.extensions_plan.propagate.as_ref(),
-        ) {
-            // only the extensions, and only when the router passes them on
-            if let Some(extensions) = SubgraphResponse::read_extensions(&bytes, range) {
-                apply_subgraph_extensions(
-                    executor.extensions_plan,
-                    &extensions,
-                    &mut ctx.extensions_aggregator,
-                );
-            }
         }
 
         match merge {

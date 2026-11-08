@@ -1265,3 +1265,17 @@ Redesigned with the user instead of patching it:
   errors read the same.
 - Left with a `Value` on the slot pipeline: the seed (introspection result, subscription events,
   data an `on_execute` start hook puts in), and the extensions aggregator itself.
+
+### 2026-11-08 — no `Value` on the slot pipeline: extensions, error bodies, bodiless responses
+
+User: no conversions to or from `Value` in the new pipeline.
+- `ExtensionsAggregator` keeps `sonic_rs` values (what the response's extensions are anyway,
+  `merge_into` converted at the end before). The slot pipeline reads a subgraph's extensions
+  range straight into them (`apply_subgraph_extensions_json`), only when propagation is on; the
+  Value pipeline converts its parsed extensions as it applies them.
+- A body the slot parser rejects: sonic checks the JSON (`IgnoredAny`), valid JSON that isn't a
+  response is `MalformedResponse`. Error-handling e2e unchanged.
+- A response without a body on slots is one the router made: null data and its errors, no
+  `Value` written out. `SubgraphResponse::data`/`extensions` are `pub(crate)` (a `data()` getter
+  for executors' users, `from_errors` next to `from_json`), so no plugin can hand the slot
+  pipeline a `Value`.
