@@ -1154,3 +1154,34 @@ session scratchpad (`opt/chunked-output.patch`).
 - Tests: `response_data::tests::edits_keep_the_response_matching_the_operation`,
   e2e `slot_plugins::a_plugin_changes_the_data_the_same_way_on_both_pipelines`. The subgraph
   end hook's TODO (`OnSubgraphExecuteEndHookPayload::execution_result`) is still open.
+
+### 2026-11-08 — regression check: HEAD (82067dc0) vs the slot build in the "vs Fusion" artifact
+
+Baseline `d13afab1` (entity reuse, the code the artifact measured; its saved binary was gone,
+so rebuilt). Both non-LTO release, 3 alternating rounds, medians, every response validated.
+
+Our bench (`bench_op`, slots on, no dedupe), router CPU µs/req and req/s:
+
+| config | d13afab1 | 82067dc0 |
+|---|---|---|
+| 1 worker, no reuse | 247.4, 4025 | 246.9, 4024 |
+| 1 worker, reuse | 185.5, 5262 | 184.8, 5333 |
+| all workers, no reuse | 541.8, 5394 | 546.2, 5362 |
+| all workers, reuse | 373.6, 6667 | 374.6, 6640 |
+
+ChilliCream subgraphs, the round-2 harness (`max_connections_per_host: 256`, `per_worker`),
+req/s and CPU µs/req; Fusion AOT as the machine reference (4705 / 2016 / 4933, the artifact had
+4716 / 1984 / 4812):
+
+| scenario | config | d13afab1 | 82067dc0 |
+|---|---|---|---|
+| synthetic, c=50 | slots | 4160, 608 | 4132, 609 |
+| | reuse | 5668, 450 | 5691, 447 |
+| real-world 4 ms, c=50 | slots | 1791, 775 | 1782, 773 |
+| | reuse | 2903, 528 | 2868, 524 |
+| c=500 | slots | 4078, 513 | 3837, 524 |
+| | reuse | 5524, 394 | 5570, 392 |
+
+No regression: CPU per request is within ~1% everywhere. Real-world reuse was ~1% lower req/s
+in all 3 rounds at lower CPU (base always ran first). c=500 swings ±6% round to round with the
+subgraph connections hyper's pool opens (1,800–4,600).
