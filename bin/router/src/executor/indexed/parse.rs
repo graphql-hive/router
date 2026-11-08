@@ -1,6 +1,6 @@
-//! Reads a subgraph response into slots. The same loop as `response::shaped`, but nothing is
+//! Reads a subgraph response into cells. The same loop as `response::shaped`, but nothing is
 //! decoded or allocated: a scalar becomes the byte range the subgraph wrote, an object a block
-//! of slots of its position's layout, a list a run of `items`.
+//! of cells of its position's layout, a list a run of `items`.
 //!
 //! It checks the JSON like the shaped parser does (number grammar, string escapes, control
 //! characters, UTF-8), so it never forwards something that isn't JSON. When it rejects a body,
@@ -8,8 +8,8 @@
 
 use bytes::Bytes;
 
-use super::compile::{Layout, Shape, ShapeNode, NO_OBJECT, NO_SLOT};
-use super::store::{Arena, Raw, Slot};
+use super::compile::{FetchShape, ObjectLayout, ShapeNode, NO_FIELD, NO_OBJECT};
+use super::store::{Arena, JsonSpan, ValueCell};
 use crate::executor::response::graphql_error::GraphQLError;
 
 /// Number of upcoming fields to check before searching all of them, see `shaped::LOOKAHEAD`
@@ -19,19 +19,19 @@ const MAX_DEPTH: u32 = 250;
 
 pub struct ParsedBody {
     /// `data`, `Missing` when the body has none
-    pub data: Slot,
+    pub data: ValueCell,
     pub errors: Option<Vec<GraphQLError>>,
     /// Where the body's `extensions` value is, `start..end`
     pub extensions: Option<(u32, u32)>,
 }
 
 /// Reads `body` with `shape`. `None` when it isn't a valid response. Without `passthrough`,
-/// every value goes into slots, also where the client would get a subtree as it came (demand
+/// every value goes into cells, also where the client would get a subtree as it came (demand
 /// control counts the lists in it).
 pub fn parse_body(
     arena: &mut Arena,
-    layouts: &[Layout],
-    shape: &Shape,
+    layouts: &[ObjectLayout],
+    shape: &FetchShape,
     body: &Bytes,
     passthrough: bool,
 ) -> Option<ParsedBody> {
@@ -60,11 +60,11 @@ pub fn parse_body(
 /// (see `StartData::Json`). `None` when it isn't valid JSON.
 pub fn parse_data(
     arena: &mut Arena,
-    layouts: &[Layout],
-    shape: &Shape,
+    layouts: &[ObjectLayout],
+    shape: &FetchShape,
     data: &Bytes,
     passthrough: bool,
-) -> Option<Slot> {
+) -> Option<ValueCell> {
     let index = arena.bodies.len() as u32;
     arena.bodies.push(data.clone());
     arena.failed.clear();
@@ -91,9 +91,9 @@ pub fn parse_data(
 /// The body of an aliased context request (see `ContextAliasTemplate`): `data` has a key per
 /// response key of the fetch and group, like `_entities_3`.
 pub struct AliasedBody {
-    /// Each value under an aliased key: the slot of its response key in `data`'s layout, its
+    /// Each value under an aliased key: the field index of its response key in `data`'s layout, its
     /// group, the value
-    pub values: Vec<(u32, usize, Slot)>,
+    pub values: Vec<(u32, usize, ValueCell)>,
     /// `data` was null (or missing)
     pub no_data: bool,
     pub errors: Option<Vec<GraphQLError>>,
@@ -106,8 +106,8 @@ pub struct AliasedBody {
 /// `None` when it isn't a valid response.
 pub fn parse_aliased_body(
     arena: &mut Arena,
-    layouts: &[Layout],
-    shape: &Shape,
+    layouts: &[ObjectLayout],
+    shape: &FetchShape,
     body: &Bytes,
     passthrough: bool,
     alias: impl Fn(&str) -> Option<(u32, usize)>,
@@ -165,8 +165,8 @@ struct Parser<'a, 'p> {
     input: &'a [u8],
     pos: usize,
     depth: u32,
-    shape: &'p Shape,
-    layouts: &'p [Layout],
+    shape: &'p FetchShape,
+    layouts: &'p [ObjectLayout],
     arena: &'p mut Arena,
     body: u32,
     passthrough: bool,
@@ -175,7 +175,7 @@ struct Parser<'a, 'p> {
 impl Parser<'_, '_> {
     fn response(&mut self) -> Option<ParsedBody> {
         let mut parsed = ParsedBody {
-            data: Slot::Missing,
+            data: ValueCell::Missing,
             errors: None,
             extensions: None,
         };
@@ -284,7 +284,7 @@ impl Parser<'_, '_> {
     fn aliased_data(
         &mut self,
         alias: &impl Fn(&str) -> Option<(u32, usize)>,
-        values: &mut Vec<(u32, usize, Slot)>,
+        values: &mut Vec<(u32, usize, ValueCell)>,
     ) -> Option<()> {
         self.expect(b'{')?;
         if self.empty(b'}') {
@@ -306,7 +306,7 @@ impl Parser<'_, '_> {
                     } else {
                         self.leaf()?
                     };
-                    values.push((node.slot as u32, group, value));
+                    values.push((node.field_index as u32, group, value));
                 }
                 None => self.skip_value()?,
             }
@@ -376,8 +376,8 @@ impl Parser<'_, '_> {
     }
 
     #[inline]
-    fn raw_slot(&self, start: usize) -> Slot {
-        Slot::Raw(Raw {
+    fn raw_cell(&self, start: usize) -> ValueCell {
+        ValueCell::RawJson(JsonSpan {
             body: self.body,
             start: start as u32,
             len: (self.pos - start) as u32,
@@ -385,33 +385,33 @@ impl Parser<'_, '_> {
     }
 
     /// A value where the query has no object: a scalar, or a list of them
-    fn leaf(&mut self) -> Option<Slot> {
+    fn leaf(&mut self) -> Option<ValueCell> {
         self.whitespace();
         let start = self.pos;
         match self.peek()? {
             b'"' => {
                 self.string()?;
-                Some(self.raw_slot(start))
+                Some(self.raw_cell(start))
             }
             b'[' => self.list(NO_OBJECT),
             // an object where a scalar was asked for: kept as it came
             b'{' => {
                 self.skip_value()?;
-                Some(self.raw_slot(start))
+                Some(self.raw_cell(start))
             }
-            b't' => self.literal(b"true", Slot::True),
-            b'f' => self.literal(b"false", Slot::False),
-            b'n' => self.literal(b"null", Slot::Null),
+            b't' => self.literal(b"true", ValueCell::True),
+            b'f' => self.literal(b"false", ValueCell::False),
+            b'n' => self.literal(b"null", ValueCell::Null),
             b'-' | b'0'..=b'9' => {
                 self.number()?;
-                Some(self.raw_slot(start))
+                Some(self.raw_cell(start))
             }
             _ => None,
         }
     }
 
     /// A value we expect to be an object of `object` in the shape, or a list of them.
-    fn shaped(&mut self, object: u32) -> Option<Slot> {
+    fn shaped(&mut self, object: u32) -> Option<ValueCell> {
         self.whitespace();
         match self.peek()? {
             b'{' => self.shaped_object(object),
@@ -420,13 +420,13 @@ impl Parser<'_, '_> {
         }
     }
 
-    fn shaped_object(&mut self, object: u32) -> Option<Slot> {
+    fn shaped_object(&mut self, object: u32) -> Option<ValueCell> {
         self.pos += 1;
         let shape = self.shape;
         let object = &shape.objects[object as usize];
         let layout = object.layout;
         let first = self.arena.object(self.layouts[layout as usize].width());
-        let result = Slot::Object { layout, first };
+        let result = ValueCell::Object { layout, first };
         if self.empty(b'}') {
             return Some(result);
         }
@@ -480,14 +480,14 @@ impl Parser<'_, '_> {
         }
     }
 
-    /// Reads a field's value, after its key, into its slot of the object at `first`
+    /// Reads a field's value, after its key, into its cell of the object at `first`
     #[inline]
     fn field(&mut self, node: &ShapeNode, first: u32) -> Option<()> {
-        let value = if node.raw {
+        let value = if node.opaque_json {
             self.whitespace();
             let start = self.pos;
             self.skip_value()?;
-            self.raw_slot(start)
+            self.raw_cell(start)
         } else if node.verify != NO_OBJECT && self.passthrough {
             self.passthrough(node.verify, node.object)?
         } else if node.object != NO_OBJECT {
@@ -495,15 +495,15 @@ impl Parser<'_, '_> {
         } else {
             self.leaf()?
         };
-        if node.slot != NO_SLOT {
-            self.arena.slots[(first + node.slot as u32) as usize] = value;
+        if node.field_index != NO_FIELD {
+            self.arena.cells[(first + node.field_index as u32) as usize] = value;
         }
         Some(())
     }
 
     /// A value the client may get as the subgraph sent it (see `compile::Verify`): kept as
     /// one raw range when it checks out, read the normal way when it doesn't.
-    fn passthrough(&mut self, verify: u32, object: u32) -> Option<Slot> {
+    fn passthrough(&mut self, verify: u32, object: u32) -> Option<ValueCell> {
         // a check that failed once in this body likely fails for the next item of the list
         // too (a subgraph that sends another key order, say): don't read every one twice
         if self.arena.failed[verify as usize] {
@@ -524,7 +524,7 @@ impl Parser<'_, '_> {
                 )
                 .is_some()
         {
-            return Some(self.raw_slot(start));
+            return Some(self.raw_cell(start));
         }
         if self.peek_at(start) != Some(b'n') {
             self.arena.failed[index as usize] = true;
@@ -659,10 +659,10 @@ impl Parser<'_, '_> {
                 .is_some_and(|rest| rest == &self.shape.key(node)[8..])
     }
 
-    fn list(&mut self, object: u32) -> Option<Slot> {
+    fn list(&mut self, object: u32) -> Option<ValueCell> {
         self.pos += 1;
         if self.empty(b']') {
-            return Some(Slot::List { start: 0, len: 0 });
+            return Some(ValueCell::List { start: 0, len: 0 });
         }
         self.enter()?;
         let mark = self.arena.scratch.len();
@@ -683,7 +683,7 @@ impl Parser<'_, '_> {
         let arena = &mut *self.arena;
         arena.items.extend_from_slice(&arena.scratch[mark..]);
         arena.scratch.truncate(mark);
-        Some(Slot::List { start, len })
+        Some(ValueCell::List { start, len })
     }
 
     /// Checks a value without keeping it.

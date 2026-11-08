@@ -3,6 +3,24 @@
 Working record for `pipeline-plan.md`. Branch `kamil-pipeline-perf`, cut from
 `kamil-perf-runtime-pr7` (`c9bcf575`). Newest entries at the bottom of each section.
 
+> **Names changed after this log was written.** The "slot pipeline" is now the **indexed
+> pipeline**. Entries below keep the names they were written with:
+>
+> | In this log | Now |
+> |---|---|
+> | slot pipeline, `executor::slots`, `plan/slots.rs` | indexed pipeline, `executor::indexed`, `plan/indexed.rs` |
+> | `query_planner.experimental_slot_pipeline`, `HIVE_SLOT_PIPELINE` | `query_planner.experimental_indexed_pipeline`, `QUERY_PLANNER_EXPERIMENTAL_INDEXED_PIPELINE` (router), `PIPELINE_INDEXED` (pipeline bench) |
+> | `SlotPlan`, `SlotPlanCell` | `IndexedResponsePlan`, `IndexedPlanCache` |
+> | `Slot` (a value), `Arena::slots` | `ValueCell`, `Arena::cells` |
+> | slot (a `u16` index in a layout), `NO_SLOT`, `Layout::slot` | field index, `NO_FIELD`, `ObjectLayout::field_index` |
+> | `FieldSlot`, `SlotView` | `OutputField`, `CellView` |
+> | `Layout` | `ObjectLayout` |
+> | `Shape` (slot parser) | `FetchShape` (`ResponseShape` is unchanged) |
+> | spot, `Targets` | entity target, `EntityTargetMap` |
+> | `Raw`, `Slot::Raw` | `JsonSpan`, `ValueCell::RawJson` |
+> | `raw` (custom scalar flag, both parsers) | `opaque_json` |
+> | `raw_response`, `SubgraphResponse::raw`, `is_raw()` | `unparsed_body`, `SubgraphResponse::unparsed_body`, `has_unparsed_body()` |
+
 ## Goals, constraints, success criteria (from the plan)
 
 | # | Criterion | Status |
@@ -1348,3 +1366,23 @@ A review of the whole branch against `main`, ten findings, all fixed:
 - Tests: test_all 2117/2117; e2e off 847/848 (`file_watch_works`). With slots and reuse forced
   on: 844/848, the others are `file_watch_works`, two entity-batching call counts (reuse makes
   fewer calls) and `json_log_default_attrs` (the log leaves the counts out on slots).
+
+## Rename: slot pipeline → indexed pipeline
+
+Naming only, no behavior change. The table at the top of this log maps the old names to the new
+ones. `ValueCell` has a compile-time `size_of == 16` check. Each of the six steps passed fmt,
+a full workspace build, `test_all` and `test_e2e`.
+
+Pipeline bench (`pipeline_benches`, bench_op + search, 20k iterations, CPU p50 µs, medians of 3
+paired rounds, the binary before the rename vs after):
+
+| config | bench_op before → after | search before → after | allocs, peak KB |
+|---|---|---|---|
+| Value pipeline | 124.4 → 124.1 | 9.4 → 9.2 | identical (1082, 217.1 / 127, 11.2) |
+| indexed | 56.0 → 56.0 | 6.7 → 6.6 | identical (77, 95.3 / 44, 11.9) |
+| indexed + entity reuse | 51.2 → 51.1 | 6.7 → 6.7 | identical (58, 95.0 / 44, 11.9) |
+
+Every difference is within the round-to-round spread (±0.2 µs).
+
+Tests: `test_all` 2117/2117; e2e 847/848 (`file_watch_works`) after every step. With the indexed
+pipeline and reuse forced on: 844/848, the same four as before the rename.

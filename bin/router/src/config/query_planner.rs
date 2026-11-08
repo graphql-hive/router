@@ -49,16 +49,16 @@ pub struct QueryPlannerConfig {
     #[serde(default = "default_arguments_to_variables")]
     pub arguments_to_variables: bool,
     /// Enables an experimental response pipeline that reads subgraph responses into compact
-    /// slots and writes the client response from them, without building intermediate values.
+    /// indexed cells and writes the client response from them, without building intermediate values.
     ///
     /// It runs queries, mutations and subscription events, with plugins and demand control.
     /// A plan it can't compile keeps the regular pipeline.
     ///
-    /// Can also be set using the `QUERY_PLANNER_EXPERIMENTAL_SLOT_PIPELINE` environment variable.
+    /// Can also be set using the `QUERY_PLANNER_EXPERIMENTAL_INDEXED_PIPELINE` environment variable.
     ///
     /// Default: false.
     #[serde(default)]
-    pub experimental_slot_pipeline: bool,
+    pub experimental_indexed_pipeline: bool,
 }
 
 impl Default for QueryPlannerConfig {
@@ -68,7 +68,7 @@ impl Default for QueryPlannerConfig {
             timeout: default_query_planning_timeout(),
             experimental_abstract_type_folding: default_experimental_abstract_type_folding(),
             arguments_to_variables: default_arguments_to_variables(),
-            experimental_slot_pipeline: false,
+            experimental_indexed_pipeline: false,
         }
     }
 }

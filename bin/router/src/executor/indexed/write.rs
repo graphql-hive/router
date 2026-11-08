@@ -1,4 +1,4 @@
-//! Writes the client response from slots. The same walk as `projection::response`, field for
+//! Writes the client response from cells. The same walk as `projection::response`, field for
 //! field: conditions, type guards, enum checks, `__typename`, forced nulls and null bubbling
 //! all behave the same. Values are copied as the subgraph wrote them.
 
@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use bytes::BufMut;
 use sonic_rs::JsonValueTrait;
 
-use super::compile::{FieldSlot, SlotPlan, KEY_WINDOW, NO_SLOT};
-use super::store::{Arena, Slot};
+use super::compile::{IndexedResponsePlan, OutputField, KEY_WINDOW, NO_FIELD};
+use super::store::{Arena, ValueCell};
 use crate::executor::execution::plan::ExecutionResultExtensions;
 use crate::executor::introspection::schema::SchemaMetadata;
 use crate::executor::projection::error::ProjectionError;
@@ -45,7 +45,7 @@ pub(super) enum TypeName<'a, 'c> {
     Resolved(&'a str),
     Deferred {
         field: &'a FieldRecord,
-        value: Slot,
+        value: ValueCell,
         parent: &'c TypeName<'a, 'c>,
         cached: OnceCell<Result<&'a str, ProjectionError>>,
     },
@@ -53,7 +53,7 @@ pub(super) enum TypeName<'a, 'c> {
 
 pub(super) struct Writer<'a> {
     arena: &'a Arena,
-    slots: &'a SlotPlan,
+    indexed: &'a IndexedResponsePlan,
     plan: &'a ProjectionPlan,
     schema: &'a SchemaMetadata,
     variables: &'a Option<HashMap<String, sonic_rs::Value>>,
@@ -64,8 +64,8 @@ pub(super) struct Writer<'a> {
 #[allow(clippy::too_many_arguments)]
 pub fn write_response(
     arena: &Arena,
-    slots: &SlotPlan,
-    data: Slot,
+    indexed: &IndexedResponsePlan,
+    data: ValueCell,
     errors: Vec<GraphQLError>,
     extensions: &ExecutionResultExtensions<'_>,
     operation_type_name: &str,
@@ -75,7 +75,7 @@ pub fn write_response(
 ) -> Result<Vec<u8>, ProjectionError> {
     let (buffer, errors) = write_data(
         arena,
-        slots,
+        indexed,
         data,
         errors,
         operation_type_name,
@@ -83,25 +83,25 @@ pub fn write_response(
         size_hint,
         schema,
     )?;
-    finish_response(buffer, errors, extensions, &slots.projection)
+    finish_response(buffer, errors, extensions, &indexed.projection)
 }
 
-/// Writes `{"data":` and the data from the slots, like `project_data` does from a `Value`.
+/// Writes `{"data":` and the data from the cells, like `project_data` does from a `Value`.
 #[allow(clippy::too_many_arguments)]
 pub fn write_data(
     arena: &Arena,
-    slots: &SlotPlan,
-    data: Slot,
+    indexed: &IndexedResponsePlan,
+    data: ValueCell,
     errors: Vec<GraphQLError>,
     operation_type_name: &str,
     variables: &Option<HashMap<String, sonic_rs::Value>>,
     size_hint: usize,
     schema: &SchemaMetadata,
 ) -> Result<(Vec<u8>, Vec<GraphQLError>), ProjectionError> {
-    let plan = &*slots.projection;
+    let plan = &*indexed.projection;
     let mut out = Writer {
         arena,
-        slots,
+        indexed,
         plan,
         schema,
         variables,
@@ -109,11 +109,11 @@ pub fn write_data(
         buffer: Vec::with_capacity(size_hint),
     };
     out.buffer.extend_from_slice(b"{\"data\":");
-    if let Slot::Object { first, .. } = data {
+    if let ValueCell::Object { first, .. } = data {
         let checkpoint = out.buffer.len();
         let mut opened = false;
         let type_name = TypeName::Resolved(operation_type_name);
-        let null = if slots.root_simple {
+        let null = if indexed.root_simple {
             out.simple_fields(first, plan.root_range(), &type_name, &mut opened)?
         } else {
             out.object_fields(first, plan.root_range(), &type_name, &mut opened)?
@@ -136,14 +136,14 @@ impl<'a> Writer<'a> {
     /// A writer that only reads: its conditions and type names, for `walk`
     pub(super) fn reader(
         arena: &'a Arena,
-        slots: &'a SlotPlan,
+        indexed: &'a IndexedResponsePlan,
         schema: &'a SchemaMetadata,
         variables: &'a Option<HashMap<String, sonic_rs::Value>>,
     ) -> Self {
         Self {
             arena,
-            slots,
-            plan: &slots.projection,
+            indexed,
+            plan: &indexed.projection,
             schema,
             variables,
             errors: Vec::new(),
@@ -170,7 +170,7 @@ impl<'a> Writer<'a> {
     fn resolve_type_name(
         &self,
         field: &'a FieldRecord,
-        value: Slot,
+        value: ValueCell,
         parent: &TypeName<'a, '_>,
     ) -> Result<&'a str, ProjectionError> {
         if field.is_typename() {
@@ -179,7 +179,7 @@ impl<'a> Writer<'a> {
         if let Some(name) = self.typename_of(value) {
             return Ok(name);
         }
-        if let Some(name) = self.slots.field_types[self.plan.field_index(field)].as_deref() {
+        if let Some(name) = self.indexed.field_types[self.plan.field_index(field)].as_deref() {
             return Ok(name);
         }
         let parent = self.type_name(parent)?;
@@ -197,27 +197,27 @@ impl<'a> Writer<'a> {
     }
 
     #[inline]
-    fn typename_of(&self, value: Slot) -> Option<&'a str> {
-        let Slot::Object { layout, first } = value else {
+    fn typename_of(&self, value: ValueCell) -> Option<&'a str> {
+        let ValueCell::Object { layout, first } = value else {
             return None;
         };
-        let slot = self.slots.layouts[layout as usize].typename;
-        if slot == NO_SLOT {
+        let field_index = self.indexed.layouts[layout as usize].typename;
+        if field_index == NO_FIELD {
             return None;
         }
         self.arena
-            .plain_str(self.arena.slots[(first + slot as u32) as usize])
+            .plain_str(self.arena.cells[(first + field_index as u32) as usize])
     }
 
     fn value(
         &mut self,
-        value: Slot,
+        value: ValueCell,
         field: &'a FieldRecord,
         parent: &TypeName<'a, '_>,
         nullability: Option<ShapeCursor<'_>>,
     ) -> Result<Null, ProjectionError> {
         match value {
-            Slot::List { start, len } => {
+            ValueCell::List { start, len } => {
                 let checkpoint = self.buffer.len();
                 let item_shape = nullability.and_then(ShapeCursor::list_item);
                 let item_non_null = item_shape.is_some_and(ShapeCursor::is_non_null);
@@ -237,7 +237,7 @@ impl<'a> Writer<'a> {
                 self.buffer.push(b']');
                 Ok(Null::Keep)
             }
-            Slot::Object { first, .. } if field.has_children() => {
+            ValueCell::Object { first, .. } if field.has_children() => {
                 let checkpoint = self.buffer.len();
                 let type_name = TypeName::Deferred {
                     field,
@@ -246,8 +246,9 @@ impl<'a> Writer<'a> {
                     cached: OnceCell::new(),
                 };
                 let mut opened = false;
-                let simple =
-                    self.slots.fields[self.plan.field_index(field)].flags & FieldSlot::SIMPLE != 0;
+                let simple = self.indexed.fields[self.plan.field_index(field)].flags
+                    & OutputField::SIMPLE
+                    != 0;
                 let null = if simple {
                     self.simple_fields(first, field.children, &type_name, &mut opened)?
                 } else {
@@ -265,21 +266,21 @@ impl<'a> Writer<'a> {
                 }
                 Ok(Null::Keep)
             }
-            Slot::Null | Slot::Missing => {
+            ValueCell::Null | ValueCell::Missing => {
                 self.buffer.extend_from_slice(b"null");
                 Ok(Null::Bubble)
             }
-            Slot::True => {
+            ValueCell::True => {
                 self.buffer.extend_from_slice(b"true");
                 Ok(Null::Keep)
             }
-            Slot::False => {
+            ValueCell::False => {
                 self.buffer.extend_from_slice(b"false");
                 Ok(Null::Keep)
             }
-            Slot::Raw(raw) => {
-                let body = self.arena.body(raw.body);
-                let (start, len) = (raw.start as usize, raw.len as usize);
+            ValueCell::RawJson(span) => {
+                let body = self.arena.body(span.body);
+                let (start, len) = (span.start as usize, span.len as usize);
                 match body.get(start..start + VALUE_WINDOW) {
                     // most values are short: one fixed-size copy instead of a memcpy call
                     Some(window) if len <= VALUE_WINDOW => put_window::<VALUE_WINDOW>(
@@ -291,11 +292,11 @@ impl<'a> Writer<'a> {
                 }
                 Ok(Null::Keep)
             }
-            Slot::Object { layout, first } => {
+            ValueCell::Object { layout, first } => {
                 // an object where the client selects nothing under it: written as it is
                 self.arena.write_whole(
-                    &self.slots.layouts,
-                    Slot::Object { layout, first },
+                    &self.indexed.layouts,
+                    ValueCell::Object { layout, first },
                     &mut self.buffer,
                 );
                 Ok(Null::Keep)
@@ -304,7 +305,7 @@ impl<'a> Writer<'a> {
     }
 
     /// [`Self::object_fields`] for fields with no type guards, conditions or `__typename`
-    /// (see [`FieldSlot::SIMPLE`]): nothing to check before writing, and scalars are copied
+    /// (see [`OutputField::SIMPLE`]): nothing to check before writing, and scalars are copied
     /// right here.
     fn simple_fields(
         &mut self,
@@ -315,12 +316,12 @@ impl<'a> Writer<'a> {
     ) -> Result<Null, ProjectionError> {
         let plan = self.plan;
         let fields = plan.fields(range);
-        let field_slots = &self.slots.fields[range.start as usize..][..fields.len()];
-        for (field, field_slot) in fields.iter().zip(field_slots) {
-            let value = if field_slot.slot == NO_SLOT {
-                Slot::Missing
+        let output_fields = &self.indexed.fields[range.start as usize..][..fields.len()];
+        for (field, output_field) in fields.iter().zip(output_fields) {
+            let value = if output_field.field_index == NO_FIELD {
+                ValueCell::Missing
             } else {
-                self.arena.slots[(first + field_slot.slot as u32) as usize]
+                self.arena.cells[(first + output_field.field_index as u32) as usize]
             };
             // one reservation for the separator, the key and a short value, then plain stores
             self.buffer.reserve(1 + KEY_WINDOW + VALUE_WINDOW);
@@ -330,18 +331,18 @@ impl<'a> Writer<'a> {
             unsafe {
                 let end = self.buffer.as_mut_ptr().add(self.buffer.len());
                 end.write(separator);
-                std::ptr::copy_nonoverlapping(field_slot.key.as_ptr(), end.add(1), KEY_WINDOW);
+                std::ptr::copy_nonoverlapping(output_field.key.as_ptr(), end.add(1), KEY_WINDOW);
                 self.buffer
-                    .set_len(self.buffer.len() + 1 + field_slot.key_len as usize);
+                    .set_len(self.buffer.len() + 1 + output_field.key_len as usize);
             }
             let null = if field.is_null_value() {
                 self.put_reserved(b"null");
                 Null::Bubble
             } else {
                 match value {
-                    Slot::Raw(raw) => {
-                        let body = self.arena.body(raw.body);
-                        let (start, len) = (raw.start as usize, raw.len as usize);
+                    ValueCell::RawJson(span) => {
+                        let body = self.arena.body(span.body);
+                        let (start, len) = (span.start as usize, span.len as usize);
                         match body.get(start..start + VALUE_WINDOW) {
                             // SAFETY: reserved above, and only `len` bytes are counted
                             Some(window) if len <= VALUE_WINDOW => unsafe {
@@ -353,12 +354,12 @@ impl<'a> Writer<'a> {
                         }
                         Null::Keep
                     }
-                    Slot::Null | Slot::Missing => {
+                    ValueCell::Null | ValueCell::Missing => {
                         self.put_reserved(b"null");
                         Null::Bubble
                     }
                     _ => {
-                        let nullability = matches!(value, Slot::List { .. })
+                        let nullability = matches!(value, ValueCell::List { .. })
                             .then(|| ShapeCursor::new(plan.shape(field.nullability())));
                         self.value(value, field, parent, nullability)?
                     }
@@ -398,12 +399,12 @@ impl<'a> Writer<'a> {
                     continue;
                 }
             }
-            let field_slot = &self.slots.fields[range.start as usize + offset];
-            let slot = field_slot.slot;
-            let value = if slot == NO_SLOT {
-                Slot::Missing
+            let output_field = &self.indexed.fields[range.start as usize + offset];
+            let field_index = output_field.field_index;
+            let value = if field_index == NO_FIELD {
+                ValueCell::Missing
             } else {
-                self.arena.slots[(first + slot as u32) as usize]
+                self.arena.cells[(first + field_index as u32) as usize]
             };
 
             let condition = match field.condition {
@@ -416,7 +417,7 @@ impl<'a> Writer<'a> {
 
             match condition {
                 Ok(()) => {
-                    self.key(opened, field_slot, field);
+                    self.key(opened, output_field, field);
                     let null = if field.is_null_value() {
                         self.buffer.extend_from_slice(b"null");
                         Null::Bubble
@@ -427,7 +428,7 @@ impl<'a> Writer<'a> {
                         self.buffer.push(b'"');
                         Null::Keep
                     } else {
-                        let nullability = matches!(value, Slot::List { .. })
+                        let nullability = matches!(value, ValueCell::List { .. })
                             .then(|| ShapeCursor::new(plan.shape(field.nullability())));
                         self.value(value, field, parent, nullability)?
                     };
@@ -438,7 +439,7 @@ impl<'a> Writer<'a> {
                 Err(Failure::Fatal(error)) => return Err(error),
                 Err(Failure::Skip | Failure::InvalidParentType) => continue,
                 Err(failure @ (Failure::InvalidEnumValue | Failure::InvalidFieldType)) => {
-                    self.key(opened, field_slot, field);
+                    self.key(opened, output_field, field);
                     self.buffer.extend_from_slice(b"null");
                     if matches!(failure, Failure::InvalidEnumValue) {
                         self.errors
@@ -454,11 +455,15 @@ impl<'a> Writer<'a> {
     }
 
     #[inline(always)]
-    fn key(&mut self, opened: &mut bool, slot: &FieldSlot, field: &FieldRecord) {
+    fn key(&mut self, opened: &mut bool, field_index: &OutputField, field: &FieldRecord) {
         self.buffer.push(if *opened { b',' } else { b'{' });
         *opened = true;
-        if slot.key_len != 0 {
-            put_window(&mut self.buffer, &slot.key, slot.key_len as usize);
+        if field_index.key_len != 0 {
+            put_window(
+                &mut self.buffer,
+                &field_index.key,
+                field_index.key_len as usize,
+            );
         } else {
             self.buffer.push(b'"');
             // field names and aliases never need escaping
@@ -472,7 +477,7 @@ impl<'a> Writer<'a> {
         &self,
         id: ConditionId,
         field: &'a FieldRecord,
-        value: Slot,
+        value: ValueCell,
         parent: &TypeName<'a, '_>,
         field_type: &OnceCell<Result<&'a str, ProjectionError>>,
     ) -> Result<(), Failure> {
@@ -523,7 +528,7 @@ impl<'a> Writer<'a> {
     }
 
     /// The value as a string, when it's one
-    fn string_value(&self, value: Slot) -> Option<std::borrow::Cow<'a, str>> {
+    fn string_value(&self, value: ValueCell) -> Option<std::borrow::Cow<'a, str>> {
         self.arena.string(value)
     }
 }

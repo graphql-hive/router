@@ -160,7 +160,7 @@ struct ClientSubscription {
     sender: mpsc::Sender<WsResponse>,
     custom_scalar_paths: Option<CustomScalarPaths>,
     /// Hand each payload over unread, see `SubgraphResponse::from_body`
-    raw: bool,
+    unparsed_body: bool,
 }
 
 /// The client's WebSocket state. Its subscriptions map subscription IDs to their response senders.
@@ -351,13 +351,13 @@ impl WsClient<Initialized> {
             .await
     }
 
-    /// [`Self::subscribe`], with each payload handed over unread when `raw` (see
+    /// [`Self::subscribe`], with each payload handed over unread when `unparsed_body` (see
     /// `SubgraphResponse::from_body`)
     pub(crate) async fn subscribe_reading(
         &mut self,
         subscribe_payload: SubscribePayload,
         custom_scalar_paths: Option<CustomScalarPaths>,
-        raw: bool,
+        unparsed_body: bool,
     ) -> Result<WsResponseStream, WsClientError> {
         let subscribe_id = self.next_subscription_id()?;
 
@@ -368,7 +368,7 @@ impl WsClient<Initialized> {
             ClientSubscription {
                 sender: tx,
                 custom_scalar_paths,
-                raw,
+                unparsed_body,
             },
         );
 
@@ -530,7 +530,7 @@ fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {
                 let response = match SubgraphResponse::from_body(
                     payload_bytes,
                     subscription.custom_scalar_paths.as_ref(),
-                    subscription.raw,
+                    subscription.unparsed_body,
                 ) {
                     Ok(response) => Ok(response),
                     Err(e) => {
@@ -596,7 +596,7 @@ mod tests {
             ClientSubscription {
                 sender: tx,
                 custom_scalar_paths: Some(custom_scalar_paths),
-                raw: false,
+                unparsed_body: false,
             },
         );
 

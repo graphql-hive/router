@@ -82,8 +82,8 @@ pub struct EnvVarOverrides {
     // Query planner overrides
     #[envconfig(from = "QUERY_PLANNER_EXPERIMENTAL_ABSTRACT_TYPE_FOLDING")]
     pub query_planner_experimental_abstract_type_folding: Option<bool>,
-    #[envconfig(from = "QUERY_PLANNER_EXPERIMENTAL_SLOT_PIPELINE")]
-    pub query_planner_experimental_slot_pipeline: Option<bool>,
+    #[envconfig(from = "QUERY_PLANNER_EXPERIMENTAL_INDEXED_PIPELINE")]
+    pub query_planner_experimental_indexed_pipeline: Option<bool>,
 
     // Error masking
     #[envconfig(from = "DISABLE_SUBGRAPH_ERROR_MASKING")]
@@ -298,13 +298,13 @@ impl EnvVarOverrides {
             )?;
         }
 
-        if let Some(experimental_slot_pipeline) =
-            self.query_planner_experimental_slot_pipeline.take()
+        if let Some(experimental_indexed_pipeline) =
+            self.query_planner_experimental_indexed_pipeline.take()
         {
-            debug!(target: CONFIG_LOGGING_TARGET, value = experimental_slot_pipeline, "overriding 'experimental_slot_pipeline'");
+            debug!(target: CONFIG_LOGGING_TARGET, value = experimental_indexed_pipeline, "overriding 'experimental_indexed_pipeline'");
             config = config.set_override(
-                "query_planner.experimental_slot_pipeline",
-                experimental_slot_pipeline,
+                "query_planner.experimental_indexed_pipeline",
+                experimental_indexed_pipeline,
             )?;
         }
 
@@ -599,15 +599,15 @@ http:
     }
 
     #[test]
-    fn query_planner_experimental_slot_pipeline_override_turns_it_off_too() {
+    fn query_planner_experimental_indexed_pipeline_override_turns_it_off_too() {
         let config = EnvVarOverrides {
-            query_planner_experimental_slot_pipeline: Some(false),
+            query_planner_experimental_indexed_pipeline: Some(false),
             ..Default::default()
         }
         .apply_overrides(Config::builder().add_source(File::from_str(
             r#"
 query_planner:
-  experimental_slot_pipeline: true
+  experimental_indexed_pipeline: true
 "#,
             FileFormat::Yaml,
         )))
@@ -617,7 +617,7 @@ query_planner:
         .try_deserialize::<HiveRouterConfig>()
         .unwrap();
 
-        assert!(!config.query_planner.experimental_slot_pipeline);
+        assert!(!config.query_planner.experimental_indexed_pipeline);
     }
 
     #[test]

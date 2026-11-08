@@ -476,7 +476,7 @@ mod tests {
             extensions: None,
             custom_scalar_paths: None,
             response_shape: None,
-            raw_response: false,
+            unparsed_body: false,
             connection_fingerprint: None,
         }
     }

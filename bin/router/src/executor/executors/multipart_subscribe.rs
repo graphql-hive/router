@@ -77,7 +77,7 @@ pub fn parse_to_stream<B>(
     boundary: &str,
     body_stream: B,
     custom_scalar_paths: Option<CustomScalarPaths>,
-    raw: bool,
+    unparsed_body: bool,
 ) -> BoxStream<'static, Result<SubgraphResponse<'static>, ParseError>>
 where
     B: Body + Send + Unpin + 'static,
@@ -104,7 +104,7 @@ where
                 buffer.drain(..skip_len);
 
                 if !part_bytes.is_empty() {
-                    match parse_part(&part_bytes, custom_scalar_paths.as_ref(), raw) {
+                    match parse_part(&part_bytes, custom_scalar_paths.as_ref(), unparsed_body) {
                         Ok(Some(response)) => {
                             yield Ok(response);
                         }
@@ -191,7 +191,7 @@ fn find_next_part(
 fn parse_part(
     part: &[u8],
     custom_scalar_paths: Option<&CustomScalarPaths>,
-    raw: bool,
+    unparsed_body: bool,
 ) -> Result<Option<SubgraphResponse<'static>>, ParseError> {
     let text = std::str::from_utf8(part)?;
     let body = extract_body_after_headers(text);
@@ -200,7 +200,7 @@ fn parse_part(
         return Ok(None);
     }
 
-    extract_payload(body, custom_scalar_paths, raw)
+    extract_payload(body, custom_scalar_paths, unparsed_body)
 }
 
 fn extract_body_after_headers(content: &str) -> &str {
@@ -216,7 +216,7 @@ fn extract_body_after_headers(content: &str) -> &str {
 fn extract_payload(
     body: &str,
     custom_scalar_paths: Option<&CustomScalarPaths>,
-    raw: bool,
+    unparsed_body: bool,
 ) -> Result<Option<SubgraphResponse<'static>>, ParseError> {
     // cheap heartbeat check: subgraphs send `{}` as a keep-alive ping
     if body == "{}" {
@@ -236,7 +236,7 @@ fn extract_payload(
                     return SubgraphResponse::from_body(
                         Bytes::from(transport_err),
                         custom_scalar_paths,
-                        raw,
+                        unparsed_body,
                     )
                     .map_err(ParseError::InvalidSubgraphResponse)
                     .map(Some);
@@ -248,16 +248,20 @@ fn extract_payload(
             SubgraphResponse::from_body(
                 Bytes::copy_from_slice(payload.as_bytes()),
                 custom_scalar_paths,
-                raw,
+                unparsed_body,
             )
             .map_err(ParseError::InvalidSubgraphResponse)
             .map(Some)
         }
         Err(e) if e.is_not_found() => {
             // no payload wrapper, treat the whole body as a subgraph response
-            SubgraphResponse::from_body(Bytes::from(body.to_owned()), custom_scalar_paths, raw)
-                .map_err(ParseError::InvalidSubgraphResponse)
-                .map(Some)
+            SubgraphResponse::from_body(
+                Bytes::from(body.to_owned()),
+                custom_scalar_paths,
+                unparsed_body,
+            )
+            .map_err(ParseError::InvalidSubgraphResponse)
+            .map(Some)
         }
         Err(e) => Err(ParseError::InvalidSubgraphResponse(
             SubgraphExecutorError::ResponseDeserializationFailure(e, None),

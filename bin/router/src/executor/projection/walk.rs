@@ -11,13 +11,13 @@ use super::plan::{FieldRecord, ProjectionPlan, Range};
 use super::response::{evaluate, resolve_type_name, ConditionFailure, ShapeCursor, TypeName};
 use graphql_tools::parser::query as gql;
 
+use crate::executor::indexed::compile::{collect_fields, single_type_condition};
 use crate::executor::introspection::schema::SchemaMetadata;
 use crate::executor::plugins::response_data::{
     DataValue, Nullability, PathFrame, Place, Step, WalkResult,
 };
 use crate::executor::response::graphql_error::GraphQLError;
 use crate::executor::response::value::Value;
-use crate::executor::slots::compile::{collect_fields, single_type_condition};
 use crate::executor::utils::consts::TYPENAME_FIELD_NAME;
 
 pub(crate) fn walk<F: FnMut(&mut DataValue<'_, '_>)>(

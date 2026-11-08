@@ -404,16 +404,17 @@ impl SubgraphExecutorMap {
                         debug!(target: targets::EXECUTOR, subgraph = subgraph_name, "execution was skipped due to response override by a plugin");
                         // a body the plugin gave as JSON: read like a subgraph's, unless the
                         // pipeline reads bodies itself
-                        let response =
-                            if response.is_raw() && !start_payload.execution_request.raw_response {
-                                read_plugin_response(
-                                    response,
-                                    start_payload.execution_request.response_shape,
-                                    start_payload.execution_request.custom_scalar_paths,
-                                )
-                            } else {
-                                response
-                            };
+                        let response = if response.has_unparsed_body()
+                            && !start_payload.execution_request.unparsed_body
+                        {
+                            read_plugin_response(
+                                response,
+                                start_payload.execution_request.response_shape,
+                                start_payload.execution_request.custom_scalar_paths,
+                            )
+                        } else {
+                            response
+                        };
                         execution_result = Some(response);
                         break;
                     }
@@ -576,7 +577,7 @@ impl SubgraphExecutorMap {
         };
 
         // a body the pipeline reads itself has no errors or data yet, the pipeline counts them
-        let read = !execution_result.is_raw();
+        let read = !execution_result.has_unparsed_body();
         let error_count = read.then(|| {
             execution_result
                 .errors

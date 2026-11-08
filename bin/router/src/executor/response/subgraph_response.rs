@@ -25,8 +25,8 @@ pub struct SubgraphResponse<'a> {
     pub(crate) data: Value<'a>,
     pub errors: Option<Vec<GraphQLError>>,
     pub(crate) extensions: Option<Value<'a>>,
-    /// `bytes` is the body, not read yet (see [`Self::is_raw`])
-    pub(crate) raw: bool,
+    /// `bytes` is the body, not read yet (see [`Self::has_unparsed_body`])
+    pub(crate) unparsed_body: bool,
     pub headers: Option<Arc<HeaderMap>>,
     pub bytes: Option<Bytes>,
     pub status: Option<StatusCode>,
@@ -38,7 +38,7 @@ impl<'a> SubgraphResponse<'a> {
     pub fn from_json(body: impl Into<Bytes>) -> Self {
         Self {
             bytes: Some(body.into()),
-            raw: true,
+            unparsed_body: true,
             ..Default::default()
         }
     }
@@ -48,14 +48,14 @@ impl<'a> SubgraphResponse<'a> {
         &self.data
     }
 
-    /// A subgraph's response body: as it came when the pipeline reads bodies itself (`raw`,
-    /// the slot pipeline), else read like [`Self::deserialize_from_bytes`]
+    /// A subgraph's response body: as it came when the pipeline reads bodies itself (`unparsed_body`,
+    /// the indexed pipeline), else read like [`Self::deserialize_from_bytes`]
     pub(crate) fn from_body(
         bytes: Bytes,
         custom_scalar_paths: Option<&CustomScalarPaths>,
-        raw: bool,
+        unparsed_body: bool,
     ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
-        if raw {
+        if unparsed_body {
             Ok(SubgraphResponse::from_json(bytes))
         } else {
             SubgraphResponse::deserialize_from_bytes(bytes, custom_scalar_paths)
@@ -70,10 +70,10 @@ impl<'a> SubgraphResponse<'a> {
         }
     }
 
-    /// Whether this is a body not read yet: what the slot pipeline asks the executor for, and
+    /// Whether this is a body not read yet: what the indexed pipeline asks the executor for, and
     /// what [`Self::from_json`] makes
-    pub(crate) fn is_raw(&self) -> bool {
-        self.raw
+    pub(crate) fn has_unparsed_body(&self) -> bool {
+        self.unparsed_body
     }
 
     pub fn append_error(&mut self, error: GraphQLError) {
@@ -178,7 +178,7 @@ impl<'a, 'de> Visitor<'de> for SubgraphResponseVisitor<'a> {
         }
 
         Ok(SubgraphResponse {
-            raw: false,
+            unparsed_body: false,
             data: data.unwrap_or(Value::Null),
             errors,
             extensions,
@@ -363,7 +363,7 @@ impl<'a> SubgraphResponse<'a> {
             return Err(SubgraphExecutorError::MalformedResponse(None));
         }
         Ok(SubgraphResponse {
-            raw: false,
+            unparsed_body: false,
             data: parsed.data,
             errors: parsed.errors,
             extensions: parsed.extensions,
@@ -470,7 +470,7 @@ mod tests {
             .unwrap()
             .1
             .as_raw_json()
-            .expect("custom path should deserialize as raw json");
+            .expect("custom path should deserialize as unparsed_body json");
         assert!(custom.contains("\"generic.learnMore.button\\t\""));
         assert!(custom.contains("\"Learn more\""));
 
@@ -742,7 +742,7 @@ mod tests {
             .unwrap()
             .1
             .as_raw_json()
-            .expect("json union branch should deserialize as raw json");
+            .expect("json union branch should deserialize as unparsed_body json");
         assert!(union_meta.contains("union.key\\t"));
     }
 

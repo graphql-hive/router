@@ -204,7 +204,7 @@ pub fn project_data(
     Ok((out.buffer, out.errors))
 }
 
-/// Ends a response that [`project_data`] (or the slot pipeline's writer) started: the errors
+/// Ends a response that [`project_data`] (or the indexed pipeline's writer) started: the errors
 /// and the extensions.
 pub fn finish_response(
     mut buffer: Vec<u8>,

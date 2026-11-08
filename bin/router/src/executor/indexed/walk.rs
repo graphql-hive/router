@@ -1,14 +1,14 @@
-//! Walks the response data in slots for plugins (see `ResponseData::walk`): the writer's walk,
+//! Walks the response data in cells for plugins (see `ResponseData::walk`): the writer's walk,
 //! field for field with the same conditions and type guards, visiting values instead of writing
-//! them. A plugin changes the slots as it goes; the writer bubbles the nulls later.
+//! them. A plugin changes the cells as it goes; the writer bubbles the nulls later.
 
 use std::cell::OnceCell;
 use std::collections::HashMap;
 
-use super::compile::{Layout, Shape, SlotPlan, NO_OBJECT, NO_SLOT};
+use super::compile::{FetchShape, IndexedResponsePlan, ObjectLayout, NO_FIELD, NO_OBJECT};
 use bytes::Bytes;
 
-use super::store::{plain_str_of, Arena, Raw, Slot, EDITS_BODY};
+use super::store::{plain_str_of, Arena, JsonSpan, ValueCell, EDITS_BODY};
 use super::write::{Failure, TypeName, Writer};
 use crate::executor::introspection::schema::SchemaMetadata;
 use crate::executor::plugins::response_data::{
@@ -22,31 +22,31 @@ use crate::executor::response::graphql_error::GraphQLError;
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn walk<F: FnMut(&mut DataValue<'_, '_>)>(
     arena: &mut Arena,
-    slots: &SlotPlan,
-    data: Slot,
+    indexed: &IndexedResponsePlan,
+    data: ValueCell,
     root_type: &str,
     schema: &SchemaMetadata,
     variables: &Option<HashMap<String, sonic_rs::Value>>,
     errors: &mut Vec<GraphQLError>,
     visit: F,
 ) -> WalkResult {
-    let Slot::Object { first, .. } = data else {
+    let ValueCell::Object { first, .. } = data else {
         return Ok(());
     };
     let mut walker = Walker {
         arena,
-        slots,
+        indexed,
         schema,
         variables,
         errors,
         visit,
     };
-    walker.object(first, slots.projection.root_range(), root_type, None)
+    walker.object(first, indexed.projection.root_range(), root_type, None)
 }
 
 struct Walker<'w, F> {
     arena: &'w mut Arena,
-    slots: &'w SlotPlan,
+    indexed: &'w IndexedResponsePlan,
     schema: &'w SchemaMetadata,
     variables: &'w Option<HashMap<String, sonic_rs::Value>>,
     errors: &'w mut Vec<GraphQLError>,
@@ -61,8 +61,8 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> Walker<'w, F> {
         parent_type: &str,
         path: Option<&PathFrame<'_>>,
     ) -> WalkResult {
-        let slots = self.slots;
-        let plan = &*slots.projection;
+        let indexed = self.indexed;
+        let plan = &*indexed.projection;
         for (offset, field) in plan.fields(range).iter().enumerate() {
             if field.is_typename() || field.is_null_value() {
                 continue;
@@ -72,15 +72,15 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> Walker<'w, F> {
                     continue;
                 }
             }
-            let slot = slots.fields[range.start as usize + offset].slot;
+            let field_index = indexed.fields[range.start as usize + offset].field_index;
             // not in the layout: the writer writes null, there's nothing to change
-            if slot == NO_SLOT {
+            if field_index == NO_FIELD {
                 continue;
             }
-            let index = first + slot as u32;
+            let index = first + field_index as u32;
             if let Some(condition) = field.condition {
-                let value = self.arena.slots[index as usize];
-                let reader = Writer::reader(&*self.arena, slots, self.schema, self.variables);
+                let value = self.arena.cells[index as usize];
+                let reader = Writer::reader(&*self.arena, indexed, self.schema, self.variables);
                 match reader.evaluate(
                     condition,
                     field,
@@ -109,7 +109,7 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> Walker<'w, F> {
         Ok(())
     }
 
-    /// Visits the value at `slots[index]` (`items[index]` for an item), then what's under it
+    /// Visits the value at `cells[index]` (`items[index]` for an item), then what's under it
     #[allow(clippy::too_many_arguments)]
     fn value(
         &mut self,
@@ -121,8 +121,8 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> Walker<'w, F> {
         list_index: Option<u32>,
         path: &PathFrame<'_>,
     ) -> WalkResult {
-        let slots = self.slots;
-        let plan = &*slots.projection;
+        let indexed = self.indexed;
+        let plan = &*indexed.projection;
         let mut value = DataValue {
             schema: self.schema,
             field_name: plan.field_name(field),
@@ -132,7 +132,7 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> Walker<'w, F> {
             nullability,
             item: list_index,
             path,
-            place: Place::Slot {
+            place: Place::Cell {
                 arena: &mut *self.arena,
                 item,
                 index,
@@ -145,13 +145,13 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> Walker<'w, F> {
             return Ok(());
         }
         // read again: the plugin may have changed it
-        let slot = if item {
+        let cell = if item {
             self.arena.items[index as usize]
         } else {
-            self.arena.slots[index as usize]
+            self.arena.cells[index as usize]
         };
-        match slot {
-            Slot::List { start, len } => {
+        match cell {
+            ValueCell::List { start, len } => {
                 let item_nullability = nullability.item();
                 for i in 0..len {
                     let frame = PathFrame {
@@ -169,15 +169,15 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> Walker<'w, F> {
                     )?;
                 }
             }
-            Slot::Object { layout, first } if field.has_children() => {
+            ValueCell::Object { layout, first } if field.has_children() => {
                 // like the writer: the object's `__typename`, else the field's type. The name is
-                // read from the subgraph's body, kept alive here: the walk changes slots, never
+                // read from the subgraph's body, kept alive here: the walk changes cells, never
                 // bodies.
-                let typename = typename_of(self.arena, &self.slots.layouts, layout, first);
-                let type_name = match typename.as_ref().and_then(|(body, raw)| {
+                let typename = typename_of(self.arena, &self.indexed.layouts, layout, first);
+                let type_name = match typename.as_ref().and_then(|(body, span)| {
                     // SAFETY: the body's bytes are what the parser read
                     unsafe {
-                        plain_str_of(&body[raw.start as usize..(raw.start + raw.len) as usize])
+                        plain_str_of(&body[span.start as usize..(span.start + span.len) as usize])
                     }
                 }) {
                     Some(name) => name,
@@ -196,9 +196,9 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> Walker<'w, F> {
         field: &'w FieldRecord,
         parent_type: &str,
     ) -> Result<&'w str, ProjectionError> {
-        let slots = self.slots;
-        let plan = &*slots.projection;
-        if let Some(name) = slots.field_types[plan.field_index(field)].as_deref() {
+        let indexed = self.indexed;
+        let plan = &*indexed.projection;
+        if let Some(name) = indexed.field_types[plan.field_index(field)].as_deref() {
             return Ok(name);
         }
         self.schema
@@ -213,35 +213,40 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> Walker<'w, F> {
 }
 
 /// The body and range of an object's `__typename`, when it has one. The body is a cheap clone
-/// that keeps the name alive while the walk changes the slots.
-fn typename_of(arena: &Arena, layouts: &[Layout], layout: u32, first: u32) -> Option<(Bytes, Raw)> {
-    let slot = layouts[layout as usize].typename;
-    if slot == NO_SLOT {
+/// that keeps the name alive while the walk changes the cells.
+fn typename_of(
+    arena: &Arena,
+    layouts: &[ObjectLayout],
+    layout: u32,
+    first: u32,
+) -> Option<(Bytes, JsonSpan)> {
+    let field_index = layouts[layout as usize].typename;
+    if field_index == NO_FIELD {
         return None;
     }
-    match arena.slots[(first + slot as u32) as usize] {
-        Slot::Raw(raw) if raw.body != EDITS_BODY => {
-            Some((arena.bodies[raw.body as usize].clone(), raw))
+    match arena.cells[(first + field_index as u32) as usize] {
+        ValueCell::RawJson(span) if span.body != EDITS_BODY => {
+            Some((arena.bodies[span.body as usize].clone(), span))
         }
         _ => None,
     }
 }
 
-/// Walks one fetch's data in slots, before it's merged, field for field the way the fetch's
+/// Walks one fetch's data in cells, before it's merged, field for field the way the fetch's
 /// query selects it (see `SubgraphData::walk`). Field names and types come from the fetch's
 /// shape and the schema.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn walk_fetch<F: FnMut(&mut DataValue<'_, '_>)>(
     arena: &mut Arena,
-    layouts: &[Layout],
-    shape: &Shape,
-    data: Slot,
+    layouts: &[ObjectLayout],
+    shape: &FetchShape,
+    data: ValueCell,
     root_type: &str,
     schema: &SchemaMetadata,
     errors: &mut Vec<GraphQLError>,
     visit: F,
 ) -> WalkResult {
-    let Slot::Object { first, .. } = data else {
+    let ValueCell::Object { first, .. } = data else {
         return Ok(());
     };
     let mut walker = FetchWalker {
@@ -258,8 +263,8 @@ pub(crate) fn walk_fetch<F: FnMut(&mut DataValue<'_, '_>)>(
 
 struct FetchWalker<'w, F> {
     arena: &'w mut Arena,
-    layouts: &'w [Layout],
-    shape: &'w Shape,
+    layouts: &'w [ObjectLayout],
+    shape: &'w FetchShape,
     schema: &'w SchemaMetadata,
     errors: &'w mut Vec<GraphQLError>,
     visit: F,
@@ -273,7 +278,7 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> FetchWalker<'w, F> {
             let node = &shape.nodes[node_index as usize];
             let name = shape.name(node_index as usize);
             // `__typename` can't change; a key that's a different field per type can't be typed
-            if node.slot == NO_SLOT || name.is_empty() || name == "__typename" {
+            if node.field_index == NO_FIELD || name.is_empty() || name == "__typename" {
                 continue;
             }
             let quoted = shape.key(node);
@@ -284,7 +289,7 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> FetchWalker<'w, F> {
             };
             self.value(
                 false,
-                first + node.slot as u32,
+                first + node.field_index as u32,
                 node.object,
                 name,
                 key,
@@ -296,7 +301,7 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> FetchWalker<'w, F> {
         }
     }
 
-    /// Visits the value at `slots[index]` (`items[index]` for an item), then what's under it.
+    /// Visits the value at `cells[index]` (`items[index]` for an item), then what's under it.
     /// `object` is the shape object of the field's objects.
     #[allow(clippy::too_many_arguments)]
     fn value(
@@ -320,7 +325,7 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> FetchWalker<'w, F> {
             nullability,
             item: list_index,
             path,
-            place: Place::Slot {
+            place: Place::Cell {
                 arena: &mut *self.arena,
                 item,
                 index,
@@ -332,13 +337,13 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> FetchWalker<'w, F> {
         if value.skip {
             return;
         }
-        let slot = if item {
+        let cell = if item {
             self.arena.items[index as usize]
         } else {
-            self.arena.slots[index as usize]
+            self.arena.cells[index as usize]
         };
-        match slot {
-            Slot::List { start, len } => {
+        match cell {
+            ValueCell::List { start, len } => {
                 for i in 0..len {
                     let frame = PathFrame {
                         parent: Some(path),
@@ -357,17 +362,19 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> FetchWalker<'w, F> {
                     );
                 }
             }
-            Slot::Object { layout, first } if object != NO_OBJECT => {
+            ValueCell::Object { layout, first } if object != NO_OBJECT => {
                 // the object's `__typename`, else the type the query puts its fields on, else
                 // the field's type
                 let typename = typename_of(self.arena, self.layouts, layout, first);
                 let schema = self.schema;
                 let type_name = typename
                     .as_ref()
-                    .and_then(|(body, raw)| {
+                    .and_then(|(body, span)| {
                         // SAFETY: the body's bytes are what the parser read
                         unsafe {
-                            plain_str_of(&body[raw.start as usize..(raw.start + raw.len) as usize])
+                            plain_str_of(
+                                &body[span.start as usize..(span.start + span.len) as usize],
+                            )
                         }
                     })
                     .or_else(|| self.shape.object_type(object))

@@ -4,6 +4,7 @@ pub mod execution_context;
 pub mod executors;
 pub mod extensions;
 pub mod headers;
+pub mod indexed;
 pub mod introspection;
 pub mod json_writer;
 pub mod operation_filter;
@@ -11,7 +12,6 @@ pub mod plugins;
 pub mod projection;
 pub mod request_context;
 pub mod response;
-pub mod slots;
 pub mod utils;
 pub mod variables;
 
