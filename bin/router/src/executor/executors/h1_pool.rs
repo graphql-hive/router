@@ -96,27 +96,40 @@ impl H1Pool {
             }
         }
 
-        let mut sender = self.checkout(&key).await?;
-        let response = sender.send_request(req).await?;
-        Ok((
-            response,
-            Lease {
-                pool: self,
-                key,
-                sender,
-            },
-        ))
+        loop {
+            let (mut sender, reused) = self.checkout(&key).await?;
+            match sender.try_send_request(req).await {
+                Ok(response) => {
+                    return Ok((
+                        response,
+                        Lease {
+                            pool: self,
+                            key,
+                            sender,
+                        },
+                    ))
+                }
+                // an idle connection the subgraph closed before the request went out: sent
+                // again on another one, like hyper's client does
+                Err(mut err) if reused => match err.take_message() {
+                    Some(back) => req = back,
+                    None => return Err(err.into_error().into()),
+                },
+                Err(err) => return Err(err.into_error().into()),
+            }
+        }
     }
 
-    async fn checkout(&self, key: &Authority) -> Result<Sender, SubgraphExecutorError> {
+    /// A connection for `key`, and whether it was an idle one
+    async fn checkout(&self, key: &Authority) -> Result<(Sender, bool), SubgraphExecutorError> {
         while let Some(mut sender) = self.pop(key) {
             // The last response on it was read already, so this resolves as soon as the
             // connection task catches up. An error means the subgraph closed it meanwhile.
             if sender.ready().await.is_ok() {
-                return Ok(sender);
+                return Ok((sender, true));
             }
         }
-        connect(key).await
+        Ok((connect(key).await?, false))
     }
 
     fn pop(&self, key: &Authority) -> Option<Sender> {

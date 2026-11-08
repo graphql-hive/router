@@ -1323,3 +1323,28 @@ A high-effort review of 82067dc0..99f30836 found ten issues; all fixed:
 - Final bench (`bench_op`, slots, 1 worker, CPU µs/request, medians of 3 alternating rounds),
   82067dc0 → a3c9c542: no plugin 248.6 → 248.6; a plugin whose hooks only proceed 307.2 →
   252.4 (req/s 3241 → 3940).
+
+## Branch review fixes
+
+A review of the whole branch against `main`, ten findings, all fixed:
+
+- HTTP client metrics read a raw body's top-level `errors` (a `memmem` for the key first, then
+  sonic's lazy `get` only when it's there, and only with metrics on), so slot-pipeline subgraph
+  calls report `graphql.response.status` like the Value pipeline. The "subgraph execution
+  completed" log leaves `error_count`/`partial_response` out for a body nothing read yet.
+- Start data a plugin sets that isn't an object (`null` included) is left out with a warning on
+  slots too; before, `null` nulled the whole response.
+- `H1Pool` sends a request again when an idle connection turns out closed before it went out
+  (`try_send_request` hands it back), like hyper's client.
+- Errors a plugin sets next to a `from_json` body come after the body's, on both pipelines. The
+  shared job code no longer adds the HTTP status error to a raw body, the slot pipeline does.
+- The slot pipeline and entity reuse are per router: `slot_plan` is only passed when the
+  router's config has the pipeline on, entity reuse comes from the executor map's config and is
+  passed to `SlotPlan::compile`, and the planner only looks for reuse with
+  `QueryPlannerOptions::entity_reuse` (reuse and slots both on). `HIVE_SLOT_PIPELINE` is gone
+  from the router; `QUERY_PLANNER_EXPERIMENTAL_SLOT_PIPELINE=true|false` sets it like the other
+  overrides. The pipeline bench still reads `HIVE_SLOT_PIPELINE` and `PIPELINE_ENTITY_REUSE`.
+- Pooled target lists go back when a fetch has nothing to send; a no-op in the writer is gone.
+- Tests: test_all 2117/2117; e2e off 847/848 (`file_watch_works`). With slots and reuse forced
+  on: 844/848, the others are `file_watch_works`, two entity-batching call counts (reuse makes
+  fewer calls) and `json_log_default_attrs` (the log leaves the counts out on slots).

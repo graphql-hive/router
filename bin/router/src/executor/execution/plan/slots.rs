@@ -28,10 +28,8 @@ const NO_ENTITY: u32 = u32::MAX;
 
 /// Whether this request can run on the slot pipeline. The plan decides most of it when it's
 /// compiled; what's left is per router and per request.
+/// A router with the slot pipeline off gives no `slot_plan`.
 pub(super) fn usable(opts: &QueryPlanExecutionOpts<'_>) -> Option<Arc<SlotPlan>> {
-    if !crate::executor::slots::enabled() {
-        return None;
-    }
     opts.slot_plan.as_deref().and_then(|cell: &SlotPlanCell| {
         cell.get(
             opts.query_plan,
@@ -39,6 +37,7 @@ pub(super) fn usable(opts: &QueryPlanExecutionOpts<'_>) -> Option<Arc<SlotPlan>>
             &opts.introspection_context.metadata,
             &opts.operation_type_name,
             opts.introspection_context.query.as_deref(),
+            opts.executors.entity_reuse(),
         )
     })
 }
@@ -113,6 +112,7 @@ pub(super) async fn execute<'exec>(
             &opts.introspection_context.metadata,
             &opts.operation_type_name,
             Seed::Operation(&opts.operation_for_plan),
+            opts.executors.entity_reuse(),
         ) {
             Ok(compiled) => Arc::new(compiled),
             Err(reason) => {
@@ -164,11 +164,12 @@ pub(super) async fn execute<'exec>(
         let (layouts, shape, passthrough) = (&plan.layouts, &program.shape, run.passthrough);
         let read = match (&json, event) {
             (Some(json), _) => {
+                // like on the other pipeline, anything but an object is left out, also `null`
                 match parse_data(&mut run.arena, layouts, shape, json, passthrough) {
-                    Some(data) => Some(data),
-                    None => {
+                    Some(data @ Slot::Object { .. }) => Some(data),
+                    _ => {
                         tracing::warn!(
-                            "the data a plugin set before execution isn't JSON, it's left out"
+                            "the data a plugin set before execution isn't a JSON object, it's left out"
                         );
                         None
                     }
@@ -1078,6 +1079,7 @@ impl<'p> Run<'p> {
                     None,
                 );
                 if count == 0 {
+                    self.arena.give_back_targets(targets.spots);
                     return None;
                 }
                 Some((
@@ -1108,7 +1110,7 @@ impl<'p> Run<'p> {
                     .of_subgraph(&batch.service_name);
                 let mut variables: Vec<(&'exec str, Vec<u8>)> =
                     Vec::with_capacity(batch.entity_batch.aliases.len());
-                let mut aliases = SmallVec::new();
+                let mut aliases: SmallVec<[AliasMerge<'exec, 'p>; 2]> = SmallVec::new();
                 let mut any = false;
                 for (spec, alias) in batch.entity_batch.aliases.iter().zip(&program.aliases) {
                     // an alias that's off sends `[]` and has nowhere to merge
@@ -1141,6 +1143,9 @@ impl<'p> Run<'p> {
                     });
                 }
                 if !any {
+                    for alias in aliases {
+                        self.arena.give_back_targets(alias.targets.spots);
+                    }
                     return None;
                 }
                 let job = executor
@@ -1457,15 +1462,13 @@ impl<'p> Run<'p> {
         // and only real subgraph bytes are counted (for cache control), like on the other
         // pipeline
         let subgraph_bytes = response.bytes.clone();
-        let (bytes, mut errors, rebuilt) = match response.bytes {
-            Some(bytes) => (bytes, None, false),
+        // errors a plugin set next to its JSON body (`from_json`) come after the body's
+        let mut errors = response.errors;
+        let (bytes, rebuilt) = match response.bytes {
+            Some(bytes) => (bytes, false),
             None => {
                 debug_assert!(response.data.is_null(), "a response with data has its body");
-                (
-                    bytes::Bytes::from_static(b"{\"data\":null}"),
-                    response.errors,
-                    true,
-                )
+                (bytes::Bytes::from_static(b"{\"data\":null}"), true)
             }
         };
         let status_errors = response
@@ -1532,9 +1535,13 @@ impl<'p> Run<'p> {
             executor.handle_job_error(ctx, &error);
             return;
         }
-        if errors.is_none() {
-            errors = parsed.errors;
-        }
+        errors = match (parsed.errors, errors) {
+            (Some(mut body), Some(set)) => {
+                body.extend(set);
+                Some(body)
+            }
+            (body, set) => body.or(set),
+        };
         let mut data = parsed.data;
         if let (false, Some(plugin_req_state), Some(plan)) = (
             end_hooks.is_empty(),

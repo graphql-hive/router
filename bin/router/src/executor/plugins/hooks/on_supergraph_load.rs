@@ -90,6 +90,8 @@ impl TryFrom<&HiveRouterConfig> for SupergraphOptions {
                         Some((name.clone(), subgraph.max_aliases_per_request?))
                     })
                     .collect(),
+                entity_reuse: config.traffic_shaping.experimental_entity_reuse
+                    && config.query_planner.experimental_slot_pipeline,
             },
             traffic_shaping: (&config.traffic_shaping).into(),
             override_subgraph_urls: config.override_subgraph_urls.clone(),

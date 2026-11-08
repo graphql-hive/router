@@ -269,11 +269,9 @@ impl SubgraphExecutor for Replay {
 
         // like the http executor: the slot pipeline reads the body itself
         if request.raw_response {
-            return Ok(SubgraphResponse {
-                bytes: Some(bytes),
-                status: Some(StatusCode::OK),
-                ..Default::default()
-            });
+            let mut response = SubgraphResponse::from_json(bytes);
+            response.status = Some(StatusCode::OK);
+            return Ok(response);
         }
         let response = match request.response_shape {
             Some(shape) => {
@@ -325,8 +323,11 @@ fn workload(
     operation: &str,
     references: PathBuf,
 ) -> Workload {
-    let supergraph = Supergraph::from_sdl(name, supergraph_sdl, Default::default())
-        .expect("the supergraph builds");
+    let mut options =
+        hive_router::executor::plugins::hooks::on_supergraph_load::SupergraphOptions::default();
+    options.query_planner.entity_reuse = entity_reuse_on();
+    let supergraph =
+        Supergraph::from_sdl(name, supergraph_sdl, options).expect("the supergraph builds");
     let planner = &supergraph.planner;
     let metadata = Arc::clone(&supergraph.metadata);
 
@@ -349,9 +350,12 @@ fn workload(
         .into_executable(&planner.supergraph);
 
     let endpoints = planner.supergraph.subgraph_endpoint_map.clone();
+    let mut traffic_shaping =
+        hive_router::config::traffic_shaping::SupergraphTrafficShapingConfig::default();
+    traffic_shaping.experimental_entity_reuse = entity_reuse_on();
     let executors = SubgraphExecutorMap::from_http_endpoint_map(
         &endpoints,
-        Default::default(),
+        traffic_shaping,
         Default::default(),
         Default::default(),
         None,
@@ -448,7 +452,7 @@ impl Workload {
             response_header_sink: Default::default(),
             error_masking_runtime: Default::default(),
             connection_fingerprint: None,
-            slot_plan: Some(Arc::clone(&self.slot_plan)),
+            slot_plan: slots_on().then(|| Arc::clone(&self.slot_plan)),
         };
         match execute_query_plan(opts).await.expect("the plan executes") {
             QueryPlanExecutionResult::Single(output) => output.body,
@@ -490,7 +494,7 @@ fn check_or_bless(workload: &Workload, output: &[u8], requests: &[(String, Vec<u
     let dir = &workload.references;
     let output_path = dir.join("output.json");
     // entity reuse sends fewer requests for the same output
-    let requests_path = dir.join(if hive_router::executor::slots::entity_reuse() {
+    let requests_path = dir.join(if entity_reuse_on() {
         "requests-reuse.json"
     } else {
         "requests.json"
@@ -509,7 +513,7 @@ fn check_or_bless(workload: &Workload, output: &[u8], requests: &[(String, Vec<u
 
     if bless {
         std::fs::create_dir_all(dir).unwrap();
-        if !hive_router::executor::slots::entity_reuse() {
+        if !entity_reuse_on() {
             std::fs::write(&output_path, output).unwrap();
         }
         std::fs::write(
@@ -617,15 +621,22 @@ fn measure(runtime: &tokio::runtime::Runtime, workload: &Workload, iterations: u
     }
 }
 
+/// `PIPELINE_ENTITY_REUSE=1` lets entity fetches copy entities already in the response
+fn entity_reuse_on() -> bool {
+    std::env::var("PIPELINE_ENTITY_REUSE").is_ok_and(|value| value == "1")
+}
+
+/// `HIVE_SLOT_PIPELINE=1` runs the workloads on the slot pipeline
+fn slots_on() -> bool {
+    std::env::var("HIVE_SLOT_PIPELINE").is_ok_and(|value| value == "1" || value == "true")
+}
+
 fn main() {
     tracing::subscriber::set_global_default(tracing::subscriber::NoSubscriber::default())
         .expect("no subscriber yet");
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
-    hive_router::executor::slots::set_entity_reuse(
-        std::env::var("PIPELINE_ENTITY_REUSE").is_ok_and(|value| value == "1"),
-    );
     let bless = args.iter().any(|arg| arg == "--bless");
     let iterations = args
         .iter()
@@ -703,7 +714,7 @@ fn main() {
     }
 
     for workload in &workloads {
-        let slots = hive_router::executor::slots::enabled()
+        let slots = slots_on()
             && workload
                 .slot_plan
                 .get(
@@ -712,6 +723,7 @@ fn main() {
                     &workload.introspection.metadata,
                     &workload.root_type_name,
                     None,
+                    workload.executors.entity_reuse(),
                 )
                 .is_some();
         println!(
@@ -724,6 +736,7 @@ fn main() {
                 &workload.introspection.metadata,
                 &workload.root_type_name,
                 hive_router::executor::slots::compile::Seed::None,
+                workload.executors.entity_reuse(),
             )
             .err()
             .map(|reason| format!(" (slots can't: {})", reason.0))

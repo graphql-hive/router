@@ -129,12 +129,18 @@ pub fn build_query_plan_from_fetch_graph(
 
             let step_data = fetch_graph.get_step_data(step_index)?;
             if let Some(mut node) = PlanNode::from_fetch_step(step_data, supergraph, options) {
-                if let Some(reuse) = entity_reuse::find_entity_reuse(
-                    &fetch_graph,
-                    step_index,
-                    &earlier_steps,
-                    supergraph,
-                ) {
+                if let Some(reuse) = options
+                    .entity_reuse
+                    .then(|| {
+                        entity_reuse::find_entity_reuse(
+                            &fetch_graph,
+                            step_index,
+                            &earlier_steps,
+                            supergraph,
+                        )
+                    })
+                    .flatten()
+                {
                     entity_reuse::attach_entity_reuse(&mut node, reuse);
                 }
                 current_wave_nodes.push(node);

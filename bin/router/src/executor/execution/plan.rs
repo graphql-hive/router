@@ -295,13 +295,14 @@ pub async fn execute_query_plan<'exec>(
 
         // the slot pipeline runs each event: the plan above, with the event read in like the
         // subscription fetch's response, compiled once for the stream
-        let slot_plan = crate::executor::slots::enabled().then(|| {
+        let slot_plan = opts.slot_plan.is_some().then(|| {
             crate::executor::slots::SlotPlanCell::for_subscription(
                 &query_plan,
                 &opts.projection_plan,
                 &opts.introspection_context.metadata,
                 &opts.operation_type_name,
                 fetch_node,
+                opts.executors.entity_reuse(),
             )
         });
 
@@ -2078,10 +2079,11 @@ impl<'exec> Executor<'exec> {
                 }
             }
 
-            if let Some(status) = &response.status {
+            // the slot pipeline adds it once it has read the body, after the body's errors
+            if let Some(status) = response.status.filter(|_| !response.is_raw()) {
                 if !status.is_success() {
                     response.append_error(GraphQLError::create_from_status_code(
-                        status,
+                        &status,
                         opts.subgraph_name,
                     ));
                 }

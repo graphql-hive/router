@@ -1,9 +1,25 @@
 use crate::query_planner::{
     planner::plan_nodes::planning::{PlanNode, QueryPlan},
-    tests::testkit::{build_query_plan_with_defaults, init_logger},
+    planner::QueryPlannerOptions,
+    tests::testkit::{build_query_plan, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
+
+fn with_reuse(
+    fixture_path: &str,
+    document: graphql_tools::parser::query::Document<'static, String>,
+) -> Result<QueryPlan, Box<dyn Error>> {
+    build_query_plan(
+        fixture_path,
+        document,
+        Default::default(),
+        QueryPlannerOptions {
+            entity_reuse: true,
+            ..Default::default()
+        },
+    )
+}
 
 /// One line per entity fetch (or batch alias): where it merges, and where it may copy from.
 fn describe(plan: &QueryPlan) -> String {
@@ -67,7 +83,7 @@ fn bench_operation_entities_can_come_from_earlier_fetches() -> Result<(), Box<dy
         &std::fs::read_to_string("../../bench/operation.graphql")
             .expect("Unable to read input file"),
     );
-    let query_plan = build_query_plan_with_defaults("../../bench/supergraph.graphql", document)?;
+    let query_plan = with_reuse("../../bench/supergraph.graphql", document)?;
 
     insta::assert_snapshot!(describe(&query_plan), @r"
     inventory at topProducts.@ <- -
@@ -87,7 +103,7 @@ fn source_with_an_aliased_key_is_left_out() -> Result<(), Box<dyn Error>> {
     // `id` on users is the username, the executor would match authors by it
     let document =
         parse_operation(r#"{ users { id: username name reviews { author { name } } } }"#);
-    let query_plan = build_query_plan_with_defaults("../../bench/supergraph.graphql", document)?;
+    let query_plan = with_reuse("../../bench/supergraph.graphql", document)?;
 
     insta::assert_snapshot!(describe(&query_plan), @r"
     reviews at users.@ <- -
@@ -109,8 +125,7 @@ fn mutation_fields_never_copy_from_each_other() -> Result<(), Box<dyn Error>> {
           second: addProduct(input: { name: "b", price: 2 }) { id isAvailable }
         }"#,
     );
-    let query_plan =
-        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+    let query_plan = with_reuse("fixture/tests/mutations.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(describe(&query_plan), @r"
     b at first <- -

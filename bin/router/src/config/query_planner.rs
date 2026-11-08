@@ -37,10 +37,10 @@ pub struct QueryPlannerConfig {
     /// Enables an experimental response pipeline that reads subgraph responses into compact
     /// slots and writes the client response from them, without building intermediate values.
     ///
-    /// Plans it can't run (subscriptions, mutations, `@fromContext`, rewrites, plugins on
-    /// execution, demand control) keep the regular pipeline.
+    /// It runs queries, mutations and subscription events, with plugins and demand control.
+    /// A plan it can't compile keeps the regular pipeline.
     ///
-    /// Can also be turned on with the `HIVE_SLOT_PIPELINE=1` environment variable.
+    /// Can also be set using the `QUERY_PLANNER_EXPERIMENTAL_SLOT_PIPELINE` environment variable.
     ///
     /// Default: false.
     #[serde(default)]

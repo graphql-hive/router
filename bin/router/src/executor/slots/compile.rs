@@ -561,6 +561,8 @@ struct Compiler<'p> {
     positions: Positions,
     root: u32,
     fetches: Vec<(i64, PendingFetch<'p>)>,
+    /// `traffic_shaping.experimental_entity_reuse`
+    entity_reuse: bool,
 }
 
 /// An entity alias of a fetch: its key in `data`, the position of its items, its merge paths
@@ -597,11 +599,13 @@ impl SlotPlan {
         schema: &SchemaMetadata,
         root_type: &str,
         seed: Seed,
+        entity_reuse: bool,
     ) -> Result<SlotPlan, Unsupported> {
         let mut compiler = Compiler {
             positions: Positions::default(),
             root: 0,
             fetches: Vec::new(),
+            entity_reuse,
         };
         compiler.root = compiler.positions.new_position();
         if let Some(node) = &plan.node {
@@ -800,6 +804,7 @@ impl<'p> Compiler<'p> {
         schema: &SchemaMetadata,
         root_type: &str,
     ) -> Result<SlotPlan, Unsupported> {
+        let entity_reuse = self.entity_reuse;
         // one layout per class
         let mut layout_of: AHashMap<u32, u32> = AHashMap::default();
         let mut layouts = Vec::new();
@@ -863,7 +868,7 @@ impl<'p> Compiler<'p> {
                         ctx.requires(&mut program, Some(items), requires.root_selections());
                     program.reads_root = program.flatten(program.root.clone());
                     let reuse = reuse
-                        .filter(|_| super::entity_reuse())
+                        .filter(|_| entity_reuse)
                         .and_then(|reuse| ctx.reuse(items, requires, reuse));
                     AliasProgram {
                         slot: layouts[data_layout].slot(&key),

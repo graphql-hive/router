@@ -12,44 +12,13 @@ pub mod store;
 pub mod walk;
 pub mod write;
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::executor::introspection::schema::SchemaMetadata;
 use crate::executor::projection::plan::ProjectionPlan;
 use crate::query_planner::ast::operation::OperationDefinition;
 use crate::query_planner::planner::plan_nodes::{FetchNode, QueryPlan};
 use compile::{Seed, SlotPlan};
-
-/// Whether requests may use the slot pipeline, from the router config. Off by default.
-static ENABLED: AtomicBool = AtomicBool::new(false);
-
-/// `HIVE_SLOT_PIPELINE=1` (or `true`) turns it on whatever the config says.
-static FROM_ENV: LazyLock<bool> = LazyLock::new(|| {
-    std::env::var("HIVE_SLOT_PIPELINE").is_ok_and(|value| value == "1" || value == "true")
-});
-
-/// Turns the slot pipeline on or off for the process (`query_planner.experimental_slot_pipeline`).
-pub fn set_enabled(enabled: bool) {
-    ENABLED.store(enabled, Ordering::Relaxed);
-}
-
-pub fn enabled() -> bool {
-    ENABLED.load(Ordering::Relaxed) || *FROM_ENV
-}
-
-/// Whether entity fetches may copy entities that are already in the response
-/// (`traffic_shaping.experimental_entity_reuse`). Off by default. Slot plans compiled while it's
-/// off have no reuse programs, so it costs nothing then.
-static ENTITY_REUSE: AtomicBool = AtomicBool::new(false);
-
-pub fn set_entity_reuse(enabled: bool) {
-    ENTITY_REUSE.store(enabled, Ordering::Relaxed);
-}
-
-pub fn entity_reuse() -> bool {
-    ENTITY_REUSE.load(Ordering::Relaxed)
-}
 
 /// The slot plans of a cached query plan, compiled by the first request that needs each.
 ///
@@ -82,6 +51,7 @@ impl SlotPlanCell {
         schema: &SchemaMetadata,
         root_type: &str,
         subscription: &FetchNode,
+        entity_reuse: bool,
     ) -> Arc<Self> {
         let cell = Self::default();
         let compiled = compile_or_log(
@@ -90,6 +60,7 @@ impl SlotPlanCell {
             schema,
             root_type,
             Seed::Subscription(subscription),
+            entity_reuse,
         );
         let _ = cell.first.set(compiled);
         Arc::new(cell)
@@ -108,9 +79,10 @@ impl SlotPlanCell {
         schema: &SchemaMetadata,
         root_type: &str,
         introspection: Option<&OperationDefinition>,
+        entity_reuse: bool,
     ) -> Option<Arc<SlotPlan>> {
         let seed = introspection.map_or(Seed::None, Seed::Operation);
-        let compile = || compile_or_log(plan, projection, schema, root_type, seed);
+        let compile = || compile_or_log(plan, projection, schema, root_type, seed, entity_reuse);
         let first = self.first.get_or_init(compile).as_ref()?;
         if first.projection.same_as(projection) {
             return Some(Arc::clone(first));
@@ -148,8 +120,9 @@ fn compile_or_log(
     schema: &SchemaMetadata,
     root_type: &str,
     seed: Seed,
+    entity_reuse: bool,
 ) -> Option<Arc<SlotPlan>> {
-    match SlotPlan::compile(plan, projection, schema, root_type, seed) {
+    match SlotPlan::compile(plan, projection, schema, root_type, seed, entity_reuse) {
         Ok(compiled) => Some(Arc::new(compiled)),
         Err(reason) => {
             tracing::debug!(reason = reason.0, "the slot pipeline can't run this plan");

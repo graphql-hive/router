@@ -305,6 +305,12 @@ impl SubgraphExecutorMap {
             .insert(endpoint, executor);
     }
 
+    /// Whether entity fetches may copy entities already in the response
+    /// (`traffic_shaping.experimental_entity_reuse`), see `slots::compile`
+    pub fn entity_reuse(&self) -> bool {
+        self.config.traffic_shaping.experimental_entity_reuse
+    }
+
     /// Returns the shared active callback subscriptions map for use by callback handlers.
     pub fn callback_subscriptions(&self) -> CallbackSubscriptionsMap {
         self.callback_subscriptions.clone()
@@ -569,17 +575,21 @@ impl SubgraphExecutorMap {
             }
         };
 
-        let error_count = execution_result
-            .errors
-            .as_ref()
-            .map(|e| e.len())
-            .unwrap_or(0);
+        // a body the pipeline reads itself has no errors or data yet, the pipeline counts them
+        let read = !execution_result.is_raw();
+        let error_count = read.then(|| {
+            execution_result
+                .errors
+                .as_ref()
+                .map(|e| e.len())
+                .unwrap_or(0)
+        });
 
         debug!(target: targets::EXECUTOR,
           subgraph = subgraph_name,
           executor = executor.executor_name(),
           error_count,
-          partial_response = error_count > 0 && !execution_result.data.is_null(),
+          partial_response = error_count.map(|count| count > 0 && !execution_result.data.is_null()),
           http_status = execution_result.status.map(|s| s.as_u16()).unwrap_or(0),
           "subgraph execution completed"
         );
@@ -1199,10 +1209,21 @@ pub(crate) fn read_plugin_response<'exec>(
         Some(shape) => SubgraphResponse::deserialize_with_shape(bytes, shape, custom_scalar_paths),
         None => SubgraphResponse::deserialize_from_bytes(bytes, custom_scalar_paths),
     };
-    let mut read = read.unwrap_or_else(|error| SubgraphResponse {
-        errors: Some(vec![GraphQLError::from(error.to_string())]),
-        ..Default::default()
-    });
+    let mut read = match read {
+        Ok(read) => read,
+        // `data: null` next to errors the plugin set isn't malformed
+        Err(SubgraphExecutorError::MalformedResponse(_)) if response.errors.is_some() => {
+            SubgraphResponse::default()
+        }
+        Err(error) => SubgraphResponse {
+            errors: Some(vec![GraphQLError::from(error.to_string())]),
+            ..Default::default()
+        },
+    };
+    // errors the plugin set next to its body come after the body's
+    if let Some(set) = response.errors {
+        read.errors.get_or_insert_with(Vec::new).extend(set);
+    }
     read.headers = headers;
     read.status = status;
     read

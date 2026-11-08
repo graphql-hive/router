@@ -76,6 +76,8 @@ pub struct EnvVarOverrides {
     // Query planner overrides
     #[envconfig(from = "QUERY_PLANNER_EXPERIMENTAL_ABSTRACT_TYPE_FOLDING")]
     pub query_planner_experimental_abstract_type_folding: Option<bool>,
+    #[envconfig(from = "QUERY_PLANNER_EXPERIMENTAL_SLOT_PIPELINE")]
+    pub query_planner_experimental_slot_pipeline: Option<bool>,
 
     // Executor overrides
     #[envconfig(from = "ROUTER_EXPERIMENTAL_ENTITY_REUSE")]
@@ -279,6 +281,16 @@ impl EnvVarOverrides {
             config = config.set_override(
                 "query_planner.experimental_abstract_type_folding",
                 experimental_abstract_type_folding,
+            )?;
+        }
+
+        if let Some(experimental_slot_pipeline) =
+            self.query_planner_experimental_slot_pipeline.take()
+        {
+            debug!(target: CONFIG_LOGGING_TARGET, value = experimental_slot_pipeline, "overriding 'experimental_slot_pipeline'");
+            config = config.set_override(
+                "query_planner.experimental_slot_pipeline",
+                experimental_slot_pipeline,
             )?;
         }
 
@@ -530,6 +542,28 @@ http:
                 "unexpected error: {err}"
             );
         }
+    }
+
+    #[test]
+    fn query_planner_experimental_slot_pipeline_override_turns_it_off_too() {
+        let config = EnvVarOverrides {
+            query_planner_experimental_slot_pipeline: Some(false),
+            ..Default::default()
+        }
+        .apply_overrides(Config::builder().add_source(File::from_str(
+            r#"
+query_planner:
+  experimental_slot_pipeline: true
+"#,
+            FileFormat::Yaml,
+        )))
+        .unwrap()
+        .build()
+        .unwrap()
+        .try_deserialize::<HiveRouterConfig>()
+        .unwrap();
+
+        assert!(!config.query_planner.experimental_slot_pipeline);
     }
 
     #[test]
