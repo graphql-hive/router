@@ -12,4 +12,4 @@ payload.data = Some(Bytes::from_static(br#"{"me":{"id":"1"}}"#));
 
 The router reads it with the operation's shape, and what the subgraphs send is merged into it, like before. Data that isn't a JSON object is left out, with a warning.
 
-Introspection results are now written as JSON directly, and on the slot pipeline every subscription event, from SSE, multipart, WebSocket or HTTP callback subgraphs, is read once, straight from its body.
+Introspection results are now written as JSON directly, and on the indexed pipeline every subscription event, from SSE, multipart, WebSocket or HTTP callback subgraphs, is read once, straight from its body.

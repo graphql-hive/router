@@ -712,8 +712,8 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             ));
         }
 
-        let response_result = if execution_request.raw_response {
-            Ok(response.into_raw_response())
+        let response_result = if execution_request.unparsed_body {
+            Ok(response.into_unparsed_response())
         } else {
             response.deserialize_http_response(
                 execution_request.custom_scalar_paths,
@@ -742,7 +742,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         SubgraphExecutorError,
     > {
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
-        let raw = execution_request.raw_response;
+        let unparsed_body = execution_request.unparsed_body;
         let buffer_capacity = self.subgraph_buffer_capacity;
         let body = build_request_body(&execution_request)?;
 
@@ -824,7 +824,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 boundary,
                 body_stream,
                 custom_scalar_paths.clone(),
-                raw,
+                unparsed_body,
             );
 
             let op_guard = self
@@ -880,7 +880,8 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 "using SSE for subscription connection to subgraph",
             );
 
-            let stream = sse::parse_to_stream(body_stream, custom_scalar_paths.clone(), raw);
+            let stream =
+                sse::parse_to_stream(body_stream, custom_scalar_paths.clone(), unparsed_body);
 
             let op_guard = self
                 .telemetry_context
@@ -938,7 +939,7 @@ fn finish_capture_from_subgraph_result(
     }
     let error_code = response_result.as_ref().err().map(|err| err.error_code());
     let graphql_response_status = if response_result.as_ref().is_ok_and(|response| {
-        if response.is_raw() {
+        if response.has_unparsed_body() {
             return !response.bytes.as_deref().is_some_and(raw_body_has_errors);
         }
         response
@@ -1025,11 +1026,11 @@ fn validate_response_content_type(headers: &HeaderMap) -> (bool, Option<&str>) {
 }
 
 impl SubgraphHttpResponse {
-    /// The body as it came, for the slot pipeline to read
-    fn into_raw_response(self) -> SubgraphResponse<'static> {
+    /// The body as it came, for the indexed pipeline to read
+    fn into_unparsed_response(self) -> SubgraphResponse<'static> {
         SubgraphResponse {
             bytes: Some(self.body),
-            raw: true,
+            unparsed_body: true,
             headers: Some(self.headers),
             status: Some(self.status),
             ..Default::default()
@@ -1082,7 +1083,7 @@ mod tests {
             extensions: None,
             custom_scalar_paths: None,
             response_shape: None,
-            raw_response: false,
+            unparsed_body: false,
             connection_fingerprint: None,
         };
 

@@ -1,9 +1,9 @@
-//! The slot pipeline: subgraph bodies to client bytes without building `Value`s.
+//! The indexed pipeline: subgraph bodies to client bytes without building `Value`s.
 //!
-//! A query plan is compiled once into a [`compile::SlotPlan`]: a layout for each position in the
-//! response and, for each fetch, the shape its response is read with. A request then parses
-//! every subgraph body into slots of a pooled [`store::Arena`], writes representations from those
-//! slots, merges entities by copying slots, and writes the client response from them.
+//! A query plan is compiled once into a [`compile::IndexedResponsePlan`]: a layout for each position in the
+//! response and, for each fetch, the fetch shape its response is read with. A request then parses
+//! every subgraph body into cells of a pooled [`store::Arena`], writes representations from those
+//! cells, merges entities by copying cells, and writes the client response from them.
 //! See `pipeline-plan.md` and `plan-log.md` at the repository root.
 
 pub mod compile;
@@ -18,26 +18,26 @@ use crate::executor::introspection::schema::SchemaMetadata;
 use crate::executor::projection::plan::ProjectionPlan;
 use crate::query_planner::ast::operation::OperationDefinition;
 use crate::query_planner::planner::plan_nodes::{FetchNode, QueryPlan};
-use compile::{Seed, SlotPlan};
+use compile::{IndexedResponsePlan, Seed};
 
-/// The slot plans of a cached query plan, compiled by the first request that needs each.
+/// The indexed plans of a cached query plan, compiled by the first request that needs each.
 ///
-/// A slot plan is compiled for one projection plan (and the introspection part of the
+/// An indexed plan is compiled for one projection plan (and the introspection part of the
 /// operation that goes with it). Most requests of a query plan have the
 /// same one; an authorization rewrite (fields the client may not see, forced to null) gives a
 /// request its own copy, and different client operations can share a query plan. Those get a
-/// slot plan of their own, found by the projection plan's content.
+/// indexed plan of their own, found by the projection plan's content.
 #[derive(Default)]
-pub struct SlotPlanCell {
-    first: OnceLock<Option<Arc<SlotPlan>>>,
-    others: RwLock<Vec<Arc<SlotPlan>>>,
+pub struct IndexedPlanCache {
+    first: OnceLock<Option<Arc<IndexedResponsePlan>>>,
+    others: RwLock<Vec<Arc<IndexedResponsePlan>>>,
 }
 
-/// Slot plans kept for projection plans other than the first one. Past this, a request with
+/// Indexed plans kept for projection plans other than the first one. Past this, a request with
 /// yet another projection plan compiles one for itself.
 const MAX_OTHERS: usize = 16;
 
-impl SlotPlanCell {
+impl IndexedPlanCache {
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
@@ -66,12 +66,12 @@ impl SlotPlanCell {
         Arc::new(cell)
     }
 
-    /// Whether the first slot plan compiled: the slot pipeline runs the requests that use it
+    /// Whether the first indexed plan compiled: the indexed pipeline runs the requests that use it
     pub fn compiled(&self) -> bool {
         self.first.get().is_some_and(Option::is_some)
     }
 
-    /// The slot plan for this projection plan, `None` when the query plan isn't supported.
+    /// The indexed plan for this projection plan, `None` when the query plan isn't supported.
     pub fn get(
         &self,
         plan: &QueryPlan,
@@ -80,7 +80,7 @@ impl SlotPlanCell {
         root_type: &str,
         introspection: Option<&OperationDefinition>,
         entity_reuse: bool,
-    ) -> Option<Arc<SlotPlan>> {
+    ) -> Option<Arc<IndexedResponsePlan>> {
         let seed = introspection.map_or(Seed::None, Seed::Operation);
         let compile = || compile_or_log(plan, projection, schema, root_type, seed, entity_reuse);
         let first = self.first.get_or_init(compile).as_ref()?;
@@ -121,11 +121,14 @@ fn compile_or_log(
     root_type: &str,
     seed: Seed,
     entity_reuse: bool,
-) -> Option<Arc<SlotPlan>> {
-    match SlotPlan::compile(plan, projection, schema, root_type, seed, entity_reuse) {
+) -> Option<Arc<IndexedResponsePlan>> {
+    match IndexedResponsePlan::compile(plan, projection, schema, root_type, seed, entity_reuse) {
         Ok(compiled) => Some(Arc::new(compiled)),
         Err(reason) => {
-            tracing::debug!(reason = reason.0, "the slot pipeline can't run this plan");
+            tracing::debug!(
+                reason = reason.0,
+                "the indexed pipeline can't run this plan"
+            );
             None
         }
     }

@@ -46,13 +46,13 @@ use hive_router::executor::executors::common::{SubgraphExecutionRequest, Subgrap
 use hive_router::executor::executors::error::SubgraphExecutorError;
 use hive_router::executor::executors::http::build_request_body;
 use hive_router::executor::executors::map::SubgraphExecutorMap;
+use hive_router::executor::indexed::IndexedPlanCache;
 use hive_router::executor::introspection::partition::partition_operation;
 use hive_router::executor::introspection::resolve::IntrospectionContext;
 use hive_router::executor::plugin_context::PluginRequestState;
 use hive_router::executor::plugins::hooks::on_supergraph_load::Supergraph;
 use hive_router::executor::projection::plan::ProjectionPlan;
 use hive_router::executor::response::subgraph_response::SubgraphResponse;
-use hive_router::executor::slots::SlotPlanCell;
 use hive_router::query_planner::ast::normalization::normalize_operation;
 use hive_router::query_planner::ast::operation::OperationDefinition;
 use hive_router::query_planner::planner::plan_nodes::QueryPlan;
@@ -267,8 +267,8 @@ impl SubgraphExecutor for Replay {
                 .clone()
         };
 
-        // like the http executor: the slot pipeline reads the body itself
-        if request.raw_response {
+        // like the http executor: the indexed pipeline reads the body itself
+        if request.unparsed_body {
             let mut response = SubgraphResponse::from_json(bytes);
             response.status = Some(StatusCode::OK);
             return Ok(response);
@@ -314,7 +314,7 @@ struct Workload {
     client_request: Arc<ClientRequestDetails<'static>>,
     introspection: Arc<IntrospectionContext>,
     variables: Arc<CoerceVariablesPayload>,
-    slot_plan: Arc<SlotPlanCell>,
+    indexed_plan: Arc<IndexedPlanCache>,
 }
 
 fn workload(
@@ -416,7 +416,7 @@ fn workload(
         client_request,
         introspection,
         variables,
-        slot_plan: SlotPlanCell::new(),
+        indexed_plan: IndexedPlanCache::new(),
     }
 }
 
@@ -452,7 +452,7 @@ impl Workload {
             response_header_sink: Default::default(),
             error_masking_runtime: Default::default(),
             connection_fingerprint: None,
-            slot_plan: slots_on().then(|| Arc::clone(&self.slot_plan)),
+            indexed_plan: indexed_on().then(|| Arc::clone(&self.indexed_plan)),
         };
         match execute_query_plan(opts).await.expect("the plan executes") {
             QueryPlanExecutionResult::Single(output) => output.body,
@@ -626,9 +626,9 @@ fn entity_reuse_on() -> bool {
     std::env::var("PIPELINE_ENTITY_REUSE").is_ok_and(|value| value == "1")
 }
 
-/// `HIVE_SLOT_PIPELINE=1` runs the workloads on the slot pipeline
-fn slots_on() -> bool {
-    std::env::var("HIVE_SLOT_PIPELINE").is_ok_and(|value| value == "1" || value == "true")
+/// `PIPELINE_INDEXED=1` runs the workloads on the indexed pipeline
+fn indexed_on() -> bool {
+    std::env::var("PIPELINE_INDEXED").is_ok_and(|value| value == "1" || value == "true")
 }
 
 fn main() {
@@ -714,9 +714,9 @@ fn main() {
     }
 
     for workload in &workloads {
-        let slots = slots_on()
+        let indexed = indexed_on()
             && workload
-                .slot_plan
+                .indexed_plan
                 .get(
                     &workload.plan,
                     &workload.projection_plan,
@@ -729,17 +729,17 @@ fn main() {
         println!(
             "{}: {} pipeline{}",
             workload.name,
-            if slots { "slot" } else { "value" },
-            hive_router::executor::slots::compile::SlotPlan::compile(
+            if indexed { "indexed" } else { "value" },
+            hive_router::executor::indexed::compile::IndexedResponsePlan::compile(
                 &workload.plan,
                 &workload.projection_plan,
                 &workload.introspection.metadata,
                 &workload.root_type_name,
-                hive_router::executor::slots::compile::Seed::None,
+                hive_router::executor::indexed::compile::Seed::None,
                 workload.executors.entity_reuse(),
             )
             .err()
-            .map(|reason| format!(" (slots can't: {})", reason.0))
+            .map(|reason| format!(" (indexed can't: {})", reason.0))
             .unwrap_or_default()
         );
         if std::env::var("PIPELINE_SHOW_PROJECTION").is_ok() {

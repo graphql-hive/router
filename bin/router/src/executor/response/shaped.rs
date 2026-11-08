@@ -109,7 +109,7 @@ pub struct ResponseShape {
     /// All field names (with quotes) and type names in a single byte buffer.
     text: Box<[u8]>,
     /// Whether the entire `data` value should be kept as raw JSON.
-    raw_data: bool,
+    opaque_json_data: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -167,7 +167,7 @@ const LOOKAHEAD: usize = 4;
 // the object index. This avoids storing the flags separately.
 
 /// Marks a custom scalar whose value is kept as raw JSON.
-const RAW: u32 = 1 << 31;
+const OPAQUE_JSON: u32 = 1 << 31;
 /// Marks a `__typename` field.
 const TYPENAME: u32 = 1 << 30;
 /// Mask for extracting the object index.
@@ -180,7 +180,7 @@ struct Node {
     prefix: u64,
     /// The quoted key, for example `"name"`. We compare it with the input as it is.
     key: Text,
-    /// Object index, with `RAW` and `TYPENAME` flags in the upper bits.
+    /// Object index, with `OPAQUE_JSON` and `TYPENAME` flags in the upper bits.
     /// Index 0 means no nested object.
     object: u32,
 }
@@ -192,8 +192,8 @@ impl Node {
     }
 
     #[inline]
-    fn raw(self) -> bool {
-        self.object & RAW != 0
+    fn opaque_json(self) -> bool {
+        self.object & OPAQUE_JSON != 0
     }
 
     #[inline]
@@ -287,14 +287,14 @@ impl ResponseShape {
             text: Vec::new(),
             fits: true,
         };
-        let raw_data = paths.is_some_and(|paths| paths.terminal);
+        let opaque_json_data = paths.is_some_and(|paths| paths.terminal);
         builder.object(&[&document.operation.selection_set], paths);
         builder.fits.then(|| Self {
             nodes: builder.nodes.into(),
             objects: builder.objects.into(),
             types: builder.types.into(),
             text: builder.text.into(),
-            raw_data,
+            opaque_json_data,
         })
     }
 
@@ -589,12 +589,12 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
         let start = self.nodes.len();
         for field in fields {
             let quoted = format!("\"{}\"", field.key);
-            let raw = paths
+            let opaque_json = paths
                 .and_then(|paths| paths.child(field.key))
                 .is_some_and(|paths| paths.terminal);
             let mut flags = 0;
-            if raw {
-                flags |= RAW;
+            if opaque_json {
+                flags |= OPAQUE_JSON;
             }
             if field.key == "__typename" {
                 flags |= TYPENAME;
@@ -610,7 +610,7 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
         for (index, field) in nodes.range().zip(fields) {
             // A custom scalar stays as it is, also when it is an object. So we do not read
             // anything under it.
-            if self.nodes[index].raw() {
+            if self.nodes[index].opaque_json() {
                 continue;
             }
             // Add an object for the selected fields. Also add one for custom scalar paths under
@@ -677,8 +677,8 @@ pub fn parse_response<'a>(input: &'a [u8], shape: &ResponseShape) -> Option<Pars
             match key {
                 // A second one is an error. sonic writes the error.
                 "data" if first(&mut seen, DATA) => {
-                    response.data = if shape.raw_data {
-                        parser.raw()?
+                    response.data = if shape.opaque_json_data {
+                        parser.opaque_json()?
                     } else {
                         parser.shaped(0)?
                     };
@@ -872,7 +872,7 @@ impl<'a> Parser<'a, '_> {
             };
             self.expect(b':')?;
             let value = match node {
-                Some(node) if node.raw() => self.raw()?,
+                Some(node) if node.opaque_json() => self.opaque_json()?,
                 Some(node) if node.object() != 0 => self.shaped(node.object())?,
                 _ => self.value()?,
             };
@@ -1025,7 +1025,7 @@ impl<'a> Parser<'a, '_> {
     }
 
     /// Reads a custom scalar. We keep it as the JSON that it came as.
-    fn raw(&mut self) -> Option<Value<'a>> {
+    fn opaque_json(&mut self) -> Option<Value<'a>> {
         self.whitespace();
         let start = self.pos;
         self.skip_value()?;

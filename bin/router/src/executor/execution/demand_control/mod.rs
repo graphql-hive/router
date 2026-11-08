@@ -377,8 +377,8 @@ fn collect_entity_root_type_conditions(selection_set: &SelectionSet, out: &mut A
     }
 }
 
-/// Response data the actual cost is counted over: the `Value` tree, or the slot pipeline's
-/// slots (`slots::store::SlotView`). One walk for both, so they can't count differently.
+/// Response data the actual cost is counted over: the `Value` tree, or the indexed pipeline's
+/// value cells (`indexed::store::CellView`). One walk for both, so they can't count differently.
 pub trait CostData<'a>: Copy {
     /// The value of a field, when this is an object that has it
     fn field(self, key: &str) -> Option<Self>;

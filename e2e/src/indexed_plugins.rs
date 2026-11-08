@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod slot_plugins_e2e_tests {
+mod indexed_plugins_e2e_tests {
     use bytes::Bytes;
     use hive_router::{
         async_trait,
@@ -250,10 +250,10 @@ mod slot_plugins_e2e_tests {
         }
     }
 
-    /// The response with the slot pipeline off and on: they must be the same
+    /// The response with the indexed pipeline off and on: they must be the same
     async fn both_pipelines(plugin: &str, extra_config: &str, query: &str) -> (String, String) {
         let mut out = Vec::new();
-        for slots in [false, true] {
+        for indexed in [false, true] {
             let subgraphs = TestSubgraphs::builder()
                 .with_on_request(|req| {
                     // the root `users` query only: entity fetches reach the accounts subgraph
@@ -280,7 +280,7 @@ mod slot_plugins_e2e_tests {
                       source: file
                       path: supergraph.graphql
                     query_planner:
-                      experimental_slot_pipeline: {slots}
+                      experimental_indexed_pipeline: {indexed}
                     plugins:
                       {plugin}:
                         enabled: true
@@ -307,14 +307,14 @@ mod slot_plugins_e2e_tests {
     }
 
     #[ntex::test]
-    async fn a_plugin_keeps_subgraph_extensions_and_its_own_data_on_slots() {
+    async fn a_plugin_keeps_subgraph_extensions_and_its_own_data_on_the_indexed_pipeline() {
         let (off, on) = both_pipelines(
             "test_seed",
             "response_extensions:\n                      propagate:\n                        algorithm: last",
             "{ users { id username } }",
         )
         .await;
-        assert_eq!(on, off, "slot pipeline response differs");
+        assert_eq!(on, off, "indexed pipeline response differs");
         assert!(
             on.contains("from-accounts"),
             "subgraph extensions kept: {on}"
@@ -324,7 +324,7 @@ mod slot_plugins_e2e_tests {
     #[ntex::test]
     async fn a_plugin_changes_the_data_the_same_way_on_both_pipelines() {
         let (off, on) = both_pipelines("test_edit", "", "{ users { id username } }").await;
-        assert_eq!(on, off, "slot pipeline response differs");
+        assert_eq!(on, off, "indexed pipeline response differs");
         let body: sonic_rs::Value = sonic_rs::from_str(&on).expect("json");
         assert_eq!(
             body["data"],
@@ -351,7 +351,7 @@ mod slot_plugins_e2e_tests {
             "{ users { id username } }",
         )
         .await;
-        assert_eq!(on, off, "slot pipeline response differs");
+        assert_eq!(on, off, "indexed pipeline response differs");
         let body: sonic_rs::Value = sonic_rs::from_str(&on).expect("json");
         assert_eq!(
             body["data"],
@@ -374,7 +374,7 @@ mod slot_plugins_e2e_tests {
             "{ topProducts { upc reviews { author { username } } } }",
         )
         .await;
-        assert_eq!(on, off, "slot pipeline response differs");
+        assert_eq!(on, off, "indexed pipeline response differs");
         let body: sonic_rs::Value = sonic_rs::from_str(&on).expect("json");
         let mut usernames = Vec::new();
         for product in body["data"]["topProducts"]
@@ -403,7 +403,7 @@ mod slot_plugins_e2e_tests {
     #[ntex::test]
     async fn data_a_plugin_sets_that_isnt_json_is_left_out_on_both_pipelines() {
         let (off, on) = both_pipelines("test_bad_seed", "", "{ users { id username } }").await;
-        assert_eq!(on, off, "slot pipeline response differs");
+        assert_eq!(on, off, "indexed pipeline response differs");
         let body: sonic_rs::Value = sonic_rs::from_str(&on).expect("json");
         assert_eq!(
             body["data"],
@@ -415,7 +415,7 @@ mod slot_plugins_e2e_tests {
     #[ntex::test]
     async fn null_data_a_plugin_sets_is_left_out_on_both_pipelines() {
         let (off, on) = both_pipelines("test_null_seed", "", "{ users { id username } }").await;
-        assert_eq!(on, off, "slot pipeline response differs");
+        assert_eq!(on, off, "indexed pipeline response differs");
         let body: sonic_rs::Value = sonic_rs::from_str(&on).expect("json");
         assert_eq!(
             body["data"],
@@ -432,7 +432,7 @@ mod slot_plugins_e2e_tests {
             "{ users { id username } }",
         )
         .await;
-        assert_eq!(on, off, "slot pipeline response differs");
+        assert_eq!(on, off, "indexed pipeline response differs");
         let body: sonic_rs::Value = sonic_rs::from_str(&on).expect("json");
         assert_eq!(
             body["data"],
@@ -459,7 +459,7 @@ mod slot_plugins_e2e_tests {
             "{ users { id } }",
         )
         .await;
-        assert_eq!(on, off, "slot pipeline response differs");
+        assert_eq!(on, off, "indexed pipeline response differs");
         assert!(
             on.contains("saw from-accounts with Some(200)"),
             "the hook read the subgraph's extensions and status: {on}"

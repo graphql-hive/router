@@ -943,7 +943,7 @@ mod tests {
             extensions: None,
             headers: None,
             bytes: None,
-            raw: false,
+            unparsed_body: false,
             status: None,
         };
         let counts = [2, 1, 1];

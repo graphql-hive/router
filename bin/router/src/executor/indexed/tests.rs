@@ -1,4 +1,4 @@
-//! The slot pipeline against the `Value` pipeline, one root fetch at a time: the same body goes
+//! The indexed pipeline against the `Value` pipeline, one root fetch at a time: the same body goes
 //! through `deserialize_with_shape` + `deep_merge` + `project_by_operation` and through
 //! `parse_body` + `merge_object` + `write_response`, and the client outputs must be JSON-equal
 //! (same keys in the same order, numbers by value). Bodies cover what a subgraph can get wrong
@@ -9,9 +9,9 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 
-use super::compile::SlotPlan;
+use super::compile::IndexedResponsePlan;
 use super::parse::parse_body;
-use super::store::{Arena, Slot};
+use super::store::{Arena, ValueCell};
 use super::write::write_response;
 use crate::executor::execution::plan::CoerceVariablesPayload;
 use crate::executor::introspection::partition::partition_operation;
@@ -79,7 +79,7 @@ enum State @join__type(graph: A) {
 "#;
 
 /// Runs `body` as the response of the only fetch of `query`, through both pipelines. Also
-/// returns how many subtrees the slot plan may pass through, and which root fields of `data`
+/// returns how many subtrees the indexed plan may pass through, and which root fields of `data`
 /// the parser kept as one raw range (passed through).
 fn both_with(types: &str, query: &str, body: &str) -> (String, String, usize, Vec<String>) {
     both_edited(types, query, body, None)
@@ -158,7 +158,7 @@ fn both_edited(
         Err(_) => "invalid".to_string(),
     };
 
-    let slots = SlotPlan::compile(
+    let indexed = IndexedResponsePlan::compile(
         &plan,
         &projection,
         &metadata,
@@ -167,58 +167,58 @@ fn both_edited(
         false,
     )
     .expect("compiles");
-    let slots = Arc::new(slots);
-    let program = &slots.fetches[&fetch.id];
+    let indexed = Arc::new(indexed);
+    let program = &indexed.fetches[&fetch.id];
     let passthroughs = program.shape.verifies.len();
     let mut arena = Arena::default();
-    let width = slots.layouts[slots.root_layout as usize].width();
+    let width = indexed.layouts[indexed.root_layout as usize].width();
     let first = arena.object(width);
     let mut raw = Vec::new();
     // a plugin walks the data value by value, nothing is passed through then
     let passthrough = edit.is_none();
     let new = match parse_body(
         &mut arena,
-        &slots.layouts,
+        &indexed.layouts,
         &program.shape,
         &bytes,
         passthrough,
     ) {
         Some(parsed) => {
-            if let Slot::Object {
+            if let ValueCell::Object {
                 layout,
                 first: data,
             } = parsed.data
             {
-                for (slot, key) in slots.layouts[layout as usize].keys.iter().enumerate() {
-                    if let Slot::Raw(_) = arena.slots[data as usize + slot] {
+                for (field_index, key) in indexed.layouts[layout as usize].keys.iter().enumerate() {
+                    if let ValueCell::RawJson(_) = arena.cells[data as usize + field_index] {
                         raw.push(key.to_string());
                     }
                 }
-                arena.merge_object(&slots.layouts, layout, first, data);
+                arena.merge_object(&indexed.layouts, layout, first, data);
             }
-            let mut root_data = Slot::Object {
-                layout: slots.root_layout,
+            let mut root_data = ValueCell::Object {
+                layout: indexed.root_layout,
                 first,
             };
             let mut errors = parsed.errors.unwrap_or_default();
             if let Some(edit) = edit.as_mut() {
-                let mut walked = ResponseData::from_slots(
+                let mut walked = ResponseData::from_cells(
                     std::mem::take(&mut arena),
                     root_data,
-                    slots.clone(),
+                    indexed.clone(),
                     metadata.clone(),
                     no_variables(),
                     OperationKind::Query,
                 );
                 walked.walk(&mut **edit);
-                let (edited, data, plugin_errors) = walked.into_slots();
+                let (edited, data, plugin_errors) = walked.into_cells();
                 arena = edited;
                 root_data = data;
                 errors.extend(plugin_errors);
             }
             let output = write_response(
                 &arena,
-                &slots,
+                &indexed,
                 root_data,
                 errors,
                 &Default::default(),
@@ -402,9 +402,9 @@ fn a_list_keeps_its_items_right_after_a_failed_check() {
 }
 
 #[test]
-fn a_rewritten_projection_plan_gets_a_slot_plan_of_its_own() {
+fn a_rewritten_projection_plan_gets_an_indexed_plan_of_its_own() {
+    use crate::executor::indexed::IndexedPlanCache;
     use crate::executor::operation_filter::PathSegment;
-    use crate::executor::slots::SlotPlanCell;
     use crate::pipeline::trie::Trie;
 
     let sdl = format!("{HEADER}{TYPES}");
@@ -432,24 +432,24 @@ fn a_rewritten_projection_plan_gets_a_slot_plan_of_its_own() {
         ]]))
     };
 
-    let cell = SlotPlanCell::default();
+    let cell = IndexedPlanCache::default();
     let original = cell
         .get(&plan, &projection, &metadata, root, None, false)
         .expect("compiles");
     let rewritten = rewrite();
-    let slots = cell
+    let indexed = cell
         .get(&plan, &rewritten, &metadata, root, None, false)
         .expect("compiles");
     assert!(
-        !Arc::ptr_eq(&slots, &original),
-        "another projection, another slot plan"
+        !Arc::ptr_eq(&indexed, &original),
+        "another projection, another indexed plan"
     );
     assert!(
         Arc::ptr_eq(
             &cell
                 .get(&plan, &rewrite(), &metadata, root, None, false)
                 .expect("compiles"),
-            &slots
+            &indexed
         ),
         "the next request with the same rewrite reuses it"
     );
@@ -482,23 +482,23 @@ fn a_rewritten_projection_plan_gets_a_slot_plan_of_its_own() {
     )
     .expect("projects");
 
-    let program = &slots.fetches[&fetch.id];
+    let program = &indexed.fetches[&fetch.id];
     let mut arena = Arena::default();
-    let first = arena.object(slots.layouts[slots.root_layout as usize].width());
+    let first = arena.object(indexed.layouts[indexed.root_layout as usize].width());
     let parsed =
-        parse_body(&mut arena, &slots.layouts, &program.shape, &body, true).expect("parses");
-    if let Slot::Object {
+        parse_body(&mut arena, &indexed.layouts, &program.shape, &body, true).expect("parses");
+    if let ValueCell::Object {
         layout,
         first: data,
     } = parsed.data
     {
-        arena.merge_object(&slots.layouts, layout, first, data);
+        arena.merge_object(&indexed.layouts, layout, first, data);
     }
     let new = write_response(
         &arena,
-        &slots,
-        Slot::Object {
-            layout: slots.root_layout,
+        &indexed,
+        ValueCell::Object {
+            layout: indexed.root_layout,
             first,
         },
         Vec::new(),
@@ -566,7 +566,7 @@ fn an_aliased_field_is_renamed_back_like_the_value_pipeline() {
 }
 
 #[test]
-fn a_wide_object_runs_on_slots() {
+fn a_wide_object_runs_on_the_indexed_pipeline() {
     // past the 512 keys that used to send a plan to the other pipeline
     let fields: Vec<String> = (0..600).map(|i| format!("f{i}")).collect();
     let types = format!(

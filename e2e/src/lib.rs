@@ -59,6 +59,8 @@ mod http2;
 #[cfg(test)]
 mod http_callback;
 #[cfg(test)]
+mod indexed_plugins;
+#[cfg(test)]
 mod introspection;
 #[cfg(test)]
 mod issues;
@@ -92,8 +94,6 @@ mod read_deadline;
 mod router_timeout;
 #[cfg(test)]
 mod skip_entity_fetch;
-#[cfg(test)]
-mod slot_plugins;
 #[cfg(test)]
 mod storage;
 #[cfg(test)]

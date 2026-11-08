@@ -40,7 +40,7 @@ pub struct QueryPlannerOptions {
     /// Per-subgraph overrides of `max_aliases_per_request`, keyed by subgraph name.
     pub subgraph_max_aliases_per_request: HashMap<String, usize>,
     /// Look for entities an entity fetch could copy from the response (see `EntityReuse`). Only
-    /// the slot pipeline copies, with `traffic_shaping.experimental_entity_reuse` on.
+    /// the indexed pipeline copies, with `traffic_shaping.experimental_entity_reuse` on.
     pub entity_reuse: bool,
 }
 

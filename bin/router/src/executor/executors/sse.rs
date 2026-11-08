@@ -27,7 +27,7 @@ pub enum ParseError {
 pub fn parse_to_stream<B>(
     body_stream: B,
     custom_scalar_paths: Option<CustomScalarPaths>,
-    raw: bool,
+    unparsed_body: bool,
 ) -> BoxStream<'static, Result<SubgraphResponse<'static>, ParseError>>
 where
     B: Body + Send + Unpin + 'static,
@@ -48,7 +48,7 @@ where
                                 match SubgraphResponse::from_body(
                                     Bytes::from(sse_event.data.clone()),
                                     custom_scalar_paths.as_ref(),
-                                    raw,
+                                    unparsed_body,
                                 ) {
                                     Ok(response) => {
                                         yield Ok(response);

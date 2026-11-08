@@ -41,7 +41,7 @@ pub struct PlannedRequest<'req> {
     pub demand_control_execution_context: Option<DemandControlExecutionContext>,
     pub plugin_req_state: Option<PluginRequestState<'req>>,
     pub connection_fingerprint: Option<ConnectionFingerprint>,
-    pub slot_plan: Option<Arc<crate::executor::slots::SlotPlanCell>>,
+    pub indexed_plan: Option<Arc<crate::executor::indexed::IndexedPlanCache>>,
 }
 
 #[inline]
@@ -162,12 +162,12 @@ pub async fn execute_plan<'exec>(
             response_header_sink,
             error_masking_runtime: supergraph.runtime.error_masking.clone(),
             connection_fingerprint: planned_request.connection_fingerprint,
-            // the slot pipeline runs only when this router has it on
-            slot_plan: planned_request.slot_plan.filter(|_| {
+            // the indexed pipeline runs only when this router has it on
+            indexed_plan: planned_request.indexed_plan.filter(|_| {
                 app_state
                     .router_config
                     .query_planner
-                    .experimental_slot_pipeline
+                    .experimental_indexed_pipeline
             }),
         })
         .await?;

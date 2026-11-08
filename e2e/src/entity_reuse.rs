@@ -17,7 +17,7 @@ mod entity_reuse_e2e_tests {
     // In the bench operation, every product, user and inventory entity the last two waves ask
     // for was already fetched by `topProducts`, `users` and the first inventory fetch.
     // With reuse on, those fetches copy them instead of calling the subgraphs again.
-    // Only the slot pipeline copies, so these routers turn it on.
+    // Only the indexed pipeline copies, so these routers turn it on.
     #[ntex::test]
     async fn bench_operation_copies_entities_it_already_has() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
@@ -30,7 +30,7 @@ mod entity_reuse_e2e_tests {
                     source: file
                     path: supergraph.graphql
                   query_planner:
-                    experimental_slot_pipeline: true
+                    experimental_indexed_pipeline: true
                   traffic_shaping:
                     experimental_entity_reuse: true
                     all:
@@ -92,7 +92,7 @@ mod entity_reuse_e2e_tests {
                     source: file
                     path: supergraph.graphql
                   query_planner:
-                    experimental_slot_pipeline: true
+                    experimental_indexed_pipeline: true
                   traffic_shaping:
                     experimental_entity_reuse: true
                     all:

@@ -1,21 +1,21 @@
-//! Runs a query plan on the slot pipeline (see `executor::slots`). The same plan walk, job
+//! Runs a query plan on the indexed pipeline (see `executor::indexed`). The same plan walk, job
 //! preparation and error handling as the `Value` pipeline in the parent module, but subgraph
-//! bodies are read into slots, representations are written from slots, and entities are merged
-//! by copying slots.
+//! bodies are read into cells, representations are written from cells, and entities are merged
+//! by copying cells.
 
 use super::*;
 use crate::executor::executors::error::SubgraphExecutorError;
 use crate::executor::extensions::aggregator::apply_subgraph_extensions_json;
+use crate::executor::indexed::compile::{
+    AliasProgram, FetchProgram, IndexedResponsePlan, ObjectLayout, Requires, RequiresNode, Seed,
+    Step, TypenameRewrite, NO_FIELD, SEED_FETCH,
+};
+use crate::executor::indexed::parse::{parse_aliased_body, parse_body, parse_data};
+use crate::executor::indexed::store::{Arena, CellView, ValueCell};
+use crate::executor::indexed::write::write_response;
+use crate::executor::indexed::IndexedPlanCache;
 use crate::executor::introspection::schema::PossibleTypes;
 use crate::executor::plugins::hooks::on_subgraph_execute::SubgraphExtensions;
-use crate::executor::slots::compile::{
-    AliasProgram, FetchProgram, Layout, Requires, RequiresNode, Seed, SlotPlan, Step,
-    TypenameRewrite, NO_SLOT, SEED_FETCH,
-};
-use crate::executor::slots::parse::{parse_aliased_body, parse_body, parse_data};
-use crate::executor::slots::store::{Arena, Slot, SlotView};
-use crate::executor::slots::write::write_response;
-use crate::executor::slots::SlotPlanCell;
 use crate::executor::utils::consts::TYPENAME_JSON_FIELD;
 use crate::query_planner::ast::operation::ContextAliasTemplate;
 use crate::query_planner::planner::plan_nodes::{
@@ -23,30 +23,32 @@ use crate::query_planner::planner::plan_nodes::{
 };
 use smallvec::SmallVec;
 
-/// No entity for a spot: it's null, or it has nothing to send.
+/// No entity for an entity target: it's null, or it has nothing to send.
 const NO_ENTITY: u32 = u32::MAX;
 
-/// Whether this request can run on the slot pipeline. The plan decides most of it when it's
+/// Whether this request can run on the indexed pipeline. The plan decides most of it when it's
 /// compiled; what's left is per router and per request.
-/// A router with the slot pipeline off gives no `slot_plan`.
-pub(super) fn usable(opts: &QueryPlanExecutionOpts<'_>) -> Option<Arc<SlotPlan>> {
-    opts.slot_plan.as_deref().and_then(|cell: &SlotPlanCell| {
-        cell.get(
-            opts.query_plan,
-            &opts.projection_plan,
-            &opts.introspection_context.metadata,
-            &opts.operation_type_name,
-            opts.introspection_context.query.as_deref(),
-            opts.executors.entity_reuse(),
-        )
-    })
+/// A router with the indexed pipeline off gives no `indexed_plan`.
+pub(super) fn usable(opts: &QueryPlanExecutionOpts<'_>) -> Option<Arc<IndexedResponsePlan>> {
+    opts.indexed_plan
+        .as_deref()
+        .and_then(|cell: &IndexedPlanCache| {
+            cell.get(
+                opts.query_plan,
+                &opts.projection_plan,
+                &opts.introspection_context.metadata,
+                &opts.operation_type_name,
+                opts.introspection_context.query.as_deref(),
+                opts.executors.entity_reuse(),
+            )
+        })
 }
 
-/// Runs the plan on the slot pipeline, with the slot plan [`usable`] gave. `start` is the data
-/// the router has before the plan runs (see `compile::Seed`), read straight into slots.
+/// Runs the plan on the indexed pipeline, with the indexed plan [`usable`] gave. `start` is the data
+/// the router has before the plan runs (see `compile::Seed`), read straight into cells.
 pub(super) async fn execute<'exec>(
     mut opts: QueryPlanExecutionOpts<'exec>,
-    plan: Arc<SlotPlan>,
+    plan: Arc<IndexedResponsePlan>,
     start: StartData<'exec>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
     let aliased_requests = AliasedRequests::default();
@@ -106,7 +108,7 @@ pub(super) async fn execute<'exec>(
     // that reads it in with the operation's own shape, so the fetches merge into it like on the
     // other pipeline
     let plan = if !plan.fetches.contains_key(&SEED_FETCH) && json.is_some() {
-        match SlotPlan::compile(
+        match IndexedResponsePlan::compile(
             opts.query_plan,
             &opts.projection_plan,
             &opts.introspection_context.metadata,
@@ -149,24 +151,24 @@ pub(super) async fn execute<'exec>(
     let mut run = Run {
         plan,
         arena: Arena::take(),
-        data: Slot::Missing,
+        data: ValueCell::Missing,
         passthrough: opts.demand_control_context.is_none() && on_end_callbacks.is_empty(),
         shared: opts.plugin_req_state.is_some().then(|| plan_arc.clone()),
     };
     let width = plan.layouts[plan.root_layout as usize].width();
-    run.data = Slot::Object {
+    run.data = ValueCell::Object {
         layout: plan.root_layout,
         first: run.arena.object(width),
     };
 
-    // the start data goes into slots like a root fetch's response, read from its JSON
+    // the start data goes into cells like a root fetch's response, read from its JSON
     if let Some(program) = plan.fetches.get(&SEED_FETCH) {
         let (layouts, shape, passthrough) = (&plan.layouts, &program.shape, run.passthrough);
         let read = match (&json, event) {
             (Some(json), _) => {
                 // like on the other pipeline, anything but an object is left out, also `null`
                 match parse_data(&mut run.arena, layouts, shape, json, passthrough) {
-                    Some(data @ Slot::Object { .. }) => Some(data),
+                    Some(data @ ValueCell::Object { .. }) => Some(data),
                     _ => {
                         tracing::warn!(
                             "the data a plugin set before execution isn't a JSON object, it's left out"
@@ -198,17 +200,17 @@ pub(super) async fn execute<'exec>(
                     }
                 }
                 // an event the router made: errors only, already taken out
-                None => Some(Slot::Null),
+                None => Some(ValueCell::Null),
             },
             (None, None) => None,
         };
         match (read, run.data) {
-            (Some(Slot::Object { layout, first }), Slot::Object { first: root, .. }) => {
+            (Some(ValueCell::Object { layout, first }), ValueCell::Object { first: root, .. }) => {
                 run.arena.merge_object(&plan.layouts, layout, root, first)
             }
             // an event without `data` (only errors) is a response with `data: null`, like on the
             // other pipeline
-            (Some(Slot::Null | Slot::Missing), _) => run.data = Slot::Null,
+            (Some(ValueCell::Null | ValueCell::Missing), _) => run.data = ValueCell::Null,
             _ => {}
         }
     }
@@ -227,17 +229,17 @@ pub(super) async fn execute<'exec>(
                 .record_errors(|| ctx.errors.iter().map(|err| err.extensions.code.as_deref()));
         }
     }
-    summary::record(|s| s.set_partial_response(error_count > 0 && run.data != Slot::Null));
+    summary::record(|s| s.set_partial_response(error_count > 0 && run.data != ValueCell::Null));
     let response_size_estimate = ctx.response_storage.estimate_final_response_size();
     let errors = std::mem::take(&mut ctx.errors);
 
     let mut demand_control_cost = None;
     if let Some(demand_control) = executor.demand_control_context.as_deref() {
         let actual = demand_control.calculate_actual_cost(
-            SlotView {
+            CellView {
                 arena: &run.arena,
                 layouts: &plan.layouts,
-                slot: run.data,
+                cell: run.data,
             },
             &opts.variable_values.variables_map,
             &ctx.subgraph_response_cost_tracker,
@@ -280,7 +282,7 @@ pub(super) async fn execute<'exec>(
     let mut errors = errors;
     if !on_end_callbacks.is_empty() {
         let mut end_payload = OnExecuteEndHookPayload {
-            data: ResponseData::from_slots(
+            data: ResponseData::from_cells(
                 std::mem::take(&mut run.arena),
                 run.data,
                 plan_arc.clone(),
@@ -304,7 +306,7 @@ pub(super) async fn execute<'exec>(
             match result.control_flow {
                 EndControlFlow::Proceed => {}
                 EndControlFlow::EndWithResponse(response) => {
-                    end_payload.data.into_slots().0.give_back();
+                    end_payload.data.into_cells().0.give_back();
                     return Ok(match response {
                         OnExecuteResponse::Output(response) => response,
                         OnExecuteResponse::EarlyResponse(response) => {
@@ -318,7 +320,7 @@ pub(super) async fn execute<'exec>(
             }
         }
         opts.extensions.extensions = end_payload.extensions;
-        let (arena, data, plugin_errors) = end_payload.data.into_slots();
+        let (arena, data, plugin_errors) = end_payload.data.into_cells();
         run.arena = arena;
         run.data = data;
         errors = end_payload.errors;
@@ -387,15 +389,15 @@ struct Processing<'exec> {
 }
 
 struct Run<'p> {
-    plan: &'p SlotPlan,
+    plan: &'p IndexedResponsePlan,
     arena: Arena,
     /// The root object
-    data: Slot,
+    data: ValueCell,
     /// Whether subtrees nothing checks are kept as the subgraph wrote them. Not when something
     /// reads the data value by value: demand control counts it, plugins' end hooks walk it.
     passthrough: bool,
     /// The plan, for plugins' subgraph end hooks to walk a fetch's data with. Only with plugins.
-    shared: Option<Arc<SlotPlan>>,
+    shared: Option<Arc<IndexedResponsePlan>>,
 }
 
 /// What a job's response gets merged with. One per job in flight, so the size difference
@@ -450,23 +452,23 @@ struct AliasMerge<'exec, 'p> {
     /// The alias in the response, for errors
     name: &'exec str,
     paths: SmallVec<[ResponsePathRef<'exec>; 4]>,
-    targets: Targets,
+    targets: EntityTargetMap,
 }
 
-/// The spots of each path of an alias, in walk order, with the entity each one gets. One
+/// The entity targets of each path of an alias, in walk order, with the entity each one gets. One
 /// `Vec` for all paths, from the arena's pool.
 #[derive(Default)]
-struct Targets {
-    spots: Vec<(Slot, u32)>,
-    /// Where each path's spots end
+struct EntityTargetMap {
+    entries: Vec<(ValueCell, u32)>,
+    /// Where each path's entity targets end
     ends: SmallVec<[u32; 4]>,
 }
 
-impl Targets {
-    fn paths(&self) -> impl Iterator<Item = &[(Slot, u32)]> {
+impl EntityTargetMap {
+    fn paths(&self) -> impl Iterator<Item = &[(ValueCell, u32)]> {
         let mut start = 0;
         self.ends.iter().map(move |&end| {
-            let path = &self.spots[start..end as usize];
+            let path = &self.entries[start..end as usize];
             start = end as usize;
             path
         })
@@ -570,7 +572,7 @@ impl<'p> Run<'p> {
             .schema_metadata
             .entity_keys
             .of_subgraph(&fetch.service_name);
-        let (groups, group_of_spot) = self.context_groups(alias, &fetch.context, possible_types);
+        let (groups, group_of_target) = self.context_groups(alias, &fetch.context, possible_types);
         // every group with something to send: its variables, representations, count, targets
         let mut sent = Vec::with_capacity(groups.len());
         for (group, variables) in groups.into_iter().enumerate() {
@@ -579,10 +581,10 @@ impl<'p> Run<'p> {
                 possible_types,
                 keys,
                 false,
-                Some((&group_of_spot, group as u32)),
+                Some((&group_of_target, group as u32)),
             );
             if count == 0 {
-                self.arena.give_back_targets(targets.spots);
+                self.arena.give_back_targets(targets.entries);
             } else {
                 sent.push((variables, representations, count, targets));
             }
@@ -609,8 +611,8 @@ impl<'p> Run<'p> {
                         custom_scalar_paths,
                         raw_variable_values: Some(variables),
                         affected_path: Some(path),
-                        // the body as it came: plugins' end hooks run on the slots it's read into
-                        raw_response: true,
+                        // the body as it came: plugins' end hooks run on the cells it's read into
+                        unparsed_body: true,
                     })
                     .map(move |job| (index, job))
                     .boxed()
@@ -641,11 +643,11 @@ impl<'p> Run<'p> {
                     }
                 }
                 Some(template) => {
-                    // the spots of every group in the request, the entity offset by where the
+                    // the entity targets of every group in the request, the entity offset by where the
                     // group's entities start in the response read back as one list
                     let mut counts = SmallVec::new();
                     let mut values = Vec::with_capacity(chunk.len());
-                    let mut combined: Option<Targets> = None;
+                    let mut combined: Option<EntityTargetMap> = None;
                     let mut offset = 0;
                     for (mut variables, representations, count, targets) in chunk {
                         variables.push(("representations", representations));
@@ -654,7 +656,7 @@ impl<'p> Run<'p> {
                         match &mut combined {
                             None => {
                                 let mut targets = targets;
-                                for (_, entity) in &mut targets.spots {
+                                for (_, entity) in &mut targets.entries {
                                     if *entity != NO_ENTITY {
                                         *entity += offset;
                                     }
@@ -663,13 +665,13 @@ impl<'p> Run<'p> {
                             }
                             Some(combined) => {
                                 for (into, (_, entity)) in
-                                    combined.spots.iter_mut().zip(&targets.spots)
+                                    combined.entries.iter_mut().zip(&targets.entries)
                                 {
                                     if *entity != NO_ENTITY {
                                         into.1 = *entity + offset;
                                     }
                                 }
-                                self.arena.give_back_targets(targets.spots);
+                                self.arena.give_back_targets(targets.entries);
                             }
                         }
                         offset += count;
@@ -698,7 +700,7 @@ impl<'p> Run<'p> {
     }
 
     /// A `BatchFetch` whose aliases have `@fromContext` arguments, like the other pipeline: each
-    /// alias groups its spots by their context values, and wave `n` sends group `n` of every
+    /// alias groups its entity targets by their context values, and wave `n` sends group `n` of every
     /// alias (an alias with fewer groups sends its first group's values and no
     /// representations). Up to `max_context_groups` waves go in one request, aliased when
     /// there's more than one. The jobs get `first_index` on.
@@ -718,7 +720,7 @@ impl<'p> Run<'p> {
             .entity_keys
             .of_subgraph(&batch.service_name);
         let specs = &batch.entity_batch.aliases;
-        // each alias's groups and the group of each of its spots, none when it's off
+        // each alias's groups and the group of each of its entity targets, none when it's off
         let grouped: Vec<_> = specs
             .iter()
             .zip(&program.aliases)
@@ -742,7 +744,7 @@ impl<'p> Run<'p> {
             let mut aliases: SmallVec<[AliasMerge<'exec, 'p>; 2]> = SmallVec::new();
             let mut counts: SmallVec<[u32; 4]> = SmallVec::new();
             let mut any = false;
-            for ((spec, alias), (groups, group_of_spot)) in
+            for ((spec, alias), (groups, group_of_target)) in
                 specs.iter().zip(&program.aliases).zip(&grouped)
             {
                 match groups.get(wave).or(groups.first()) {
@@ -761,10 +763,10 @@ impl<'p> Run<'p> {
                         possible_types,
                         keys,
                         false,
-                        Some((group_of_spot, wave as u32)),
+                        Some((group_of_target, wave as u32)),
                     )
                 } else {
-                    (b"[]".to_vec(), 0, Targets::default())
+                    (b"[]".to_vec(), 0, EntityTargetMap::default())
                 };
                 any |= count > 0;
                 let name = spec.representations_variable_name.as_str();
@@ -789,7 +791,7 @@ impl<'p> Run<'p> {
                 waves.push((variables, aliases, counts));
             } else {
                 for alias in aliases {
-                    self.arena.give_back_targets(alias.targets.spots);
+                    self.arena.give_back_targets(alias.targets.entries);
                 }
             }
         }
@@ -810,8 +812,8 @@ impl<'p> Run<'p> {
                     custom_scalar_paths,
                     raw_variable_values: Some(variables),
                     affected_path: None,
-                    // the body as it came: plugins' end hooks run on the slots it's read into
-                    raw_response: true,
+                    // the body as it came: plugins' end hooks run on the cells it's read into
+                    unparsed_body: true,
                 })
                 .map(move |job| (index, job))
                 .boxed()
@@ -857,10 +859,10 @@ impl<'p> Run<'p> {
                         continue;
                     }
                     let into = &mut merged[index];
-                    if into.targets.spots.is_empty() {
-                        // the first wave had nothing for this alias: these spots stand in
+                    if into.targets.entries.is_empty() {
+                        // the first wave had nothing for this alias: these entity targets stand in
                         let mut targets = alias.targets;
-                        for (_, entity) in &mut targets.spots {
+                        for (_, entity) in &mut targets.entries {
                             if *entity != NO_ENTITY {
                                 *entity += offset;
                             }
@@ -870,13 +872,13 @@ impl<'p> Run<'p> {
                         continue;
                     }
                     for (target, (_, entity)) in
-                        into.targets.spots.iter_mut().zip(&alias.targets.spots)
+                        into.targets.entries.iter_mut().zip(&alias.targets.entries)
                     {
                         if *entity != NO_ENTITY {
                             target.1 = *entity + offset;
                         }
                     }
-                    self.arena.give_back_targets(alias.targets.spots);
+                    self.arena.give_back_targets(alias.targets.entries);
                 }
             }
             let counts = template
@@ -916,8 +918,8 @@ impl<'p> Run<'p> {
         out
     }
 
-    /// Groups the spots of the alias's paths by their context values: the variables of
-    /// each group, and each spot's group in walk order (`u32::MAX` for a spot that isn't an
+    /// Groups the entity targets of the alias's paths by their context values: the variables of
+    /// each group, and each entity target's group in walk order (`u32::MAX` for an entity target that isn't an
     /// object). See `context::collect_context_entities`, which does this for `Value`s.
     #[allow(clippy::type_complexity)]
     fn context_groups<'exec>(
@@ -928,7 +930,7 @@ impl<'p> Run<'p> {
     ) -> (Vec<Vec<(&'exec str, Vec<u8>)>>, Vec<u32>) {
         let names = FetchContext::group_variables(context);
         let rewrites = FetchContext::rewrites(context).unwrap_or_default();
-        // where each variable's value is read: so many objects up from the spot, then a path
+        // where each variable's value is read: so many objects up from the entity target, then a path
         let sources: Vec<Vec<(usize, &[FetchNodePathSegment])>> = names
             .iter()
             .map(|name| {
@@ -948,7 +950,7 @@ impl<'p> Run<'p> {
             .collect();
         let mut groups: Vec<Vec<(&'exec str, Vec<u8>)>> = Vec::new();
         let mut by_values: AHashMap<Vec<Vec<u8>>, u32> = AHashMap::default();
-        let mut group_of_spot = Vec::new();
+        let mut group_of_target = Vec::new();
         let arena = &self.arena;
         let layouts = &self.plan.layouts;
         for path in &alias.paths {
@@ -959,13 +961,13 @@ impl<'p> Run<'p> {
                 self.data,
                 path,
                 &mut Vec::new(),
-                &mut |spot, objects| {
-                    if !matches!(spot, Slot::Object { .. }) {
-                        group_of_spot.push(u32::MAX);
+                &mut |target, objects| {
+                    if !matches!(target, ValueCell::Object { .. }) {
+                        group_of_target.push(u32::MAX);
                         return;
                     }
                     let ancestor = |up: usize| match up {
-                        0 => Some(spot),
+                        0 => Some(target),
                         up => objects.get(objects.len().checked_sub(up)?).copied(),
                     };
                     let values: Vec<Vec<u8>> = sources
@@ -994,11 +996,11 @@ impl<'p> Run<'p> {
                         groups.push(names.iter().copied().zip(values.iter().cloned()).collect());
                         groups.len() as u32 - 1
                     });
-                    group_of_spot.push(group);
+                    group_of_target.push(group);
                 },
             );
         }
-        (groups, group_of_spot)
+        (groups, group_of_target)
     }
 
     fn prepare<'wave, 'exec>(
@@ -1026,8 +1028,8 @@ impl<'p> Run<'p> {
                     custom_scalar_paths: fetch.custom_scalar_paths.as_ref(),
                     raw_variable_values: variables,
                     affected_path,
-                    // the body as it came: plugins' end hooks run on the slots it's read into
-                    raw_response: true,
+                    // the body as it came: plugins' end hooks run on the cells it's read into
+                    unparsed_body: true,
                 })
                 .map(move |job| (index, job))
                 .boxed()
@@ -1079,7 +1081,7 @@ impl<'p> Run<'p> {
                     None,
                 );
                 if count == 0 {
-                    self.arena.give_back_targets(targets.spots);
+                    self.arena.give_back_targets(targets.entries);
                     return None;
                 }
                 Some((
@@ -1124,7 +1126,7 @@ impl<'p> Run<'p> {
                             None,
                         )
                     } else {
-                        (b"[]".to_vec(), 0, Targets::default())
+                        (b"[]".to_vec(), 0, EntityTargetMap::default())
                     };
                     any |= count > 0;
                     let name = spec.representations_variable_name.as_str();
@@ -1144,7 +1146,7 @@ impl<'p> Run<'p> {
                 }
                 if !any {
                     for alias in aliases {
-                        self.arena.give_back_targets(alias.targets.spots);
+                        self.arena.give_back_targets(alias.targets.entries);
                     }
                     return None;
                 }
@@ -1161,8 +1163,8 @@ impl<'p> Run<'p> {
                         custom_scalar_paths: batch.custom_scalar_paths.as_ref(),
                         raw_variable_values: Some(variables),
                         affected_path: None,
-                        // the body as it came: plugins' end hooks run on the slots it's read into
-                        raw_response: true,
+                        // the body as it came: plugins' end hooks run on the cells it's read into
+                        unparsed_body: true,
                     })
                     .map(move |job| (index, job))
                     .boxed();
@@ -1182,11 +1184,11 @@ impl<'p> Run<'p> {
     }
 
     /// Walks the alias's paths and writes a representation for every distinct entity. Returns
-    /// the representations as a JSON list, how many there are, and the entity of every spot.
-    /// With `reuse`, a spot that matches an entity already in the response gets its fields
+    /// the representations as a JSON list, how many there are, and the entity of every entity target.
+    /// With `reuse`, an entity target that matches an entity already in the response gets its fields
     /// copied from it instead, and no entity.
-    /// `only`: the group of every spot and the one to send, when the fetch has context (see
-    /// [`Self::prepare_context`]); spots of other groups get no entity.
+    /// `only`: the group of every entity target and the one to send, when the fetch has context (see
+    /// [`Self::prepare_context`]); entity targets of other groups get no entity.
     fn collect(
         &mut self,
         alias: &AliasProgram,
@@ -1194,10 +1196,10 @@ impl<'p> Run<'p> {
         keys: Option<&KeysByType>,
         reuse: bool,
         only: Option<(&[u32], u32)>,
-    ) -> (Vec<u8>, u32, Targets) {
+    ) -> (Vec<u8>, u32, EntityTargetMap) {
         let layouts = &self.plan.layouts;
         let arena = &mut self.arena;
-        let mut spots = std::mem::take(&mut arena.spots);
+        let mut found = std::mem::take(&mut arena.found);
         let mut frontier = std::mem::take(&mut arena.frontier);
         let mut seen = std::mem::take(&mut arena.seen);
         let mut ranges = std::mem::take(&mut arena.ranges);
@@ -1209,13 +1211,13 @@ impl<'p> Run<'p> {
         reps.push(b'[');
         let mut count = 0u32;
         let hasher = ahash::RandomState::with_seeds(7, 11, 13, 17);
-        let mut targets = Targets {
-            spots: arena.targets.pop().unwrap_or_default(),
+        let mut targets = EntityTargetMap {
+            entries: arena.targets.pop().unwrap_or_default(),
             ends: SmallVec::new(),
         };
         let mut known = std::mem::take(&mut arena.known);
         known.clear();
-        let mut key_slot_cache = SmallVec::new();
+        let mut key_field_cache = SmallVec::new();
         let reuse = alias.reuse.as_ref().filter(|_| reuse);
         if let Some(reuse) = reuse {
             // the entities already in the response, by what their representation would read
@@ -1226,16 +1228,16 @@ impl<'p> Run<'p> {
                     possible_types,
                     self.data,
                     &source.path,
-                    &mut spots,
+                    &mut found,
                     &mut frontier,
                 );
-                for &object in &spots {
-                    let Slot::Object { first, .. } = object else {
+                for &object in &found {
+                    let ValueCell::Object { first, .. } = object else {
                         continue;
                     };
                     if !holds_representation(arena, &source.requires, first)
-                        || source.copy.iter().any(|&slot| {
-                            arena.slots[(first + slot as u32) as usize] == Slot::Missing
+                        || source.copy.iter().any(|&field_index| {
+                            arena.cells[(first + field_index as u32) as usize] == ValueCell::Missing
                         })
                     {
                         continue;
@@ -1253,52 +1255,52 @@ impl<'p> Run<'p> {
                 }
             }
         }
-        let mut spot_number = 0usize;
+        let mut target_number = 0usize;
         for path in &alias.paths {
-            spots.clear();
+            found.clear();
             walk(
                 arena,
                 layouts,
                 possible_types,
                 self.data,
                 path,
-                &mut spots,
+                &mut found,
                 &mut frontier,
             );
-            let path_targets = &mut targets.spots;
-            for &spot in &spots {
-                let nth = spot_number;
-                spot_number += 1;
+            let path_targets = &mut targets.entries;
+            for &target in &found {
+                let nth = target_number;
+                target_number += 1;
                 if only.is_some_and(|(groups, group)| groups.get(nth) != Some(&group)) {
-                    path_targets.push((spot, NO_ENTITY));
+                    path_targets.push((target, NO_ENTITY));
                     continue;
                 }
-                if let (Some(reuse), Slot::Object { layout, first }) = (reuse, spot) {
+                if let (Some(reuse), ValueCell::Object { layout, first }) = (reuse, target) {
                     if layout == reuse.target_layout && !known.is_empty() {
                         // without the key mask: it depends on the layout, and the source's
-                        // isn't the spot's
+                        // isn't the entity target's
                         let mut print = Fingerprint {
                             arena,
                             layouts,
                             requires: &alias.requires,
                             hasher: Mix::new(),
                         };
-                        print.value(spot, alias.requires.reads_root.clone(), None);
+                        print.value(target, alias.requires.reads_root.clone(), None);
                         if let Some(&(from, source)) = known.get(&print.hasher.finish()) {
-                            let from_slots = &reuse.sources[source as usize].copy;
-                            for (&to, &from_slot) in reuse.copy.iter().zip(from_slots.iter()) {
-                                arena.slots[(first + to as u32) as usize] =
-                                    arena.slots[(from + from_slot as u32) as usize];
+                            let from_fields = &reuse.sources[source as usize].copy;
+                            for (&to, &from_field) in reuse.copy.iter().zip(from_fields.iter()) {
+                                arena.cells[(first + to as u32) as usize] =
+                                    arena.cells[(from + from_field as u32) as usize];
                             }
-                            path_targets.push((spot, NO_ENTITY));
+                            path_targets.push((target, NO_ENTITY));
                             continue;
                         }
                     }
                 }
-                let entity = match spot {
-                    Slot::Null | Slot::Missing => NO_ENTITY,
+                let entity = match target {
+                    ValueCell::Null | ValueCell::Missing => NO_ENTITY,
                     _ => {
-                        // most spots repeat an entity another spot already sent: tell them
+                        // most entity targets repeat an entity another entity target already sent: tell them
                         // apart by what the representation would read, without writing it
                         let mut print = Fingerprint {
                             arena,
@@ -1306,16 +1308,16 @@ impl<'p> Run<'p> {
                             requires: &alias.requires,
                             hasher: Mix::new(),
                         };
-                        let key_slots = match (keys, spot) {
-                            (Some(keys), Slot::Object { layout, .. }) => {
-                                Some(key_slots(&mut key_slot_cache, layouts, keys, layout))
+                        let key_fields = match (keys, target) {
+                            (Some(keys), ValueCell::Object { layout, .. }) => {
+                                Some(key_fields(&mut key_field_cache, layouts, keys, layout))
                             }
                             _ => None,
                         };
-                        print.value(spot, alias.requires.reads_root.clone(), key_slots);
+                        print.value(target, alias.requires.reads_root.clone(), key_fields);
                         let fingerprint = print.hasher.finish();
                         if let Some(&entity) = prints.get(&fingerprint) {
-                            path_targets.push((spot, entity));
+                            path_targets.push((target, entity));
                             continue;
                         }
                         let before = reps.len();
@@ -1329,7 +1331,7 @@ impl<'p> Run<'p> {
                             buffer: &mut reps,
                         }
                         .value(
-                            spot,
+                            target,
                             alias.requires.root.clone(),
                             first_rep,
                             None,
@@ -1362,12 +1364,12 @@ impl<'p> Run<'p> {
                         entity
                     }
                 };
-                path_targets.push((spot, entity));
+                path_targets.push((target, entity));
             }
-            targets.ends.push(targets.spots.len() as u32);
+            targets.ends.push(targets.entries.len() as u32);
         }
         reps.push(b']');
-        arena.spots = spots;
+        arena.found = found;
         arena.frontier = frontier;
         arena.seen = seen;
         arena.ranges = ranges;
@@ -1410,7 +1412,7 @@ impl<'p> Run<'p> {
         subgraph_name: &'exec str,
         fetch_hash: u64,
         bytes: Option<bytes::Bytes>,
-        data: Slot,
+        data: ValueCell,
     ) {
         if let Some(bytes) = bytes {
             ctx.response_storage.add_response(bytes);
@@ -1420,10 +1422,10 @@ impl<'p> Run<'p> {
                 &mut ctx.subgraph_response_cost_tracker,
                 subgraph_name,
                 fetch_hash,
-                SlotView {
+                CellView {
                     arena: &self.arena,
                     layouts: &self.plan.layouts,
-                    slot: data,
+                    cell: data,
                 },
                 executor.variable_values,
             );
@@ -1522,7 +1524,7 @@ impl<'p> Run<'p> {
             );
         }
         if !rebuilt
-            && matches!(parsed.data, Slot::Missing | Slot::Null)
+            && matches!(parsed.data, ValueCell::Missing | ValueCell::Null)
             && parsed.errors.is_none()
             && errors.is_none()
         {
@@ -1551,7 +1553,7 @@ impl<'p> Run<'p> {
             let fetch = match &merge {
                 Merge::Root { fetch, .. } | Merge::Entities { fetch, .. } => *fetch,
             };
-            let subgraph_data = SubgraphData::from_slots(
+            let subgraph_data = SubgraphData::from_cells(
                 std::mem::take(&mut self.arena),
                 data,
                 plan,
@@ -1574,7 +1576,7 @@ impl<'p> Run<'p> {
                 response.status,
                 extensions,
             );
-            let (arena, walked, attached) = outcome.data.into_slots();
+            let (arena, walked, attached) = outcome.data.into_cells();
             self.arena = arena;
             data = walked;
             // a hook's own response is read instead, like a subgraph's
@@ -1613,14 +1615,16 @@ impl<'p> Run<'p> {
                 let source = data;
                 match merge_path {
                     None => {
-                        if let (Slot::Object { layout, first }, Slot::Object { first: root, .. }) =
-                            (source, self.data)
+                        if let (
+                            ValueCell::Object { layout, first },
+                            ValueCell::Object { first: root, .. },
+                        ) = (source, self.data)
                         {
                             self.arena.merge_object(layouts, layout, root, first);
                         }
                     }
                     Some(steps) => {
-                        let mut spots = std::mem::take(&mut self.arena.spots);
+                        let mut found = std::mem::take(&mut self.arena.found);
                         let mut frontier = std::mem::take(&mut self.arena.frontier);
                         walk(
                             &self.arena,
@@ -1628,24 +1632,29 @@ impl<'p> Run<'p> {
                             &executor.schema_metadata.possible_types,
                             self.data,
                             steps,
-                            &mut spots,
+                            &mut found,
                             &mut frontier,
                         );
                         self.arena.frontier = frontier;
-                        if let Slot::Object { layout, first } = source {
-                            for spot in &spots {
-                                if let Slot::Object {
+                        if let ValueCell::Object { layout, first } = source {
+                            for target in &found {
+                                if let ValueCell::Object {
                                     layout: target_layout,
-                                    first: target,
-                                } = *spot
+                                    first: target_first,
+                                } = *target
                                 {
                                     if target_layout == layout {
-                                        self.arena.merge_object(layouts, layout, target, first);
+                                        self.arena.merge_object(
+                                            layouts,
+                                            layout,
+                                            target_first,
+                                            first,
+                                        );
                                     }
                                 }
                             }
                         }
-                        self.arena.spots = spots;
+                        self.arena.found = found;
                     }
                 }
                 ctx.handle_errors(subgraph_name, affected_path, errors, None);
@@ -1686,9 +1695,13 @@ impl<'p> Run<'p> {
 
                 for (alias, alias_errors) in aliases.iter().zip(by_alias) {
                     let entities = match data {
-                        Slot::Object { first, .. } if alias.program.slot != NO_SLOT => {
-                            match self.arena.slots[(first + alias.program.slot as u32) as usize] {
-                                Slot::List { start, len } => Some((start, len)),
+                        ValueCell::Object { first, .. }
+                            if alias.program.field_index != NO_FIELD =>
+                        {
+                            match self.arena.cells
+                                [(first + alias.program.field_index as u32) as usize]
+                            {
+                                ValueCell::List { start, len } => Some((start, len)),
                                 _ => None,
                             }
                         }
@@ -1719,21 +1732,26 @@ impl<'p> Run<'p> {
                             }
                         }
                         {
-                            for &(spot, entity) in &alias.targets.spots {
+                            for &(target, entity) in &alias.targets.entries {
                                 if entity == NO_ENTITY || entity >= len {
                                     continue;
                                 }
                                 let item = self.arena.items[(start + entity) as usize];
                                 if let (
-                                    Slot::Object { layout, first },
-                                    Slot::Object {
+                                    ValueCell::Object { layout, first },
+                                    ValueCell::Object {
                                         layout: target_layout,
-                                        first: target,
+                                        first: target_first,
                                     },
-                                ) = (item, spot)
+                                ) = (item, target)
                                 {
-                                    if layout == target_layout && first != target {
-                                        self.arena.merge_object(layouts, layout, target, first);
+                                    if layout == target_layout && first != target_first {
+                                        self.arena.merge_object(
+                                            layouts,
+                                            layout,
+                                            target_first,
+                                            first,
+                                        );
                                     }
                                 }
                             }
@@ -1750,7 +1768,7 @@ impl<'p> Run<'p> {
                     ctx.handle_errors(subgraph_name, None, Some(unmatched), None);
                 }
                 for alias in aliases {
-                    self.arena.give_back_targets(alias.targets.spots);
+                    self.arena.give_back_targets(alias.targets.entries);
                 }
             }
         }
@@ -1768,7 +1786,7 @@ impl Run<'_> {
         bytes: &bytes::Bytes,
         passthrough: bool,
         unalias: &Unaliasing<'_>,
-    ) -> Option<crate::executor::slots::parse::ParsedBody> {
+    ) -> Option<crate::executor::indexed::parse::ParsedBody> {
         let shape = &program.shape;
         let layouts = &self.plan.layouts;
         let template = unalias.template;
@@ -1799,7 +1817,7 @@ impl Run<'_> {
             },
         )?;
         let data = if body.no_data {
-            Slot::Null
+            ValueCell::Null
         } else {
             let layout = shape.objects[0].layout;
             let first = self.arena.object(layouts[layout as usize].width());
@@ -1807,19 +1825,21 @@ impl Run<'_> {
                 let Some(node) = node else {
                     continue;
                 };
-                let slot = shape.nodes[(nodes_start + node) as usize].slot;
-                if slot == NO_SLOT {
+                let field_index = shape.nodes[(nodes_start + node) as usize].field_index;
+                if field_index == NO_FIELD {
                     continue;
                 }
                 let offsets = unalias.offsets(key);
                 let total = offsets[groups];
                 let start = self.arena.items.len();
-                self.arena.items.resize(start + total as usize, Slot::Null);
-                for &(value_slot, group, value) in &body.values {
-                    if value_slot != slot as u32 {
+                self.arena
+                    .items
+                    .resize(start + total as usize, ValueCell::Null);
+                for &(value_field, group, value) in &body.values {
+                    if value_field != field_index as u32 {
                         continue;
                     }
-                    if let Slot::List { start: from, len } = value {
+                    if let ValueCell::List { start: from, len } = value {
                         let take = len.min(offsets[group + 1] - offsets[group]) as usize;
                         let to = start + offsets[group] as usize;
                         self.arena
@@ -1827,12 +1847,12 @@ impl Run<'_> {
                             .copy_within(from as usize..from as usize + take, to);
                     }
                 }
-                self.arena.slots[first as usize + slot as usize] = Slot::List {
+                self.arena.cells[first as usize + field_index as usize] = ValueCell::List {
                     start: start as u32,
                     len: total,
                 };
             }
-            Slot::Object { layout, first }
+            ValueCell::Object { layout, first }
         };
         let mut errors = body.errors;
         for error in errors.iter_mut().flatten() {
@@ -1858,7 +1878,7 @@ impl Run<'_> {
             }
             path.segments[0] = GraphQLErrorPathSegment::String(template.response_keys[key].clone());
         }
-        Some(crate::executor::slots::parse::ParsedBody {
+        Some(crate::executor::indexed::parse::ParsedBody {
             data,
             errors,
             extensions: body.extensions,
@@ -1872,12 +1892,12 @@ impl Run<'_> {
 /// level in order keeps the document order a depth-first walk has.
 fn walk(
     arena: &Arena,
-    layouts: &[Layout],
+    layouts: &[ObjectLayout],
     possible_types: &PossibleTypes,
-    root: Slot,
+    root: ValueCell,
     steps: &[Step],
-    out: &mut Vec<Slot>,
-    frontier: &mut Vec<Slot>,
+    out: &mut Vec<ValueCell>,
+    frontier: &mut Vec<ValueCell>,
 ) {
     out.clear();
     out.push(root);
@@ -1886,18 +1906,18 @@ fn walk(
         out.clear();
         for &value in frontier.iter() {
             match step {
-                Step::Field(slot) => {
-                    if let Slot::Object { first, .. } = value {
-                        if *slot != NO_SLOT {
-                            let child = arena.slots[(first + *slot as u32) as usize];
-                            if child != Slot::Missing {
+                Step::Field(field_index) => {
+                    if let ValueCell::Object { first, .. } = value {
+                        if *field_index != NO_FIELD {
+                            let child = arena.cells[(first + *field_index as u32) as usize];
+                            if child != ValueCell::Missing {
                                 out.push(child);
                             }
                         }
                     }
                 }
                 Step::List => {
-                    if let Slot::List { start, len } = value {
+                    if let ValueCell::List { start, len } = value {
                         out.extend_from_slice(arena.list_items(start, len));
                     }
                 }
@@ -1913,12 +1933,17 @@ fn walk(
         }
     }
     // a list at the end gives its items
-    if out.iter().any(|value| matches!(value, Slot::List { .. })) {
+    if out
+        .iter()
+        .any(|value| matches!(value, ValueCell::List { .. }))
+    {
         std::mem::swap(out, frontier);
         out.clear();
         for &value in frontier.iter() {
             match value {
-                Slot::List { start, len } => out.extend_from_slice(arena.list_items(start, len)),
+                ValueCell::List { start, len } => {
+                    out.extend_from_slice(arena.list_items(start, len))
+                }
                 value => out.push(value),
             }
         }
@@ -1951,19 +1976,19 @@ fn batch_with_context(batch: &BatchFetchNode) -> bool {
 }
 
 /// [`walk`] one value at a time, with the objects a field was read from on the way (the
-/// spot's ancestors, the nearest last), like `traverse_and_callback`.
+/// entity target's ancestors, the nearest last), like `traverse_and_callback`.
 fn walk_with_ancestors(
     arena: &Arena,
-    layouts: &[Layout],
+    layouts: &[ObjectLayout],
     possible_types: &PossibleTypes,
-    value: Slot,
+    value: ValueCell,
     steps: &[Step],
-    objects: &mut Vec<Slot>,
-    found: &mut impl FnMut(Slot, &[Slot]),
+    objects: &mut Vec<ValueCell>,
+    found: &mut impl FnMut(ValueCell, &[ValueCell]),
 ) {
     let Some((step, rest)) = steps.split_first() else {
         match value {
-            Slot::List { start, len } => {
+            ValueCell::List { start, len } => {
                 for &item in arena.list_items(start, len) {
                     found(item, objects);
                 }
@@ -1973,20 +1998,20 @@ fn walk_with_ancestors(
         return;
     };
     match (step, value) {
-        (Step::Field(slot), Slot::Object { first, .. }) if *slot != NO_SLOT => {
-            let child = arena.slots[(first + *slot as u32) as usize];
-            if child != Slot::Missing {
+        (Step::Field(field_index), ValueCell::Object { first, .. }) if *field_index != NO_FIELD => {
+            let child = arena.cells[(first + *field_index as u32) as usize];
+            if child != ValueCell::Missing {
                 objects.push(value);
                 walk_with_ancestors(arena, layouts, possible_types, child, rest, objects, found);
                 objects.pop();
             }
         }
-        (Step::List, Slot::List { start, len }) => {
+        (Step::List, ValueCell::List { start, len }) => {
             for &item in arena.list_items(start, len) {
                 walk_with_ancestors(arena, layouts, possible_types, item, rest, objects, found);
             }
         }
-        (Step::TypeCondition(condition), Slot::Object { layout, first }) => {
+        (Step::TypeCondition(condition), ValueCell::Object { layout, first }) => {
             if satisfies(
                 arena,
                 layouts,
@@ -1998,7 +2023,7 @@ fn walk_with_ancestors(
                 walk_with_ancestors(arena, layouts, possible_types, value, rest, objects, found);
             }
         }
-        (Step::TypeCondition(_), Slot::List { start, len }) => {
+        (Step::TypeCondition(_), ValueCell::List { start, len }) => {
             for &item in arena.list_items(start, len) {
                 walk_with_ancestors(arena, layouts, possible_types, item, steps, objects, found);
             }
@@ -2012,18 +2037,18 @@ fn walk_with_ancestors(
 /// `context::select_value`: a list gives a list, with null for an item that has none.
 fn select_value(
     arena: &Arena,
-    layouts: &[Layout],
+    layouts: &[ObjectLayout],
     possible_types: &PossibleTypes,
-    value: Slot,
+    value: ValueCell,
     path: &[FetchNodePathSegment],
     out: &mut Vec<u8>,
 ) -> bool {
-    if path.is_empty() || value == Slot::Null {
+    if path.is_empty() || value == ValueCell::Null {
         arena.write_whole(layouts, value, out);
         return true;
     }
     match value {
-        Slot::List { start, len } => {
+        ValueCell::List { start, len } => {
             out.push(b'[');
             for (i, &item) in arena.list_items(start, len).iter().enumerate() {
                 if i > 0 {
@@ -2036,21 +2061,21 @@ fn select_value(
             out.push(b']');
             true
         }
-        Slot::Object { layout, first } => match &path[0] {
+        ValueCell::Object { layout, first } => match &path[0] {
             FetchNodePathSegment::Key(key) => {
-                let slot = layouts[layout as usize].slot(key);
-                if slot == NO_SLOT {
+                let field_index = layouts[layout as usize].field_index(key);
+                if field_index == NO_FIELD {
                     return false;
                 }
-                match arena.slots[(first + slot as u32) as usize] {
-                    Slot::Missing => false,
+                match arena.cells[(first + field_index as u32) as usize] {
+                    ValueCell::Missing => false,
                     child => select_value(arena, layouts, possible_types, child, &path[1..], out),
                 }
             }
             FetchNodePathSegment::TypenameEquals(names) => {
                 let typename = layouts[layout as usize].typename;
-                let name = (typename != NO_SLOT)
-                    .then(|| arena.plain_str(arena.slots[(first + typename as u32) as usize]))
+                let name = (typename != NO_FIELD)
+                    .then(|| arena.plain_str(arena.cells[(first + typename as u32) as usize]))
                     .flatten();
                 name.is_some_and(|name| {
                     names.iter().any(|condition| {
@@ -2067,19 +2092,19 @@ fn select_value(
 /// An object passes when it meets the condition; a list is checked item by item.
 fn type_condition(
     arena: &Arena,
-    layouts: &[Layout],
+    layouts: &[ObjectLayout],
     possible_types: &PossibleTypes,
-    value: Slot,
+    value: ValueCell,
     names: &[Box<str>],
-    out: &mut Vec<Slot>,
+    out: &mut Vec<ValueCell>,
 ) {
     match value {
-        Slot::Object { layout, first } => {
+        ValueCell::Object { layout, first } => {
             if satisfies(arena, layouts, possible_types, layout, first, names) {
                 out.push(value);
             }
         }
-        Slot::List { start, len } => {
+        ValueCell::List { start, len } => {
             for i in 0..len {
                 let item = arena.items[(start + i) as usize];
                 type_condition(arena, layouts, possible_types, item, names, out);
@@ -2089,20 +2114,20 @@ fn type_condition(
     }
 }
 
-/// The error path of every spot `walk` finds, in the same order. Only run for a response
+/// The error path of every entity target `walk` finds, in the same order. Only run for a response
 /// with errors.
 fn error_walk(
     arena: &Arena,
-    layouts: &[Layout],
+    layouts: &[ObjectLayout],
     possible_types: &PossibleTypes,
-    value: Slot,
+    value: ValueCell,
     path: &[PathSegment],
     error_path: &mut GraphQLErrorPath,
     out: &mut Vec<GraphQLErrorPath>,
 ) {
     let Some((step, rest)) = path.split_first() else {
         match value {
-            Slot::List { len, .. } => {
+            ValueCell::List { len, .. } => {
                 for i in 0..len {
                     error_path.push_index(i as usize);
                     out.push(error_path.clone());
@@ -2115,11 +2140,11 @@ fn error_walk(
     };
     match step {
         PathSegment::Field(key) => {
-            if let Slot::Object { layout, first } = value {
-                let slot = layouts[layout as usize].slot(key);
-                if slot != NO_SLOT {
-                    let child = arena.slots[(first + slot as u32) as usize];
-                    if child != Slot::Missing {
+            if let ValueCell::Object { layout, first } = value {
+                let field_index = layouts[layout as usize].field_index(key);
+                if field_index != NO_FIELD {
+                    let child = arena.cells[(first + field_index as u32) as usize];
+                    if child != ValueCell::Missing {
                         error_path.push_field(key);
                         error_walk(arena, layouts, possible_types, child, rest, error_path, out);
                         error_path.pop();
@@ -2128,7 +2153,7 @@ fn error_walk(
             }
         }
         PathSegment::List => {
-            if let Slot::List { start, len } = value {
+            if let ValueCell::List { start, len } = value {
                 for i in 0..len {
                     error_path.push_index(i as usize);
                     let item = arena.items[(start + i) as usize];
@@ -2138,7 +2163,7 @@ fn error_walk(
             }
         }
         PathSegment::TypeCondition(condition) => match value {
-            Slot::Object { layout, first } => {
+            ValueCell::Object { layout, first } => {
                 if satisfies(
                     arena,
                     layouts,
@@ -2150,7 +2175,7 @@ fn error_walk(
                     error_walk(arena, layouts, possible_types, value, rest, error_path, out);
                 }
             }
-            Slot::List { start, len } => {
+            ValueCell::List { start, len } => {
                 for i in 0..len {
                     error_path.push_index(i as usize);
                     let item = arena.items[(start + i) as usize];
@@ -2166,15 +2191,15 @@ fn error_walk(
 /// Whether an object's `__typename` meets one of `names`. One without `__typename` does.
 fn satisfies(
     arena: &Arena,
-    layouts: &[Layout],
+    layouts: &[ObjectLayout],
     possible_types: &PossibleTypes,
     layout: u32,
     first: u32,
     names: &[Box<str>],
 ) -> bool {
-    let slot = layouts[layout as usize].typename;
-    let typename = (slot != NO_SLOT)
-        .then(|| arena.string(arena.slots[(first + slot as u32) as usize]))
+    let field_index = layouts[layout as usize].typename;
+    let typename = (field_index != NO_FIELD)
+        .then(|| arena.string(arena.cells[(first + field_index as u32) as usize]))
         .flatten();
     typename.is_none_or(|typename| {
         names
@@ -2190,14 +2215,14 @@ struct Applied {
     missing_field: bool,
 }
 
-/// Writes representations from slots. A port of `projection::request::project_requires`: the
-/// same rules, read from slots.
+/// Writes representations from cells. A port of `projection::request::project_requires`: the
+/// same rules, read from cells.
 struct Representation<'r> {
     arena: &'r Arena,
-    layouts: &'r [Layout],
+    layouts: &'r [ObjectLayout],
     requires: &'r Requires,
     possible_types: &'r PossibleTypes,
-    /// The planner's input rewrite of the spot's `__typename`, see [`TypenameRewrite`]
+    /// The planner's input rewrite of the entity target's `__typename`, see [`TypenameRewrite`]
     typename_rewrite: &'r [TypenameRewrite],
     buffer: &'r mut Vec<u8>,
 }
@@ -2221,17 +2246,17 @@ impl<'r> Representation<'r> {
 
     fn typename_of(&self, layout: u32, first: u32) -> Option<&'r str> {
         let arena: &'r Arena = self.arena;
-        let slot = self.layouts[layout as usize].typename;
-        if slot == NO_SLOT {
+        let field_index = self.layouts[layout as usize].typename;
+        if field_index == NO_FIELD {
             return None;
         }
-        arena.plain_str(arena.slots[(first + slot as u32) as usize])
+        arena.plain_str(arena.cells[(first + field_index as u32) as usize])
     }
 
     #[allow(clippy::too_many_arguments)]
     fn value(
         &mut self,
-        value: Slot,
+        value: ValueCell,
         selections: std::ops::Range<u32>,
         first: bool,
         response_key: Option<&str>,
@@ -2239,12 +2264,12 @@ impl<'r> Representation<'r> {
         keys: Option<&KeysByType>,
     ) -> bool {
         match value {
-            Slot::Missing | Slot::Null => return false,
-            Slot::True | Slot::False | Slot::Raw(_) => {
+            ValueCell::Missing | ValueCell::Null => return false,
+            ValueCell::True | ValueCell::False | ValueCell::RawJson(_) => {
                 self.key(first, response_key);
                 self.arena.write_whole(self.layouts, value, self.buffer);
             }
-            Slot::List { start, len } => {
+            ValueCell::List { start, len } => {
                 self.key(first, response_key);
                 self.buffer.push(b'[');
                 let mut first = true;
@@ -2262,7 +2287,7 @@ impl<'r> Representation<'r> {
                 }
                 self.buffer.push(b']');
             }
-            Slot::Object {
+            ValueCell::Object {
                 layout,
                 first: object,
             } => {
@@ -2272,13 +2297,15 @@ impl<'r> Representation<'r> {
                     return true;
                 }
                 let width = self.layouts[layout as usize].width() as u32;
-                if (object..object + width).all(|i| self.arena.slots[i as usize] == Slot::Missing) {
+                if (object..object + width)
+                    .all(|i| self.arena.cells[i as usize] == ValueCell::Missing)
+                {
                     return false;
                 }
                 let parent_first = first;
                 let mut first = true;
                 let mut type_name = self.typename_of(layout, object);
-                // the spot is sent as another type (an `@interfaceObject`'s interface), like the
+                // the entity target is sent as another type (an `@interfaceObject`'s interface), like the
                 // other pipeline's input rewrites: when it has a `__typename` that matches
                 for rewrite in self.typename_rewrite.iter().filter(|_| !nested) {
                     if type_name.is_some_and(|name| {
@@ -2306,10 +2333,10 @@ impl<'r> Representation<'r> {
                     let keys = &self.layouts[layout as usize];
                     let complete = type_keys.iter().any(|fields| {
                         fields.iter().all(|field| {
-                            let slot = keys.slot(field);
-                            slot != NO_SLOT
-                                && self.arena.slots[(object + slot as u32) as usize]
-                                    != Slot::Missing
+                            let field_index = keys.field_index(field);
+                            field_index != NO_FIELD
+                                && self.arena.cells[(object + field_index as u32) as usize]
+                                    != ValueCell::Missing
                         })
                     });
                     if !complete {
@@ -2360,14 +2387,14 @@ impl<'r> Representation<'r> {
                         applied.typename = true;
                         continue;
                     }
-                    let read = |slot: u16| {
-                        (slot != NO_SLOT)
-                            .then(|| self.arena.slots[(object + slot as u32) as usize])
-                            .filter(|value| *value != Slot::Missing)
+                    let read = |field_index: u16| {
+                        (field_index != NO_FIELD)
+                            .then(|| self.arena.cells[(object + field_index as u32) as usize])
+                            .filter(|value| *value != ValueCell::Missing)
                     };
                     let original = match read(*by_name).or_else(|| read(*by_alias)) {
                         Some(value) => value,
-                        None if keys_known => Slot::Null,
+                        None if keys_known => ValueCell::Null,
                         None => {
                             applied.missing_field = true;
                             continue;
@@ -2383,7 +2410,7 @@ impl<'r> Representation<'r> {
                             *first = false;
                         }
                     }
-                    if original == Slot::Null {
+                    if original == ValueCell::Null {
                         self.key(*first, Some(response_key));
                         self.buffer.extend_from_slice(b"null");
                         *first = false;
@@ -2442,20 +2469,20 @@ fn holds_representation(arena: &Arena, requires: &Requires, first: u32) -> bool 
     requires.reads[requires.reads_root.start as usize..requires.reads_root.end as usize]
         .iter()
         .all(|read| {
-            let get = |slot: u16| {
-                (slot != NO_SLOT)
-                    .then(|| arena.slots[(first + slot as u32) as usize])
-                    .filter(|value| *value != Slot::Missing)
+            let get = |field_index: u16| {
+                (field_index != NO_FIELD)
+                    .then(|| arena.cells[(first + field_index as u32) as usize])
+                    .filter(|value| *value != ValueCell::Missing)
             };
-            matches!(get(read.by_name).or_else(|| get(read.by_alias)), Some(value) if value != Slot::Null)
+            matches!(get(read.by_name).or_else(|| get(read.by_alias)), Some(value) if value != ValueCell::Null)
         })
 }
 
-/// The slots in `layout` of every key field of every type in `keys`, sorted. A spot's
+/// The field indexes in `layout` of every key field of every type in `keys`, sorted. An entity target's
 /// complete-key check reads the presence of some of these, depending on its type.
-fn key_slots<'c>(
+fn key_fields<'c>(
     cache: &'c mut SmallVec<[(u32, Vec<u16>); 2]>,
-    layouts: &[Layout],
+    layouts: &[ObjectLayout],
     keys: &KeysByType,
     layout: u32,
 ) -> &'c [u16] {
@@ -2463,58 +2490,58 @@ fn key_slots<'c>(
         Some(index) => index,
         None => {
             let layout_keys = &layouts[layout as usize];
-            let mut slots: Vec<u16> = keys
+            let mut fields: Vec<u16> = keys
                 .values()
                 .flatten()
                 .flatten()
-                .map(|field| layout_keys.slot(field))
-                // a key field the layout has no slot for is never there
-                .filter(|slot| *slot != NO_SLOT)
+                .map(|field| layout_keys.field_index(field))
+                // a key field the layout has no field index for is never there
+                .filter(|field_index| *field_index != NO_FIELD)
                 .collect();
-            slots.sort_unstable();
-            slots.dedup();
-            cache.push((layout, slots));
+            fields.sort_unstable();
+            fields.dedup();
+            cache.push((layout, fields));
             cache.len() - 1
         }
     };
     &cache[index].1
 }
 
-/// Hashes everything [`Representation`] reads to write a spot: its `__typename`, which key
+/// Hashes everything [`Representation`] reads to write an entity target: its `__typename`, which key
 /// fields it has, and the values of the selected fields, recursively. The writer is a function
-/// of these, so two spots with the same fingerprint get the same representation (64-bit hash,
+/// of these, so two entity targets with the same fingerprint get the same representation (64-bit hash,
 /// the same trust `Value::to_hash` gets today).
 struct Fingerprint<'r> {
     arena: &'r Arena,
-    layouts: &'r [Layout],
+    layouts: &'r [ObjectLayout],
     requires: &'r Requires,
     hasher: Mix,
 }
 
 impl<'r> Fingerprint<'r> {
     /// `reads` are the fields to hash when `value` is an object, see `Requires::reads`
-    /// `key_slots`: the spot's slots of every key field of the subgraph, see [`key_slots`]
-    fn value(&mut self, value: Slot, reads: std::ops::Range<u32>, key_slots: Option<&[u16]>) {
+    /// `key_fields`: the entity target's field indexes of every key field of the subgraph, see [`key_fields`]
+    fn value(&mut self, value: ValueCell, reads: std::ops::Range<u32>, key_fields: Option<&[u16]>) {
         match value {
-            Slot::Missing => self.hasher.word(0),
-            Slot::Null => self.hasher.word(1),
-            Slot::True => self.hasher.word(2),
-            Slot::False => self.hasher.word(3),
-            Slot::Raw(raw) => self.hasher.bytes(4, self.arena.raw(raw)),
-            Slot::List { start, len } => {
+            ValueCell::Missing => self.hasher.word(0),
+            ValueCell::Null => self.hasher.word(1),
+            ValueCell::True => self.hasher.word(2),
+            ValueCell::False => self.hasher.word(3),
+            ValueCell::RawJson(span) => self.hasher.bytes(4, self.arena.json(span)),
+            ValueCell::List { start, len } => {
                 self.hasher.word(5 | (len as u64) << 8);
                 for i in 0..len {
                     let item = self.arena.items[(start + i) as usize];
-                    self.value(item, reads.clone(), key_slots);
+                    self.value(item, reads.clone(), key_fields);
                 }
             }
-            Slot::Object { layout, first } => {
+            ValueCell::Object { layout, first } => {
                 let width = self.layouts[layout as usize].width() as u32;
                 if reads.is_empty() {
-                    // written whole: every slot counts
+                    // written whole: every cell counts
                     self.hasher.word(6);
                     for i in first..first + width {
-                        self.value(self.arena.slots[i as usize], 0..0, None);
+                        self.value(self.arena.cells[i as usize], 0..0, None);
                     }
                     return;
                 }
@@ -2522,34 +2549,34 @@ impl<'r> Fingerprint<'r> {
                 // fragments apply; different bytes only make the fingerprint differ, which is
                 // always safe
                 let typename = self.layouts[layout as usize].typename;
-                match (typename != NO_SLOT)
-                    .then(|| self.arena.slots[(first + typename as u32) as usize])
+                match (typename != NO_FIELD)
+                    .then(|| self.arena.cells[(first + typename as u32) as usize])
                 {
-                    Some(Slot::Raw(raw)) => self.hasher.bytes(7, self.arena.raw(raw)),
+                    Some(ValueCell::RawJson(span)) => self.hasher.bytes(7, self.arena.json(span)),
                     _ => self.hasher.word(8),
                 }
                 // what else the representation looks at: whether the object has anything at
                 // all, and which key fields it has (the complete-key check)
-                if let Some(key_slots) = key_slots {
-                    let block = &self.arena.slots[first as usize..(first + width) as usize];
-                    let mut mask = block.iter().any(|slot| *slot != Slot::Missing) as u64;
+                if let Some(key_fields) = key_fields {
+                    let block = &self.arena.cells[first as usize..(first + width) as usize];
+                    let mut mask = block.iter().any(|cell| *cell != ValueCell::Missing) as u64;
                     let mut bit = 1;
-                    for &slot in key_slots {
+                    for &field_index in key_fields {
                         if bit == 64 {
                             self.hasher.word(mask);
                             (mask, bit) = (0, 0);
                         }
-                        mask |= ((block[slot as usize] != Slot::Missing) as u64) << bit;
+                        mask |= ((block[field_index as usize] != ValueCell::Missing) as u64) << bit;
                         bit += 1;
                     }
                     self.hasher.word(mask);
                 }
                 let requires = self.requires;
                 for read in &requires.reads[reads.start as usize..reads.end as usize] {
-                    let get = |slot: u16| {
-                        (slot != NO_SLOT)
-                            .then(|| self.arena.slots[(first + slot as u32) as usize])
-                            .filter(|value| *value != Slot::Missing)
+                    let get = |field_index: u16| {
+                        (field_index != NO_FIELD)
+                            .then(|| self.arena.cells[(first + field_index as u32) as usize])
+                            .filter(|value| *value != ValueCell::Missing)
                     };
                     match get(read.by_name).or_else(|| get(read.by_alias)) {
                         Some(value) => self.value(value, read.children.clone(), None),

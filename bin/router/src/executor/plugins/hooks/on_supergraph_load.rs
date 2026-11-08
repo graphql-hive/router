@@ -91,7 +91,7 @@ impl TryFrom<&HiveRouterConfig> for SupergraphOptions {
                     })
                     .collect(),
                 entity_reuse: config.traffic_shaping.experimental_entity_reuse
-                    && config.query_planner.experimental_slot_pipeline,
+                    && config.query_planner.experimental_indexed_pipeline,
             },
             traffic_shaping: (&config.traffic_shaping).into(),
             override_subgraph_urls: config.override_subgraph_urls.clone(),

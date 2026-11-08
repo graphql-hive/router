@@ -11,7 +11,7 @@
 //!
 //! No field comes or goes, lists stay lists and objects stay objects.
 //!
-//! Nothing is copied or converted: the walk goes over the router's own storage (slots or a
+//! Nothing is copied or converted: the walk goes over the router's own storage (cells or a
 //! `Value` tree) and changes it in place before the response is written. Walking allocates
 //! nothing; a value a plugin sets is kept in a buffer the router reuses across requests.
 
@@ -22,6 +22,9 @@ use std::sync::Arc;
 use serde::Serialize;
 
 use crate::executor::execution::plan::CoerceVariablesPayload;
+use crate::executor::indexed::compile::IndexedResponsePlan;
+use crate::executor::indexed::store::{Arena, JsonSpan, ValueCell, EDITS_BODY};
+use crate::executor::indexed::write::write_data;
 use crate::executor::introspection::schema::{FieldNullability, FieldTypeInfo, SchemaMetadata};
 use crate::executor::projection::error::ProjectionError;
 use crate::executor::projection::plan::ProjectionPlan;
@@ -30,9 +33,6 @@ use crate::executor::response::graphql_error::{
     GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment,
 };
 use crate::executor::response::value::Value;
-use crate::executor::slots::compile::SlotPlan;
-use crate::executor::slots::store::{Arena, Raw, Slot, EDITS_BODY};
-use crate::executor::slots::write::write_data;
 use crate::query_planner::state::supergraph_state::OperationKind;
 
 /// Why a change to a value was refused. The value is left as it was.
@@ -69,10 +69,10 @@ pub struct ResponseData<'exec> {
 // one per request, the size difference doesn't matter
 #[allow(clippy::large_enum_variant)]
 enum Store<'exec> {
-    Slots {
+    Cells {
         arena: Arena,
-        plan: Arc<SlotPlan>,
-        data: Slot,
+        plan: Arc<IndexedResponsePlan>,
+        data: ValueCell,
     },
     Value {
         data: Value<'exec>,
@@ -81,16 +81,16 @@ enum Store<'exec> {
 }
 
 impl<'exec> ResponseData<'exec> {
-    pub(crate) fn from_slots(
+    pub(crate) fn from_cells(
         arena: Arena,
-        data: Slot,
-        plan: Arc<SlotPlan>,
+        data: ValueCell,
+        plan: Arc<IndexedResponsePlan>,
         schema: Arc<SchemaMetadata>,
         variables: Arc<CoerceVariablesPayload>,
         kind: OperationKind,
     ) -> Self {
         Self {
-            store: Store::Slots { arena, plan, data },
+            store: Store::Cells { arena, plan, data },
             schema,
             variables,
             kind,
@@ -114,11 +114,11 @@ impl<'exec> ResponseData<'exec> {
         }
     }
 
-    /// The slots back, with the errors plugins attached
-    pub(crate) fn into_slots(self) -> (Arena, Slot, Vec<GraphQLError>) {
+    /// The cells back, with the errors plugins attached
+    pub(crate) fn into_cells(self) -> (Arena, ValueCell, Vec<GraphQLError>) {
         match self.store {
-            Store::Slots { arena, data, .. } => (arena, data, self.errors),
-            Store::Value { .. } => unreachable!("the data of the slot pipeline is slots"),
+            Store::Cells { arena, data, .. } => (arena, data, self.errors),
+            Store::Value { .. } => unreachable!("the data of the indexed pipeline is cells"),
         }
     }
 
@@ -126,7 +126,7 @@ impl<'exec> ResponseData<'exec> {
     pub(crate) fn into_value(self) -> (Value<'exec>, Vec<GraphQLError>) {
         match self.store {
             Store::Value { data, .. } => (data, self.errors),
-            Store::Slots { .. } => unreachable!("the data of the Value pipeline is a Value"),
+            Store::Cells { .. } => unreachable!("the data of the Value pipeline is a Value"),
         }
     }
 
@@ -154,7 +154,7 @@ impl<'exec> ResponseData<'exec> {
         let variables = &self.variables.variables_map;
         let root = root_type(schema, &self.kind);
         let walked = match &mut self.store {
-            Store::Slots { arena, plan, data } => crate::executor::slots::walk::walk(
+            Store::Cells { arena, plan, data } => crate::executor::indexed::walk::walk(
                 arena,
                 plan,
                 *data,
@@ -187,7 +187,7 @@ impl<'exec> ResponseData<'exec> {
         let variables = &self.variables.variables_map;
         let root = root_type(schema, &self.kind);
         let written = match &self.store {
-            Store::Slots { arena, plan, data } => {
+            Store::Cells { arena, plan, data } => {
                 write_data(arena, plan, *data, Vec::new(), root, variables, 0, schema)
             }
             Store::Value { data, plan } => {
@@ -248,8 +248,8 @@ impl PathFrame<'_> {
 
 /// Where a value is stored
 pub(crate) enum Place<'w, 'v> {
-    /// `slots[index]` (a field of an object) or `items[index]` (an item of a list)
-    Slot {
+    /// `cells[index]` (a field of an object) or `items[index]` (an item of a list)
+    Cell {
         arena: &'w mut Arena,
         item: bool,
         index: u32,
@@ -384,10 +384,10 @@ impl<'w, 'v> DataValue<'w, 'v> {
         self.skip = true;
     }
 
-    fn slot(&self) -> Option<(Slot, &Arena)> {
+    fn cell(&self) -> Option<(ValueCell, &Arena)> {
         match &self.place {
-            Place::Slot { arena, item, index } => {
-                let table = if *item { &arena.items } else { &arena.slots };
+            Place::Cell { arena, item, index } => {
+                let table = if *item { &arena.items } else { &arena.cells };
                 Some((table[*index as usize], &**arena))
             }
             Place::Value(_) => None,
@@ -397,16 +397,16 @@ impl<'w, 'v> DataValue<'w, 'v> {
     fn value(&self) -> Option<&Value<'v>> {
         match &self.place {
             Place::Value(value) => Some(value),
-            Place::Slot { .. } => None,
+            Place::Cell { .. } => None,
         }
     }
 
     /// The bytes of a scalar as JSON, for numbers
     fn number_text(&self) -> Option<&str> {
-        let (Slot::Raw(raw), arena) = self.slot()? else {
+        let (ValueCell::RawJson(span), arena) = self.cell()? else {
             return None;
         };
-        let bytes = arena.raw(raw);
+        let bytes = arena.json(span);
         match bytes.first() {
             Some(b'-' | b'0'..=b'9') => std::str::from_utf8(bytes).ok(),
             _ => None,
@@ -414,30 +414,30 @@ impl<'w, 'v> DataValue<'w, 'v> {
     }
 
     pub fn is_null(&self) -> bool {
-        match self.slot() {
-            Some((slot, _)) => matches!(slot, Slot::Null | Slot::Missing),
+        match self.cell() {
+            Some((cell, _)) => matches!(cell, ValueCell::Null | ValueCell::Missing),
             None => matches!(self.value(), Some(Value::Null)),
         }
     }
 
     pub fn is_list(&self) -> bool {
-        match self.slot() {
-            Some((slot, _)) => matches!(slot, Slot::List { .. }),
+        match self.cell() {
+            Some((cell, _)) => matches!(cell, ValueCell::List { .. }),
             None => matches!(self.value(), Some(Value::Array(_))),
         }
     }
 
     pub fn is_object(&self) -> bool {
-        match self.slot() {
-            Some((slot, _)) => matches!(slot, Slot::Object { .. }),
+        match self.cell() {
+            Some((cell, _)) => matches!(cell, ValueCell::Object { .. }),
             None => matches!(self.value(), Some(Value::Object(_))),
         }
     }
 
     /// The number of items, for a list
     pub fn list_len(&self) -> Option<usize> {
-        match self.slot() {
-            Some((Slot::List { len, .. }, _)) => Some(len as usize),
+        match self.cell() {
+            Some((ValueCell::List { len, .. }, _)) => Some(len as usize),
             Some(_) => None,
             None => match self.value() {
                 Some(Value::Array(items)) => Some(items.len()),
@@ -449,8 +449,8 @@ impl<'w, 'v> DataValue<'w, 'v> {
     /// The value as a string, for a string or an enum. It's borrowed unless the string has
     /// escapes.
     pub fn as_str(&self) -> Option<Cow<'_, str>> {
-        match self.slot() {
-            Some((slot, arena)) => arena.string(slot),
+        match self.cell() {
+            Some((cell, arena)) => arena.string(cell),
             None => match self.value() {
                 Some(Value::String(value)) => Some(Cow::Borrowed(&**value)),
                 _ => None,
@@ -459,9 +459,9 @@ impl<'w, 'v> DataValue<'w, 'v> {
     }
 
     pub fn as_bool(&self) -> Option<bool> {
-        match self.slot() {
-            Some((Slot::True, _)) => Some(true),
-            Some((Slot::False, _)) => Some(false),
+        match self.cell() {
+            Some((ValueCell::True, _)) => Some(true),
+            Some((ValueCell::False, _)) => Some(false),
             Some(_) => None,
             None => match self.value() {
                 Some(Value::Bool(value)) => Some(*value),
@@ -471,7 +471,7 @@ impl<'w, 'v> DataValue<'w, 'v> {
     }
 
     pub fn as_i64(&self) -> Option<i64> {
-        if self.slot().is_some() {
+        if self.cell().is_some() {
             return self.number_text()?.parse().ok();
         }
         match self.value()? {
@@ -482,7 +482,7 @@ impl<'w, 'v> DataValue<'w, 'v> {
     }
 
     pub fn as_f64(&self) -> Option<f64> {
-        if self.slot().is_some() {
+        if self.cell().is_some() {
             return self.number_text()?.parse().ok();
         }
         match self.value()? {
@@ -507,42 +507,42 @@ impl<'w, 'v> DataValue<'w, 'v> {
             .ok_or(DataEditError::WrongType)?;
         let schema = self.schema;
         match &mut self.place {
-            Place::Slot { arena, item, index } => {
+            Place::Cell { arena, item, index } => {
                 let start = arena.edits.len();
                 serde_json::to_writer(&mut arena.edits, &value)
                     .map_err(|_| DataEditError::WrongType)?;
                 let json = &arena.edits[start..];
-                let slot = match fits(schema, type_name, json) {
-                    Ok(slot) => slot,
+                let cell = match fits(schema, type_name, json) {
+                    Ok(cell) => cell,
                     Err(error) => {
                         arena.edits.truncate(start);
                         return Err(error);
                     }
                 };
-                let slot = slot.unwrap_or(Slot::Raw(Raw {
+                let cell = cell.unwrap_or(ValueCell::RawJson(JsonSpan {
                     body: EDITS_BODY,
                     start: start as u32,
                     len: (arena.edits.len() - start) as u32,
                 }));
-                if !matches!(slot, Slot::Raw(_)) {
+                if !matches!(cell, ValueCell::RawJson(_)) {
                     arena.edits.truncate(start);
                 }
                 let table = if *item {
                     &mut arena.items
                 } else {
-                    &mut arena.slots
+                    &mut arena.cells
                 };
-                table[*index as usize] = slot;
+                table[*index as usize] = cell;
             }
             Place::Value(target) => {
                 // ponytail: the Value pipeline serializes into a new buffer and builds a new
-                // `Value`; it allocates, the slot pipeline doesn't
+                // `Value`; it allocates, the indexed pipeline doesn't
                 let json = serde_json::to_vec(&value).map_err(|_| DataEditError::WrongType)?;
-                let slot = fits(schema, type_name, &json)?;
-                **target = match slot {
-                    Some(Slot::Null) => Value::Null,
-                    Some(Slot::True) => Value::Bool(true),
-                    Some(Slot::False) => Value::Bool(false),
+                let cell = fits(schema, type_name, &json)?;
+                **target = match cell {
+                    Some(ValueCell::Null) => Value::Null,
+                    Some(ValueCell::True) => Value::Bool(true),
+                    Some(ValueCell::False) => Value::Bool(false),
                     _ => json_to_value(schema, type_name, json)?,
                 };
             }
@@ -554,13 +554,13 @@ impl<'w, 'v> DataValue<'w, 'v> {
     /// closest nullable parent when the response is written.
     pub fn set_null(&mut self) {
         match &mut self.place {
-            Place::Slot { arena, item, index } => {
+            Place::Cell { arena, item, index } => {
                 let table = if *item {
                     &mut arena.items
                 } else {
-                    &mut arena.slots
+                    &mut arena.cells
                 };
-                table[*index as usize] = Slot::Null;
+                table[*index as usize] = ValueCell::Null;
             }
             Place::Value(target) => **target = Value::Null,
         }
@@ -577,19 +577,19 @@ impl<'w, 'v> DataValue<'w, 'v> {
 }
 
 /// Whether `json` is a value of `type_name`. A value that isn't kept as bytes comes back as its
-/// slot (`null`, `true`, `false`); one that is, as `None`.
+/// cell (`null`, `true`, `false`); one that is, as `None`.
 fn fits(
     schema: &SchemaMetadata,
     type_name: &str,
     json: &[u8],
-) -> Result<Option<Slot>, DataEditError> {
+) -> Result<Option<ValueCell>, DataEditError> {
     match json {
-        b"null" => return Ok(Some(Slot::Null)),
+        b"null" => return Ok(Some(ValueCell::Null)),
         b"true" | b"false" if type_name == "Boolean" || schema.is_scalar_type(type_name) => {
             return Ok(Some(if json == b"true" {
-                Slot::True
+                ValueCell::True
             } else {
-                Slot::False
+                ValueCell::False
             }))
         }
         _ => {}
@@ -664,11 +664,11 @@ pub struct SubgraphData<'exec> {
 // one per fetch with end hooks, the size difference doesn't matter
 #[allow(clippy::large_enum_variant)]
 enum FetchStore<'exec> {
-    Slots {
+    Cells {
         arena: Arena,
-        plan: Arc<SlotPlan>,
+        plan: Arc<IndexedResponsePlan>,
         fetch: i64,
-        data: Slot,
+        data: ValueCell,
     },
     Value {
         data: Value<'exec>,
@@ -677,16 +677,16 @@ enum FetchStore<'exec> {
 }
 
 impl<'exec> SubgraphData<'exec> {
-    pub(crate) fn from_slots(
+    pub(crate) fn from_cells(
         arena: Arena,
-        data: Slot,
-        plan: Arc<SlotPlan>,
+        data: ValueCell,
+        plan: Arc<IndexedResponsePlan>,
         fetch: i64,
         schema: &'exec SchemaMetadata,
         kind: &OperationKind,
     ) -> Self {
         Self {
-            store: FetchStore::Slots {
+            store: FetchStore::Cells {
                 arena,
                 plan,
                 fetch,
@@ -712,11 +712,11 @@ impl<'exec> SubgraphData<'exec> {
         }
     }
 
-    /// The slots back, with the errors plugins attached
-    pub(crate) fn into_slots(self) -> (Arena, Slot, Vec<GraphQLError>) {
+    /// The cells back, with the errors plugins attached
+    pub(crate) fn into_cells(self) -> (Arena, ValueCell, Vec<GraphQLError>) {
         match self.store {
-            FetchStore::Slots { arena, data, .. } => (arena, data, self.errors),
-            FetchStore::Value { .. } => unreachable!("the data of the slot pipeline is slots"),
+            FetchStore::Cells { arena, data, .. } => (arena, data, self.errors),
+            FetchStore::Value { .. } => unreachable!("the data of the indexed pipeline is cells"),
         }
     }
 
@@ -724,7 +724,7 @@ impl<'exec> SubgraphData<'exec> {
     pub(crate) fn into_value(self) -> (Value<'exec>, Vec<GraphQLError>) {
         match self.store {
             FetchStore::Value { data, .. } => (data, self.errors),
-            FetchStore::Slots { .. } => unreachable!("the data of the Value pipeline is a Value"),
+            FetchStore::Cells { .. } => unreachable!("the data of the Value pipeline is a Value"),
         }
     }
 
@@ -735,13 +735,13 @@ impl<'exec> SubgraphData<'exec> {
     pub fn walk<F: FnMut(&mut DataValue<'_, '_>)>(&mut self, visit: F) {
         let schema = self.schema;
         let walked = match &mut self.store {
-            FetchStore::Slots {
+            FetchStore::Cells {
                 arena,
                 plan,
                 fetch,
                 data,
             } => match plan.fetches.get(fetch) {
-                Some(program) => crate::executor::slots::walk::walk_fetch(
+                Some(program) => crate::executor::indexed::walk::walk_fetch(
                     arena,
                     &plan.layouts,
                     &program.shape,

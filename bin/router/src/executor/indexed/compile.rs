@@ -1,18 +1,18 @@
-//! Builds a [`SlotPlan`] from a query plan and the projection plan of its operation.
+//! Builds a [`IndexedResponsePlan`] from a query plan and the projection plan of its operation.
 //!
 //! # Positions
 //!
 //! Every object in the response sits at a position: a response path from `data`, with the list
 //! steps and type conditions left out. `users.@.reviews.@.product` is the position
-//! `users.reviews.product`. Every object at one position gets the same layout: one slot per
+//! `users.reviews.product`. Every object at one position gets the same layout: one field index per
 //! response key that any fetch writes there, in the order the keys were first seen.
 //!
 //! One parsed entity can land in several positions: a `BatchFetch` alias with three paths parses
-//! each entity once and copies it into the spots of all three. So those positions are unioned,
+//! each entity once and copies it into the entity targets of all three. So those positions are unioned,
 //! and so are their children with the same key, all the way down. After that, an entity's block
-//! fits every spot it is copied into, slot for slot, and its nested objects can be shared by id.
+//! fits every entity target it is copied into, cell for cell, and its nested objects can be shared by id.
 //!
-//! Keys that only the client asks for (no fetch writes them) get no slot. The writer reads them
+//! Keys that only the client asks for (no fetch writes them) get no field index. The writer reads them
 //! as missing, which is what they are.
 //!
 //! Nothing here needs the schema: the layouts come from the fetch documents and the plan's paths.
@@ -34,13 +34,13 @@ use crate::query_planner::planner::plan_nodes::{
 };
 use crate::query_planner::state::supergraph_state::OperationKind;
 
-/// No slot: the key isn't written at this position.
-pub const NO_SLOT: u16 = u16::MAX;
+/// No field index: the key isn't written at this position.
+pub const NO_FIELD: u16 = u16::MAX;
 /// A shape node without an object under it.
 pub const NO_OBJECT: u32 = u32::MAX;
 
-/// The fetch id, in [`SlotPlan::fetches`], of the data the router has before the plan runs (see
-/// [`Seed`]). It's read into slots like a root fetch's response.
+/// The fetch id, in [`IndexedResponsePlan::fetches`], of the data the router has before the plan runs (see
+/// [`Seed`]). It's read into cells like a root fetch's response.
 pub const SEED_FETCH: i64 = i64::MIN;
 
 /// Data the router has before the plan runs, read into the root first
@@ -55,18 +55,18 @@ pub enum Seed<'a> {
     Subscription(&'a FetchNode),
 }
 
-/// Slots are `u16`s and `NO_SLOT` is taken: no layout can be wider.
-const MAX_WIDTH: usize = NO_SLOT as usize - 1;
+/// Field indexes are `u16`s and `NO_FIELD` is taken: no layout can be wider.
+const MAX_WIDTH: usize = NO_FIELD as usize - 1;
 
-pub struct SlotPlan {
+pub struct IndexedResponsePlan {
     /// The projection plan this was compiled with. A request with another one can't use it.
     pub projection: Arc<ProjectionPlan>,
-    pub layouts: Box<[Layout]>,
+    pub layouts: Box<[ObjectLayout]>,
     pub root_layout: u32,
-    /// For each field of the projection plan, its slot in the layout of the object it's read
+    /// For each field of the projection plan, its field index in the layout of the object it's read
     /// from, and the layout of the objects under it.
-    pub fields: Box<[FieldSlot]>,
-    /// Whether the root fields can take the writer's fast loop, see [`FieldSlot::SIMPLE`]
+    pub fields: Box<[OutputField]>,
+    /// Whether the root fields can take the writer's fast loop, see [`OutputField::SIMPLE`]
     pub root_simple: bool,
     /// For each field of the projection plan, its type in the schema when the object it's read
     /// from is of a known object type. Saves the writer two schema lookups per object for a
@@ -76,12 +76,12 @@ pub struct SlotPlan {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct FieldSlot {
-    pub slot: u16,
+pub struct OutputField {
+    pub field_index: u16,
     /// `"key":` padded to a fixed window, so the writer copies it with one fixed-size store.
     /// `key_len` is 0 when the key doesn't fit, then the writer writes it the slow way.
     pub key_len: u8,
-    /// [`FieldSlot::SIMPLE`]
+    /// [`OutputField::SIMPLE`]
     pub flags: u8,
     pub key: [u8; KEY_WINDOW],
 }
@@ -89,17 +89,17 @@ pub struct FieldSlot {
 /// 24 beat 16 and 32 on `kamil-slot-projection`
 pub const KEY_WINDOW: usize = 24;
 
-impl FieldSlot {
+impl OutputField {
     /// The field's children can take the writer's fast loop: none of them has a type guard,
     /// a condition or is `__typename`, and every key fits the window.
     pub const SIMPLE: u8 = 1;
 
-    fn new(slot: u16, key: &str) -> Self {
+    fn new(field_index: u16, key: &str) -> Self {
         let mut window = [0; KEY_WINDOW];
         let len = key.len() + 3;
         if len > KEY_WINDOW {
             return Self {
-                slot,
+                field_index,
                 key_len: 0,
                 flags: 0,
                 key: window,
@@ -110,7 +110,7 @@ impl FieldSlot {
         window[key.len() + 1] = b'"';
         window[key.len() + 2] = b':';
         Self {
-            slot,
+            field_index,
             key_len: len as u8,
             flags: 0,
             key: window,
@@ -119,48 +119,48 @@ impl FieldSlot {
 }
 
 #[derive(Debug, Default)]
-pub struct Layout {
-    /// The response key of each slot
+pub struct ObjectLayout {
+    /// The response key of each field index
     pub keys: Vec<Box<str>>,
     pub typename: u16,
 }
 
-impl Layout {
+impl ObjectLayout {
     #[inline]
     pub fn width(&self) -> usize {
         self.keys.len()
     }
 
-    pub fn slot(&self, key: &str) -> u16 {
+    pub fn field_index(&self, key: &str) -> u16 {
         self.keys
             .iter()
             .position(|k| &**k == key)
-            .map_or(NO_SLOT, |slot| slot as u16)
+            .map_or(NO_FIELD, |field_index| field_index as u16)
     }
 }
 
 pub struct FetchProgram {
-    pub shape: Shape,
-    /// The slots `data` keeps entities under, one per alias. Empty for a root fetch.
+    pub shape: FetchShape,
+    /// The fields `data` keeps entities under, one per alias. Empty for a root fetch.
     pub aliases: Vec<AliasProgram>,
     /// Where a root re-entry fetch merges its `data`
     pub merge_path: Option<PathProgram>,
 }
 
 pub struct AliasProgram {
-    /// The slot of the alias in the layout of `data`
-    pub slot: u16,
+    /// The field index of the alias in the layout of `data`
+    pub field_index: u16,
     pub paths: Vec<PathProgram>,
     pub requires: Requires,
     /// Where entities of this alias may already be in the response, when entity reuse is on
     pub reuse: Option<ReuseProgram>,
-    /// The `__typename` a spot's representation says instead of its own (planner input
+    /// The `__typename` an entity target's representation says instead of its own (planner input
     /// rewrites), applied in order
     pub typename: Box<[TypenameRewrite]>,
 }
 
 /// An entity sent as another type: the planner's input rewrite that sets `__typename` of an
-/// `@interfaceObject` (or interface) entity to the interface. It applies when the spot has a
+/// `@interfaceObject` (or interface) entity to the interface. It applies when the entity target has a
 /// `__typename` that is one of `types` (or implements one).
 #[derive(Debug, Clone)]
 pub struct TypenameRewrite {
@@ -233,13 +233,13 @@ fn renames(rewrites: Option<&[FetchRewrite]>, under: &[&str]) -> Result<Vec<Rena
     Ok(out)
 }
 
-/// An alias's planner `EntityReuse`, resolved to slots. A spot whose representation matches an
+/// An alias's planner `EntityReuse`, resolved to field indexes. An entity target whose representation matches an
 /// object at one of the sources is the same entity with the same inputs: the copied fields go
-/// from that object's slots into the spot's, and the spot isn't sent.
+/// from that object's cells into the entity target's, and the entity target isn't sent.
 pub struct ReuseProgram {
-    /// The layout of the alias's spots
+    /// The layout of the alias's entity targets
     pub target_layout: u32,
-    /// The slot of each copied field in the spots
+    /// The field index of each copied field in the entity targets
     pub copy: Box<[u16]>,
     pub sources: Vec<ReuseSource>,
 }
@@ -248,7 +248,7 @@ pub struct ReuseSource {
     pub path: PathProgram,
     /// The alias's representation, read at the source's position
     pub requires: Requires,
-    /// The slot of each copied field at the source, in `ReuseProgram::copy` order
+    /// The field index of each copied field at the source, in `ReuseProgram::copy` order
     pub copy: Box<[u16]>,
 }
 
@@ -256,13 +256,13 @@ pub type PathProgram = Box<[Step]>;
 
 #[derive(Debug)]
 pub enum Step {
-    /// The slot of the field
+    /// The field index of the field
     Field(u16),
     List,
     TypeCondition(Box<TypeCondition>),
 }
 
-/// A `@requires` selection, with the slots it reads resolved.
+/// A `@requires` selection, with the field indexes it reads resolved.
 #[derive(Debug, Default)]
 pub struct Requires {
     pub nodes: Vec<RequiresNode>,
@@ -317,7 +317,7 @@ impl Requires {
                     by_alias,
                     children,
                 } => {
-                    // `__typename` is read from the typename slot, which is hashed anyway
+                    // `__typename` is read from the typename cell, which is hashed anyway
                     if &**response_key != "__typename" {
                         out.push((*by_name, *by_alias, children.clone()));
                     }
@@ -335,7 +335,7 @@ pub enum RequiresNode {
     Field {
         /// The key written to the representation
         response_key: Box<str>,
-        /// The slot under the field's name, then the one under its alias (like
+        /// The field index under the field's name, then the one under its alias (like
         /// `project_requires`, which looks the name up first)
         by_name: u16,
         by_alias: u16,
@@ -348,9 +348,9 @@ pub enum RequiresNode {
 }
 
 /// The fetch's query, as the parser reads it: like `ResponseShape`, but every node knows its
-/// slot.
+/// field index.
 #[derive(Debug, Default)]
-pub struct Shape {
+pub struct FetchShape {
     pub objects: Vec<ShapeObject>,
     pub nodes: Vec<ShapeNode>,
     pub text: Vec<u8>,
@@ -385,11 +385,11 @@ pub struct ShapeNode {
 
     pub key_start: u32,
     pub key_len: u32,
-    pub slot: u16,
+    pub field_index: u16,
     /// The shape object of its value, `NO_OBJECT` for a leaf
     pub object: u32,
     /// A custom scalar, kept as the JSON it came as
-    pub raw: bool,
+    pub opaque_json: bool,
     /// A subtree the client gets exactly as the subgraph sends it, see [`Verify`]. `NO_OBJECT`
     /// when it isn't one.
     pub verify: u32,
@@ -405,7 +405,7 @@ pub struct ShapeNode {
 pub struct Verify {
     /// Nullability of the value, one byte per type level (see `ShapeFlags`)
     pub shape: Box<[u8]>,
-    /// The object it expects, an index into `Shape::verify_objects`, or `NO_OBJECT` for a
+    /// The object it expects, an index into `FetchShape::verify_objects`, or `NO_OBJECT` for a
     /// scalar
     pub object: u32,
     /// For an enum: the values a string may be
@@ -420,14 +420,14 @@ pub struct VerifyObject {
     pub fields: Vec<(u32, Verify)>,
 }
 
-impl Shape {
-    /// A field's name in the schema, see [`Shape::names`]
+impl FetchShape {
+    /// A field's name in the schema, see [`FetchShape::names`]
     pub fn name(&self, node: usize) -> &str {
         let (start, len) = self.names[node];
         std::str::from_utf8(&self.text[start as usize..(start + len) as usize]).unwrap_or("")
     }
 
-    /// The type of an object's fields, see [`Shape::object_types`]
+    /// The type of an object's fields, see [`FetchShape::object_types`]
     pub fn object_type(&self, object: u32) -> Option<&str> {
         let (start, len) = self.object_types[object as usize];
         (len > 0)
@@ -553,7 +553,7 @@ fn copy_keys<'s>(selections: RequiresSelectionSetRef<'s>, keys: &mut Vec<&'s str
     Some(())
 }
 
-/// Why a plan can't use the slot pipeline. Only for logs and tests.
+/// Why a plan can't use the indexed pipeline. Only for logs and tests.
 #[derive(Debug)]
 pub struct Unsupported(pub &'static str);
 
@@ -587,12 +587,12 @@ type PlanAlias<'p> = (
 );
 
 struct PendingFetch<'p> {
-    shape: Shape,
+    shape: FetchShape,
     aliases: Vec<PendingAlias<'p>>,
     merge_path: Option<&'p [PathSegment]>,
 }
 
-impl SlotPlan {
+impl IndexedResponsePlan {
     pub fn compile(
         plan: &QueryPlan,
         projection: &Arc<ProjectionPlan>,
@@ -600,7 +600,7 @@ impl SlotPlan {
         root_type: &str,
         seed: Seed,
         entity_reuse: bool,
-    ) -> Result<SlotPlan, Unsupported> {
+    ) -> Result<IndexedResponsePlan, Unsupported> {
         let mut compiler = Compiler {
             positions: Positions::default(),
             root: 0,
@@ -765,7 +765,7 @@ impl<'p> Compiler<'p> {
             fragments: &fragments,
             renames: &renames,
             trail: Vec::new(),
-            shape: Shape::default(),
+            shape: FetchShape::default(),
         };
 
         // `data` of an entity fetch is a position of its own, its keys are the aliases
@@ -803,7 +803,7 @@ impl<'p> Compiler<'p> {
         projection: &Arc<ProjectionPlan>,
         schema: &SchemaMetadata,
         root_type: &str,
-    ) -> Result<SlotPlan, Unsupported> {
+    ) -> Result<IndexedResponsePlan, Unsupported> {
         let entity_reuse = self.entity_reuse;
         // one layout per class
         let mut layout_of: AHashMap<u32, u32> = AHashMap::default();
@@ -817,11 +817,11 @@ impl<'p> Compiler<'p> {
             if keys.len() > MAX_WIDTH {
                 return Err(Unsupported("object too wide"));
             }
-            let mut layout = Layout {
+            let mut layout = ObjectLayout {
                 keys,
-                typename: NO_SLOT,
+                typename: NO_FIELD,
             };
-            layout.typename = layout.slot("__typename");
+            layout.typename = layout.field_index("__typename");
             layout_of.insert(rep, layouts.len() as u32);
             layouts.push(layout);
         }
@@ -855,7 +855,7 @@ impl<'p> Compiler<'p> {
                         )
                         .expect("keys come from a str"),
                     };
-                    shape.nodes[node_index as usize].slot = keys.slot(key);
+                    shape.nodes[node_index as usize].field_index = keys.field_index(key);
                 }
             }
             let data_layout = shape.objects[0].layout as usize;
@@ -871,7 +871,7 @@ impl<'p> Compiler<'p> {
                         .filter(|_| entity_reuse)
                         .and_then(|reuse| ctx.reuse(items, requires, reuse));
                     AliasProgram {
-                        slot: layouts[data_layout].slot(&key),
+                        field_index: layouts[data_layout].field_index(&key),
                         paths: merge_paths.iter().map(|path| ctx.path(path)).collect(),
                         requires: program,
                         reuse,
@@ -891,7 +891,7 @@ impl<'p> Compiler<'p> {
         }
 
         // the projection plan's fields, by walking it along the positions
-        let mut fields = vec![FieldSlot::new(NO_SLOT, ""); projection.field_count()];
+        let mut fields = vec![OutputField::new(NO_FIELD, ""); projection.field_count()];
         let mut field_types = vec![None; projection.field_count()];
         ctx.projection(
             projection,
@@ -903,7 +903,7 @@ impl<'p> Compiler<'p> {
             &mut field_types,
         );
 
-        let simple = |range: crate::executor::projection::plan::Range, fields: &[FieldSlot]| {
+        let simple = |range: crate::executor::projection::plan::Range, fields: &[OutputField]| {
             projection
                 .fields(range)
                 .iter()
@@ -919,7 +919,7 @@ impl<'p> Compiler<'p> {
         for index in 0..fields.len() {
             let record = projection.field_at(index);
             if record.has_children() && simple(record.children, &fields) {
-                fields[index].flags |= FieldSlot::SIMPLE;
+                fields[index].flags |= OutputField::SIMPLE;
             }
         }
 
@@ -943,7 +943,7 @@ impl<'p> Compiler<'p> {
         passthrough.count_readers(projection.root_range(), Some(self.root));
         passthrough.walk(projection.root_range(), Some(self.root));
 
-        Ok(SlotPlan {
+        Ok(IndexedResponsePlan {
             projection: Arc::clone(projection),
             layouts: layouts.into(),
             root_layout,
@@ -956,13 +956,13 @@ impl<'p> Compiler<'p> {
 }
 
 /// Positions with their layouts known. Walks paths, requires and the projection plan along them,
-/// without making new positions: what no fetch writes has no slot.
+/// without making new positions: what no fetch writes has no field index.
 struct Resolved<'c> {
     positions: &'c mut Positions,
     layout_of: &'c AHashMap<u32, u32>,
-    layouts: &'c [Layout],
+    layouts: &'c [ObjectLayout],
     root: u32,
-    /// Classes that paths walk through or requires read: they must stay slots, never a raw
+    /// Classes that paths walk through or requires read: they must stay cells, never a raw
     /// passthrough
     touched: &'c mut AHashSet<u32>,
 }
@@ -973,9 +973,9 @@ impl Resolved<'_> {
         self.layout_of.get(&rep).copied()
     }
 
-    fn slot(&mut self, p: Option<u32>, key: &str) -> u16 {
+    fn field_index(&mut self, p: Option<u32>, key: &str) -> u16 {
         p.and_then(|p| self.layout(p))
-            .map_or(NO_SLOT, |l| self.layouts[l as usize].slot(key))
+            .map_or(NO_FIELD, |l| self.layouts[l as usize].field_index(key))
     }
 
     fn path(&mut self, path: &[PathSegment]) -> PathProgram {
@@ -984,7 +984,7 @@ impl Resolved<'_> {
         for segment in path {
             match segment {
                 PathSegment::Field(key) => {
-                    steps.push(Step::Field(self.slot(p, key)));
+                    steps.push(Step::Field(self.field_index(p, key)));
                     p = p.and_then(|p| self.positions.existing_child(p, key));
                     if let Some(p) = p {
                         let class = self.positions.find(p);
@@ -1001,7 +1001,7 @@ impl Resolved<'_> {
     }
 
     /// Resolves an alias's `EntityReuse`. None when the copy isn't plain leaf fields, or no
-    /// source has a slot for every one of them.
+    /// source has a field index for every one of them.
     fn reuse(
         &mut self,
         items: u32,
@@ -1011,14 +1011,14 @@ impl Resolved<'_> {
         let target_layout = self.layout(items)?;
         let mut keys = Vec::new();
         copy_keys(reuse.copy.root_selections(), &mut keys)?;
-        let slots_of = |layout: u32, layouts: &[Layout]| -> Option<Box<[u16]>> {
-            let slots: Box<[u16]> = keys
+        let fields_of = |layout: u32, layouts: &[ObjectLayout]| -> Option<Box<[u16]>> {
+            let fields: Box<[u16]> = keys
                 .iter()
-                .map(|key| layouts[layout as usize].slot(key))
+                .map(|key| layouts[layout as usize].field_index(key))
                 .collect();
-            (!slots.contains(&NO_SLOT)).then_some(slots)
+            (!fields.contains(&NO_FIELD)).then_some(fields)
         };
-        let copy = slots_of(target_layout, self.layouts)?;
+        let copy = fields_of(target_layout, self.layouts)?;
         let mut sources = Vec::new();
         for source in &reuse.sources {
             let mut p = Some(self.root);
@@ -1030,7 +1030,7 @@ impl Resolved<'_> {
             let Some(layout) = p.and_then(|p| self.layout(p)) else {
                 continue;
             };
-            let Some(source_copy) = slots_of(layout, self.layouts) else {
+            let Some(source_copy) = fields_of(layout, self.layouts) else {
                 continue;
             };
             let mut program = Requires::default();
@@ -1072,10 +1072,11 @@ impl Resolved<'_> {
                     selections,
                     ..
                 } => {
-                    let by_name = self.slot(position, name);
-                    let by_alias = alias.map_or(NO_SLOT, |alias| self.slot(position, alias));
+                    let by_name = self.field_index(position, name);
+                    let by_alias =
+                        alias.map_or(NO_FIELD, |alias| self.field_index(position, alias));
                     // the value is read under the name first, so its objects are there
-                    let child_key = if by_name != NO_SLOT {
+                    let child_key = if by_name != NO_FIELD {
                         name
                     } else {
                         alias.unwrap_or(name)
@@ -1124,13 +1125,13 @@ impl Resolved<'_> {
         position: Option<u32>,
         parent_type: Option<&str>,
         schema: &SchemaMetadata,
-        out: &mut [FieldSlot],
+        out: &mut [OutputField],
         types: &mut [Option<Box<str>>],
     ) {
         for (offset, field) in plan.fields(range).iter().enumerate() {
             let key = plan.response_key(field);
             let index = range.start as usize + offset;
-            out[index] = FieldSlot::new(self.slot(position, key), key);
+            out[index] = OutputField::new(self.field_index(position, key), key);
             // only an object type is the same at runtime, an interface's object can be any of
             // its types, and so can the type of its fields
             let field_type = parent_type
@@ -1151,7 +1152,7 @@ impl Resolved<'_> {
 struct Passthrough<'c> {
     plan: &'c ProjectionPlan,
     touched: AHashSet<u32>,
-    /// See `SlotPlan::field_types`
+    /// See `IndexedResponsePlan::field_types`
     field_types: &'c [Option<Box<str>>],
     /// How many fields of the projection plan read the objects of each class. Two fields can
     /// select different things from one position (one per type, say), and a passthrough can
@@ -1259,7 +1260,7 @@ impl Passthrough<'_> {
             }
             match (field.has_children(), node.object) {
                 (false, NO_OBJECT) => {}
-                (true, child_object) if child_object != NO_OBJECT && !node.raw => {
+                (true, child_object) if child_object != NO_OBJECT && !node.opaque_json => {
                     let Some(child) = self.positions.existing_child(position, key) else {
                         return false;
                     };
@@ -1317,7 +1318,7 @@ impl Passthrough<'_> {
                     shape: plan.shape(child.nullability()).into(),
                     object: NO_OBJECT,
                     enum_values: self.enum_values(child),
-                    any: child_node.raw,
+                    any: child_node.opaque_json,
                 }
             };
             verify_object.fields.push((node, verify));
@@ -1409,7 +1410,7 @@ struct ShapeBuilder<'d, 'a> {
     renames: &'d [Rename],
     /// The keys from `data` to the object being built
     trail: Vec<&'a str>,
-    shape: Shape,
+    shape: FetchShape,
 }
 
 impl<'d, 'a> ShapeBuilder<'d, 'a> {
@@ -1476,10 +1477,10 @@ impl<'d, 'a> ShapeBuilder<'d, 'a> {
                 key_colon: u128::from_le_bytes(key_colon),
                 key_start,
                 key_len: quoted.len() as u32,
-                slot: NO_SLOT,
+                field_index: NO_FIELD,
                 object: NO_OBJECT,
                 verify: NO_OBJECT,
-                raw: paths
+                opaque_json: paths
                     .and_then(|paths| paths.child(key))
                     .is_some_and(|paths| paths.terminal),
             });
@@ -1489,7 +1490,7 @@ impl<'d, 'a> ShapeBuilder<'d, 'a> {
         for (offset, (key, _, sets)) in fields.iter().enumerate() {
             let node = start as usize + offset;
             // a leaf keeps whatever is under it as it came, custom scalars included
-            if self.shape.nodes[node].raw || sets.is_empty() {
+            if self.shape.nodes[node].opaque_json || sets.is_empty() {
                 continue;
             }
             let child_position =

@@ -108,7 +108,7 @@ impl<'exec> OnSubgraphExecuteEndHookPayload<'exec> {
 /// A subgraph's `extensions`, as the pipeline has them
 pub(crate) enum SubgraphExtensions<'exec> {
     None,
-    /// Their JSON, from the body the slot pipeline read
+    /// Their JSON, from the body the indexed pipeline read
     Json(bytes::Bytes),
     /// What the Value pipeline read
     Value(Value<'exec>),

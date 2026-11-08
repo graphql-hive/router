@@ -100,9 +100,9 @@ pub struct SubgraphExecutionRequest<'a> {
     pub custom_scalar_paths: Option<&'a CustomScalarPaths>,
     /// The fields the response has, to read it faster
     pub response_shape: Option<&'a ResponseShape>,
-    /// Return the body as it came (`SubgraphResponse::bytes`), without parsing it. The slot
+    /// Return the body as it came (`SubgraphResponse::bytes`), without parsing it. The indexed
     /// pipeline reads it itself. Executors that can't do that parse it as usual.
-    pub raw_response: bool,
+    pub unparsed_body: bool,
     /// Identifies an existing pooled connection that may execute this request.
     ///
     /// `None` disables pooled lookup and preserves the request's normal transport behavior.

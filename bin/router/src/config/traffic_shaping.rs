@@ -27,8 +27,8 @@ pub struct TrafficShapingConfig {
     #[serde(default)]
     pub http_client_mode: HttpClientMode,
     /// Copy entities that are already in the response instead of asking a subgraph for them
-    /// again. Experimental, off by default. Only requests on the slot pipeline
-    /// (`query_planner.experimental_slot_pipeline`) copy.
+    /// again. Experimental, off by default. Only requests on the indexed pipeline
+    /// (`query_planner.experimental_indexed_pipeline`) copy.
     ///
     /// Can also be set using the `ROUTER_EXPERIMENTAL_ENTITY_REUSE` environment variable.
     #[serde(default)]

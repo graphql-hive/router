@@ -22,6 +22,6 @@ payload.on_end(|mut payload| {
 
 Each value knows its field (`field_name`, `response_key`, `parent_type`, `is("Type", "field")`), its position (`index`, `path`, `is_non_null`) and can be read (`as_str`, `as_i64`, `as_f64`, `as_bool`, `is_null`, `list_len`). `skip_children` leaves out what's under a value. `to_json` returns the data as the client will get it.
 
-The walk reads and changes the router's own storage in place, on both execution pipelines. Walking allocates nothing, and on the slot pipeline neither does setting values: they go into a buffer reused across requests.
+The walk reads and changes the router's own storage in place, on both execution pipelines. Walking allocates nothing, and on the indexed pipeline neither does setting values: they go into a buffer reused across requests.
 
 Plugins that read `payload.data` as a `Value`, or replaced it, need to move to `walk`.

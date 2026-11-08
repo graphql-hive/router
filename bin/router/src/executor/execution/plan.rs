@@ -92,7 +92,7 @@ use crate::query_planner::state::entity_keys::KeysByType;
 
 pub type VariablesMap = HashMap<String, sonic_rs::Value>;
 
-mod slots;
+mod indexed;
 
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -156,8 +156,8 @@ pub struct QueryPlanExecutionOpts<'exec> {
     pub response_header_sink: ResponseHeaderSink,
     pub error_masking_runtime: Arc<Option<ErrorMaskingRuntime>>,
     pub connection_fingerprint: Option<ConnectionFingerprint>,
-    /// The plan compiled for the slot pipeline, when the router has it on
-    pub slot_plan: Option<Arc<crate::executor::slots::SlotPlanCell>>,
+    /// The plan compiled for the indexed pipeline, when the router has it on
+    pub indexed_plan: Option<Arc<crate::executor::indexed::IndexedPlanCache>>,
 }
 
 pub struct PlanSubscriptionOutput {
@@ -293,10 +293,10 @@ pub async fn execute_query_plan<'exec>(
             }),
         });
 
-        // the slot pipeline runs each event: the plan above, with the event read in like the
+        // the indexed pipeline runs each event: the plan above, with the event read in like the
         // subscription fetch's response, compiled once for the stream
-        let slot_plan = opts.slot_plan.is_some().then(|| {
-            crate::executor::slots::SlotPlanCell::for_subscription(
+        let indexed_plan = opts.indexed_plan.is_some().then(|| {
+            crate::executor::indexed::IndexedPlanCache::for_subscription(
                 &query_plan,
                 &opts.projection_plan,
                 &opts.introspection_context.metadata,
@@ -337,8 +337,8 @@ pub async fn execute_query_plan<'exec>(
             extensions: None,
             custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
             response_shape: fetch_node.operation.response_shape.as_deref(),
-            // the slot pipeline reads each event's body itself
-            raw_response: slot_plan.as_ref().is_some_and(|cell| cell.compiled()),
+            // the indexed pipeline reads each event's body itself
+            unparsed_body: indexed_plan.as_ref().is_some_and(|cell| cell.compiled()),
             connection_fingerprint: opts.connection_fingerprint,
         };
 
@@ -457,7 +457,7 @@ pub async fn execute_query_plan<'exec>(
                     response_header_sink: response_header_sink.clone(),
                     error_masking_runtime: opts.error_masking_runtime.clone(),
                     connection_fingerprint: opts.connection_fingerprint,
-                    slot_plan: slot_plan.clone(),
+                    indexed_plan: indexed_plan.clone(),
                 };
                 match execute_query_plan_with_data(StartData::Event(response, &subgraph_name), opts).await {
                     Ok(result) => yield result.body,
@@ -498,7 +498,7 @@ pub(crate) enum StartData<'exec> {
     /// in. `None` is `{}`.
     Json(Option<Bytes>),
     /// A subscription event from a subgraph, its errors already taken out. Its body as it came
-    /// when the slot pipeline asked for it (see `SubgraphResponse::from_body`).
+    /// when the indexed pipeline asked for it (see `SubgraphResponse::from_body`).
     Event(SubgraphResponse<'exec>, &'exec str),
 }
 
@@ -506,8 +506,8 @@ async fn execute_query_plan_with_data<'exec>(
     start: StartData<'exec>,
     mut opts: QueryPlanExecutionOpts<'exec>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
-    if let Some(slot_plan) = slots::usable(&opts) {
-        return slots::execute(opts, slot_plan, start).await;
+    if let Some(indexed_plan) = indexed::usable(&opts) {
+        return indexed::execute(opts, indexed_plan, start).await;
     }
     let (mut data, event) = match start {
         StartData::Json(json) => (json, None),
@@ -573,8 +573,8 @@ async fn execute_query_plan_with_data<'exec>(
     let mut exec_ctx = ExecutionContext::new(Value::Null, errors);
     exec_ctx.data = match event {
         Some(mut event) => {
-            // only the slot pipeline asks for events as they came, this is a guard
-            if event.is_raw() {
+            // only the indexed pipeline asks for events as they came, this is a guard
+            if event.has_unparsed_body() {
                 event = read_plugin_response(event, None, None);
                 exec_ctx
                     .errors
@@ -800,7 +800,7 @@ pub enum ExecutionJob<'exec> {
         subgraph_name: &'exec str,
         operation: &'exec SubgraphFetchOperation,
         response: SubgraphResponse<'exec>,
-        /// Plugins' end hooks the slot pipeline runs once it has read the body (the Value
+        /// Plugins' end hooks the indexed pipeline runs once it has read the body (the Value
         /// pipeline already ran them)
         end_hooks: Vec<OnSubgraphExecuteEndCallback<'exec>>,
         operation_kind: Option<&'exec OperationKind>,
@@ -989,8 +989,8 @@ struct PrepareExecutionJobOpts<'exec> {
     raw_variable_values: Option<Vec<(&'exec str, Vec<u8>)>>,
     // and the path to the representations in the original response for error handling and normalization
     affected_path: Option<ResponsePathRef<'exec>>,
-    // Return the body unparsed, for the slot pipeline
-    raw_response: bool,
+    // Return the body unparsed, for the indexed pipeline
+    unparsed_body: bool,
 }
 
 impl<'exec> Executor<'exec> {
@@ -1047,7 +1047,7 @@ impl<'exec> Executor<'exec> {
             custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
             raw_variable_values: None,
             affected_path: Some(flatten_node.path.as_ref()),
-            raw_response: false,
+            unparsed_body: false,
         })
         .boxed()
     }
@@ -1265,7 +1265,7 @@ impl<'exec> Executor<'exec> {
                     custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
                     raw_variable_values: None,
                     affected_path: None,
-                    raw_response: false,
+                    unparsed_body: false,
                 })
                 .boxed()],
             PlanNode::BatchFetch(batch_fetch_node) => {
@@ -1309,7 +1309,7 @@ impl<'exec> Executor<'exec> {
                             custom_scalar_paths,
                             raw_variable_values: Some(variables),
                             affected_path: None,
-                            raw_response: false,
+                            unparsed_body: false,
                         })
                         .map_ok(move |fetch_job| {
                             let mut response = fetch_job.response();
@@ -1379,7 +1379,7 @@ impl<'exec> Executor<'exec> {
                             custom_scalar_paths,
                             raw_variable_values: Some(variables),
                             affected_path: Some(flatten_node.path.as_ref()),
-                            raw_response: false,
+                            unparsed_body: false,
                         })
                         .map_ok(move |fetch_job| {
                             let mut response = fetch_job.response();
@@ -1965,7 +1965,7 @@ impl<'exec> Executor<'exec> {
             response.extensions = Some(extensions);
         }
         if let Some(replaced) = outcome.replaced {
-            return if replaced.is_raw() {
+            return if replaced.has_unparsed_body() {
                 read_plugin_response(
                     replaced,
                     operation.response_shape.as_deref(),
@@ -2018,7 +2018,7 @@ impl<'exec> Executor<'exec> {
                 extensions: None,
                 custom_scalar_paths: opts.custom_scalar_paths,
                 response_shape: opts.operation.response_shape.as_deref(),
-                raw_response: opts.raw_response,
+                unparsed_body: opts.unparsed_body,
                 connection_fingerprint: self.connection_fingerprint,
             };
 
@@ -2054,9 +2054,9 @@ impl<'exec> Executor<'exec> {
                     subgraph_name: subgraph_name_factory,
                     affected_path: affected_path_factory,
                 })?;
-            // the Value pipeline runs the plugins' end hooks on the data it just read; the slot
-            // pipeline runs them once it has read the body into slots
-            let end_hooks = if opts.raw_response {
+            // the Value pipeline runs the plugins' end hooks on the data it just read; the
+            // indexed pipeline runs them once it has read the body into cells
+            let end_hooks = if opts.unparsed_body {
                 end_hooks
             } else {
                 if !end_hooks.is_empty() {
@@ -2079,8 +2079,8 @@ impl<'exec> Executor<'exec> {
                 }
             }
 
-            // the slot pipeline adds it once it has read the body, after the body's errors
-            if let Some(status) = response.status.filter(|_| !response.is_raw()) {
+            // the indexed pipeline adds it once it has read the body, after the body's errors
+            if let Some(status) = response.status.filter(|_| !response.has_unparsed_body()) {
                 if !status.is_success() {
                     response.append_error(GraphQLError::create_from_status_code(
                         &status,
