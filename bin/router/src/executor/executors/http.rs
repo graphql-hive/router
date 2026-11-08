@@ -742,6 +742,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         SubgraphExecutorError,
     > {
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
+        let raw = execution_request.raw_response;
         let buffer_capacity = self.subgraph_buffer_capacity;
         let body = build_request_body(&execution_request)?;
 
@@ -823,6 +824,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 boundary,
                 body_stream,
                 custom_scalar_paths.clone(),
+                raw,
             );
 
             let op_guard = self
@@ -878,7 +880,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 "using SSE for subscription connection to subgraph",
             );
 
-            let stream = sse::parse_to_stream(body_stream, custom_scalar_paths.clone());
+            let stream = sse::parse_to_stream(body_stream, custom_scalar_paths.clone(), raw);
 
             let op_guard = self
                 .telemetry_context

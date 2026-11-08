@@ -2,6 +2,7 @@ use super::context::{
     collect_context_entities, unalias_response, AliasedRequests, ContextGroup, EntityRef,
     TargetEntities,
 };
+use bytes::Bytes;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::vec;
@@ -335,7 +336,8 @@ pub async fn execute_query_plan<'exec>(
             extensions: None,
             custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
             response_shape: fetch_node.operation.response_shape.as_deref(),
-            raw_response: false,
+            // the slot pipeline reads each event's body itself
+            raw_response: slot_plan.as_ref().is_some_and(|cell| cell.compiled()),
             connection_fingerprint: opts.connection_fingerprint,
         };
 
@@ -414,8 +416,9 @@ pub async fn execute_query_plan<'exec>(
                         return;
                     }
                 };
+                let mut response = response;
                 let mut initial_errors = opts.initial_errors.clone();
-                if let Some(new_errors) = response.errors {
+                if let Some(new_errors) = response.errors.take() {
                     initial_errors.extend(new_errors);
                 }
                 let opts = QueryPlanExecutionOpts {
@@ -455,7 +458,7 @@ pub async fn execute_query_plan<'exec>(
                     connection_fingerprint: opts.connection_fingerprint,
                     slot_plan: slot_plan.clone(),
                 };
-                match execute_query_plan_with_data(response.data, opts).await {
+                match execute_query_plan_with_data(StartData::Event(response), opts).await {
                     Ok(result) => yield result.body,
                     Err(ref err) => {
                         // fatal error, stream it and stop
@@ -475,27 +478,40 @@ pub async fn execute_query_plan<'exec>(
 
     // query or mutation
 
-    let introspection_context_clone = Arc::clone(&opts.introspection_context);
     // An operation without fields, like `{ topProducts @skip(if: true) { name } }`,
     // still has `{}` as its data.
-    let data = if let Some(introspection_query) = &introspection_context_clone.query {
-        resolve_introspection(introspection_query, &introspection_context_clone)
-    } else {
-        Value::Object(Vec::new())
-    };
+    let introspection = &opts.introspection_context;
+    let data = introspection
+        .query
+        .as_ref()
+        .map(|query| Bytes::from(resolve_introspection(query, introspection)));
 
-    let output = execute_query_plan_with_data(data, opts).await?;
+    let output = execute_query_plan_with_data(StartData::Json(data), opts).await?;
 
     Ok(QueryPlanExecutionResult::Single(output))
 }
 
+/// The data the router has before the plan runs
+pub(crate) enum StartData<'exec> {
+    /// A JSON object: the introspection result, or what a plugin's `on_execute` start hook put
+    /// in. `None` is `{}`.
+    Json(Option<Bytes>),
+    /// A subscription event, its errors already taken out. Its body as it came when the slot
+    /// pipeline asked for it (see `SubgraphResponse::from_body`).
+    Event(SubgraphResponse<'exec>),
+}
+
 async fn execute_query_plan_with_data<'exec>(
-    mut data: Value<'exec>,
+    start: StartData<'exec>,
     mut opts: QueryPlanExecutionOpts<'exec>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
     if let Some(slot_plan) = slots::usable(&opts) {
-        return slots::execute(opts, slot_plan, data).await;
+        return slots::execute(opts, slot_plan, start).await;
     }
+    let (mut data, event) = match start {
+        StartData::Json(json) => (json, None),
+        StartData::Event(event) => (None, Some(event)),
+    };
     // declared first so it outlives everything that borrows from it
     let aliased_requests = AliasedRequests::default();
     let mut errors = opts.initial_errors;
@@ -553,7 +569,22 @@ async fn execute_query_plan_with_data<'exec>(
         opts.extensions.extensions = start_payload.extensions;
     }
 
-    let mut exec_ctx = ExecutionContext::new(data, errors);
+    let mut exec_ctx = ExecutionContext::new(Value::Null, errors);
+    exec_ctx.data = match event {
+        Some(mut event) => {
+            // only the slot pipeline asks for events as they came, this is a guard
+            if event.is_raw() {
+                event = read_plugin_response(event, None, None);
+                exec_ctx
+                    .errors
+                    .extend(event.errors.take().unwrap_or_default());
+            }
+            // the event's data borrows from its body: the context keeps the body as long
+            exec_ctx.keep_body(event.bytes.take());
+            event.data
+        }
+        None => exec_ctx.read_start_data(data),
+    };
     // No need for `new`, it has too many parameters
     // We can directly create `Executor` instance here
     let executor = Executor {

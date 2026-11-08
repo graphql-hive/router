@@ -395,6 +395,8 @@ async fn initialize_connection(
 struct ConnectionCommand {
     payload: SubscribePayload,
     custom_scalar_paths: Option<CustomScalarPaths>,
+    /// Hand each response over unread, see `SubgraphResponse::from_body`
+    raw: bool,
     responses: mpsc::Sender<SubscriptionItem>,
     ready: oneshot::Sender<Result<(), WsClientError>>,
 }
@@ -451,12 +453,14 @@ impl PooledWebSocketExecutor {
         })?;
 
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
+        let raw = execution_request.raw_response;
         let payload = SubscribePayload::try_from(execution_request)?;
         let (responses, receiver) = mpsc::channel(response_capacity);
         let (ready, ready_rx) = oneshot::channel();
         permit.send(ConnectionCommand {
             payload,
             custom_scalar_paths,
+            raw,
             responses,
             ready,
         });
@@ -645,6 +649,7 @@ impl ConnectionOwner {
                     let Some(ConnectionCommand {
                         payload,
                         custom_scalar_paths,
+                        raw,
                         responses,
                         ready,
                     }) = command else {
@@ -665,7 +670,7 @@ impl ConnectionOwner {
                     // and one sink. the cancellation branch is safe because WsClient removes a
                     // partially registered operation with its own drop guard.
                     let subscribe_result = {
-                        let subscribe = self.client.subscribe(payload, custom_scalar_paths);
+                        let subscribe = self.client.subscribe_reading(payload, custom_scalar_paths, raw);
                         tokio::pin!(subscribe);
                         tokio::select! {
                             result = &mut subscribe => Some(result),

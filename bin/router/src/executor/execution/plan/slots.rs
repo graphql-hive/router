@@ -7,12 +7,11 @@ use super::*;
 use crate::executor::executors::error::SubgraphExecutorError;
 use crate::executor::extensions::aggregator::apply_subgraph_extensions_json;
 use crate::executor::introspection::schema::PossibleTypes;
-use crate::executor::projection::response::serialize_value_to_buffer;
 use crate::executor::slots::compile::{
     AliasProgram, FetchProgram, Layout, Requires, RequiresNode, Seed, SlotPlan, Step,
     TypenameRewrite, NO_SLOT, SEED_FETCH,
 };
-use crate::executor::slots::parse::{parse_aliased_body, parse_body};
+use crate::executor::slots::parse::{parse_aliased_body, parse_body, parse_data};
 use crate::executor::slots::store::{Arena, Slot, SlotView};
 use crate::executor::slots::write::write_response;
 use crate::executor::slots::SlotPlanCell;
@@ -43,16 +42,19 @@ pub(super) fn usable(opts: &QueryPlanExecutionOpts<'_>) -> Option<Arc<SlotPlan>>
     })
 }
 
-/// Runs the plan on the slot pipeline, with the slot plan [`usable`] gave. `seed` is the data
-/// the router has before the plan runs (see `compile::Seed`): the introspection result, or a
-/// subscription's event; an empty object when there's none.
+/// Runs the plan on the slot pipeline, with the slot plan [`usable`] gave. `start` is the data
+/// the router has before the plan runs (see `compile::Seed`), read straight into slots.
 pub(super) async fn execute<'exec>(
     mut opts: QueryPlanExecutionOpts<'exec>,
     plan: Arc<SlotPlan>,
-    mut seed: Value<'exec>,
+    start: StartData<'exec>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
     let aliased_requests = AliasedRequests::default();
     let mut initial_errors = std::mem::take(&mut opts.initial_errors);
+    let (mut json, event) = match start {
+        StartData::Json(json) => (json, None),
+        StartData::Event(event) => (None, Some(event)),
+    };
 
     // plugins' `on_execute`, like the other pipeline: they may change the data the plan starts
     // from, the errors and the extensions, answer instead, or ask to see the result
@@ -66,7 +68,7 @@ pub(super) async fn execute<'exec>(
                 .for_plugin::<hooks::OnExecute>(),
             query_plan: opts.query_plan,
             operation_for_plan: &opts.operation_for_plan,
-            data: seed,
+            data: json,
             errors: initial_errors,
             extensions: opts.extensions.extensions,
             variable_values: &opts.variable_values.variables_map,
@@ -95,7 +97,7 @@ pub(super) async fn execute<'exec>(
                 StartControlFlow::OnEnd(callback) => on_end_callbacks.push(callback),
             }
         }
-        seed = start_payload.data;
+        json = start_payload.data;
         initial_errors = start_payload.errors;
         opts.extensions.extensions = start_payload.extensions;
     }
@@ -103,9 +105,7 @@ pub(super) async fn execute<'exec>(
     // data a plugin put in for an operation without a seed: the request gets a plan of its own
     // that reads it in with the operation's own shape, so the fetches merge into it like on the
     // other pipeline
-    let plan = if !plan.fetches.contains_key(&SEED_FETCH)
-        && matches!(&seed, Value::Object(fields) if !fields.is_empty())
-    {
+    let plan = if !plan.fetches.contains_key(&SEED_FETCH) && json.is_some() {
         match SlotPlan::compile(
             opts.query_plan,
             &opts.projection_plan,
@@ -158,27 +158,50 @@ pub(super) async fn execute<'exec>(
         first: run.arena.object(width),
     };
 
-    // the seed goes into slots like a root fetch's response
+    // the start data goes into slots like a root fetch's response, read from its JSON
     if let Some(program) = plan.fetches.get(&SEED_FETCH) {
-        let mut body = b"{\"data\":".to_vec();
-        serialize_value_to_buffer(&seed, &mut body);
-        body.push(b'}');
-        let passthrough = run.passthrough;
-        let parsed = parse_body(
-            &mut run.arena,
-            &plan.layouts,
-            &program.shape,
-            &bytes::Bytes::from(body),
-            passthrough,
-        );
-        match (parsed.map(|parsed| parsed.data), run.data) {
+        let (layouts, shape, passthrough) = (&plan.layouts, &program.shape, run.passthrough);
+        let read = match (&json, event) {
+            (Some(json), _) => {
+                match parse_data(&mut run.arena, layouts, shape, json, passthrough) {
+                    Some(data) => Some(data),
+                    None => {
+                        tracing::warn!(
+                            "the data a plugin set before execution isn't JSON, it's left out"
+                        );
+                        None
+                    }
+                }
+            }
+            (None, Some(event)) => match event.bytes {
+                Some(body) => {
+                    match parse_body(&mut run.arena, layouts, shape, &body, passthrough) {
+                        Some(parsed) => {
+                            ctx.errors.extend(parsed.errors.unwrap_or_default());
+                            Some(parsed.data)
+                        }
+                        None => {
+                            return Err(SubgraphExecutorError::MalformedResponse(None))
+                                .with_plan_context(LazyPlanContext {
+                                    subgraph_name: || None,
+                                    affected_path: || None,
+                                })
+                        }
+                    }
+                }
+                // an event the router made: errors only, already taken out
+                None => Some(Slot::Null),
+            },
+            (None, None) => None,
+        };
+        match (read, run.data) {
             (Some(Slot::Object { layout, first }), Slot::Object { first: root, .. }) => {
                 run.arena.merge_object(&plan.layouts, layout, root, first)
             }
             // an event without `data` (only errors) is a response with `data: null`, like on the
             // other pipeline
             (Some(Slot::Null | Slot::Missing), _) => run.data = Slot::Null,
-            _ => debug_assert!(false, "a seed the router serialized reads back"),
+            _ => {}
         }
     }
 

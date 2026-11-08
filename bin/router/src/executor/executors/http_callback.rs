@@ -172,6 +172,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
     > {
         let custom_scalar_paths: Option<CustomScalarPaths> =
             execution_request.custom_scalar_paths.cloned();
+        let raw = execution_request.raw_response;
         let subscription_id = Ulid::generate().to_string();
         let verifier = Ulid::generate().to_string();
 
@@ -292,9 +293,10 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                             subscription_id,
                             "received next payload"
                         );
-                        match SubgraphResponse::deserialize_from_bytes(
+                        match SubgraphResponse::from_body(
                             payload,
                             custom_scalar_paths.as_ref(),
+                            raw,
                         ) {
                             Ok(response) => yield Ok(response),
                             Err(e) => {

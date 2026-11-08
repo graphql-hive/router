@@ -14,7 +14,7 @@ use crate::executor::plugin_trait::{
 use crate::executor::plugins::response_data::ResponseData;
 use crate::executor::request_context::RequestContextPluginApi;
 use crate::executor::response::graphql_error::GraphQLError;
-use crate::executor::response::value::Value;
+use bytes::Bytes;
 
 type RequestContextApi = RequestContextPluginApi<super::OnExecute>;
 
@@ -84,9 +84,11 @@ pub struct OnExecuteStartHookPayload<'exec> {
     /// It includes the details of the operation such as its name, type (query/mutation/subscription), etc.
     pub operation_for_plan: &'exec OperationDefinition,
 
-    /// The root value of the execution
-    /// Anything here will be merged into the execution result
-    pub data: Value<'exec>,
+    /// The data the plan starts from, as a JSON object: the introspection result for an
+    /// operation with introspection fields, `None` otherwise. What the subgraphs send is merged
+    /// into it. A plugin can set it, like `Some(Bytes::from_static(br#"{"me":{"id":"1"}}"#))`;
+    /// it's read with the operation's shape.
+    pub data: Option<Bytes>,
     /// Initial set of GraphQL errors in the execution result
     /// Any error passed here will be merged into the execution result errors list
     pub errors: Vec<GraphQLError>,
