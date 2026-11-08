@@ -45,9 +45,9 @@ value cell holds the value.
 | `Positions` | The union-find over response positions; each class is a layout group. | Every fetch that writes the same object writes into the same layout. |
 | `ObjectLayout` | One layout group's fields: the response key of each field index, in order, and the field index of `__typename`. | A field becomes an index instead of a key lookup. |
 | `OutputField` | For each projection-plan field: its field index, its `"key":` bytes padded to a 24-byte window, and the `SIMPLE` flag. | The writer copies keys with one fixed-size store and takes a fast loop for plain fields. |
-| `FetchProgram` | Per fetch: its `FetchShape`, its entity aliases (`AliasProgram`), and where a root re-entry fetch merges. | Everything needed to send a fetch and merge its answer. |
-| `AliasProgram` | Per entity alias of a fetch (`_entities`, or `_e0`, `_e1`… in a batch): the field index of its list in `data`, the paths to its entity targets, its `Requires`, its `ReuseProgram`, and its `__typename` rewrites. | Writing representations and merging entities back for one alias. |
-| `PathProgram` / `Step` | A path in the response resolved to field indexes: `Field(field_index)`, `List`, `TypeCondition`. | Walks the cells to the entity targets without key lookups. |
+| `FetchProgram` | Per fetch: its `FetchShape`, its entity aliases (`CompiledEntityAlias`), and where a root re-entry fetch merges. | Everything needed to send a fetch and merge its answer. |
+| `CompiledEntityAlias` | Per entity alias of a fetch (`_entities`, or `_e0`, `_e1`… in a batch): the field index of its list in `data`, the paths to its entity targets, its `Requires`, its `ReuseProgram`, and its `__typename` rewrites. | Writing representations and merging entities back for one alias. |
+| `PathProgram` / `PathStep` | A path in the response resolved to field indexes: `Field(field_index)`, `List`, `TypeCondition`. | Walks the cells to the entity targets without key lookups. |
 | `Requires` / `RequiresNode` / `Read` | A `@requires` or key selection resolved to field indexes: the nodes to write a representation from, plus a flat list of everything it reads. | Writing representations, and fingerprinting entity targets without writing them. |
 | `TypenameRewrite` | The planner's input rewrite that sends an `@interfaceObject` entity under the interface's name. | Representations name the type the subgraph expects. |
 | `Rename` | The planner's output rewrite: a field the fetch aliases, put back under its own key. | Reads it into the right cell. |
@@ -74,14 +74,14 @@ value cell holds the value.
 | `usable` / `execute` | Picks the indexed pipeline for a request and runs it: plugins' start hooks, the plan, demand control, end hooks, writing. | The entry point, next to the tree-based pipeline's. |
 | `Run` | A request in flight: its `IndexedResponsePlan`, arena, root cell, whether passthrough is on, and the shared plan for plugin walks. | The state the plan walk changes. |
 | *wave* | The fetches of one `Parallel` node (or one fetch), sent together and merged as they arrive. | |
-| `Merge` | What a job's response is merged into: `Root` (the root, or a re-entry path) or `Entities` (one or more aliases). | Keeps what's needed to merge a response until it arrives. |
+| `PendingMerge` | The rest of a job once its request is sent: what its response is merged into, `Root` (the root, or a re-entry path) or `Entities` (one or more aliases), and how to read it. Parked while the request is in flight, taken once when it finishes, consumed by the merge. | Keeps what's needed to read and merge a response until it arrives. |
 | `EntityTargetMap` | Every entity target of an alias, in walk order, with the index of the entity it gets (`NO_ENTITY` for none), as `entries`, and where each path's targets end. | Maps the `_entities` list back to the entity targets. |
 | `AliasMerge` | One alias of a job: its program, name, paths and `EntityTargetMap`. | |
-| `Unaliasing` | An aliased `@fromContext` request (several context groups in one request): how many entities each group sent. | Reads the aliased answer back as one list per key. |
-| `Processing` | A job's subgraph name, path, hash and kind, kept apart from its response. | Lets a hook's replacement response go through the same processing. |
+| `ContextGroupPartition` | An aliased `@fromContext` request (several context groups in one request): how many entities each group sent. | Reads the aliased answer back as one list per key. |
+| `FetchProcessingContext` | A job's subgraph name, path, hash and kind, kept apart from its response. | Lets a hook's replacement response go through the same processing. |
 | *representation* | The JSON object sent in `representations` for one entity. | |
-| `Representation` | Writes a representation from cells (a port of `project_requires`). | |
-| `Applied` | Which selections applied while writing one representation. | Decides the `__typename`-only and missing-field cases. |
+| `RepresentationWriter` | Writes a representation from cells (a port of `project_requires`). | |
+| `AppliedSelections` | Which selections applied while writing one representation. | Decides the `__typename`-only and missing-field cases. |
 | `Fingerprint` / `Mix` | A hash of everything a representation would read, and the small hasher it uses. | Dedupes entity targets without writing their representations. |
 | *entity reuse* | Copying an entity's fields from an object already in the response instead of fetching it. | Fewer subgraph calls; experimental. |
 
@@ -100,7 +100,7 @@ value cell holds the value.
 | Name | What it is | Why it exists |
 |---|---|---|
 | `write_response` / `Writer` | Writes `{"data":…,"errors":…,"extensions":…}` from cells, walking the projection plan field by field: conditions, type guards, enum checks, `__typename`, forced nulls, null bubbling. | Same output as the tree-based pipeline's projection, byte for byte. |
-| `TypeName` | A type name that is known, or found the first time it's needed. | Skips schema lookups that aren't needed. |
+| `LazyTypename` | A type name that is known, or found the first time it's needed. | Skips schema lookups that aren't needed. |
 | `Failure` | Why a field isn't written as is (skipped, wrong type, invalid enum, fatal). | |
 | `Null` | Whether a written `null` bubbles up. | |
 
@@ -130,10 +130,10 @@ value cell holds the value.
 
 ## Words still used for more than one thing
 
-- **step**: `compile::Step` (a path step over cells) and `response_data::Step` (a path frame for errors).
 - **shape**: `FetchShape` (indexed parser), `ResponseShape` (shape-guided parser), `ShapeCursor` (nullability in the projection plan), and `Verify::shape`.
 - **alias**: an entity alias of a fetch (`_e0`), a field alias in a query, and aliased context requests.
-- **program**: `FetchProgram`, `AliasProgram`, `PathProgram`, `ReuseProgram`. These are compiled data, not code.
+- **program**: `FetchProgram`, `PathProgram`, `ReuseProgram`. These are compiled data, not code; kept until their responsibilities are looked at more closely.
+- **typename**: `LazyTypename` here, while the tree-based pipeline's projection keeps its own `TypeName`.
 
 ## Test baseline with the indexed pipeline forced on
 

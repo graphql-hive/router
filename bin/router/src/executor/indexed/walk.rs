@@ -9,7 +9,7 @@ use super::compile::{FetchShape, IndexedResponsePlan, ObjectLayout, NO_FIELD, NO
 use bytes::Bytes;
 
 use super::store::{plain_str_of, Arena, JsonSpan, ValueCell, EDITS_BODY};
-use super::write::{Failure, TypeName, Writer};
+use super::write::{Failure, LazyTypename, Writer};
 use crate::executor::introspection::schema::SchemaMetadata;
 use crate::executor::plugins::response_data::{
     DataValue, Nullability, PathFrame, Place, Step, WalkResult,
@@ -85,7 +85,7 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> Walker<'w, F> {
                     condition,
                     field,
                     value,
-                    &TypeName::Resolved(parent_type),
+                    &LazyTypename::Resolved(parent_type),
                     &OnceCell::new(),
                 ) {
                     // an enum value that isn't one is visited: a plugin may set a valid one, the

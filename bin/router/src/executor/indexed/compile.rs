@@ -142,12 +142,12 @@ impl ObjectLayout {
 pub struct FetchProgram {
     pub shape: FetchShape,
     /// The fields `data` keeps entities under, one per alias. Empty for a root fetch.
-    pub aliases: Vec<AliasProgram>,
+    pub aliases: Vec<CompiledEntityAlias>,
     /// Where a root re-entry fetch merges its `data`
     pub merge_path: Option<PathProgram>,
 }
 
-pub struct AliasProgram {
+pub struct CompiledEntityAlias {
     /// The field index of the alias in the layout of `data`
     pub field_index: u16,
     pub paths: Vec<PathProgram>,
@@ -252,10 +252,10 @@ pub struct ReuseSource {
     pub copy: Box<[u16]>,
 }
 
-pub type PathProgram = Box<[Step]>;
+pub type PathProgram = Box<[PathStep]>;
 
 #[derive(Debug)]
-pub enum Step {
+pub enum PathStep {
     /// The field index of the field
     Field(u16),
     List,
@@ -870,7 +870,7 @@ impl<'p> Compiler<'p> {
                     let reuse = reuse
                         .filter(|_| entity_reuse)
                         .and_then(|reuse| ctx.reuse(items, requires, reuse));
-                    AliasProgram {
+                    CompiledEntityAlias {
                         field_index: layouts[data_layout].field_index(&key),
                         paths: merge_paths.iter().map(|path| ctx.path(path)).collect(),
                         requires: program,
@@ -984,16 +984,16 @@ impl Resolved<'_> {
         for segment in path {
             match segment {
                 PathSegment::Field(key) => {
-                    steps.push(Step::Field(self.field_index(p, key)));
+                    steps.push(PathStep::Field(self.field_index(p, key)));
                     p = p.and_then(|p| self.positions.existing_child(p, key));
                     if let Some(p) = p {
                         let class = self.positions.find(p);
                         self.touched.insert(class);
                     }
                 }
-                PathSegment::List => steps.push(Step::List),
+                PathSegment::List => steps.push(PathStep::List),
                 PathSegment::TypeCondition(condition) => {
-                    steps.push(Step::TypeCondition(condition.clone()))
+                    steps.push(PathStep::TypeCondition(condition.clone()))
                 }
             }
         }
