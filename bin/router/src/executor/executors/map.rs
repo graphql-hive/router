@@ -45,13 +45,13 @@ use crate::executor::{
         websocket::WsSubgraphExecutor,
         websocket_pool::{WebSocketConnectionId, WebSocketPool},
     },
-    hooks::on_subgraph_execute::{
-        OnSubgraphExecuteEndHookPayload, OnSubgraphExecuteStartHookPayload,
-    },
+    hooks::on_subgraph_execute::{OnSubgraphExecuteEndCallback, OnSubgraphExecuteStartHookPayload},
     plugin_context::PluginRequestState,
-    plugin_trait::{EndControlFlow, StartControlFlow},
+    plugin_trait::StartControlFlow,
     plugins::hooks,
-    response::subgraph_response::SubgraphResponse,
+    response::{
+        graphql_error::GraphQLError, shaped::ResponseShape, subgraph_response::SubgraphResponse,
+    },
 };
 
 type SubgraphName = String;
@@ -317,7 +317,13 @@ impl SubgraphExecutorMap {
         client_request: &ClientRequestDetails<'exec>,
         plugin_req_state: Option<&'exec PluginRequestState<'exec>>,
         demand_control_ctx: Option<&DemandControlExecutionContext>,
-    ) -> Result<SubgraphResponse<'exec>, SubgraphExecutorError> {
+    ) -> Result<
+        (
+            SubgraphResponse<'exec>,
+            Vec<OnSubgraphExecuteEndCallback<'exec>>,
+        ),
+        SubgraphExecutorError,
+    > {
         if let Some(demand_control_opts) = demand_control_ctx {
             if let Some(subgraph_max_cost) = demand_control_opts
                 .subgraphs
@@ -362,7 +368,8 @@ impl SubgraphExecutorMap {
 
         let timeout = self.resolve_subgraph_timeout(subgraph_name, client_request)?;
 
-        let mut on_end_callbacks = vec![];
+        // the pipeline runs them once it has the subgraph's data, see `OnSubgraphExecuteEndHookPayload`
+        let mut on_end_callbacks: Vec<OnSubgraphExecuteEndCallback<'exec>> = vec![];
 
         let mut execution_result: Option<SubgraphResponse<'exec>> = None;
         if let Some(plugin_req_state) = plugin_req_state.as_ref() {
@@ -385,6 +392,18 @@ impl SubgraphExecutorMap {
                     }
                     StartControlFlow::EndWithResponse(response) => {
                         debug!(target: targets::EXECUTOR, subgraph = subgraph_name, "execution was skipped due to response override by a plugin");
+                        // a body the plugin gave as JSON: read like a subgraph's, unless the
+                        // pipeline reads bodies itself
+                        let response =
+                            if response.is_raw() && !start_payload.execution_request.raw_response {
+                                read_plugin_response(
+                                    response,
+                                    start_payload.execution_request.response_shape,
+                                    start_payload.execution_request.custom_scalar_paths,
+                                )
+                            } else {
+                                response
+                            };
                         execution_result = Some(response);
                         break;
                     }
@@ -472,7 +491,7 @@ impl SubgraphExecutorMap {
             }
         }
 
-        let mut execution_result = match execution_result {
+        let execution_result = match execution_result {
             Some(execution_result) => execution_result,
             None => {
                 debug!(target: targets::EXECUTOR, operation = execution_request.query, dedupe = execution_request.dedupe, subgraph = subgraph_name, executor = executor.executor_name(), "executing subgraph request");
@@ -550,34 +569,6 @@ impl SubgraphExecutorMap {
             }
         };
 
-        if !on_end_callbacks.is_empty() {
-            if let Some(plugin_req_state) = plugin_req_state.as_ref() {
-                let mut end_payload = OnSubgraphExecuteEndHookPayload {
-                    context: &plugin_req_state.context,
-                    request_context: plugin_req_state
-                        .request_context
-                        .for_plugin::<hooks::OnSubgraphExecute>(),
-                    execution_result,
-                };
-
-                for callback in on_end_callbacks {
-                    let result = callback(end_payload);
-                    end_payload = result.payload;
-                    match result.control_flow {
-                        EndControlFlow::Proceed => {
-                            // continue to next callback
-                        }
-                        EndControlFlow::EndWithResponse(response) => {
-                            end_payload.execution_result = response;
-                        }
-                    }
-                }
-
-                // Give the ownership back to variables
-                execution_result = end_payload.execution_result;
-            }
-        }
-
         let error_count = execution_result
             .errors
             .as_ref()
@@ -593,7 +584,7 @@ impl SubgraphExecutorMap {
           "subgraph execution completed"
         );
 
-        Ok(execution_result)
+        Ok((execution_result, on_end_callbacks))
     }
 
     pub async fn subscribe<'exec>(
@@ -1194,4 +1185,25 @@ pub fn compile_duration_or_expression(
             Ok(ValueOrProgram::Program(Box::new(program), hints))
         }
     }
+}
+
+/// A response a plugin gave as JSON (`SubgraphResponse::from_json`), read like a subgraph's
+pub(crate) fn read_plugin_response<'exec>(
+    response: SubgraphResponse<'exec>,
+    shape: Option<&ResponseShape>,
+    custom_scalar_paths: Option<&crate::query_planner::planner::plan_nodes::CustomScalarPaths>,
+) -> SubgraphResponse<'exec> {
+    let (headers, status) = (response.headers.clone(), response.status);
+    let bytes = response.bytes.unwrap_or_default();
+    let read = match shape {
+        Some(shape) => SubgraphResponse::deserialize_with_shape(bytes, shape, custom_scalar_paths),
+        None => SubgraphResponse::deserialize_from_bytes(bytes, custom_scalar_paths),
+    };
+    let mut read = read.unwrap_or_else(|error| SubgraphResponse {
+        errors: Some(vec![GraphQLError::from(error.to_string())]),
+        ..Default::default()
+    });
+    read.headers = headers;
+    read.status = status;
+    read
 }

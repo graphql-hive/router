@@ -8,9 +8,13 @@ mod slot_plugins_e2e_tests {
             OnExecuteEndHookPayload, OnExecuteStartHookPayload, OnExecuteStartHookResult,
         },
         plugins::hooks::on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
+        plugins::hooks::on_subgraph_execute::{
+            OnSubgraphExecuteEndHookPayload, OnSubgraphExecuteStartHookPayload,
+            OnSubgraphExecuteStartHookResult,
+        },
         plugins::plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload},
     };
-    use sonic_rs::json;
+    use sonic_rs::{json, JsonContainerTrait, JsonValueTrait};
 
     use crate::testkit::{ClientResponseExt, ResponseLike, TestRouter, TestSubgraphs};
 
@@ -89,6 +93,41 @@ mod slot_plugins_e2e_tests {
         }
     }
 
+    /// Changes subgraph data before it's merged, through the subgraph end hook
+    #[derive(Default)]
+    struct SubgraphEditPlugin;
+
+    #[async_trait]
+    impl RouterPlugin for SubgraphEditPlugin {
+        type Config = ();
+
+        fn plugin_name() -> &'static str {
+            "test_subgraph_edit"
+        }
+
+        fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
+            payload.initialize_plugin_with_defaults()
+        }
+
+        async fn on_subgraph_execute<'exec>(
+            &'exec self,
+            payload: OnSubgraphExecuteStartHookPayload<'exec>,
+        ) -> OnSubgraphExecuteStartHookResult<'exec> {
+            payload.on_end(|mut payload: OnSubgraphExecuteEndHookPayload<'exec>| {
+                payload.data.walk(|value| {
+                    if value.is("User", "username") {
+                        let shouted = value.as_str().map(|name| name.to_uppercase());
+                        let _ = value.set(shouted);
+                    } else if value.is("User", "id") && value.as_str().as_deref() == Some("2") {
+                        // Non-Null: the user becomes null
+                        value.set_null_with_error("user 2 is private");
+                    }
+                });
+                payload.proceed()
+            })
+        }
+    }
+
     fn json_response(body: sonic_rs::Value) -> ResponseLike {
         let mut headers = http::HeaderMap::new();
         headers.insert(
@@ -108,7 +147,12 @@ mod slot_plugins_e2e_tests {
         for slots in [false, true] {
             let subgraphs = TestSubgraphs::builder()
                 .with_on_request(|req| {
-                    if req.path.contains("accounts") {
+                    // the root `users` query only: entity fetches reach the accounts subgraph
+                    let entities = req
+                        .body
+                        .as_ref()
+                        .is_some_and(|body| body.windows(9).any(|w| w == b"_entities"));
+                    if req.path.contains("accounts") && !entities {
                         return Some(json_response(json!({
                             "data": { "users": [{ "id": "1", "username": "a" }, { "id": "2", "username": "b" }] },
                             "extensions": { "foo": "from-accounts" }
@@ -136,6 +180,7 @@ mod slot_plugins_e2e_tests {
                 ))
                 .register_plugin::<SeedPlugin>()
                 .register_plugin::<EditPlugin>()
+                .register_plugin::<SubgraphEditPlugin>()
                 .build()
                 .start()
                 .await;
@@ -181,6 +226,64 @@ mod slot_plugins_e2e_tests {
         assert!(
             on.contains("the value isn't of the field's type"),
             "a value of another type is refused: {on}"
+        );
+    }
+
+    #[ntex::test]
+    async fn a_subgraph_hook_changes_the_data_the_same_way_on_both_pipelines() {
+        // errors from a subgraph hook are the subgraph's: masked like its own unless turned off
+        let (off, on) = both_pipelines(
+            "test_subgraph_edit",
+            "error_masking:\n                      enabled: false",
+            "{ users { id username } }",
+        )
+        .await;
+        assert_eq!(on, off, "slot pipeline response differs");
+        let body: sonic_rs::Value = sonic_rs::from_str(&on).expect("json");
+        assert_eq!(
+            body["data"],
+            json!({ "users": [{ "id": "1", "username": "A" }, null] }),
+            "username changed, user 2 nulled: {on}"
+        );
+        assert_eq!(
+            body["errors"][0]["message"],
+            json!("user 2 is private"),
+            "{on}"
+        );
+        assert_eq!(body["errors"][0]["path"], json!(["users", 1, "id"]), "{on}");
+    }
+
+    #[ntex::test]
+    async fn a_subgraph_hook_changes_entities_the_same_way_on_both_pipelines() {
+        let (off, on) = both_pipelines(
+            "test_subgraph_edit",
+            "",
+            "{ topProducts { upc reviews { author { username } } } }",
+        )
+        .await;
+        assert_eq!(on, off, "slot pipeline response differs");
+        let body: sonic_rs::Value = sonic_rs::from_str(&on).expect("json");
+        let mut usernames = Vec::new();
+        for product in body["data"]["topProducts"]
+            .as_array()
+            .expect("products")
+            .iter()
+        {
+            for review in product["reviews"].as_array().into_iter().flatten() {
+                usernames.push(
+                    review["author"]["username"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string(),
+                );
+            }
+        }
+        assert!(!usernames.is_empty(), "authors came from _entities: {on}");
+        assert!(
+            usernames
+                .iter()
+                .all(|name| !name.is_empty() && *name == name.to_uppercase()),
+            "every author's username changed in the entity fetch: {on}"
         );
     }
 }

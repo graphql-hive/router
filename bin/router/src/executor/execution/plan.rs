@@ -6,7 +6,11 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::vec;
 
-use crate::executor::plugins::response_data::ResponseData;
+use crate::executor::executors::map::read_plugin_response;
+use crate::executor::plugins::hooks::on_subgraph_execute::{
+    run_end_hooks, OnSubgraphExecuteEndCallback,
+};
+use crate::executor::plugins::response_data::{ResponseData, SubgraphData};
 use crate::query_planner::ast::operation::{ContextAliasTemplate, SubgraphFetchOperation};
 use crate::query_planner::planner::plan_nodes::{
     BatchFetchNode, ConditionGroup, CustomScalarPaths, FetchContext, FetchNode, FlattenNode,
@@ -764,6 +768,10 @@ pub enum ExecutionJob<'exec> {
         subgraph_name: &'exec str,
         operation: &'exec SubgraphFetchOperation,
         response: SubgraphResponse<'exec>,
+        /// Plugins' end hooks the slot pipeline runs once it has read the body (the Value
+        /// pipeline already ran them)
+        end_hooks: Vec<OnSubgraphExecuteEndCallback<'exec>>,
+        operation_kind: Option<&'exec OperationKind>,
         output_rewrites: Option<&'exec [FetchRewrite]>,
         // By default, this job is merged at the root. When this is set, we merge at
         // a specific path instead of the root (used for root re-entry fetches)
@@ -866,6 +874,27 @@ struct BatchFetchErrors {
 }
 
 impl<'exec> ExecutionJob<'exec> {
+    /// The response, with the end hooks still to run and the fetch's operation kind
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        SubgraphResponse<'exec>,
+        Vec<OnSubgraphExecuteEndCallback<'exec>>,
+        Option<&'exec OperationKind>,
+    ) {
+        match self {
+            ExecutionJob::Fetch {
+                response,
+                end_hooks,
+                operation_kind,
+                ..
+            } => (response, end_hooks, operation_kind),
+            ExecutionJob::FlattenFetch { response, .. }
+            | ExecutionJob::BatchFetch { response, .. } => (response, Vec::new(), None),
+        }
+    }
+
     fn response(self) -> SubgraphResponse<'exec> {
         match self {
             ExecutionJob::Fetch { response, .. } => response,
@@ -1869,6 +1898,51 @@ impl<'exec> Executor<'exec> {
         waves
     }
 
+    /// Runs plugins' `on_subgraph_execute` end hooks on a fetch's data, for the Value pipeline
+    fn subgraph_end_hooks(
+        &self,
+        hooks: Vec<OnSubgraphExecuteEndCallback<'exec>>,
+        mut response: SubgraphResponse<'exec>,
+        operation: &'exec SubgraphFetchOperation,
+        operation_kind: Option<&'exec OperationKind>,
+        custom_scalar_paths: Option<&'exec CustomScalarPaths>,
+    ) -> SubgraphResponse<'exec> {
+        let Some(plugin_req_state) = self.plugin_req_state else {
+            return response;
+        };
+        let data = SubgraphData::from_value(
+            std::mem::take(&mut response.data),
+            &operation.document_str,
+            self.schema_metadata,
+            operation_kind.unwrap_or(&OperationKind::Query),
+        );
+        let outcome = run_end_hooks(
+            hooks,
+            plugin_req_state,
+            data,
+            response.errors.take().unwrap_or_default(),
+            response.headers.clone(),
+            response.status,
+        );
+        if let Some(replaced) = outcome.replaced {
+            return if replaced.is_raw() {
+                read_plugin_response(
+                    replaced,
+                    operation.response_shape.as_deref(),
+                    custom_scalar_paths,
+                )
+            } else {
+                replaced
+            };
+        }
+        let (data, attached) = outcome.data.into_value();
+        response.data = data;
+        let mut errors = outcome.errors;
+        errors.extend(attached);
+        response.errors = (!errors.is_empty()).then_some(errors);
+        response
+    }
+
     async fn prepare_execution_job(
         &self,
         opts: PrepareExecutionJobOpts<'exec>,
@@ -1926,7 +2000,7 @@ impl<'exec> Executor<'exec> {
                 );
             }
 
-            let mut response = self
+            let (mut response, end_hooks) = self
                 .executors
                 .execute(
                     opts.subgraph_name,
@@ -1940,6 +2014,22 @@ impl<'exec> Executor<'exec> {
                     subgraph_name: subgraph_name_factory,
                     affected_path: affected_path_factory,
                 })?;
+            // the Value pipeline runs the plugins' end hooks on the data it just read; the slot
+            // pipeline runs them once it has read the body into slots
+            let end_hooks = if opts.raw_response {
+                end_hooks
+            } else {
+                if !end_hooks.is_empty() {
+                    response = self.subgraph_end_hooks(
+                        end_hooks,
+                        response,
+                        opts.operation,
+                        opts.operation_kind,
+                        opts.custom_scalar_paths,
+                    );
+                }
+                Vec::new()
+            };
 
             if let Some(errors) = &response.errors {
                 if !errors.is_empty() {
@@ -1962,6 +2052,8 @@ impl<'exec> Executor<'exec> {
                 subgraph_name: opts.subgraph_name,
                 operation: opts.operation,
                 response,
+                end_hooks,
+                operation_kind: opts.operation_kind,
                 output_rewrites: opts.output_rewrites,
                 merge_path: opts.affected_path,
             })

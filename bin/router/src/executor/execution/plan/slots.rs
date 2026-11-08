@@ -149,6 +149,7 @@ pub(super) async fn execute<'exec>(
         arena: Arena::take(),
         data: Slot::Missing,
         passthrough: opts.demand_control_context.is_none() && on_end_callbacks.is_empty(),
+        shared: opts.plugin_req_state.is_some().then(|| plan_arc.clone()),
     };
     let width = plan.layouts[plan.root_layout as usize].width();
     run.data = Slot::Object {
@@ -344,6 +345,15 @@ fn masked(opts: &QueryPlanExecutionOpts<'_>, mut errors: Vec<GraphQLError>) -> V
     errors
 }
 
+/// What [`Run::process_response`] needs of a job besides its response
+#[derive(Clone, Copy)]
+struct Processing<'exec> {
+    subgraph_name: &'exec str,
+    affected_path: Option<ResponsePathRef<'exec>>,
+    fetch_hash: u64,
+    operation_kind: Option<&'exec OperationKind>,
+}
+
 struct Run<'p> {
     plan: &'p SlotPlan,
     arena: Arena,
@@ -352,6 +362,8 @@ struct Run<'p> {
     /// Whether subtrees nothing checks are kept as the subgraph wrote them. Not when something
     /// reads the data value by value: demand control counts it, plugins' end hooks walk it.
     passthrough: bool,
+    /// The plan, for plugins' subgraph end hooks to walk a fetch's data with. Only with plugins.
+    shared: Option<Arc<SlotPlan>>,
 }
 
 /// What a job's response gets merged with. One per job in flight, so the size difference
@@ -361,10 +373,13 @@ enum Merge<'exec, 'p> {
     /// Into the root, or the objects at a root re-entry's path
     Root {
         program: &'p FetchProgram,
+        /// The fetch's id in the plan, for plugins' end hooks (see `SubgraphData`)
+        fetch: i64,
         merge_path: Option<&'p [Step]>,
     },
     Entities {
         program: &'p FetchProgram,
+        fetch: i64,
         aliases: SmallVec<[AliasMerge<'exec, 'p>; 2]>,
         /// Errors are split by alias, like a `BatchFetch`'s
         batch: bool,
@@ -562,14 +577,15 @@ impl<'p> Run<'p> {
                         custom_scalar_paths,
                         raw_variable_values: Some(variables),
                         affected_path: Some(path),
-                        // a plugin's subgraph hooks get (and may change) the parsed response
-                        raw_response: executor.plugin_req_state.is_none(),
+                        // the body as it came: plugins' end hooks run on the slots it's read into
+                        raw_response: true,
                     })
                     .map(move |job| (index, job))
                     .boxed()
             };
             let merge = |targets, unalias| Merge::Entities {
                 program,
+                fetch: fetch.id,
                 aliases: smallvec::smallvec![AliasMerge {
                     program: alias,
                     name: "_entities",
@@ -762,8 +778,8 @@ impl<'p> Run<'p> {
                     custom_scalar_paths,
                     raw_variable_values: Some(variables),
                     affected_path: None,
-                    // a plugin's subgraph hooks get (and may change) the parsed response
-                    raw_response: executor.plugin_req_state.is_none(),
+                    // the body as it came: plugins' end hooks run on the slots it's read into
+                    raw_response: true,
                 })
                 .map(move |job| (index, job))
                 .boxed()
@@ -784,6 +800,7 @@ impl<'p> Run<'p> {
                         job,
                         Merge::Entities {
                             program,
+                            fetch: batch.id,
                             aliases,
                             batch: true,
                             unalias: None,
@@ -853,6 +870,7 @@ impl<'p> Run<'p> {
                 ),
                 Merge::Entities {
                     program,
+                    fetch: batch.id,
                     aliases: merged,
                     batch: true,
                     unalias: Some(Unaliasing {
@@ -976,8 +994,8 @@ impl<'p> Run<'p> {
                     custom_scalar_paths: fetch.custom_scalar_paths.as_ref(),
                     raw_variable_values: variables,
                     affected_path,
-                    // a plugin's subgraph hooks get (and may change) the parsed response
-                    raw_response: executor.plugin_req_state.is_none(),
+                    // the body as it came: plugins' end hooks run on the slots it's read into
+                    raw_response: true,
                 })
                 .map(move |job| (index, job))
                 .boxed()
@@ -992,6 +1010,7 @@ impl<'p> Run<'p> {
                     send(fetch, None, None),
                     Merge::Root {
                         program,
+                        fetch: fetch.id,
                         merge_path: None,
                     },
                 ))
@@ -1010,6 +1029,7 @@ impl<'p> Run<'p> {
                         send(fetch, None, Some(path)),
                         Merge::Root {
                             program,
+                            fetch: fetch.id,
                             merge_path: program.merge_path.as_deref(),
                         },
                     ));
@@ -1037,6 +1057,7 @@ impl<'p> Run<'p> {
                     ),
                     Merge::Entities {
                         program,
+                        fetch: fetch.id,
                         aliases: smallvec::smallvec![AliasMerge {
                             program: alias,
                             name: "_entities",
@@ -1104,8 +1125,8 @@ impl<'p> Run<'p> {
                         custom_scalar_paths: batch.custom_scalar_paths.as_ref(),
                         raw_variable_values: Some(variables),
                         affected_path: None,
-                        // a plugin's subgraph hooks get (and may change) the parsed response
-                        raw_response: executor.plugin_req_state.is_none(),
+                        // the body as it came: plugins' end hooks run on the slots it's read into
+                        raw_response: true,
                     })
                     .map(move |job| (index, job))
                     .boxed();
@@ -1113,6 +1134,7 @@ impl<'p> Run<'p> {
                     job,
                     Merge::Entities {
                         program,
+                        fetch: batch.id,
                         aliases,
                         batch: true,
                         unalias: None,
@@ -1328,7 +1350,38 @@ impl<'p> Run<'p> {
         let subgraph_name = job.subgraph_name();
         let affected_path = job.affected_path();
         let fetch_hash = job.operation().hash;
-        let response = job.response();
+        let (response, end_hooks, operation_kind) = job.into_parts();
+        self.process_response(
+            executor,
+            ctx,
+            Processing {
+                subgraph_name,
+                affected_path,
+                fetch_hash,
+                operation_kind,
+            },
+            response,
+            end_hooks,
+            merge,
+        );
+    }
+
+    /// [`Self::process`], for a response and the end hooks still to run on it
+    fn process_response<'exec>(
+        &mut self,
+        executor: &Executor<'exec>,
+        ctx: &mut ExecutionContext<'exec>,
+        job: Processing<'exec>,
+        response: SubgraphResponse<'exec>,
+        end_hooks: Vec<OnSubgraphExecuteEndCallback<'exec>>,
+        merge: Merge<'exec, 'p>,
+    ) {
+        let Processing {
+            subgraph_name,
+            affected_path,
+            fetch_hash,
+            operation_kind,
+        } = job;
         if let Some(ref headers) = response.headers {
             executor.apply_job_headers(ctx, subgraph_name, affected_path, headers);
         }
@@ -1341,8 +1394,7 @@ impl<'p> Run<'p> {
         // cache control), like on the other pipeline.
         let subgraph_bytes = response.bytes.clone();
         let (bytes, mut errors, parsed_extensions, rebuilt) = match response.bytes {
-            // with plugins the parsed response is what counts: a hook may have changed it
-            Some(bytes) if executor.plugin_req_state.is_none() => (bytes, None, None, false),
+            Some(bytes) => (bytes, None, None, false),
             _ => {
                 let mut body = b"{\"data\":".to_vec();
                 serialize_value_to_buffer(&response.data, &mut body);
@@ -1360,8 +1412,9 @@ impl<'p> Run<'p> {
             .filter(|status| !status.is_success())
             .map(|status| GraphQLError::create_from_status_code(&status, subgraph_name));
         let layouts = &self.plan.layouts;
-        // demand control counts the lists of a response, which a passed-through subtree hides
-        let passthrough = self.passthrough;
+        // demand control counts the lists of a response, which a passed-through subtree hides,
+        // and end hooks walk it
+        let passthrough = self.passthrough && end_hooks.is_empty();
         let parsed = match &merge {
             Merge::Entities {
                 unalias: Some(unalias),
@@ -1429,6 +1482,42 @@ impl<'p> Run<'p> {
         if errors.is_none() {
             errors = parsed.errors;
         }
+        let mut data = parsed.data;
+        if let (false, Some(plugin_req_state), Some(plan)) = (
+            end_hooks.is_empty(),
+            executor.plugin_req_state,
+            self.shared.clone(),
+        ) {
+            let fetch = match &merge {
+                Merge::Root { fetch, .. } | Merge::Entities { fetch, .. } => *fetch,
+            };
+            let subgraph_data = SubgraphData::from_slots(
+                std::mem::take(&mut self.arena),
+                data,
+                plan,
+                fetch,
+                executor.schema_metadata,
+                operation_kind.unwrap_or(&OperationKind::Query),
+            );
+            let outcome = run_end_hooks(
+                end_hooks,
+                plugin_req_state,
+                subgraph_data,
+                errors.take().unwrap_or_default(),
+                response.headers.clone(),
+                response.status,
+            );
+            let (arena, walked, attached) = outcome.data.into_slots();
+            self.arena = arena;
+            data = walked;
+            // a hook's own response is read instead, like a subgraph's
+            if let Some(replaced) = outcome.replaced {
+                return self.process_response(executor, ctx, job, replaced, Vec::new(), merge);
+            }
+            let mut hook_errors = outcome.errors;
+            hook_errors.extend(attached);
+            errors = (!hook_errors.is_empty()).then_some(hook_errors);
+        }
         if let Some(status_error) = status_errors {
             errors.get_or_insert_with(Vec::new).push(status_error);
         }
@@ -1453,7 +1542,7 @@ impl<'p> Run<'p> {
 
         match merge {
             Merge::Root { merge_path, .. } => {
-                let source = parsed.data;
+                let source = data;
                 match merge_path {
                     None => {
                         if let (Slot::Object { layout, first }, Slot::Object { first: root, .. }) =
@@ -1528,7 +1617,7 @@ impl<'p> Run<'p> {
                 }
 
                 for (alias, alias_errors) in aliases.iter().zip(by_alias) {
-                    let entities = match parsed.data {
+                    let entities = match data {
                         Slot::Object { first, .. } if alias.program.slot != NO_SLOT => {
                             match self.arena.slots[(first + alias.program.slot as u32) as usize] {
                                 Slot::List { start, len } => Some((start, len)),

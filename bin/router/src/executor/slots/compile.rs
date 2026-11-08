@@ -359,6 +359,13 @@ pub struct Shape {
     renamed: AHashMap<u32, Box<str>>,
     pub verifies: Vec<Verify>,
     pub verify_objects: Vec<VerifyObject>,
+    /// The schema field name of each node, a range in `text`, for a walk over the fetch's data
+    /// (see `SubgraphData`). Empty when the key is a different field depending on the type.
+    pub names: Vec<(u32, u32)>,
+    /// Per object, the type its fields are on when the query says it: every selection is in a
+    /// fragment on that one type, like the items of `_entities`. A range in `text`, empty when
+    /// it doesn't say.
+    pub object_types: Vec<(u32, u32)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -414,6 +421,20 @@ pub struct VerifyObject {
 }
 
 impl Shape {
+    /// A field's name in the schema, see [`Shape::names`]
+    pub fn name(&self, node: usize) -> &str {
+        let (start, len) = self.names[node];
+        std::str::from_utf8(&self.text[start as usize..(start + len) as usize]).unwrap_or("")
+    }
+
+    /// The type of an object's fields, see [`Shape::object_types`]
+    pub fn object_type(&self, object: u32) -> Option<&str> {
+        let (start, len) = self.object_types[object as usize];
+        (len > 0)
+            .then(|| std::str::from_utf8(&self.text[start as usize..(start + len) as usize]).ok())
+            .flatten()
+    }
+
     #[inline]
     pub fn key(&self, node: &ShapeNode) -> &[u8] {
         &self.text[node.key_start as usize..(node.key_start + node.key_len) as usize]
@@ -1308,6 +1329,33 @@ impl Passthrough<'_> {
     }
 }
 
+/// A response key with the field's name (`None` when fragments put different fields under it)
+/// and the selection sets under it
+type Collected<'d, 'a> = (
+    &'a str,
+    Option<&'a str>,
+    Vec<&'d gql::SelectionSet<'a, &'a str>>,
+);
+
+/// The type condition every selection of `sets` is under, when they're all inline fragments on
+/// the same type
+pub(crate) fn single_type_condition<'a>(
+    sets: &[&gql::SelectionSet<'a, &'a str>],
+) -> Option<&'a str> {
+    let mut found = None;
+    for item in sets.iter().flat_map(|set| &set.items) {
+        let gql::Selection::InlineFragment(fragment) = item else {
+            return None;
+        };
+        let gql::TypeCondition::On(name) = fragment.type_condition.as_ref()?;
+        if found.is_some_and(|found| found != *name) {
+            return None;
+        }
+        found = Some(*name);
+    }
+    found
+}
+
 struct ShapeBuilder<'d, 'a> {
     fragments: &'d [&'d gql::FragmentDefinition<'a, &'a str>],
     renames: &'d [Rename],
@@ -1332,10 +1380,13 @@ impl<'d, 'a> ShapeBuilder<'d, 'a> {
             nodes: (0, 0),
             position,
         });
-        let mut fields: Vec<(&'a str, Vec<&'d gql::SelectionSet<'a, &'a str>>)> = Vec::new();
+        let mut fields: Vec<Collected<'d, 'a>> = Vec::new();
         for set in sets {
             self.collect(set, &mut fields)?;
         }
+        let object_type = single_type_condition(sets);
+        let type_range = self.text_range(object_type.unwrap_or(""));
+        self.shape.object_types.push(type_range);
         let start = self.shape.nodes.len() as u32;
         // an aliased field the response has under its own key: the key the subgraph sends is
         // matched, its value goes where the field's own key is
@@ -1349,7 +1400,9 @@ impl<'d, 'a> ShapeBuilder<'d, 'a> {
                 })
                 .map(|rename| &*rename.to)
         };
-        for (offset, (key, _)) in fields.iter().enumerate() {
+        for (offset, (key, name, _)) in fields.iter().enumerate() {
+            let name = self.text_range(name.unwrap_or(""));
+            self.shape.names.push(name);
             if let Some(renamed) = logical(&self.trail, key) {
                 self.shape
                     .renamed
@@ -1385,7 +1438,7 @@ impl<'d, 'a> ShapeBuilder<'d, 'a> {
         }
         let end = self.shape.nodes.len() as u32;
         self.shape.objects[index as usize].nodes = (start, end);
-        for (offset, (key, sets)) in fields.iter().enumerate() {
+        for (offset, (key, _, sets)) in fields.iter().enumerate() {
             let node = start as usize + offset;
             // a leaf keeps whatever is under it as it came, custom scalars included
             if self.shape.nodes[node].raw || sets.is_empty() {
@@ -1402,24 +1455,37 @@ impl<'d, 'a> ShapeBuilder<'d, 'a> {
         Ok(index)
     }
 
+    /// Appends `text` to the shape's text, returns its range
+    fn text_range(&mut self, text: &str) -> (u32, u32) {
+        let start = self.shape.text.len() as u32;
+        self.shape.text.extend_from_slice(text.as_bytes());
+        (start, text.len() as u32)
+    }
+
     fn collect(
         &self,
         set: &'d gql::SelectionSet<'a, &'a str>,
-        out: &mut Vec<(&'a str, Vec<&'d gql::SelectionSet<'a, &'a str>>)>,
+        out: &mut Vec<Collected<'d, 'a>>,
     ) -> Result<(), Unsupported> {
         for item in &set.items {
             match item {
                 gql::Selection::Field(field) => {
                     let key = field.alias.unwrap_or(field.name);
-                    let index = match out.iter().position(|(k, _)| *k == key) {
-                        Some(index) => index,
+                    let index = match out.iter().position(|(k, _, _)| *k == key) {
+                        Some(index) => {
+                            // another field under the same key: no one name for it
+                            if out[index].1 != Some(field.name) {
+                                out[index].1 = None;
+                            }
+                            index
+                        }
                         None => {
-                            out.push((key, Vec::new()));
+                            out.push((key, Some(field.name), Vec::new()));
                             out.len() - 1
                         }
                     };
                     if !field.selection_set.items.is_empty() {
-                        out[index].1.push(&field.selection_set);
+                        out[index].2.push(&field.selection_set);
                     }
                 }
                 gql::Selection::InlineFragment(fragment) => {

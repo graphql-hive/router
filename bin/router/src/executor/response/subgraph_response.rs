@@ -30,6 +30,25 @@ pub struct SubgraphResponse<'a> {
 }
 
 impl SubgraphResponse<'_> {
+    /// A response as a subgraph would send it: its JSON body. For a plugin's hook to end with,
+    /// the router reads it like a subgraph's.
+    pub fn from_json(body: impl Into<Bytes>) -> Self {
+        Self {
+            bytes: Some(body.into()),
+            ..Default::default()
+        }
+    }
+
+    /// Whether this is a body not read yet: what the slot pipeline asks the executor for, and
+    /// what [`Self::from_json`] makes. A response that was read has data or errors (one with
+    /// neither is refused as malformed).
+    pub(crate) fn is_raw(&self) -> bool {
+        self.bytes.is_some()
+            && self.data.is_null()
+            && self.errors.is_none()
+            && self.extensions.is_none()
+    }
+
     pub fn append_error(&mut self, error: GraphQLError) {
         if let Some(errors) = &mut self.errors {
             errors.push(error);

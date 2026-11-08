@@ -1222,3 +1222,33 @@ lets the engine bubble). No allocations, no path strings.
   same plugin walking every value 331 (reading `__typename` from the body instead of the
   schema's set saved ~1 µs). The 246 → 306 jump for any plugin is the subgraph responses
   parsed to `Value` for the subgraph hooks and back: next.
+
+### 2026-11-08 — subgraph end hooks run in the pipeline, every body is read once
+
+Any plugin made the slot pipeline ask the executor for parsed responses (`raw_response:
+plugin_req_state.is_none()`): each subgraph body became a `Value` for the subgraph hooks, was
+written back out and parsed again into slots, even when no plugin had a subgraph end hook.
+Redesigned with the user instead of patching it:
+
+- The executor map runs the `on_subgraph_execute` start hooks and the call, and hands the end
+  hooks back with the response (`execute` returns both). Slot jobs always get the raw body; the
+  slot pipeline parses it once (no passthrough when the job has end hooks), runs the hooks on
+  those slots, then merges. The Value pipeline runs them in `prepare_execution_job`, on the
+  `Value` it just read.
+- `OnSubgraphExecuteEndHookPayload` is `data: SubgraphData` (the same `walk`/`DataValue` as the
+  `on_execute` end hook, over the fetch's own response keys), `errors`, `headers`, `status`.
+  Errors from the hook count as the subgraph's (path mapping, service name, masking).
+  `SubgraphResponse::from_json` for a plugin's own response; one a hook ends with replaces the
+  subgraph's and is read like it.
+- Typing a fetch's data: the slot compiler records each shape node's schema field name and,
+  per shape object, the type when every selection is a fragment on one type (`_entities`
+  items). The Value walk follows the fetch document instead (parsed per walk, Value pipeline
+  only, a `ponytail:` comment). `DataValue` carries field name, key and nullability itself:
+  from the projection plan for client data, from the schema (looked up when asked) for fetches.
+- Mistake on the way: telling a raw body from a read response by "bytes, no data, no errors"
+  also caught non-200 and error-only responses (18 e2e failures). Slots use the body whenever
+  there is one again; only responses a plugin made are read on the Value pipeline.
+- Bench (`bench_op`, slots, 1 worker, CPU µs/request, medians of 3, base 7a765b72): no plugin
+  246.5 → 246.4; a plugin whose subgraph hooks only proceed 306.5 → 252.1 (−18%, req/s 3251 →
+  3946). Tests: e2e `a_subgraph_hook_changes_the_data_the_same_way_on_both_pipelines` (root
+  fetch, error at `users.1.id`) and `…_entities_…` (usernames changed in `_entities`), off = on.
