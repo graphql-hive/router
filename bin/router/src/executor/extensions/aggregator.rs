@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ahash::{HashMap as AHashMap, HashMapExt};
+use ahash::HashMap as AHashMap;
 use sonic_rs::Value as SonicValue;
 
 use crate::executor::response::value::Value;
@@ -9,23 +9,19 @@ use super::plan::{ExtensionsMergeStrategy, ExtensionsPlan};
 
 const RESERVED_KEY: &str = "queryPlan";
 
-pub struct ExtensionsAggregator<'a> {
-    entries: AHashMap<&'a str, (ExtensionsMergeStrategy, Vec<Value<'a>>)>,
+/// Subgraph extensions collected for the response, as the `sonic_rs` values the response's
+/// extensions are
+#[derive(Default)]
+pub struct ExtensionsAggregator {
+    entries: AHashMap<String, (ExtensionsMergeStrategy, Vec<SonicValue>)>,
 }
 
-impl Default for ExtensionsAggregator<'_> {
-    fn default() -> Self {
-        Self {
-            entries: AHashMap::new(),
-        }
-    }
-}
-
-impl<'a> ExtensionsAggregator<'a> {
-    fn write(&mut self, key: &'a str, value: Value<'a>, strategy: ExtensionsMergeStrategy) {
+impl ExtensionsAggregator {
+    fn write(&mut self, key: &str, value: SonicValue, strategy: ExtensionsMergeStrategy) {
         match self.entries.get_mut(key) {
             None => {
-                self.entries.insert(key, (strategy, vec![value]));
+                self.entries
+                    .insert(key.to_string(), (strategy, vec![value]));
             }
             Some((_, values)) => match strategy {
                 ExtensionsMergeStrategy::First => {
@@ -48,47 +44,67 @@ impl<'a> ExtensionsAggregator<'a> {
         for (key, (strategy, values)) in self.entries {
             let sonic_val = match strategy {
                 ExtensionsMergeStrategy::Append => {
-                    let arr: sonic_rs::Array = values.iter().map(SonicValue::from).collect();
+                    let arr: sonic_rs::Array = values.into_iter().collect();
                     SonicValue::from(arr)
                 }
-                ExtensionsMergeStrategy::First | ExtensionsMergeStrategy::Last => {
-                    let v = values
-                        .into_iter()
-                        .next()
-                        .expect("First/Last entry guaranteed non-empty by write()");
-                    SonicValue::from(&v)
-                }
+                ExtensionsMergeStrategy::First | ExtensionsMergeStrategy::Last => values
+                    .into_iter()
+                    .next()
+                    .expect("First/Last entry guaranteed non-empty by write()"),
             };
-            target.entry(key.to_string()).or_insert(sonic_val);
+            target.entry(key).or_insert(sonic_val);
         }
     }
 }
 
+/// Whether the plan passes the key on
+fn propagated(plan: &ExtensionsPlan, key: &str) -> Option<ExtensionsMergeStrategy> {
+    let propagate = plan.propagate.as_ref()?;
+    if key == RESERVED_KEY {
+        return None;
+    }
+    if let Some(ref allow) = propagate.allow {
+        if !allow.contains(key) {
+            return None;
+        }
+    }
+    Some(propagate.strategy)
+}
+
 /// Apply top-level keys from `subgraph_extensions` into the aggregator,
 /// filtered and merged per the plan.
-pub fn apply_subgraph_extensions<'a>(
+pub fn apply_subgraph_extensions(
     plan: &ExtensionsPlan,
-    subgraph_extensions: &Value<'a>,
-    agg: &mut ExtensionsAggregator<'a>,
+    subgraph_extensions: &Value<'_>,
+    agg: &mut ExtensionsAggregator,
 ) {
-    let Some(ref propagate) = plan.propagate else {
-        return;
-    };
-
     let Value::Object(entries) = subgraph_extensions else {
         return;
     };
-
     for (key, val) in entries {
-        if *key == RESERVED_KEY {
-            continue;
+        if let Some(strategy) = propagated(plan, key) {
+            agg.write(key, SonicValue::from(val), strategy);
         }
-        if let Some(ref allow) = propagate.allow {
-            if !allow.contains(*key) {
-                continue;
-            }
+    }
+}
+
+/// [`apply_subgraph_extensions`] for a subgraph's `extensions` as JSON, read straight into
+/// the values the response keeps. Nothing is read when the plan passes nothing on.
+pub fn apply_subgraph_extensions_json(
+    plan: &ExtensionsPlan,
+    json: &[u8],
+    agg: &mut ExtensionsAggregator,
+) {
+    if plan.propagate.is_none() {
+        return;
+    }
+    let Ok(mut extensions) = sonic_rs::from_slice::<sonic_rs::Object>(json) else {
+        return;
+    };
+    for (key, val) in extensions.iter_mut() {
+        if let Some(strategy) = propagated(plan, key) {
+            agg.write(key, std::mem::take(val), strategy);
         }
-        agg.write(key, val.clone(), propagate.strategy);
     }
 }
 

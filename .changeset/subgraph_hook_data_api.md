@@ -23,4 +23,4 @@ payload.on_end(|mut payload| {
 
 The hooks now run in the execution pipeline once it has read the subgraph's body, so every subgraph response is read once, with or without plugins. Before, any plugin made the router read each response into a `Value` and write it back out.
 
-A plugin that answers instead of the subgraph, from the start hook or the end hook, can pass its response as JSON with `SubgraphResponse::from_json(body)`; the router reads it like a subgraph's. A response a plugin ends with replaces the subgraph's, and later end hooks don't run.
+A plugin that answers instead of the subgraph, from the start hook or the end hook, passes its response as JSON with `SubgraphResponse::from_json(body)`, or only errors with `SubgraphResponse::from_errors(errors)`; the router reads it like a subgraph's. `SubgraphResponse::data` and `extensions` are no longer public fields, so a response can't be built around the router's internal `Value`; `data()` still reads what an executor read. A response a plugin ends with replaces the subgraph's, and later end hooks don't run.

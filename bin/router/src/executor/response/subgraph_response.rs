@@ -21,20 +21,34 @@ use crate::executor::{
 
 #[derive(Debug, Default)]
 pub struct SubgraphResponse<'a> {
-    pub data: Value<'a>,
+    /// Read by the Value pipeline; a plugin's response is JSON, see [`Self::from_json`]
+    pub(crate) data: Value<'a>,
     pub errors: Option<Vec<GraphQLError>>,
-    pub extensions: Option<Value<'a>>,
+    pub(crate) extensions: Option<Value<'a>>,
     pub headers: Option<Arc<HeaderMap>>,
     pub bytes: Option<Bytes>,
     pub status: Option<StatusCode>,
 }
 
-impl SubgraphResponse<'_> {
+impl<'a> SubgraphResponse<'a> {
     /// A response as a subgraph would send it: its JSON body. For a plugin's hook to end with,
     /// the router reads it like a subgraph's.
     pub fn from_json(body: impl Into<Bytes>) -> Self {
         Self {
             bytes: Some(body.into()),
+            ..Default::default()
+        }
+    }
+
+    /// The data an executor read, for an executor's own users; the pipelines read the body
+    pub fn data(&self) -> &Value<'a> {
+        &self.data
+    }
+
+    /// A response with only errors, for a plugin's hook to end with
+    pub fn from_errors(errors: Vec<GraphQLError>) -> Self {
+        Self {
+            errors: Some(errors),
             ..Default::default()
         }
     }
@@ -47,17 +61,6 @@ impl SubgraphResponse<'_> {
             && self.data.is_null()
             && self.errors.is_none()
             && self.extensions.is_none()
-    }
-
-    /// The `extensions` value at `range` of a body (see `ParsedBody::extensions`), read on its
-    /// own. The value borrows from `bytes`: the caller keeps that body alive for as long as the
-    /// value, like the request's response storage keeps every subgraph body it read.
-    pub(crate) fn read_extensions(bytes: &Bytes, range: (u32, u32)) -> Option<Value<'static>> {
-        let slice = bytes.get(range.0 as usize..range.1 as usize)?;
-        // SAFETY: see above, the same as `deserialize_from_bytes`'s values borrowing from the
-        // body: the slot pipeline adds the body to the response storage before reading this
-        let slice: &'static [u8] = unsafe { std::mem::transmute::<&[u8], _>(slice) };
-        sonic_rs::from_slice(slice).ok()
     }
 
     pub fn append_error(&mut self, error: GraphQLError) {
