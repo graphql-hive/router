@@ -21,8 +21,8 @@ pub struct ParsedBody {
     /// `data`, `Missing` when the body has none
     pub data: Slot,
     pub errors: Option<Vec<GraphQLError>>,
-    /// The body has `extensions`
-    pub extensions: bool,
+    /// Where the body's `extensions` value is, `start..end`
+    pub extensions: Option<(u32, u32)>,
 }
 
 /// Reads `body` with `shape`. `None` when it isn't a valid response. Without `passthrough`,
@@ -65,7 +65,8 @@ pub struct AliasedBody {
     /// `data` was null (or missing)
     pub no_data: bool,
     pub errors: Option<Vec<GraphQLError>>,
-    pub extensions: bool,
+    /// See [`ParsedBody::extensions`]
+    pub extensions: Option<(u32, u32)>,
 }
 
 /// Reads an aliased context request's body: `alias` maps a key of `data` to the index of its
@@ -144,7 +145,7 @@ impl Parser<'_, '_> {
         let mut parsed = ParsedBody {
             data: Slot::Missing,
             errors: None,
-            extensions: false,
+            extensions: None,
         };
         let (mut data, mut errors) = (false, false);
         self.whitespace();
@@ -171,9 +172,11 @@ impl Parser<'_, '_> {
                         parsed.errors =
                             Some(sonic_rs::from_slice(&self.input[start..self.pos]).ok()?);
                     }
-                    b"extensions" if !parsed.extensions => {
-                        parsed.extensions = true;
+                    b"extensions" if parsed.extensions.is_none() => {
+                        self.whitespace();
+                        let start = self.pos as u32;
                         self.skip_value()?;
+                        parsed.extensions = Some((start, self.pos as u32));
                     }
                     b"data" | b"errors" | b"extensions" => return None,
                     _ => self.skip_value()?,
@@ -196,7 +199,7 @@ impl Parser<'_, '_> {
             values: Vec::new(),
             no_data: true,
             errors: None,
-            extensions: false,
+            extensions: None,
         };
         let (mut data, mut errors) = (false, false);
         self.whitespace();
@@ -228,9 +231,11 @@ impl Parser<'_, '_> {
                         parsed.errors =
                             Some(sonic_rs::from_slice(&self.input[start..self.pos]).ok()?);
                     }
-                    b"extensions" if !parsed.extensions => {
-                        parsed.extensions = true;
+                    b"extensions" if parsed.extensions.is_none() => {
+                        self.whitespace();
+                        let start = self.pos as u32;
                         self.skip_value()?;
+                        parsed.extensions = Some((start, self.pos as u32));
                     }
                     b"data" | b"errors" | b"extensions" => return None,
                     _ => self.skip_value()?,
