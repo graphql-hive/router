@@ -40,6 +40,21 @@ pub struct Raw {
     pub len: u32,
 }
 
+/// A JSON string without its quotes, when it has no escapes.
+///
+/// # Safety
+///
+/// `json` must be bytes the parser read: it checked every string in them is UTF-8.
+#[inline]
+pub unsafe fn plain_str_of(json: &[u8]) -> Option<&str> {
+    let inner = json.strip_prefix(b"\"")?.strip_suffix(b"\"")?;
+    if inner.contains(&b'\\') {
+        return None;
+    }
+    // SAFETY: see above
+    Some(unsafe { std::str::from_utf8_unchecked(inner) })
+}
+
 /// The storage of one request. Pooled per thread, see [`with_arena`].
 #[derive(Default)]
 pub struct Arena {
@@ -164,13 +179,8 @@ impl Arena {
         let Slot::Raw(raw) = slot else {
             return None;
         };
-        let bytes = self.raw(raw);
-        let inner = bytes.strip_prefix(b"\"")?.strip_suffix(b"\"")?;
-        if inner.contains(&b'\\') {
-            return None;
-        }
-        // SAFETY: the parser checked every string is UTF-8
-        Some(unsafe { std::str::from_utf8_unchecked(inner) })
+        // SAFETY: the bytes of a slot are what the parser read
+        unsafe { plain_str_of(self.raw(raw)) }
     }
 
     /// Like [`Self::plain_str`], but decodes escapes when there are any.

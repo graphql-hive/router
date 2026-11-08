@@ -1299,3 +1299,24 @@ User: no conversions to or from `Value` in the new pipeline.
 - Tests: e2e for data a plugin sets that isn't JSON (left out) and a subgraph start hook
   answering with `from_json`, both pipelines equal. Full suites: test_all 2114/2114, e2e
   843/844 off and on (`file_watch_works`).
+
+### 2026-11-08 — review fixes on today's plugin and Value-removal work
+
+A high-effort review of 82067dc0..99f30836 found ten issues; all fixed:
+- Slots with subgraph end hooks: headers, counted bytes and demand-control cost come after the
+  hooks (`Run::count`), so a response a hook replaces doesn't count twice and the cost is of
+  what the hooks left, like on the Value pipeline.
+- `OnSubgraphExecuteEndHookPayload`: `headers()`, `status()`, `extensions()` read only
+  (changing them never took effect); `extensions()` reads the body's range on slots, converts
+  the read `Value` on the other pipeline.
+- `SubgraphResponse::raw`, set by `from_json` and the HTTP executor's raw path, instead of
+  inferring an unread body from empty fields.
+- The walks visit a value whose enum check failed: a plugin can set a valid one
+  (`slots::tests::a_plugin_can_fix_an_invalid_enum_value_on_both_pipelines`).
+- A subscription event that doesn't parse on slots fails with sonic's message and the subgraph's
+  name (`StartData::Event` carries it).
+- `collect_fields` shared by the slot shape builder and the Value fetch walk; `plain_str_of`
+  shared by `Arena::plain_str` and the walk; the extensions aggregator converts a value only
+  when it keeps it.
+- Tests: test_all 2115/2115, e2e 846/847 off and on (`file_watch_works`), a new e2e reading
+  extensions and status in a subgraph end hook.

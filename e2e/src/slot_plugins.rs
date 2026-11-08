@@ -3,7 +3,7 @@ mod slot_plugins_e2e_tests {
     use bytes::Bytes;
     use hive_router::{
         async_trait,
-        executor::response::subgraph_response::SubgraphResponse,
+        executor::response::{graphql_error::GraphQLError, subgraph_response::SubgraphResponse},
         plugins::hooks::on_execute::{
             OnExecuteEndHookPayload, OnExecuteStartHookPayload, OnExecuteStartHookResult,
         },
@@ -175,6 +175,40 @@ mod slot_plugins_e2e_tests {
         }
     }
 
+    /// Reads the subgraph's extensions in the end hook and reports them as an error
+    #[derive(Default)]
+    struct SubgraphExtensionsPlugin;
+
+    #[async_trait]
+    impl RouterPlugin for SubgraphExtensionsPlugin {
+        type Config = ();
+
+        fn plugin_name() -> &'static str {
+            "test_subgraph_extensions"
+        }
+
+        fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
+            payload.initialize_plugin_with_defaults()
+        }
+
+        async fn on_subgraph_execute<'exec>(
+            &'exec self,
+            payload: OnSubgraphExecuteStartHookPayload<'exec>,
+        ) -> OnSubgraphExecuteStartHookResult<'exec> {
+            payload.on_end(|mut payload: OnSubgraphExecuteEndHookPayload<'exec>| {
+                let foo = payload
+                    .extensions()
+                    .and_then(|extensions| extensions["foo"].as_str().map(str::to_string));
+                let status = payload.status().map(|status| status.as_u16());
+                payload.errors.push(GraphQLError::from(format!(
+                    "saw {} with {status:?}",
+                    foo.as_deref().unwrap_or("nothing")
+                )));
+                payload.proceed()
+            })
+        }
+    }
+
     fn json_response(body: sonic_rs::Value) -> ResponseLike {
         let mut headers = http::HeaderMap::new();
         headers.insert(
@@ -230,6 +264,7 @@ mod slot_plugins_e2e_tests {
                 .register_plugin::<SubgraphEditPlugin>()
                 .register_plugin::<BadSeedPlugin>()
                 .register_plugin::<SubgraphAnswerPlugin>()
+                .register_plugin::<SubgraphExtensionsPlugin>()
                 .build()
                 .start()
                 .await;
@@ -367,6 +402,21 @@ mod slot_plugins_e2e_tests {
             body["errors"][0]["message"],
             json!("answered by a plugin"),
             "{on}"
+        );
+    }
+
+    #[ntex::test]
+    async fn a_subgraph_hook_reads_extensions_and_status_on_both_pipelines() {
+        let (off, on) = both_pipelines(
+            "test_subgraph_extensions",
+            "error_masking:\n                      enabled: false",
+            "{ users { id } }",
+        )
+        .await;
+        assert_eq!(on, off, "slot pipeline response differs");
+        assert!(
+            on.contains("saw from-accounts with Some(200)"),
+            "the hook read the subgraph's extensions and status: {on}"
         );
     }
 }

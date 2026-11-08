@@ -9,7 +9,7 @@ use std::vec;
 
 use crate::executor::executors::map::read_plugin_response;
 use crate::executor::plugins::hooks::on_subgraph_execute::{
-    run_end_hooks, OnSubgraphExecuteEndCallback,
+    run_end_hooks, OnSubgraphExecuteEndCallback, SubgraphExtensions,
 };
 use crate::executor::plugins::response_data::{ResponseData, SubgraphData};
 use crate::query_planner::ast::operation::{ContextAliasTemplate, SubgraphFetchOperation};
@@ -458,7 +458,7 @@ pub async fn execute_query_plan<'exec>(
                     connection_fingerprint: opts.connection_fingerprint,
                     slot_plan: slot_plan.clone(),
                 };
-                match execute_query_plan_with_data(StartData::Event(response), opts).await {
+                match execute_query_plan_with_data(StartData::Event(response, &subgraph_name), opts).await {
                     Ok(result) => yield result.body,
                     Err(ref err) => {
                         // fatal error, stream it and stop
@@ -496,9 +496,9 @@ pub(crate) enum StartData<'exec> {
     /// A JSON object: the introspection result, or what a plugin's `on_execute` start hook put
     /// in. `None` is `{}`.
     Json(Option<Bytes>),
-    /// A subscription event, its errors already taken out. Its body as it came when the slot
-    /// pipeline asked for it (see `SubgraphResponse::from_body`).
-    Event(SubgraphResponse<'exec>),
+    /// A subscription event from a subgraph, its errors already taken out. Its body as it came
+    /// when the slot pipeline asked for it (see `SubgraphResponse::from_body`).
+    Event(SubgraphResponse<'exec>, &'exec str),
 }
 
 async fn execute_query_plan_with_data<'exec>(
@@ -510,7 +510,7 @@ async fn execute_query_plan_with_data<'exec>(
     }
     let (mut data, event) = match start {
         StartData::Json(json) => (json, None),
-        StartData::Event(event) => (None, Some(event)),
+        StartData::Event(event, _) => (None, Some(event)),
     };
     // declared first so it outlives everything that borrows from it
     let aliased_requests = AliasedRequests::default();
@@ -1947,6 +1947,10 @@ impl<'exec> Executor<'exec> {
             self.schema_metadata,
             operation_kind.unwrap_or(&OperationKind::Query),
         );
+        let extensions = match response.extensions.take() {
+            Some(extensions) => SubgraphExtensions::Value(extensions),
+            None => SubgraphExtensions::None,
+        };
         let outcome = run_end_hooks(
             hooks,
             plugin_req_state,
@@ -1954,7 +1958,11 @@ impl<'exec> Executor<'exec> {
             response.errors.take().unwrap_or_default(),
             response.headers.clone(),
             response.status,
+            extensions,
         );
+        if let SubgraphExtensions::Value(extensions) = outcome.extensions {
+            response.extensions = Some(extensions);
+        }
         if let Some(replaced) = outcome.replaced {
             return if replaced.is_raw() {
                 read_plugin_response(

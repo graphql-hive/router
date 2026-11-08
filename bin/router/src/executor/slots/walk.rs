@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use super::compile::{Layout, Shape, SlotPlan, NO_OBJECT, NO_SLOT};
 use bytes::Bytes;
 
-use super::store::{Arena, Raw, Slot, EDITS_BODY};
+use super::store::{plain_str_of, Arena, Raw, Slot, EDITS_BODY};
 use super::write::{Failure, TypeName, Writer};
 use crate::executor::introspection::schema::SchemaMetadata;
 use crate::executor::plugins::response_data::{
@@ -88,7 +88,9 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> Walker<'w, F> {
                     &TypeName::Resolved(parent_type),
                     &OnceCell::new(),
                 ) {
-                    Ok(()) => {}
+                    // an enum value that isn't one is visited: a plugin may set a valid one, the
+                    // writer writes null with an error otherwise
+                    Ok(()) | Err(Failure::InvalidEnumValue) => {}
                     Err(Failure::Fatal(error)) => return Err(error),
                     // left out, or written as null by the writer
                     Err(_) => continue,
@@ -173,7 +175,10 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> Walker<'w, F> {
                 // bodies.
                 let typename = typename_of(self.arena, &self.slots.layouts, layout, first);
                 let type_name = match typename.as_ref().and_then(|(body, raw)| {
-                    plain_str(&body[raw.start as usize..(raw.start + raw.len) as usize])
+                    // SAFETY: the body's bytes are what the parser read
+                    unsafe {
+                        plain_str_of(&body[raw.start as usize..(raw.start + raw.len) as usize])
+                    }
                 }) {
                     Some(name) => name,
                     None => self.field_type(field, parent_type)?,
@@ -205,15 +210,6 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> Walker<'w, F> {
                 type_name: parent_type.to_string(),
             })
     }
-}
-
-/// A JSON string without its quotes, when it has no escapes. Type names never have any.
-fn plain_str(json: &[u8]) -> Option<&str> {
-    let inner = json.strip_prefix(b"\"")?.strip_suffix(b"\"")?;
-    if inner.contains(&b'\\') {
-        return None;
-    }
-    std::str::from_utf8(inner).ok()
 }
 
 /// The body and range of an object's `__typename`, when it has one. The body is a cheap clone
@@ -369,7 +365,10 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> FetchWalker<'w, F> {
                 let type_name = typename
                     .as_ref()
                     .and_then(|(body, raw)| {
-                        plain_str(&body[raw.start as usize..(raw.start + raw.len) as usize])
+                        // SAFETY: the body's bytes are what the parser read
+                        unsafe {
+                            plain_str_of(&body[raw.start as usize..(raw.start + raw.len) as usize])
+                        }
                     })
                     .or_else(|| self.shape.object_type(object))
                     .or_else(|| {

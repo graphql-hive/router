@@ -11,7 +11,7 @@ use crate::executor::{
     },
     plugins::response_data::SubgraphData,
     request_context::RequestContextPluginApi,
-    response::{graphql_error::GraphQLError, subgraph_response::SubgraphResponse},
+    response::{graphql_error::GraphQLError, subgraph_response::SubgraphResponse, value::Value},
 };
 
 type RequestContextApi = RequestContextPluginApi<super::OnSubgraphExecute>;
@@ -73,16 +73,45 @@ pub struct OnSubgraphExecuteEndHookPayload<'exec> {
     /// plugins attach to nulls in `data`, count as the subgraph's: their paths are mapped to the
     /// client's, they carry the subgraph's name and error masking applies to them.
     pub errors: Vec<GraphQLError>,
-    /// The subgraph's response headers, when it sent any
-    pub headers: Option<Arc<HeaderMap>>,
-    /// The subgraph's HTTP status, when there is one
-    pub status: Option<StatusCode>,
+    headers: Option<Arc<HeaderMap>>,
+    status: Option<StatusCode>,
+    extensions: SubgraphExtensions<'exec>,
     /// The context object that can be used to share data across different plugin hooks for the same request.
     /// It is unique per request and is dropped after the response is sent.
     ///
     /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
     pub context: &'exec PluginContext,
     pub request_context: RequestContextApi,
+}
+
+impl<'exec> OnSubgraphExecuteEndHookPayload<'exec> {
+    /// The subgraph's response headers, when it sent any
+    pub fn headers(&self) -> Option<&HeaderMap> {
+        self.headers.as_deref()
+    }
+
+    /// The subgraph's HTTP status, when there is one
+    pub fn status(&self) -> Option<StatusCode> {
+        self.status
+    }
+
+    /// The subgraph's `extensions`, read each time this is called
+    pub fn extensions(&self) -> Option<sonic_rs::Value> {
+        match &self.extensions {
+            SubgraphExtensions::None => None,
+            SubgraphExtensions::Json(json) => sonic_rs::from_slice(json).ok(),
+            SubgraphExtensions::Value(value) => Some(sonic_rs::Value::from(value)),
+        }
+    }
+}
+
+/// A subgraph's `extensions`, as the pipeline has them
+pub(crate) enum SubgraphExtensions<'exec> {
+    None,
+    /// Their JSON, from the body the slot pipeline read
+    Json(bytes::Bytes),
+    /// What the Value pipeline read
+    Value(Value<'exec>),
 }
 
 /// A plugin's end hook, run by the pipeline once it has the subgraph's data
@@ -96,6 +125,8 @@ pub(crate) type OnSubgraphExecuteEndCallback<'exec> = Box<
 pub(crate) struct SubgraphEndOutcome<'exec> {
     pub data: SubgraphData<'exec>,
     pub errors: Vec<GraphQLError>,
+    /// Handed back as they came in
+    pub extensions: SubgraphExtensions<'exec>,
     /// The response a hook ended with: it's used instead, the later hooks don't run
     pub replaced: Option<SubgraphResponse<'exec>>,
 }
@@ -108,12 +139,14 @@ pub(crate) fn run_end_hooks<'exec>(
     errors: Vec<GraphQLError>,
     headers: Option<Arc<HeaderMap>>,
     status: Option<StatusCode>,
+    extensions: SubgraphExtensions<'exec>,
 ) -> SubgraphEndOutcome<'exec> {
     let mut payload = OnSubgraphExecuteEndHookPayload {
         data,
         errors,
         headers,
         status,
+        extensions,
         context: &plugin_req_state.context,
         request_context: plugin_req_state
             .request_context
@@ -126,6 +159,7 @@ pub(crate) fn run_end_hooks<'exec>(
             return SubgraphEndOutcome {
                 data: payload.data,
                 errors: payload.errors,
+                extensions: payload.extensions,
                 replaced: Some(response),
             };
         }
@@ -133,6 +167,7 @@ pub(crate) fn run_end_hooks<'exec>(
     SubgraphEndOutcome {
         data: payload.data,
         errors: payload.errors,
+        extensions: payload.extensions,
         replaced: None,
     }
 }

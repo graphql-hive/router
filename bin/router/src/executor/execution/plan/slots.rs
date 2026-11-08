@@ -7,6 +7,7 @@ use super::*;
 use crate::executor::executors::error::SubgraphExecutorError;
 use crate::executor::extensions::aggregator::apply_subgraph_extensions_json;
 use crate::executor::introspection::schema::PossibleTypes;
+use crate::executor::plugins::hooks::on_subgraph_execute::SubgraphExtensions;
 use crate::executor::slots::compile::{
     AliasProgram, FetchProgram, Layout, Requires, RequiresNode, Seed, SlotPlan, Step,
     TypenameRewrite, NO_SLOT, SEED_FETCH,
@@ -53,7 +54,7 @@ pub(super) async fn execute<'exec>(
     let mut initial_errors = std::mem::take(&mut opts.initial_errors);
     let (mut json, event) = match start {
         StartData::Json(json) => (json, None),
-        StartData::Event(event) => (None, Some(event)),
+        StartData::Event(event, subgraph) => (None, Some((event, subgraph))),
     };
 
     // plugins' `on_execute`, like the other pipeline: they may change the data the plan starts
@@ -173,19 +174,25 @@ pub(super) async fn execute<'exec>(
                     }
                 }
             }
-            (None, Some(event)) => match event.bytes {
+            (None, Some((event, subgraph))) => match event.bytes {
                 Some(body) => {
                     match parse_body(&mut run.arena, layouts, shape, &body, passthrough) {
                         Some(parsed) => {
                             ctx.errors.extend(parsed.errors.unwrap_or_default());
                             Some(parsed.data)
                         }
+                        // the stream stops, like when the subgraph's executor can't read an event
                         None => {
-                            return Err(SubgraphExecutorError::MalformedResponse(None))
-                                .with_plan_context(LazyPlanContext {
-                                    subgraph_name: || None,
-                                    affected_path: || None,
-                                })
+                            let error = match sonic_rs::from_slice::<serde::de::IgnoredAny>(&body) {
+                                Err(err) => {
+                                    SubgraphExecutorError::ResponseDeserializationFailure(err, None)
+                                }
+                                Ok(_) => SubgraphExecutorError::MalformedResponse(None),
+                            };
+                            return Err(error).with_plan_context(LazyPlanContext {
+                                subgraph_name: || Some(subgraph.to_string()),
+                                affected_path: || None,
+                            });
                         }
                     }
                 }
@@ -1390,6 +1397,34 @@ impl<'p> Run<'p> {
         );
     }
 
+    /// Counts a subgraph's response: its bytes for cache control, its data for demand control
+    fn count<'exec>(
+        &self,
+        executor: &Executor<'exec>,
+        ctx: &mut ExecutionContext<'exec>,
+        subgraph_name: &'exec str,
+        fetch_hash: u64,
+        bytes: Option<bytes::Bytes>,
+        data: Slot,
+    ) {
+        if let Some(bytes) = bytes {
+            ctx.response_storage.add_response(bytes);
+        }
+        if let Some(demand_control) = executor.demand_control_context.as_deref() {
+            demand_control.record_subgraph_data_cost(
+                &mut ctx.subgraph_response_cost_tracker,
+                subgraph_name,
+                fetch_hash,
+                SlotView {
+                    arena: &self.arena,
+                    layouts: &self.plan.layouts,
+                    slot: data,
+                },
+                executor.variable_values,
+            );
+        }
+    }
+
     /// [`Self::process`], for a response and the end hooks still to run on it
     fn process_response<'exec>(
         &mut self,
@@ -1406,8 +1441,13 @@ impl<'p> Run<'p> {
             fetch_hash,
             operation_kind,
         } = job;
-        if let Some(ref headers) = response.headers {
-            executor.apply_job_headers(ctx, subgraph_name, affected_path, headers);
+        // with end hooks, the response's headers and bytes count only once the hooks kept it: a
+        // response a hook ends with counts instead, like on the other pipeline
+        let hooked = !end_hooks.is_empty();
+        if !hooked {
+            if let Some(ref headers) = response.headers {
+                executor.apply_job_headers(ctx, subgraph_name, affected_path, headers);
+            }
         }
         let program = match &merge {
             Merge::Root { program, .. } | Merge::Entities { program, .. } => *program,
@@ -1468,20 +1508,14 @@ impl<'p> Run<'p> {
             executor.handle_job_error(ctx, &error);
             return;
         };
-        if let Some(subgraph_bytes) = subgraph_bytes {
-            ctx.response_storage.add_response(subgraph_bytes);
-        }
-        if let Some(demand_control) = executor.demand_control_context.as_deref() {
-            demand_control.record_subgraph_data_cost(
-                &mut ctx.subgraph_response_cost_tracker,
+        if !hooked {
+            self.count(
+                executor,
+                ctx,
                 subgraph_name,
                 fetch_hash,
-                SlotView {
-                    arena: &self.arena,
-                    layouts,
-                    slot: parsed.data,
-                },
-                executor.variable_values,
+                subgraph_bytes.clone(),
+                parsed.data,
             );
         }
         if !rebuilt
@@ -1518,6 +1552,12 @@ impl<'p> Run<'p> {
                 executor.schema_metadata,
                 operation_kind.unwrap_or(&OperationKind::Query),
             );
+            let extensions = match parsed.extensions {
+                Some((start, end)) => {
+                    SubgraphExtensions::Json(bytes.slice(start as usize..end as usize))
+                }
+                None => SubgraphExtensions::None,
+            };
             let outcome = run_end_hooks(
                 end_hooks,
                 plugin_req_state,
@@ -1525,6 +1565,7 @@ impl<'p> Run<'p> {
                 errors.take().unwrap_or_default(),
                 response.headers.clone(),
                 response.status,
+                extensions,
             );
             let (arena, walked, attached) = outcome.data.into_slots();
             self.arena = arena;
@@ -1536,6 +1577,17 @@ impl<'p> Run<'p> {
             let mut hook_errors = outcome.errors;
             hook_errors.extend(attached);
             errors = (!hook_errors.is_empty()).then_some(hook_errors);
+            if let Some(ref headers) = response.headers {
+                executor.apply_job_headers(ctx, subgraph_name, affected_path, headers);
+            }
+            self.count(
+                executor,
+                ctx,
+                subgraph_name,
+                fetch_hash,
+                subgraph_bytes,
+                data,
+            );
         }
         if let Some(status_error) = status_errors {
             errors.get_or_insert_with(Vec::new).push(status_error);
