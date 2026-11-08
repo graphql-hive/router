@@ -22,9 +22,9 @@ use std::sync::Arc;
 use serde::Serialize;
 
 use crate::executor::execution::plan::CoerceVariablesPayload;
-use crate::executor::introspection::schema::SchemaMetadata;
+use crate::executor::introspection::schema::{FieldNullability, FieldTypeInfo, SchemaMetadata};
 use crate::executor::projection::error::ProjectionError;
-use crate::executor::projection::plan::{FieldRecord, ProjectionPlan};
+use crate::executor::projection::plan::ProjectionPlan;
 use crate::executor::projection::response::{project_data, ShapeCursor};
 use crate::executor::response::graphql_error::{
     GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment,
@@ -257,16 +257,48 @@ pub(crate) enum Place<'w, 'v> {
     Value(&'w mut Value<'v>),
 }
 
+/// How nullable a value is
+#[derive(Clone, Copy)]
+pub(crate) enum Nullability<'w> {
+    /// From the client operation's projection plan: whether this value is Non-Null, and the
+    /// shape of its type from this level in (for the items of a list)
+    Plan {
+        non_null: bool,
+        shape: ShapeCursor<'w>,
+    },
+    /// From the schema, looked up when asked: how many lists deep the value is in its field
+    Schema { depth: u8 },
+}
+
+impl<'w> Nullability<'w> {
+    /// The nullability of an item of this list
+    pub(crate) fn item(self) -> Self {
+        match self {
+            Nullability::Plan { shape, .. } => {
+                let shape = shape.list_item().unwrap_or(shape);
+                Nullability::Plan {
+                    non_null: shape.is_non_null(),
+                    shape,
+                }
+            }
+            Nullability::Schema { depth } => Nullability::Schema {
+                depth: depth.saturating_add(1),
+            },
+        }
+    }
+}
+
 /// A value of the response during a walk: a field's value, or an item of a list. It reads the
 /// value and changes it, see [`ResponseData::walk`].
 pub struct DataValue<'w, 'v> {
-    pub(crate) plan: &'w ProjectionPlan,
     pub(crate) schema: &'w SchemaMetadata,
-    pub(crate) field: &'w FieldRecord,
+    pub(crate) field_name: &'w str,
+    pub(crate) response_key: &'w str,
     /// The type of the object the field is on
     pub(crate) parent_type: &'w str,
-    /// The nullability of this value: the field's, or its items' for an item
-    pub(crate) shape: ShapeCursor<'w>,
+    /// The field selects fields under it: its values are objects, or lists of them
+    pub(crate) composite: bool,
+    pub(crate) nullability: Nullability<'w>,
     pub(crate) item: Option<u32>,
     pub(crate) path: &'w PathFrame<'w>,
     pub(crate) place: Place<'w, 'v>,
@@ -277,15 +309,15 @@ pub struct DataValue<'w, 'v> {
 impl<'w, 'v> DataValue<'w, 'v> {
     /// The field's name in the schema
     pub fn field_name(&self) -> &'w str {
-        self.plan.field_name(self.field)
+        self.field_name
     }
 
     /// The field's response key: its alias, or its name
     pub fn response_key(&self) -> &'w str {
-        self.plan.response_key(self.field)
+        self.response_key
     }
 
-    /// The type of the object the field is on, always an object type
+    /// The type of the object the field is on
     pub fn parent_type(&self) -> &'w str {
         self.parent_type
     }
@@ -293,7 +325,7 @@ impl<'w, 'v> DataValue<'w, 'v> {
     /// Whether the value belongs to the field `field_name` of `type_name`: the object's type, or
     /// an interface or union it's part of
     pub fn is(&self, type_name: &str, field_name: &str) -> bool {
-        self.field_name() == field_name
+        self.field_name == field_name
             && (self.parent_type == type_name
                 || self
                     .schema
@@ -306,11 +338,39 @@ impl<'w, 'v> DataValue<'w, 'v> {
         self.item.map(|index| index as usize)
     }
 
+    /// The field's type in the schema
+    fn field_info(&self) -> Option<&'w FieldTypeInfo> {
+        self.schema
+            .get_type_fields(self.parent_type)?
+            .get(self.field_name)
+    }
+
+    /// The nullability of this value's position, from the schema: `depth` lists into the field
+    fn schema_nullability(&self, depth: u8) -> Option<&'w FieldNullability> {
+        let mut nullability = &self.field_info()?.nullability;
+        for _ in 0..depth {
+            nullability = nullability.list_item()?;
+        }
+        Some(nullability)
+    }
+
     /// Whether the position is Non-Null: a null set here bubbles up
     pub fn is_non_null(&self) -> bool {
-        match self.item {
-            None => self.field.is_non_null(),
-            Some(_) => self.shape.is_non_null(),
+        match self.nullability {
+            Nullability::Plan { non_null, .. } => non_null,
+            Nullability::Schema { depth } => self
+                .schema_nullability(depth)
+                .is_some_and(FieldNullability::is_non_null),
+        }
+    }
+
+    /// Whether the position holds a list
+    fn is_list_position(&self) -> bool {
+        match self.nullability {
+            Nullability::Plan { shape, .. } => shape.list_item().is_some(),
+            Nullability::Schema { depth } => self
+                .schema_nullability(depth)
+                .is_some_and(|nullability| nullability.list_item().is_some()),
         }
     }
 
@@ -438,13 +498,11 @@ impl<'w, 'v> DataValue<'w, 'v> {
     /// the enum's values for an enum, any JSON for a custom scalar. Only scalars and enums can
     /// be set. `null` works like [`set_null`](Self::set_null).
     pub fn set<T: Serialize>(&mut self, value: T) -> Result<(), DataEditError> {
-        if self.field.has_children() || self.shape.list_item().is_some() {
+        if self.composite || self.is_list_position() {
             return Err(DataEditError::NotALeaf);
         }
         let type_name = self
-            .schema
-            .get_type_fields(self.parent_type)
-            .and_then(|fields| fields.get(self.field_name()))
+            .field_info()
             .map(|field| field.output_type_name.as_str())
             .ok_or(DataEditError::WrongType)?;
         let schema = self.schema;
@@ -590,3 +648,122 @@ fn json_to_value(
 
 /// A plan the walk can't follow, like the writer can't
 pub(crate) type WalkResult = Result<(), ProjectionError>;
+
+/// A subgraph's data, as a plugin's `on_subgraph_execute` end hook gets it: what one fetch got
+/// back, before it's merged into the response. Walked and changed like [`ResponseData`], with
+/// the fetch's own query: its response keys (`_entities` for an entity fetch), and fields typed
+/// by the objects' `__typename` and the schema.
+pub struct SubgraphData<'exec> {
+    store: FetchStore<'exec>,
+    schema: &'exec SchemaMetadata,
+    root_type: &'exec str,
+    /// Errors plugins attached to the nulls they set
+    errors: Vec<GraphQLError>,
+}
+
+// one per fetch with end hooks, the size difference doesn't matter
+#[allow(clippy::large_enum_variant)]
+enum FetchStore<'exec> {
+    Slots {
+        arena: Arena,
+        plan: Arc<SlotPlan>,
+        fetch: i64,
+        data: Slot,
+    },
+    Value {
+        data: Value<'exec>,
+        document: &'exec str,
+    },
+}
+
+impl<'exec> SubgraphData<'exec> {
+    pub(crate) fn from_slots(
+        arena: Arena,
+        data: Slot,
+        plan: Arc<SlotPlan>,
+        fetch: i64,
+        schema: &'exec SchemaMetadata,
+        kind: &OperationKind,
+    ) -> Self {
+        Self {
+            store: FetchStore::Slots {
+                arena,
+                plan,
+                fetch,
+                data,
+            },
+            schema,
+            root_type: root_type(schema, kind),
+            errors: Vec::new(),
+        }
+    }
+
+    pub(crate) fn from_value(
+        data: Value<'exec>,
+        document: &'exec str,
+        schema: &'exec SchemaMetadata,
+        kind: &OperationKind,
+    ) -> Self {
+        Self {
+            store: FetchStore::Value { data, document },
+            schema,
+            root_type: root_type(schema, kind),
+            errors: Vec::new(),
+        }
+    }
+
+    /// The slots back, with the errors plugins attached
+    pub(crate) fn into_slots(self) -> (Arena, Slot, Vec<GraphQLError>) {
+        match self.store {
+            FetchStore::Slots { arena, data, .. } => (arena, data, self.errors),
+            FetchStore::Value { .. } => unreachable!("the data of the slot pipeline is slots"),
+        }
+    }
+
+    /// The `Value` back, with the errors plugins attached
+    pub(crate) fn into_value(self) -> (Value<'exec>, Vec<GraphQLError>) {
+        match self.store {
+            FetchStore::Value { data, .. } => (data, self.errors),
+            FetchStore::Slots { .. } => unreachable!("the data of the Value pipeline is a Value"),
+        }
+    }
+
+    /// Visits every value the fetch got, parents before their children, like
+    /// [`ResponseData::walk`]. Errors attached to nulls have paths in the subgraph's response
+    /// (`["_entities", 0, "email"]`), and the router maps them to the client's like the
+    /// subgraph's own errors.
+    pub fn walk<F: FnMut(&mut DataValue<'_, '_>)>(&mut self, visit: F) {
+        let schema = self.schema;
+        let walked = match &mut self.store {
+            FetchStore::Slots {
+                arena,
+                plan,
+                fetch,
+                data,
+            } => match plan.fetches.get(fetch) {
+                Some(program) => crate::executor::slots::walk::walk_fetch(
+                    arena,
+                    &plan.layouts,
+                    &program.shape,
+                    *data,
+                    self.root_type,
+                    schema,
+                    &mut self.errors,
+                    visit,
+                ),
+                None => Ok(()),
+            },
+            FetchStore::Value { data, document } => crate::executor::projection::walk::walk_fetch(
+                data,
+                document,
+                self.root_type,
+                schema,
+                &mut self.errors,
+                visit,
+            ),
+        };
+        if let Err(error) = walked {
+            tracing::debug!(%error, "walking the subgraph data stopped");
+        }
+    }
+}
