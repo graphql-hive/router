@@ -19,6 +19,7 @@ use crate::executor::plugins::hooks::on_supergraph_load::Supergraph;
 use crate::executor::plugins::response_data::{DataEditError, DataValue, ResponseData};
 use crate::executor::projection::plan::ProjectionPlan;
 use crate::executor::projection::response::project_by_operation;
+use crate::executor::response::graphql_error::GraphQLErrorPathSegment;
 use crate::executor::response::merge::deep_merge;
 use crate::executor::response::subgraph_response::SubgraphResponse;
 use crate::executor::response::value::Value;
@@ -649,5 +650,25 @@ fn plugin_edits_match_on_both_pipelines() {
             "name: Ok(())",
         ]
         .join("\n")
+    );
+}
+
+#[test]
+fn a_plugin_can_fix_an_invalid_enum_value_on_both_pipelines() {
+    let query = "{ products { id state } }";
+    let body = r#"{"data":{"products":[{"id":"1","state":"LEGACY"},{"id":"2","state":"LEGACY"}]}}"#;
+    let mut edit = |value: &mut DataValue<'_, '_>| {
+        // the first is fixed, the second is left to the writer
+        if value.is("Product", "state")
+            && value.path().segments[1] == GraphQLErrorPathSegment::Index(0)
+        {
+            value.set("RETIRED").expect("a valid enum value");
+        }
+    };
+    let (old, new, _, _) = both_edited(TYPES, query, body, Some(&mut edit));
+    assert_eq!(old, new, "both pipelines write the same response");
+    assert_eq!(
+        new,
+        r#"{"data":{"products":[{"id":"1","state":"RETIRED"},{"id":"2","state":null}]},"errors":[{"message":"Value is not a valid enum value"}]}"#
     );
 }

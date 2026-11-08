@@ -17,11 +17,17 @@ pub struct ExtensionsAggregator {
 }
 
 impl ExtensionsAggregator {
-    fn write(&mut self, key: &str, value: SonicValue, strategy: ExtensionsMergeStrategy) {
+    /// `value` is only made when it's kept
+    fn write(
+        &mut self,
+        key: &str,
+        value: impl FnOnce() -> SonicValue,
+        strategy: ExtensionsMergeStrategy,
+    ) {
         match self.entries.get_mut(key) {
             None => {
                 self.entries
-                    .insert(key.to_string(), (strategy, vec![value]));
+                    .insert(key.to_string(), (strategy, vec![value()]));
             }
             Some((_, values)) => match strategy {
                 ExtensionsMergeStrategy::First => {
@@ -29,10 +35,10 @@ impl ExtensionsAggregator {
                 }
                 ExtensionsMergeStrategy::Last => {
                     values.clear();
-                    values.push(value);
+                    values.push(value());
                 }
                 ExtensionsMergeStrategy::Append => {
-                    values.push(value);
+                    values.push(value());
                 }
             },
         }
@@ -83,7 +89,7 @@ pub fn apply_subgraph_extensions(
     };
     for (key, val) in entries {
         if let Some(strategy) = propagated(plan, key) {
-            agg.write(key, SonicValue::from(val), strategy);
+            agg.write(key, || SonicValue::from(val), strategy);
         }
     }
 }
@@ -103,7 +109,7 @@ pub fn apply_subgraph_extensions_json(
     };
     for (key, val) in extensions.iter_mut() {
         if let Some(strategy) = propagated(plan, key) {
-            agg.write(key, std::mem::take(val), strategy);
+            agg.write(key, || std::mem::take(val), strategy);
         }
     }
 }

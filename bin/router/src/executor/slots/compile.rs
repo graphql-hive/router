@@ -1331,11 +1331,54 @@ impl Passthrough<'_> {
 
 /// A response key with the field's name (`None` when fragments put different fields under it)
 /// and the selection sets under it
-type Collected<'d, 'a> = (
+pub(crate) type Collected<'d, 'a> = (
     &'a str,
     Option<&'a str>,
     Vec<&'d gql::SelectionSet<'a, &'a str>>,
 );
+
+/// The fields `set` selects, by response key, through its fragments: each key's field name
+/// (`None` when fragments put different fields under it) and the selection sets under it
+pub(crate) fn collect_fields<'d, 'a>(
+    fragments: &'d [&'d gql::FragmentDefinition<'a, &'a str>],
+    set: &'d gql::SelectionSet<'a, &'a str>,
+    out: &mut Vec<Collected<'d, 'a>>,
+) -> Result<(), Unsupported> {
+    for item in &set.items {
+        match item {
+            gql::Selection::Field(field) => {
+                let key = field.alias.unwrap_or(field.name);
+                let index = match out.iter().position(|(k, _, _)| *k == key) {
+                    Some(index) => {
+                        // another field under the same key: no one name for it
+                        if out[index].1 != Some(field.name) {
+                            out[index].1 = None;
+                        }
+                        index
+                    }
+                    None => {
+                        out.push((key, Some(field.name), Vec::new()));
+                        out.len() - 1
+                    }
+                };
+                if !field.selection_set.items.is_empty() {
+                    out[index].2.push(&field.selection_set);
+                }
+            }
+            gql::Selection::InlineFragment(fragment) => {
+                collect_fields(fragments, &fragment.selection_set, out)?
+            }
+            gql::Selection::FragmentSpread(spread) => {
+                let fragment = fragments
+                    .iter()
+                    .find(|f| f.name == spread.fragment_name)
+                    .ok_or(Unsupported("unknown fragment"))?;
+                collect_fields(fragments, &fragment.selection_set, out)?
+            }
+        }
+    }
+    Ok(())
+}
 
 /// The type condition every selection of `sets` is under, when they're all inline fragments on
 /// the same type
@@ -1467,40 +1510,6 @@ impl<'d, 'a> ShapeBuilder<'d, 'a> {
         set: &'d gql::SelectionSet<'a, &'a str>,
         out: &mut Vec<Collected<'d, 'a>>,
     ) -> Result<(), Unsupported> {
-        for item in &set.items {
-            match item {
-                gql::Selection::Field(field) => {
-                    let key = field.alias.unwrap_or(field.name);
-                    let index = match out.iter().position(|(k, _, _)| *k == key) {
-                        Some(index) => {
-                            // another field under the same key: no one name for it
-                            if out[index].1 != Some(field.name) {
-                                out[index].1 = None;
-                            }
-                            index
-                        }
-                        None => {
-                            out.push((key, Some(field.name), Vec::new()));
-                            out.len() - 1
-                        }
-                    };
-                    if !field.selection_set.items.is_empty() {
-                        out[index].2.push(&field.selection_set);
-                    }
-                }
-                gql::Selection::InlineFragment(fragment) => {
-                    self.collect(&fragment.selection_set, out)?
-                }
-                gql::Selection::FragmentSpread(spread) => {
-                    let fragment = self
-                        .fragments
-                        .iter()
-                        .find(|f| f.name == spread.fragment_name)
-                        .ok_or(Unsupported("unknown fragment"))?;
-                    self.collect(&fragment.selection_set, out)?
-                }
-            }
-        }
-        Ok(())
+        collect_fields(self.fragments, set, out)
     }
 }

@@ -1011,6 +1011,7 @@ impl SubgraphHttpResponse {
     fn into_raw_response(self) -> SubgraphResponse<'static> {
         SubgraphResponse {
             bytes: Some(self.body),
+            raw: true,
             headers: Some(self.headers),
             status: Some(self.status),
             ..Default::default()

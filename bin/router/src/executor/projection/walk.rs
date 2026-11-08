@@ -17,7 +17,7 @@ use crate::executor::plugins::response_data::{
 };
 use crate::executor::response::graphql_error::GraphQLError;
 use crate::executor::response::value::Value;
-use crate::executor::slots::compile::single_type_condition;
+use crate::executor::slots::compile::{collect_fields, single_type_condition};
 use crate::executor::utils::consts::TYPENAME_FIELD_NAME;
 
 pub(crate) fn walk<F: FnMut(&mut DataValue<'_, '_>)>(
@@ -94,7 +94,9 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> Walker<'w, F> {
                     Some(value),
                     self.variables,
                 ) {
-                    Ok(()) => {}
+                    // an enum value that isn't one is visited: a plugin may set a valid one, the
+                    // projection writes null with an error otherwise
+                    Ok(()) | Err(ConditionFailure::InvalidEnumValue) => {}
                     Err(ConditionFailure::Fatal(error)) => return Err(error),
                     // left out, or written as null by the projection
                     Err(_) => continue,
@@ -255,50 +257,6 @@ struct FetchWalker<'d, 'a, 's, F> {
 }
 
 impl<'d, 'a, 's, F: FnMut(&mut DataValue<'_, '_>)> FetchWalker<'d, 'a, 's, F> {
-    /// The fields `set` selects, by response key, fragments included: the field's name (`None`
-    /// when the key is a different field depending on the type) and the sets under it
-    #[allow(clippy::type_complexity)]
-    fn collect(
-        &self,
-        set: &'d Set<'d, 'a>,
-        out: &mut Vec<(&'a str, Option<&'a str>, Vec<&'d Set<'d, 'a>>)>,
-    ) {
-        for item in &set.items {
-            match item {
-                gql::Selection::Field(field) => {
-                    let key = field.alias.unwrap_or(field.name);
-                    let index = match out.iter().position(|(k, _, _)| *k == key) {
-                        Some(index) => {
-                            if out[index].1 != Some(field.name) {
-                                out[index].1 = None;
-                            }
-                            index
-                        }
-                        None => {
-                            out.push((key, Some(field.name), Vec::new()));
-                            out.len() - 1
-                        }
-                    };
-                    if !field.selection_set.items.is_empty() {
-                        out[index].2.push(&field.selection_set);
-                    }
-                }
-                gql::Selection::InlineFragment(fragment) => {
-                    self.collect(&fragment.selection_set, out)
-                }
-                gql::Selection::FragmentSpread(spread) => {
-                    if let Some(fragment) = self
-                        .fragments
-                        .iter()
-                        .find(|fragment| fragment.name == spread.fragment_name)
-                    {
-                        self.collect(&fragment.selection_set, out)
-                    }
-                }
-            }
-        }
-    }
-
     fn object(
         &mut self,
         object: &mut [(&str, Value<'_>)],
@@ -308,7 +266,8 @@ impl<'d, 'a, 's, F: FnMut(&mut DataValue<'_, '_>)> FetchWalker<'d, 'a, 's, F> {
     ) {
         let mut fields = Vec::new();
         for set in sets {
-            self.collect(set, &mut fields);
+            // a fragment the document doesn't define: what's before it is still walked
+            let _ = collect_fields(self.fragments, set, &mut fields);
         }
         let mut cursor = 0;
         for (key, name, child_sets) in &fields {

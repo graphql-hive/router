@@ -25,6 +25,8 @@ pub struct SubgraphResponse<'a> {
     pub(crate) data: Value<'a>,
     pub errors: Option<Vec<GraphQLError>>,
     pub(crate) extensions: Option<Value<'a>>,
+    /// `bytes` is the body, not read yet (see [`Self::is_raw`])
+    pub(crate) raw: bool,
     pub headers: Option<Arc<HeaderMap>>,
     pub bytes: Option<Bytes>,
     pub status: Option<StatusCode>,
@@ -36,6 +38,7 @@ impl<'a> SubgraphResponse<'a> {
     pub fn from_json(body: impl Into<Bytes>) -> Self {
         Self {
             bytes: Some(body.into()),
+            raw: true,
             ..Default::default()
         }
     }
@@ -68,13 +71,9 @@ impl<'a> SubgraphResponse<'a> {
     }
 
     /// Whether this is a body not read yet: what the slot pipeline asks the executor for, and
-    /// what [`Self::from_json`] makes. A response that was read has data or errors (one with
-    /// neither is refused as malformed).
+    /// what [`Self::from_json`] makes
     pub(crate) fn is_raw(&self) -> bool {
-        self.bytes.is_some()
-            && self.data.is_null()
-            && self.errors.is_none()
-            && self.extensions.is_none()
+        self.raw
     }
 
     pub fn append_error(&mut self, error: GraphQLError) {
@@ -179,6 +178,7 @@ impl<'a, 'de> Visitor<'de> for SubgraphResponseVisitor<'a> {
         }
 
         Ok(SubgraphResponse {
+            raw: false,
             data: data.unwrap_or(Value::Null),
             errors,
             extensions,
@@ -363,6 +363,7 @@ impl<'a> SubgraphResponse<'a> {
             return Err(SubgraphExecutorError::MalformedResponse(None));
         }
         Ok(SubgraphResponse {
+            raw: false,
             data: parsed.data,
             errors: parsed.errors,
             extensions: parsed.extensions,

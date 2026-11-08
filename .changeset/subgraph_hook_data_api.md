@@ -8,7 +8,7 @@ hive-router: minor
 
 - `data`, a `SubgraphData`: what the subgraph sent for this fetch, before it's merged into the response. Plugins `walk` it like `OnExecuteEndHookPayload::data`, with the fetch's own response keys (`_entities` for an entity fetch) and fields typed by the objects' `__typename` and the schema: `set` a scalar or enum to a value of its type, `set_null` any value, or `set_null_with_error`.
 - `errors`, the subgraph's GraphQL errors. These and the errors attached to nulls count as the subgraph's: their paths are mapped to the client's and error masking applies to them.
-- `headers` and `status`, read only.
+- `headers()`, `status()` and `extensions()`, read only: the subgraph's response headers, its HTTP status, and its `extensions` (read from the body each time `extensions()` is called). A hook that needs to change what the subgraph sent changes `data` and `errors`, or ends with its own response.
 
 ```rust
 payload.on_end(|mut payload| {
