@@ -45,6 +45,20 @@ impl<'a> SubgraphResponse<'a> {
         &self.data
     }
 
+    /// A subgraph's response body: as it came when the pipeline reads bodies itself (`raw`,
+    /// the slot pipeline), else read like [`Self::deserialize_from_bytes`]
+    pub(crate) fn from_body(
+        bytes: Bytes,
+        custom_scalar_paths: Option<&CustomScalarPaths>,
+        raw: bool,
+    ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
+        if raw {
+            Ok(SubgraphResponse::from_json(bytes))
+        } else {
+            SubgraphResponse::deserialize_from_bytes(bytes, custom_scalar_paths)
+        }
+    }
+
     /// A response with only errors, for a plugin's hook to end with
     pub fn from_errors(errors: Vec<GraphQLError>) -> Self {
         Self {

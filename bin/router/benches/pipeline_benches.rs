@@ -269,11 +269,9 @@ impl SubgraphExecutor for Replay {
 
         // like the http executor: the slot pipeline reads the body itself
         if request.raw_response {
-            return Ok(SubgraphResponse {
-                bytes: Some(bytes),
-                status: Some(StatusCode::OK),
-                ..Default::default()
-            });
+            let mut response = SubgraphResponse::from_json(bytes);
+            response.status = Some(StatusCode::OK);
+            return Ok(response);
         }
         let response = match request.response_shape {
             Some(shape) => {

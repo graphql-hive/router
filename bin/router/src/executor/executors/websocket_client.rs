@@ -159,6 +159,8 @@ pub(crate) type WsResponseStream = LocalBoxStream<'static, WsResponse>;
 struct ClientSubscription {
     sender: mpsc::Sender<WsResponse>,
     custom_scalar_paths: Option<CustomScalarPaths>,
+    /// Hand each payload over unread, see `SubgraphResponse::from_body`
+    raw: bool,
 }
 
 /// The client's WebSocket state. Its subscriptions map subscription IDs to their response senders.
@@ -345,6 +347,18 @@ impl WsClient<Initialized> {
         subscribe_payload: SubscribePayload,
         custom_scalar_paths: Option<CustomScalarPaths>,
     ) -> Result<WsResponseStream, WsClientError> {
+        self.subscribe_reading(subscribe_payload, custom_scalar_paths, false)
+            .await
+    }
+
+    /// [`Self::subscribe`], with each payload handed over unread when `raw` (see
+    /// `SubgraphResponse::from_body`)
+    pub(crate) async fn subscribe_reading(
+        &mut self,
+        subscribe_payload: SubscribePayload,
+        custom_scalar_paths: Option<CustomScalarPaths>,
+        raw: bool,
+    ) -> Result<WsResponseStream, WsClientError> {
         let subscribe_id = self.next_subscription_id()?;
 
         let (tx, rx) = mpsc::channel();
@@ -354,6 +368,7 @@ impl WsClient<Initialized> {
             ClientSubscription {
                 sender: tx,
                 custom_scalar_paths,
+                raw,
             },
         );
 
@@ -512,9 +527,10 @@ fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {
         ServerMessage::Next { id, payload } => {
             if let Some(subscription) = state.borrow().subscriptions.get(&id) {
                 let payload_bytes = Bytes::from(sonic_rs::to_vec(&payload).unwrap_or_default());
-                let response = match SubgraphResponse::deserialize_from_bytes(
+                let response = match SubgraphResponse::from_body(
                     payload_bytes,
                     subscription.custom_scalar_paths.as_ref(),
+                    subscription.raw,
                 ) {
                     Ok(response) => Ok(response),
                     Err(e) => {
@@ -580,6 +596,7 @@ mod tests {
             ClientSubscription {
                 sender: tx,
                 custom_scalar_paths: Some(custom_scalar_paths),
+                raw: false,
             },
         );
 

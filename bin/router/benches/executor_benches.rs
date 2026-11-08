@@ -76,7 +76,7 @@ fn project_data_by_operation_test(c: &mut Criterion) {
     c.bench_function("project_parsed_data_by_operation", |b| {
         b.iter(|| {
             let result = project_by_operation(
-                black_box(&parsed.data),
+                black_box(parsed.data()),
                 vec![],
                 &Default::default(),
                 black_box(root_type_name),

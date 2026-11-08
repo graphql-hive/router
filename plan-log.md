@@ -1279,3 +1279,23 @@ User: no conversions to or from `Value` in the new pipeline.
   `Value` written out. `SubgraphResponse::data`/`extensions` are `pub(crate)` (a `data()` getter
   for executors' users, `from_errors` next to `from_json`), so no plugin can hand the slot
   pipeline a `Value`.
+
+### 2026-11-08 — no `Value` on the slot pipeline: start data and subscription events
+
+- The data a plan starts from is `StartData`: JSON (`Option<Bytes>`) or a subscription event.
+  The introspection resolver writes JSON (`Out`, same field logic, fragments write into the
+  same object); the `on_execute` start hook's `data` is `Option<Bytes>`. The slot pipeline reads
+  JSON with `parse::parse_data` (a bare object with the seed fetch's shape) and an event's body
+  with `parse_body` (its errors go to the response's). The Value pipeline reads the JSON once
+  into a `Value` that borrows from it; the execution context keeps the bytes
+  (`read_start_data`, `keep_body`).
+- Subscription executors (SSE, multipart, WebSocket, HTTP callback) and WebSocket fetches hand
+  the body over unread when the request asks (`SubgraphResponse::from_body`); a subscription
+  asks only when its slot plan compiled (`SlotPlanCell::compiled`). `WsClient::subscribe` keeps
+  its signature, `subscribe_reading` takes the flag.
+- Bug caught by the e2e suite on the way: moving an event's `data` out and dropping the response
+  freed the body the `Value` borrowed from (garbage `null`s, use after free). The context keeps
+  the event's body now.
+- Tests: e2e for data a plugin sets that isn't JSON (left out) and a subgraph start hook
+  answering with `from_json`, both pipelines equal. Full suites: test_all 2114/2114, e2e
+  843/844 off and on (`file_watch_works`).

@@ -102,6 +102,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         let tls_config = self.tls_config.clone();
         let permessage_deflate = self.target.permessage_deflate;
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
+        let raw = execution_request.raw_response;
         debug!(
             target: targets::WEBSOCKET_CLIENT,
             subgraph = %subgraph_name, endpoint = %endpoint,
@@ -154,7 +155,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 );
 
                 let mut stream = client
-                    .subscribe(subscribe_payload, custom_scalar_paths)
+                    .subscribe_reading(subscribe_payload, custom_scalar_paths, raw)
                     .await?;
 
                 match stream.next().await {
@@ -218,6 +219,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         let tls_config = self.tls_config.clone();
         let permessage_deflate = self.target.permessage_deflate;
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
+        let raw = execution_request.raw_response;
         let headers = execution_request.headers.clone();
         let init_payload = (!headers.is_empty()).then(|| headers.into());
         let subscribe_payload = execution_request.try_into()?;
@@ -282,7 +284,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 );
 
             let stream = match client
-                .subscribe(subscribe_payload, custom_scalar_paths)
+                .subscribe_reading(subscribe_payload, custom_scalar_paths, raw)
                 .await
             {
                 Ok(stream) => stream.map(|item| item.map_err(SubgraphExecutorError::from)),

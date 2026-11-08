@@ -95,6 +95,11 @@ impl SlotPlanCell {
         Arc::new(cell)
     }
 
+    /// Whether the first slot plan compiled: the slot pipeline runs the requests that use it
+    pub fn compiled(&self) -> bool {
+        self.first.get().is_some_and(Option::is_some)
+    }
+
     /// The slot plan for this projection plan, `None` when the query plan isn't supported.
     pub fn get(
         &self,

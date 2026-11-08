@@ -3,7 +3,7 @@ mod slot_plugins_e2e_tests {
     use bytes::Bytes;
     use hive_router::{
         async_trait,
-        executor::response::value::Value,
+        executor::response::subgraph_response::SubgraphResponse,
         plugins::hooks::on_execute::{
             OnExecuteEndHookPayload, OnExecuteStartHookPayload, OnExecuteStartHookResult,
         },
@@ -38,13 +38,9 @@ mod slot_plugins_e2e_tests {
             &'exec self,
             mut payload: OnExecuteStartHookPayload<'exec>,
         ) -> OnExecuteStartHookResult<'exec> {
-            payload.data = Value::Object(vec![(
-                "users",
-                Value::Array(vec![Value::Object(vec![
-                    ("id", Value::String("from-plugin".into())),
-                    ("username", Value::String("seeded".into())),
-                ])]),
-            )]);
+            payload.data = Some(Bytes::from_static(
+                br#"{"users":[{"id":"from-plugin","username":"seeded"}]}"#,
+            ));
             payload.proceed()
         }
     }
@@ -128,6 +124,57 @@ mod slot_plugins_e2e_tests {
         }
     }
 
+    /// Puts data that isn't JSON in before the plan runs: it's left out
+    #[derive(Default)]
+    struct BadSeedPlugin;
+
+    #[async_trait]
+    impl RouterPlugin for BadSeedPlugin {
+        type Config = ();
+
+        fn plugin_name() -> &'static str {
+            "test_bad_seed"
+        }
+
+        fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
+            payload.initialize_plugin_with_defaults()
+        }
+
+        async fn on_execute<'exec>(
+            &'exec self,
+            mut payload: OnExecuteStartHookPayload<'exec>,
+        ) -> OnExecuteStartHookResult<'exec> {
+            payload.data = Some(Bytes::from_static(b"not json"));
+            payload.proceed()
+        }
+    }
+
+    /// Answers instead of the subgraph, with a JSON body
+    #[derive(Default)]
+    struct SubgraphAnswerPlugin;
+
+    #[async_trait]
+    impl RouterPlugin for SubgraphAnswerPlugin {
+        type Config = ();
+
+        fn plugin_name() -> &'static str {
+            "test_subgraph_answer"
+        }
+
+        fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
+            payload.initialize_plugin_with_defaults()
+        }
+
+        async fn on_subgraph_execute<'exec>(
+            &'exec self,
+            payload: OnSubgraphExecuteStartHookPayload<'exec>,
+        ) -> OnSubgraphExecuteStartHookResult<'exec> {
+            payload.end_with_response(SubgraphResponse::from_json(Bytes::from_static(
+                br#"{"data":{"users":[{"id":"9","username":"from-plugin"}]},"errors":[{"message":"answered by a plugin"}]}"#,
+            )))
+        }
+    }
+
     fn json_response(body: sonic_rs::Value) -> ResponseLike {
         let mut headers = http::HeaderMap::new();
         headers.insert(
@@ -181,6 +228,8 @@ mod slot_plugins_e2e_tests {
                 .register_plugin::<SeedPlugin>()
                 .register_plugin::<EditPlugin>()
                 .register_plugin::<SubgraphEditPlugin>()
+                .register_plugin::<BadSeedPlugin>()
+                .register_plugin::<SubgraphAnswerPlugin>()
                 .build()
                 .start()
                 .await;
@@ -284,6 +333,40 @@ mod slot_plugins_e2e_tests {
                 .iter()
                 .all(|name| !name.is_empty() && *name == name.to_uppercase()),
             "every author's username changed in the entity fetch: {on}"
+        );
+    }
+
+    #[ntex::test]
+    async fn data_a_plugin_sets_that_isnt_json_is_left_out_on_both_pipelines() {
+        let (off, on) = both_pipelines("test_bad_seed", "", "{ users { id username } }").await;
+        assert_eq!(on, off, "slot pipeline response differs");
+        let body: sonic_rs::Value = sonic_rs::from_str(&on).expect("json");
+        assert_eq!(
+            body["data"],
+            json!({ "users": [{ "id": "1", "username": "a" }, { "id": "2", "username": "b" }] }),
+            "the subgraph's data, nothing from the plugin: {on}"
+        );
+    }
+
+    #[ntex::test]
+    async fn a_plugins_json_answer_is_read_like_a_subgraphs_on_both_pipelines() {
+        let (off, on) = both_pipelines(
+            "test_subgraph_answer",
+            "error_masking:\n                      enabled: false",
+            "{ users { id username } }",
+        )
+        .await;
+        assert_eq!(on, off, "slot pipeline response differs");
+        let body: sonic_rs::Value = sonic_rs::from_str(&on).expect("json");
+        assert_eq!(
+            body["data"],
+            json!({ "users": [{ "id": "9", "username": "from-plugin" }] }),
+            "{on}"
+        );
+        assert_eq!(
+            body["errors"][0]["message"],
+            json!("answered by a plugin"),
+            "{on}"
         );
     }
 }

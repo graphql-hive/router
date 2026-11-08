@@ -27,6 +27,7 @@ pub enum ParseError {
 pub fn parse_to_stream<B>(
     body_stream: B,
     custom_scalar_paths: Option<CustomScalarPaths>,
+    raw: bool,
 ) -> BoxStream<'static, Result<SubgraphResponse<'static>, ParseError>>
 where
     B: Body + Send + Unpin + 'static,
@@ -44,9 +45,10 @@ where
                     Ok(Some(sse_event)) => {
                         match sse_event.event.as_deref() {
                             Some("next") if !sse_event.data.is_empty() => {
-                                match SubgraphResponse::deserialize_from_bytes(
+                                match SubgraphResponse::from_body(
                                     Bytes::from(sse_event.data.clone()),
                                     custom_scalar_paths.as_ref(),
+                                    raw,
                                 ) {
                                     Ok(response) => {
                                         yield Ok(response);
@@ -342,7 +344,7 @@ event: complete
         ];
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream(body, None);
+        let mut stream = parse_to_stream(body, None, false);
 
         let first = stream.next().await;
         assert!(first.is_some());
@@ -372,7 +374,7 @@ event: complete
         ];
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream(body, None);
+        let mut stream = parse_to_stream(body, None, false);
 
         let first = stream.next().await;
         assert!(first.is_some());
@@ -402,7 +404,7 @@ event: complete
         custom_scalar_paths.insert_path(["custom"]);
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream(body, Some(custom_scalar_paths));
+        let mut stream = parse_to_stream(body, Some(custom_scalar_paths), false);
 
         let first = stream.next().await.unwrap().unwrap();
         let data = first.data.as_object().unwrap();

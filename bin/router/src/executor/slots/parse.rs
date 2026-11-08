@@ -56,6 +56,38 @@ pub fn parse_body(
     parsed
 }
 
+/// Reads a `data` object on its own with `shape`'s first object: the data the plan starts from
+/// (see `StartData::Json`). `None` when it isn't valid JSON.
+pub fn parse_data(
+    arena: &mut Arena,
+    layouts: &[Layout],
+    shape: &Shape,
+    data: &Bytes,
+    passthrough: bool,
+) -> Option<Slot> {
+    let index = arena.bodies.len() as u32;
+    arena.bodies.push(data.clone());
+    arena.failed.clear();
+    arena.failed.resize(shape.verifies.len(), false);
+    let scratch = arena.scratch.len();
+    let mut parser = Parser {
+        input: data,
+        pos: 0,
+        depth: 0,
+        shape,
+        layouts,
+        arena,
+        body: index,
+        passthrough,
+    };
+    let parsed = parser.shaped(0).and_then(|data| {
+        parser.whitespace();
+        (parser.pos == parser.input.len()).then_some(data)
+    });
+    parser.arena.scratch.truncate(scratch);
+    parsed
+}
+
 /// The body of an aliased context request (see `ContextAliasTemplate`): `data` has a key per
 /// response key of the fetch and group, like `_entities_3`.
 pub struct AliasedBody {

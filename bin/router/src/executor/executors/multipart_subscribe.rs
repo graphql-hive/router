@@ -77,6 +77,7 @@ pub fn parse_to_stream<B>(
     boundary: &str,
     body_stream: B,
     custom_scalar_paths: Option<CustomScalarPaths>,
+    raw: bool,
 ) -> BoxStream<'static, Result<SubgraphResponse<'static>, ParseError>>
 where
     B: Body + Send + Unpin + 'static,
@@ -103,7 +104,7 @@ where
                 buffer.drain(..skip_len);
 
                 if !part_bytes.is_empty() {
-                    match parse_part(&part_bytes, custom_scalar_paths.as_ref()) {
+                    match parse_part(&part_bytes, custom_scalar_paths.as_ref(), raw) {
                         Ok(Some(response)) => {
                             yield Ok(response);
                         }
@@ -188,17 +189,18 @@ fn find_next_part(
 }
 
 fn parse_part(
-    raw: &[u8],
+    part: &[u8],
     custom_scalar_paths: Option<&CustomScalarPaths>,
+    raw: bool,
 ) -> Result<Option<SubgraphResponse<'static>>, ParseError> {
-    let text = std::str::from_utf8(raw)?;
+    let text = std::str::from_utf8(part)?;
     let body = extract_body_after_headers(text);
 
     if body.is_empty() {
         return Ok(None);
     }
 
-    extract_payload(body, custom_scalar_paths)
+    extract_payload(body, custom_scalar_paths, raw)
 }
 
 fn extract_body_after_headers(content: &str) -> &str {
@@ -214,6 +216,7 @@ fn extract_body_after_headers(content: &str) -> &str {
 fn extract_payload(
     body: &str,
     custom_scalar_paths: Option<&CustomScalarPaths>,
+    raw: bool,
 ) -> Result<Option<SubgraphResponse<'static>>, ParseError> {
     // cheap heartbeat check: subgraphs send `{}` as a keep-alive ping
     if body == "{}" {
@@ -224,15 +227,16 @@ fn extract_payload(
 
     match payload_lv {
         Ok(lv) => {
-            let raw = lv.as_raw_str();
+            let payload = lv.as_raw_str();
 
-            if raw == "null" {
+            if payload == "null" {
                 // transport error: payload is null, check for top-level errors
                 if let Ok(errors_lv) = sonic_rs::get_from_str(body, &["errors"]) {
                     let transport_err = format!(r#"{{"errors":{}}}"#, errors_lv.as_raw_str());
-                    return SubgraphResponse::deserialize_from_bytes(
+                    return SubgraphResponse::from_body(
                         Bytes::from(transport_err),
                         custom_scalar_paths,
+                        raw,
                     )
                     .map_err(ParseError::InvalidSubgraphResponse)
                     .map(Some);
@@ -241,21 +245,19 @@ fn extract_payload(
             }
 
             // happy path: deserialize the raw payload substring directly - no re-serialization
-            SubgraphResponse::deserialize_from_bytes(
-                Bytes::copy_from_slice(raw.as_bytes()),
+            SubgraphResponse::from_body(
+                Bytes::copy_from_slice(payload.as_bytes()),
                 custom_scalar_paths,
+                raw,
             )
             .map_err(ParseError::InvalidSubgraphResponse)
             .map(Some)
         }
         Err(e) if e.is_not_found() => {
             // no payload wrapper, treat the whole body as a subgraph response
-            SubgraphResponse::deserialize_from_bytes(
-                Bytes::from(body.to_owned()),
-                custom_scalar_paths,
-            )
-            .map_err(ParseError::InvalidSubgraphResponse)
-            .map(Some)
+            SubgraphResponse::from_body(Bytes::from(body.to_owned()), custom_scalar_paths, raw)
+                .map_err(ParseError::InvalidSubgraphResponse)
+                .map(Some)
         }
         Err(e) => Err(ParseError::InvalidSubgraphResponse(
             SubgraphExecutorError::ResponseDeserializationFailure(e, None),
@@ -408,7 +410,7 @@ mod tests {
         let part_data =
             b"Content-Type: application/json\r\n\r\n{\"payload\":{\"data\":{\"reviewAdded\":{\"id\":\"1\"}}}}";
 
-        let response = parse_part(part_data, None)
+        let response = parse_part(part_data, None, false)
             .expect("Should parse valid part")
             .expect("Should have response");
 
@@ -419,7 +421,7 @@ mod tests {
     fn test_parse_part_without_headers() {
         let part_data = b"\r\n{\"payload\":{\"data\":{\"value\":1}}}";
 
-        let response = parse_part(part_data, None)
+        let response = parse_part(part_data, None, false)
             .expect("Should parse part without headers")
             .expect("Should have response");
 
@@ -430,7 +432,7 @@ mod tests {
     fn test_extract_payload_with_payload_property() {
         let body = r#"{"payload":{"data":{"reviewAdded":{"id":"1"}}}}"#;
 
-        let response = extract_payload(body, None)
+        let response = extract_payload(body, None, false)
             .expect("Should extract payload")
             .expect("Should have response");
 
@@ -441,7 +443,7 @@ mod tests {
     fn test_extract_payload_without_payload_property() {
         let body = r#"{"data":{"user":{"name":"Alice"}}}"#;
 
-        let response = extract_payload(body, None)
+        let response = extract_payload(body, None, false)
             .expect("Should extract payload")
             .expect("Should have response");
 
@@ -452,7 +454,7 @@ mod tests {
     fn test_extract_payload_heartbeat() {
         let body = "{}";
 
-        let payload = extract_payload(body, None).expect("Should parse heartbeat");
+        let payload = extract_payload(body, None, false).expect("Should parse heartbeat");
 
         assert!(payload.is_none(), "Heartbeat should return None");
     }
@@ -461,7 +463,7 @@ mod tests {
     fn test_extract_payload_transport_error() {
         let body = r#"{"payload":null,"errors":[{"message":"Connection lost"}]}"#;
 
-        let response = extract_payload(body, None)
+        let response = extract_payload(body, None, false)
             .expect("Should extract error")
             .expect("Should have error response");
 
@@ -484,7 +486,7 @@ mod tests {
         ))];
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream("graphql", body, None);
+        let mut stream = parse_to_stream("graphql", body, None, false);
 
         let first = stream.next().await;
         assert!(first.is_some());
@@ -516,7 +518,7 @@ mod tests {
         ];
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream("graphql", body, None);
+        let mut stream = parse_to_stream("graphql", body, None, false);
 
         let first = stream.next().await;
         assert!(first.is_some());
@@ -549,7 +551,7 @@ mod tests {
         ))];
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream("graphql", body, None);
+        let mut stream = parse_to_stream("graphql", body, None, false);
 
         let first = stream.next().await;
         assert!(first.is_some());
@@ -575,7 +577,7 @@ mod tests {
         ))];
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream("graphql", body, None);
+        let mut stream = parse_to_stream("graphql", body, None, false);
 
         let first = stream.next().await;
         assert!(first.is_some());
@@ -604,7 +606,7 @@ mod tests {
         ))];
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream("myboundary", body, None);
+        let mut stream = parse_to_stream("myboundary", body, None, false);
 
         let first = stream.next().await;
         assert!(first.is_some());
@@ -630,7 +632,7 @@ mod tests {
         ))];
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream("boundary", body, None);
+        let mut stream = parse_to_stream("boundary", body, None, false);
 
         let first = stream.next().await;
         assert!(first.is_some());
@@ -659,7 +661,7 @@ mod tests {
         custom_scalar_paths.insert_path(["custom"]);
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream("graphql", body, Some(custom_scalar_paths));
+        let mut stream = parse_to_stream("graphql", body, Some(custom_scalar_paths), false);
 
         let first = stream.next().await.unwrap().unwrap();
         let data = first.data.as_object().unwrap();
