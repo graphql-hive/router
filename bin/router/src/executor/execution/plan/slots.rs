@@ -6,7 +6,6 @@
 use super::*;
 use crate::executor::executors::error::SubgraphExecutorError;
 use crate::executor::introspection::schema::PossibleTypes;
-use crate::executor::projection::response::finish_response;
 use crate::executor::projection::response::serialize_value_to_buffer;
 use crate::executor::slots::compile::{
     AliasProgram, FetchProgram, Layout, Requires, RequiresNode, Seed, SlotPlan, Step,
@@ -14,7 +13,7 @@ use crate::executor::slots::compile::{
 };
 use crate::executor::slots::parse::{parse_aliased_body, parse_body};
 use crate::executor::slots::store::{Arena, Slot, SlotView};
-use crate::executor::slots::write::{write_data, write_response};
+use crate::executor::slots::write::write_response;
 use crate::executor::slots::SlotPlanCell;
 use crate::executor::utils::consts::TYPENAME_JSON_FIELD;
 use crate::query_planner::ast::operation::ContextAliasTemplate;
@@ -51,7 +50,6 @@ pub(super) async fn execute<'exec>(
     plan: Arc<SlotPlan>,
     mut seed: Value<'exec>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
-    let plan = &*plan;
     let aliased_requests = AliasedRequests::default();
     let mut initial_errors = std::mem::take(&mut opts.initial_errors);
 
@@ -104,7 +102,6 @@ pub(super) async fn execute<'exec>(
     // data a plugin put in for an operation without a seed: the request gets a plan of its own
     // that reads it in with the operation's own shape, so the fetches merge into it like on the
     // other pipeline
-    let with_seed;
     let plan = if !plan.fetches.contains_key(&SEED_FETCH)
         && matches!(&seed, Value::Object(fields) if !fields.is_empty())
     {
@@ -115,10 +112,7 @@ pub(super) async fn execute<'exec>(
             &opts.operation_type_name,
             Seed::Operation(&opts.operation_for_plan),
         ) {
-            Ok(compiled) => {
-                with_seed = compiled;
-                &with_seed
-            }
+            Ok(compiled) => Arc::new(compiled),
             Err(reason) => {
                 tracing::warn!(
                     reason = reason.0,
@@ -130,6 +124,8 @@ pub(super) async fn execute<'exec>(
     } else {
         plan
     };
+    let plan_arc = plan;
+    let plan = &*plan_arc;
 
     let executor = Executor {
         variable_values: &opts.variable_values.variables_map,
@@ -152,6 +148,7 @@ pub(super) async fn execute<'exec>(
         plan,
         arena: Arena::take(),
         data: Slot::Missing,
+        passthrough: opts.demand_control_context.is_none() && on_end_callbacks.is_empty(),
     };
     let width = plan.layouts[plan.root_layout as usize].width();
     run.data = Slot::Object {
@@ -164,7 +161,7 @@ pub(super) async fn execute<'exec>(
         let mut body = b"{\"data\":".to_vec();
         serialize_value_to_buffer(&seed, &mut body);
         body.push(b'}');
-        let passthrough = opts.demand_control_context.is_none();
+        let passthrough = run.passthrough;
         let parsed = parse_body(
             &mut run.arena,
             &plan.layouts,
@@ -245,30 +242,18 @@ pub(super) async fn execute<'exec>(
         .store(std::mem::take(&mut ctx.response_headers_aggregator));
     std::mem::take(&mut ctx.extensions_aggregator).merge_into(&mut opts.extensions.extensions);
 
-    // plugins that asked to see the result get the data as the client will (see
-    // `ResponseData`), so it's written first and the rest of the response after them
+    // plugins that asked to see the result walk the data and may change it (see
+    // `ResponseData`) before it's written
+    let mut errors = errors;
     if !on_end_callbacks.is_empty() {
-        let (body, errors) = write_data(
-            &run.arena,
-            plan,
-            run.data,
-            errors,
-            opts.operation_type_name.as_str(),
-            &opts.variable_values.variables_map,
-            response_size_estimate,
-            &opts.introspection_context.metadata,
-        )
-        .with_plan_context(LazyPlanContext {
-            subgraph_name: || None,
-            affected_path: || None,
-        })?;
-        run.arena.give_back();
         let mut end_payload = OnExecuteEndHookPayload {
-            data: ResponseData::new(
-                body,
-                &opts.operation_for_plan,
-                opts.operation_type_name.as_str(),
-                &opts.introspection_context.metadata,
+            data: ResponseData::from_slots(
+                std::mem::take(&mut run.arena),
+                run.data,
+                plan_arc.clone(),
+                opts.introspection_context.metadata.clone(),
+                opts.variable_values.clone(),
+                opts.operation_kind.clone(),
             ),
             errors,
             extensions: opts.extensions.extensions,
@@ -285,35 +270,26 @@ pub(super) async fn execute<'exec>(
             end_payload = result.payload;
             match result.control_flow {
                 EndControlFlow::Proceed => {}
-                EndControlFlow::EndWithResponse(response) => match response {
-                    OnExecuteResponse::Output(response) => return Ok(response),
-                    OnExecuteResponse::EarlyResponse(response) => {
-                        return Ok(early_http_response_into_execution_output(
-                            response,
-                            &opts.response_header_sink,
-                        ));
-                    }
-                },
+                EndControlFlow::EndWithResponse(response) => {
+                    end_payload.data.into_slots().0.give_back();
+                    return Ok(match response {
+                        OnExecuteResponse::Output(response) => response,
+                        OnExecuteResponse::EarlyResponse(response) => {
+                            early_http_response_into_execution_output(
+                                response,
+                                &opts.response_header_sink,
+                            )
+                        }
+                    });
+                }
             }
         }
         opts.extensions.extensions = end_payload.extensions;
-        let (errors, status_code) = plugin_errors(&opts, end_payload.errors);
-        let errors = masked(&opts, errors);
-        let body = finish_response(
-            end_payload.data.into_body(),
-            errors,
-            &opts.extensions,
-            &plan.projection,
-        )
-        .with_plan_context(LazyPlanContext {
-            subgraph_name: || None,
-            affected_path: || None,
-        })?;
-        return Ok(PlanExecutionOutput {
-            body,
-            error_count,
-            status_code,
-        });
+        let (arena, data, plugin_errors) = end_payload.data.into_slots();
+        run.arena = arena;
+        run.data = data;
+        errors = end_payload.errors;
+        errors.extend(plugin_errors);
     }
 
     let (errors, status_code) = plugin_errors(&opts, errors);
@@ -373,6 +349,9 @@ struct Run<'p> {
     arena: Arena,
     /// The root object
     data: Slot,
+    /// Whether subtrees nothing checks are kept as the subgraph wrote them. Not when something
+    /// reads the data value by value: demand control counts it, plugins' end hooks walk it.
+    passthrough: bool,
 }
 
 /// What a job's response gets merged with. One per job in flight, so the size difference
@@ -1382,7 +1361,7 @@ impl<'p> Run<'p> {
             .map(|status| GraphQLError::create_from_status_code(&status, subgraph_name));
         let layouts = &self.plan.layouts;
         // demand control counts the lists of a response, which a passed-through subtree hides
-        let passthrough = executor.demand_control_context.is_none();
+        let passthrough = self.passthrough;
         let parsed = match &merge {
             Merge::Entities {
                 unalias: Some(unalias),

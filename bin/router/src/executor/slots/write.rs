@@ -26,7 +26,7 @@ enum Null {
     Keep,
 }
 
-enum Failure {
+pub(super) enum Failure {
     InvalidParentType,
     InvalidFieldType,
     Skip,
@@ -41,7 +41,7 @@ impl From<ProjectionError> for Failure {
 }
 
 /// A type name that is known, or found when first needed (see `projection::response`).
-enum TypeName<'a, 'c> {
+pub(super) enum TypeName<'a, 'c> {
     Resolved(&'a str),
     Deferred {
         field: &'a FieldRecord,
@@ -51,7 +51,7 @@ enum TypeName<'a, 'c> {
     },
 }
 
-struct Writer<'a> {
+pub(super) struct Writer<'a> {
     arena: &'a Arena,
     slots: &'a SlotPlan,
     plan: &'a ProjectionPlan,
@@ -133,6 +133,24 @@ pub fn write_data(
 }
 
 impl<'a> Writer<'a> {
+    /// A writer that only reads: its conditions and type names, for `walk`
+    pub(super) fn reader(
+        arena: &'a Arena,
+        slots: &'a SlotPlan,
+        schema: &'a SchemaMetadata,
+        variables: &'a Option<HashMap<String, sonic_rs::Value>>,
+    ) -> Self {
+        Self {
+            arena,
+            slots,
+            plan: &slots.projection,
+            schema,
+            variables,
+            errors: Vec::new(),
+            buffer: Vec::new(),
+        }
+    }
+
     fn type_name(&self, name: &TypeName<'a, '_>) -> Result<&'a str, ProjectionError> {
         match name {
             TypeName::Resolved(name) => Ok(name),
@@ -260,7 +278,7 @@ impl<'a> Writer<'a> {
                 Ok(Null::Keep)
             }
             Slot::Raw(raw) => {
-                let body = &self.arena.bodies[raw.body as usize];
+                let body = self.arena.body(raw.body);
                 let (start, len) = (raw.start as usize, raw.len as usize);
                 match body.get(start..start + VALUE_WINDOW) {
                     // most values are short: one fixed-size copy instead of a memcpy call
@@ -322,7 +340,7 @@ impl<'a> Writer<'a> {
             } else {
                 match value {
                     Slot::Raw(raw) => {
-                        let body = &self.arena.bodies[raw.body as usize];
+                        let body = self.arena.body(raw.body);
                         let (start, len) = (raw.start as usize, raw.len as usize);
                         match body.get(start..start + VALUE_WINDOW) {
                             // SAFETY: reserved above, and only `len` bytes are counted
@@ -450,7 +468,7 @@ impl<'a> Writer<'a> {
         }
     }
 
-    fn evaluate(
+    pub(super) fn evaluate(
         &self,
         id: ConditionId,
         field: &'a FieldRecord,

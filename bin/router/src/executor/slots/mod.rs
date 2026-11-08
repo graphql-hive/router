@@ -9,6 +9,7 @@
 pub mod compile;
 pub mod parse;
 pub mod store;
+pub mod walk;
 pub mod write;
 
 use std::sync::atomic::{AtomicBool, Ordering};

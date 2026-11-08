@@ -1185,3 +1185,40 @@ req/s and CPU µs/req; Fusion AOT as the machine reference (4705 / 2016 / 4933, 
 No regression: CPU per request is within ~1% everywhere. Real-world reuse was ~1% lower req/s
 in all 3 rounds at lower CPU (base always ran first). c=500 swings ±6% round to round with the
 subgraph connections hyper's pool opens (1,800–4,600).
+
+### 2026-11-08 — the `on_execute` end hook walks the data before it's written
+
+The first data API (82067dc0) worked on the written client JSON through a lazy
+`serde_json::Value` and refused nulls in Non-Null positions. Replaced, per the user: plugins
+change values without changing the shape, any value can become null (with an error if the plugin
+wants one) and the null bubbles when the response is written; looked at Grafbase first (views
+that pair a response node with its selection, authorization that nulls items with an error and
+lets the engine bubble). No allocations, no path strings.
+
+- `ResponseData::walk(|value| …)`: the writer's own walk over the projection plan, field for field
+  with the same type guards and conditions (`slots::walk` reuses `Writer::evaluate`,
+  `projection::walk` the projector's `evaluate`/`resolve_type_name`), visiting each field's value
+  and each list item instead of writing it. `DataValue` reads (`as_str`, `as_i64`, …), knows its
+  field (`is("Type", "field")` compares borrowed strings, interfaces and unions through
+  `possible_types`) and edits in place: `set` (scalar or enum of the field's type), `set_null`,
+  `set_null_with_error` (the path is put together from stack frames only then).
+  `skip_children` prunes. Object type names come from the schema's own strings, so nothing
+  borrows the storage being changed.
+- Slots: a set value goes into `Arena::edits` (pooled, kept across requests) and a `Raw` with
+  `body: EDITS_BODY` points at it; `Arena::body` is the one branch the writer pays.
+  Passthrough is off when an end hook is registered (known before the first fetch), like with
+  demand control: a passed-through subtree is one raw range the walk can't go into.
+- Both pipelines run the end hooks on the data before writing it, then write the response once;
+  errors plugins attach go through plugin error handling and masking with the rest.
+- Deduplicated entities share nested objects in the arena, so a change inside one shows at every
+  position of that entity (the Value pipeline copies). Same entity, same field, same data; a
+  `ponytail:` comment marks it.
+- Tests: `slots::tests::plugin_edits_match_on_both_pipelines` (sets, refused types, a null
+  bubbling from a Non-Null item and from `product.id` with its error, same output on both),
+  e2e `a_plugin_changes_the_data_the_same_way_on_both_pipelines` (user 2 nulled through its
+  Non-Null id, error at `users.1.id`). `response_cache` example walks for every object type's ttl.
+- Bench (`bench_op`, slots, 1 worker, router CPU µs/request, medians of 3 alternating rounds,
+  base 6ea4eb9c): no plugin 246.8 → 245.8; a plugin with an empty end hook 306.3 → 307.2; the
+  same plugin walking every value 331 (reading `__typename` from the body instead of the
+  schema's set saved ~1 µs). The 246 → 306 jump for any plugin is the subgraph responses
+  parsed to `Value` for the subgraph hooks and back: next.

@@ -13,8 +13,10 @@ use super::compile::SlotPlan;
 use super::parse::parse_body;
 use super::store::{Arena, Slot};
 use super::write::write_response;
+use crate::executor::execution::plan::CoerceVariablesPayload;
 use crate::executor::introspection::partition::partition_operation;
 use crate::executor::plugins::hooks::on_supergraph_load::Supergraph;
+use crate::executor::plugins::response_data::{DataEditError, DataValue, ResponseData};
 use crate::executor::projection::plan::ProjectionPlan;
 use crate::executor::projection::response::project_by_operation;
 use crate::executor::response::merge::deep_merge;
@@ -22,8 +24,15 @@ use crate::executor::response::subgraph_response::SubgraphResponse;
 use crate::executor::response::value::Value;
 use crate::query_planner::ast::normalization::normalize_operation;
 use crate::query_planner::planner::plan_nodes::PlanNode;
+use crate::query_planner::state::supergraph_state::OperationKind;
 use crate::query_planner::utils::cancellation::CancellationToken;
 use crate::query_planner::utils::parsing::parse_operation;
+
+fn no_variables() -> Arc<CoerceVariablesPayload> {
+    Arc::new(CoerceVariablesPayload {
+        variables_map: None,
+    })
+}
 
 pub(crate) const HEADER: &str = r#"
 schema @link(url: "https://specs.apollo.dev/link/v1.0") @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) { query: Query }
@@ -72,6 +81,16 @@ enum State @join__type(graph: A) {
 /// returns how many subtrees the slot plan may pass through, and which root fields of `data`
 /// the parser kept as one raw range (passed through).
 fn both_with(types: &str, query: &str, body: &str) -> (String, String, usize, Vec<String>) {
+    both_edited(types, query, body, None)
+}
+
+/// [`both_with`], with the data walked by `edit` (see `ResponseData::walk`) before it's written
+fn both_edited(
+    types: &str,
+    query: &str,
+    body: &str,
+    mut edit: Option<&mut dyn FnMut(&mut DataValue<'_, '_>)>,
+) -> (String, String, usize, Vec<String>) {
     let header = if types.contains("type Mutation") {
         HEADER.replace("{ query: Query }", "{ query: Query mutation: Mutation }")
     } else {
@@ -108,9 +127,23 @@ fn both_with(types: &str, query: &str, body: &str) -> (String, String, usize, Ve
             }
             let mut data = Value::Object(Vec::new());
             deep_merge(&mut data, response.data);
+            let mut errors = response.errors.unwrap_or_default();
+            if let Some(edit) = edit.as_mut() {
+                let mut walked = ResponseData::from_value(
+                    data,
+                    projection.clone(),
+                    metadata.clone(),
+                    no_variables(),
+                    OperationKind::Query,
+                );
+                walked.walk(&mut **edit);
+                let (edited, plugin_errors) = walked.into_value();
+                data = edited;
+                errors.extend(plugin_errors);
+            }
             let output = project_by_operation(
                 &data,
-                response.errors.unwrap_or_default(),
+                errors,
                 &Default::default(),
                 root,
                 &projection,
@@ -132,13 +165,22 @@ fn both_with(types: &str, query: &str, body: &str) -> (String, String, usize, Ve
         super::compile::Seed::None,
     )
     .expect("compiles");
+    let slots = Arc::new(slots);
     let program = &slots.fetches[&fetch.id];
     let passthroughs = program.shape.verifies.len();
     let mut arena = Arena::default();
     let width = slots.layouts[slots.root_layout as usize].width();
     let first = arena.object(width);
     let mut raw = Vec::new();
-    let new = match parse_body(&mut arena, &slots.layouts, &program.shape, &bytes, true) {
+    // a plugin walks the data value by value, nothing is passed through then
+    let passthrough = edit.is_none();
+    let new = match parse_body(
+        &mut arena,
+        &slots.layouts,
+        &program.shape,
+        &bytes,
+        passthrough,
+    ) {
         Some(parsed) => {
             if let Slot::Object {
                 layout,
@@ -152,14 +194,31 @@ fn both_with(types: &str, query: &str, body: &str) -> (String, String, usize, Ve
                 }
                 arena.merge_object(&slots.layouts, layout, first, data);
             }
+            let mut root_data = Slot::Object {
+                layout: slots.root_layout,
+                first,
+            };
+            let mut errors = parsed.errors.unwrap_or_default();
+            if let Some(edit) = edit.as_mut() {
+                let mut walked = ResponseData::from_slots(
+                    std::mem::take(&mut arena),
+                    root_data,
+                    slots.clone(),
+                    metadata.clone(),
+                    no_variables(),
+                    OperationKind::Query,
+                );
+                walked.walk(&mut **edit);
+                let (edited, data, plugin_errors) = walked.into_slots();
+                arena = edited;
+                root_data = data;
+                errors.extend(plugin_errors);
+            }
             let output = write_response(
                 &arena,
                 &slots,
-                Slot::Object {
-                    layout: slots.root_layout,
-                    first,
-                },
-                parsed.errors.unwrap_or_default(),
+                root_data,
+                errors,
                 &Default::default(),
                 root,
                 &None,
@@ -527,4 +586,68 @@ fn a_wide_object_runs_on_slots() {
             .join(",")
     );
     same_with(&types, &query, &body);
+}
+
+#[test]
+fn plugin_edits_match_on_both_pipelines() {
+    let query =
+        "{ products { id name price state tags variants { sku size } } product { id name } }";
+    let body = r#"{"data":{"products":[{"id":"1","name":"a\"b","price":1.5,"state":"ACTIVE","tags":["x","y"],"variants":[{"sku":"s","size":1}]}],"product":{"id":"2","name":"p"}}}"#;
+    let mut outcomes = Vec::new();
+    let mut edit = |value: &mut DataValue<'_, '_>| {
+        let mut note = |what: &str, result: Result<(), DataEditError>| {
+            outcomes.push(format!("{what}: {result:?}"))
+        };
+        if value.is("Product", "name") {
+            let upper = value.as_str().map(|name| name.to_uppercase());
+            note("name", value.set(upper));
+        } else if value.is("Product", "price") {
+            note("price string", value.set("x"));
+            note("price", value.set(2));
+        } else if value.is("Product", "state") {
+            note("state unknown", value.set("NOPE"));
+            note("state", value.set("RETIRED"));
+        } else if value.is("Product", "tags") && value.index().is_none() {
+            note("tags", value.set("z"));
+        } else if value.is("Product", "tags") && value.index() == Some(1) {
+            // a Non-Null item: the list becomes null
+            value.set_null();
+        } else if value.is("Variant", "size") {
+            note("size too big", value.set(1u64 << 40));
+            note("size", value.set(7));
+        } else if value.is("Product", "variants") && value.index().is_none() {
+            note("variants", value.set(1));
+        } else if value.is("Product", "id") && value.path().segments.len() == 2 {
+            // `product.id` is Non-Null: `product` becomes null
+            value.set_null_with_error("hidden");
+        }
+    };
+    let (old, new, _, _) = both_edited(TYPES, query, body, Some(&mut edit));
+    assert_eq!(old, new, "both pipelines write the same response");
+    assert_eq!(
+        new,
+        r#"{"data":{"products":[{"id":"1","name":"A\"B","price":2,"state":"RETIRED","tags":null,"variants":[{"sku":"s","size":7}]}],"product":null},"errors":[{"message":"hidden","path":["product","id"]}]}"#
+    );
+    let per_run = outcomes.len() / 2;
+    assert_eq!(
+        outcomes[..per_run],
+        outcomes[per_run..],
+        "the same outcomes"
+    );
+    assert_eq!(
+        outcomes[..per_run].join("\n"),
+        [
+            "name: Ok(())",
+            "price string: Err(WrongType)",
+            "price: Ok(())",
+            "state unknown: Err(WrongType)",
+            "state: Ok(())",
+            "tags: Err(NotALeaf)",
+            "variants: Err(NotALeaf)",
+            "size too big: Err(WrongType)",
+            "size: Ok(())",
+            "name: Ok(())",
+        ]
+        .join("\n")
+    );
 }

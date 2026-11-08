@@ -74,10 +74,7 @@ use crate::executor::{
     plugin_context::PluginRequestState,
     plugin_trait::{EarlyHTTPResponse, EndControlFlow, StartControlFlow},
     plugins::hooks,
-    projection::{
-        plan::ProjectionPlan,
-        response::{finish_response, project_by_operation, project_data},
-    },
+    projection::{plan::ProjectionPlan, response::project_by_operation},
     response::{
         graphql_error::{GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment},
         merge::{deep_merge, deep_merge_from, EntityMerger},
@@ -652,30 +649,18 @@ async fn execute_query_plan_with_data<'exec>(
     std::mem::take(&mut exec_ctx.extensions_aggregator).merge_into(&mut opts.extensions.extensions);
 
     // TODO: coprocessor.on_execution_response
-    // plugins that asked to see the result get the data as the client will (see
-    // `ResponseData`), so it's written first and the rest of the response after them
-    let (data_body, mut errors) = if on_end_callbacks.is_empty() {
-        (None, errors)
+    // plugins that asked to see the result walk the data and may change it (see
+    // `ResponseData`) before it's written
+    let (data, mut errors) = if on_end_callbacks.is_empty() {
+        (data, errors)
     } else {
-        let (body, errors) = project_data(
-            &data,
-            errors,
-            opts.operation_type_name.as_str(),
-            &opts.projection_plan,
-            &opts.variable_values.variables_map,
-            response_size_estimate,
-            &opts.introspection_context.metadata,
-        )
-        .with_plan_context(LazyPlanContext {
-            subgraph_name: || None,
-            affected_path: || None,
-        })?;
         let mut end_payload = OnExecuteEndHookPayload {
-            data: ResponseData::new(
-                body,
-                &opts.operation_for_plan,
-                opts.operation_type_name.as_str(),
-                &opts.introspection_context.metadata,
+            data: ResponseData::from_value(
+                data,
+                opts.projection_plan.clone(),
+                opts.introspection_context.metadata.clone(),
+                opts.variable_values.clone(),
+                opts.operation_kind.clone(),
             ),
             errors,
             extensions: opts.extensions.extensions,
@@ -707,7 +692,10 @@ async fn execute_query_plan_with_data<'exec>(
 
         // Give the ownership back to variables
         opts.extensions.extensions = end_payload.extensions;
-        (Some(end_payload.data.into_body()), end_payload.errors)
+        let (data, plugin_errors) = end_payload.data.into_value();
+        let mut errors = end_payload.errors;
+        errors.extend(plugin_errors);
+        (data, errors)
     };
 
     let mut status_code = StatusCode::OK;
@@ -733,21 +721,16 @@ async fn execute_query_plan_with_data<'exec>(
         }
     }
 
-    let body = match data_body {
-        Some(data_body) => {
-            finish_response(data_body, errors, &opts.extensions, &opts.projection_plan)
-        }
-        None => project_by_operation(
-            &data,
-            errors,
-            &opts.extensions,
-            opts.operation_type_name.as_str(),
-            &opts.projection_plan,
-            &opts.variable_values.variables_map,
-            response_size_estimate,
-            &opts.introspection_context.metadata,
-        ),
-    }
+    let body = project_by_operation(
+        &data,
+        errors,
+        &opts.extensions,
+        opts.operation_type_name.as_str(),
+        &opts.projection_plan,
+        &opts.variable_values.variables_map,
+        response_size_estimate,
+        &opts.introspection_context.metadata,
+    )
     .with_plan_context(LazyPlanContext {
         subgraph_name: || None,
         affected_path: || None,

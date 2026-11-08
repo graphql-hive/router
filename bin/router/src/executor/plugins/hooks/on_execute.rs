@@ -179,20 +179,22 @@ pub type OnExecuteStartHookResult<'exec> = StartHookResult<
 >;
 
 pub struct OnExecuteEndHookPayload<'exec> {
-    /// The data sent to the client as the "data" field of the GraphQL response: only the fields
-    /// the operation asked for, under their response keys.
-    /// Plugins can read all of it, but only change it in ways that keep the response matching
-    /// the operation: set a scalar or enum to a value of its type, or null a nullable position.
+    /// The data sent to the client as the "data" field of the GraphQL response, before it's
+    /// written. Plugins walk it value by value, only what the operation asked for, and can
+    /// change it in ways that keep the response matching the operation: set a scalar or enum to
+    /// a value of its type, or set any value to null, with an error if they want. A null in a
+    /// Non-Null position bubbles up when the response is written.
     ///
     /// Example:
     /// ```ignore
-    /// // hide the email of the first user
-    /// payload.data.set_null(&["users".into(), 0.into(), "email".into()])?;
-    /// // shout the name of the first user
-    /// let path = ["users".into(), 0.into(), "name".into()];
-    /// if let Some(name) = payload.data.get(&path).and_then(|name| name.as_str()) {
-    ///     payload.data.set(&path, name.to_uppercase())?;
-    /// }
+    /// payload.data.walk(|value| {
+    ///     if value.is("User", "email") {
+    ///         value.set_null_with_error("email is private");
+    ///     } else if value.is("User", "name") {
+    ///         let shouted = value.as_str().map(|name| name.to_uppercase());
+    ///         let _ = value.set(shouted);
+    ///     }
+    /// });
     /// ```
     pub data: ResponseData<'exec>,
     /// The final list of GraphQL errors in the execution result.

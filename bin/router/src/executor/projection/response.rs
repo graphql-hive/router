@@ -32,7 +32,7 @@ impl NullPropagationDecision {
 }
 
 #[derive(Debug)]
-enum ConditionFailure {
+pub(super) enum ConditionFailure {
     InvalidParentType,
     InvalidFieldType,
     Skip,
@@ -73,7 +73,7 @@ impl<'a> ShapeCursor<'a> {
 }
 
 /// A type name that is either known or resolved when needed.
-enum TypeName<'a, 'ctx> {
+pub(super) enum TypeName<'a, 'ctx> {
     Resolved(&'a str),
     Deferred {
         selection: &'a FieldRecord,
@@ -88,7 +88,7 @@ enum TypeName<'a, 'ctx> {
 
 impl<'a, 'ctx> TypeName<'a, 'ctx> {
     #[inline]
-    fn resolved(type_name: &'a str) -> Self {
+    pub(super) fn resolved(type_name: &'a str) -> Self {
         TypeName::Resolved(type_name)
     }
 
@@ -111,7 +111,7 @@ impl<'a, 'ctx> TypeName<'a, 'ctx> {
     }
 
     #[inline]
-    fn get(&self) -> Result<&'a str, ProjectionError> {
+    pub(super) fn get(&self) -> Result<&'a str, ProjectionError> {
         match self {
             TypeName::Resolved(name) => Ok(name),
             TypeName::Deferred {
@@ -569,7 +569,7 @@ fn write_key(buffer: &mut Vec<u8>, first: &mut bool, key: &str) {
 
 #[inline]
 /// Resolves a field type from response data or schema metadata.
-fn resolve_type_name<'a>(
+pub(super) fn resolve_type_name<'a>(
     field: &'a FieldRecord,
     field_value: Option<&'a Value>,
     parent_type_name: &TypeName<'a, '_>,
@@ -599,7 +599,7 @@ fn resolve_type_name<'a>(
 }
 
 #[inline]
-fn evaluate<'a, F, T>(
+pub(super) fn evaluate<'a, F, T>(
     id: ConditionId,
     plan: &ProjectionPlan,
     parent_type_name: &T,
