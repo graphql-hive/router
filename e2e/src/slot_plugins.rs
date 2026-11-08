@@ -9,7 +9,6 @@ mod slot_plugins_e2e_tests {
         },
         plugins::hooks::on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
         plugins::plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload},
-        plugins::response_data::DataPathSegment,
     };
     use sonic_rs::json;
 
@@ -67,27 +66,24 @@ mod slot_plugins_e2e_tests {
             payload: OnExecuteStartHookPayload<'exec>,
         ) -> OnExecuteStartHookResult<'exec> {
             payload.on_end(|mut payload: OnExecuteEndHookPayload<'exec>| {
-                let user = |key| {
-                    [
-                        DataPathSegment::Key("users"),
-                        DataPathSegment::Index(0),
-                        DataPathSegment::Key(key),
-                    ]
-                };
-                let shouted = payload
-                    .data
-                    .get(&user("username"))
-                    .and_then(|name| name.as_str())
-                    .map(str::to_uppercase);
-                let edited = payload.data.set(&user("username"), shouted);
-                let refused = payload.data.set_null(&user("id"));
-                payload.add_extension(
-                    "edits",
-                    [edited, refused].map(|result| match result {
-                        Ok(()) => "ok".to_string(),
-                        Err(error) => error.to_string(),
-                    }),
-                );
+                let mut outcomes = Vec::new();
+                payload.data.walk(|value| {
+                    if value.is("User", "username") {
+                        let shouted = value.as_str().map(|name| name.to_uppercase());
+                        outcomes.push(match value.set(shouted) {
+                            Ok(()) => "ok".to_string(),
+                            Err(error) => error.to_string(),
+                        });
+                        outcomes.push(match value.set(1) {
+                            Ok(()) => "ok".to_string(),
+                            Err(error) => error.to_string(),
+                        });
+                    } else if value.is("User", "id") && value.as_str().as_deref() == Some("2") {
+                        // Non-Null: the user becomes null
+                        value.set_null_with_error("user 2 is private");
+                    }
+                });
+                payload.add_extension("edits", outcomes);
                 payload.proceed()
             })
         }
@@ -114,7 +110,7 @@ mod slot_plugins_e2e_tests {
                 .with_on_request(|req| {
                     if req.path.contains("accounts") {
                         return Some(json_response(json!({
-                            "data": { "users": [{ "id": "1", "username": "a" }] },
+                            "data": { "users": [{ "id": "1", "username": "a" }, { "id": "2", "username": "b" }] },
                             "extensions": { "foo": "from-accounts" }
                         })));
                     }
@@ -171,11 +167,20 @@ mod slot_plugins_e2e_tests {
     async fn a_plugin_changes_the_data_the_same_way_on_both_pipelines() {
         let (off, on) = both_pipelines("test_edit", "", "{ users { id username } }").await;
         assert_eq!(on, off, "slot pipeline response differs");
-        assert!(on.contains(r#""username": "A""#), "username changed: {on}");
-        assert!(on.contains(r#""id": "1""#), "id kept: {on}");
+        let body: sonic_rs::Value = sonic_rs::from_str(&on).expect("json");
+        assert_eq!(
+            body["data"],
+            json!({ "users": [{ "id": "1", "username": "A" }, null] }),
+            "username changed, user 2 nulled: {on}"
+        );
+        assert_eq!(
+            body["errors"],
+            json!([{ "message": "user 2 is private", "path": ["users", 1, "id"] }]),
+            "the error is at the nulled id: {on}"
+        );
         assert!(
-            on.contains("the position is Non-Null"),
-            "nulling a Non-Null field is refused: {on}"
+            on.contains("the value isn't of the field's type"),
+            "a value of another type is refused: {on}"
         );
     }
 }

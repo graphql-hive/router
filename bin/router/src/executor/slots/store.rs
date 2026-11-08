@@ -30,6 +30,9 @@ pub enum Slot {
     },
 }
 
+/// [`Raw::body`] of a value a plugin set: its bytes are in [`Arena::edits`]
+pub const EDITS_BODY: u32 = u32::MAX;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Raw {
     pub body: u32,
@@ -66,6 +69,8 @@ pub struct Arena {
     pub known: AHashMap<u64, (u32, u32)>,
     /// Passthrough checks that failed in the body being parsed, by `Shape::verifies` index
     pub failed: Vec<bool>,
+    /// Values plugins set, as JSON, see [`EDITS_BODY`]. Kept across requests like the rest.
+    pub edits: Vec<u8>,
 }
 
 /// Arenas kept for the next request on this thread. A request takes one and gives it back
@@ -89,6 +94,7 @@ impl Arena {
         self.clear();
         if self.slots.capacity() + self.items.capacity() > MAX_RETAINED_SLOTS
             || self.reps.capacity() > MAX_RETAINED_SLOTS * 16
+            || self.edits.capacity() > MAX_RETAINED_SLOTS * 16
         {
             return;
         }
@@ -120,11 +126,22 @@ impl Arena {
         self.prints.clear();
         self.known.clear();
         self.failed.clear();
+        self.edits.clear();
+    }
+
+    /// A body by its index, or the values plugins set for [`EDITS_BODY`]
+    #[inline]
+    pub fn body(&self, body: u32) -> &[u8] {
+        if body == EDITS_BODY {
+            &self.edits
+        } else {
+            &self.bodies[body as usize]
+        }
     }
 
     #[inline]
     pub fn raw(&self, raw: Raw) -> &[u8] {
-        &self.bodies[raw.body as usize][raw.start as usize..(raw.start + raw.len) as usize]
+        &self.body(raw.body)[raw.start as usize..(raw.start + raw.len) as usize]
     }
 
     /// A new block of `width` missing slots
