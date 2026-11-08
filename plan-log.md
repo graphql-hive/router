@@ -1320,3 +1320,6 @@ A high-effort review of 82067dc0..99f30836 found ten issues; all fixed:
   when it keeps it.
 - Tests: test_all 2115/2115, e2e 846/847 off and on (`file_watch_works`), a new e2e reading
   extensions and status in a subgraph end hook.
+- Final bench (`bench_op`, slots, 1 worker, CPU µs/request, medians of 3 alternating rounds),
+  82067dc0 → a3c9c542: no plugin 248.6 → 248.6; a plugin whose hooks only proceed 307.2 →
+  252.4 (req/s 3241 → 3940).
