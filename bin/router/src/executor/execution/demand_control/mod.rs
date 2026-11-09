@@ -649,7 +649,8 @@ fn evaluate_field_actual_cost_plan(
 }
 
 /// The items of a list `depth` lists deep, like 2 for `[[Product]]`. Only the innermost items
-/// cost, the lists around them are free, and so is a `null` in place of an inner list.
+/// cost, the lists around them are free, and so is a `null`, in place of an inner list or of an
+/// item, like a `null` field outside a list.
 fn evaluate_list_items_actual_cost(
     field: &CompiledFieldActualCostPlan,
     items: &[Value<'_>],
@@ -662,6 +663,7 @@ fn evaluate_list_items_actual_cost(
                 evaluate_list_items_actual_cost(field, inner, depth - 1, variable_values)
             }
             _ if depth > 1 => 0,
+            Value::Null => 0,
             item => field
                 .return_type_cost
                 .saturating_add(evaluate_selection_set_actual_cost_plan(
@@ -896,9 +898,11 @@ mod tests {
 
         let grid = r#"{"grid":[[{"id":"1"},{"id":"2"}],[{"id":"3"}]]}"#;
         assert_eq!(cost("{ grid { id } }", grid), 3);
-        // a `null` row is no product
+        // a `null` row is no product, and neither is a `null` in a row
         let grid = r#"{"grid":[[{"id":"1"},{"id":"2"}],null]}"#;
         assert_eq!(cost("{ grid { id } }", grid), 2);
+        let grid = r#"{"grid":[[{"id":"1"},null]]}"#;
+        assert_eq!(cost("{ grid { id } }", grid), 1);
         let cube = r#"{"cube":[[[{"id":"1"}],[{"id":"2"}]],[[{"id":"3"}]]]}"#;
         assert_eq!(cost("{ cube { id } }", cube), 3);
         // 2 products and 3 reviews
