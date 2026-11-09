@@ -8,7 +8,9 @@ use petgraph::{
 
 use crate::query_planner::ast::merge_path::Condition;
 use crate::query_planner::graph::node::UnionMembersData;
-use crate::query_planner::planner::walker::pathfinder::NavigationTarget;
+use crate::query_planner::planner::walker::{
+    best_path::SUBGRAPH_HOP_COST, pathfinder::NavigationTarget,
+};
 use crate::query_planner::{
     ast::arguments::ArgumentsMap,
     graph::{edge::Edge, edge::EdgeReference, Graph},
@@ -198,6 +200,86 @@ impl<'graph> OperationPath<'graph> {
         OperationPath::new(edge.source(), Some(arc_path_segment))
     }
 
+    /// The subgraphs the plan fetches the path's current object from: the one it's in, the ones
+    /// it went through since the last field, and the ones their keys took it to.
+    fn subgraphs_at_object(&self, graph: &Graph<'_>) -> Vec<Option<u16>> {
+        let subgraph = |node| {
+            graph
+                .node(node)
+                .expect("path nodes are in the graph")
+                .subgraph_index()
+        };
+        let mut entered = vec![subgraph(self.tail())];
+        for segment in self.segments_rev() {
+            let edge = graph
+                .edge(segment.edge_index)
+                .expect("path edges are in the graph");
+            if matches!(edge, Edge::FieldMove(_)) {
+                break;
+            }
+            if let Some(requirement) = &segment.requirement_tree {
+                requirement.hops_cost(graph, &mut entered);
+            }
+            let source = graph
+                .get_edge_head(&segment.edge_index)
+                .expect("path edges are in the graph");
+            entered.push(subgraph(source));
+        }
+        entered
+    }
+
+    /// Whether a field's @requires makes the plan fetch the field's subgraph once more. When the
+    /// requirement takes a trip to a subgraph the object isn't fetched from yet, the field's fetch
+    /// waits for that trip, and the trip needs its key. The fetch graph sends the key from a
+    /// subgraph the object came from when that one has it. When only the field's subgraph has
+    /// it, that subgraph is fetched for the key first and for the field after.
+    fn requires_refetch(
+        &self,
+        graph: &Graph<'_>,
+        requirement: &QueryTreeNode,
+        entered: &[Option<u16>],
+    ) -> bool {
+        // where the object came from into the subgraph it's in now
+        let holders: Vec<NodeIndex> = self
+            .segments_rev()
+            .take_while(|segment| !matches!(graph.edge(segment.edge_index), Ok(Edge::FieldMove(_))))
+            .filter_map(|segment| graph.get_edge_head(&segment.edge_index).ok())
+            .collect();
+        let has_fields = |holder: NodeIndex, fields: &[&str]| {
+            fields.iter().all(|name| {
+                graph.edges_from(holder).any(
+                    |edge| matches!(edge.weight(), Edge::FieldMove(field) if field.name == *name),
+                )
+            })
+        };
+
+        requirement.children.iter().any(|trip| {
+            let into_new_subgraph = trip.edge_from_parent.is_some_and(|edge| {
+                matches!(
+                    graph.edge(edge),
+                    Ok(Edge::EntityMove(_) | Edge::InterfaceObjectTypeMove(_))
+                )
+            }) && graph
+                .node(trip.node_index)
+                .is_ok_and(|node| !entered.contains(&node.subgraph_index()));
+            if !into_new_subgraph {
+                return false;
+            }
+            let key_fields: Vec<&str> = trip
+                .requirements
+                .iter()
+                .flat_map(|key| &key.children)
+                .filter_map(|field| match graph.edge(field.edge_from_parent?) {
+                    Ok(Edge::FieldMove(field)) => Some(field.name),
+                    _ => None,
+                })
+                .collect();
+            !holders
+                .iter()
+                .any(|&holder| has_fields(holder, &key_fields))
+        })
+    }
+
     pub fn advance(
         &self,
         graph: &'graph Graph<'graph>,
@@ -208,8 +290,18 @@ impl<'graph> OperationPath<'graph> {
     ) -> OperationPath<'graph> {
         let prev_cost = self.cost;
         let edge_cost = edge_ref.weight().cost();
+        // The edge counts its key's or @requires' size, but getting those fields can take trips
+        // to other subgraphs too, and those cost like any other.
+        let requirement_hops = requirement.as_deref().map_or(0, |requirement| {
+            let mut entered = self.subgraphs_at_object(graph);
+            let refetch = matches!(edge_ref.weight(), Edge::FieldMove(_))
+                && self.requires_refetch(graph, requirement, &entered);
+            let hops = requirement.hops_cost(graph, &mut entered);
+            hops + if refetch { SUBGRAPH_HOP_COST } else { 0 }
+        });
         let new_cost = prev_cost
             + edge_cost
+            + requirement_hops
             + context_requirements
                 .iter()
                 .map(|requirement| requirement.cost)

@@ -33,6 +33,24 @@ pub fn find_best_paths<'graph>(paths: Vec<OperationPath<'graph>>) -> Vec<Operati
     best_paths
 }
 
+/// What a trip to another subgraph costs on a path, see `Edge::cost`.
+pub(super) const SUBGRAPH_HOP_COST: u64 = 1000;
+
+/// The paths to a leaf the search should choose from: the cheapest, and the best one to each
+/// other subgraph that costs less than one more trip. Such a path loses for the leaf alone, by a
+/// key field or two, but wins when the plan goes to its subgraph anyway for other leaves.
+pub fn find_candidate_paths<'graph>(
+    paths: Vec<OperationPath<'graph>>,
+) -> Vec<OperationPath<'graph>> {
+    let Some(cheapest) = paths.iter().map(|path| path.cost).min() else {
+        return paths;
+    };
+    paths
+        .into_iter()
+        .filter(|path| path.cost < cheapest + SUBGRAPH_HOP_COST)
+        .collect()
+}
+
 /// One path per requirement leaf. Any of a leaf's tied best paths reaches it, so keeping them
 /// all fetches the same value more than once. Picking one per leaf on its own can still send
 /// the leaves down different routes, like `whiskers` through `Animal`'s key and `tricks`

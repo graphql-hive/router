@@ -26,7 +26,7 @@ use crate::query_planner::{
     state::supergraph_state::{OperationKind, SupergraphState},
     utils::cancellation::CancellationToken,
 };
-use best_path::{find_best_paths, BestPathTracker};
+use best_path::{find_best_paths, find_candidate_paths, BestPathTracker};
 use error::WalkOperationError;
 use excluded::ExcludedFromLookup;
 use path::OperationPath;
@@ -795,7 +795,7 @@ fn process_field<'graph, 'op: 'graph>(
     }
 
     if field.is_leaf() {
-        paths_per_leaf.push(find_best_paths(next_paths));
+        paths_per_leaf.push(find_candidate_paths(next_paths));
     } else {
         trace!("Found {} paths", next_paths.len());
         let next_paths = Rc::new(next_paths);

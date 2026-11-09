@@ -548,6 +548,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
                 ... on User {
                   age
                   name
+                  id
                 }
               }
             }
@@ -565,7 +566,6 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
             {
               ... on NodeWithName {
                 username
-                id
               }
             }
           },
@@ -598,7 +598,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
               "kind": "Fetch",
               "serviceName": "a",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{__typename name ...on User{age name}}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{__typename name ...on User{age name id}}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -646,7 +646,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
               "kind": "Fetch",
               "serviceName": "b",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{username id}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{username}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",

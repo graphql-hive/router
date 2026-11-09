@@ -4,52 +4,39 @@
 //! The "best" plan is defined by a cost model that penalizes crossing
 //! subgraph boundaries, and favors plans that are "local" to a single subgraph.
 //!
-//! A naive search to find the best combination would be exponentially slow (we were there...),
-//! as the number of possible plans is the product of the number of choices for each part of
-//! the query. This module implements a search algorithm to make this problem solved.
-//!
-//! The core of the solution is a Branch and Bound algorithm implemented over a
-//! Depth-First Search (DFS). This approach explores all possible
-//! combinations while aggressively pruning entire branches of the search space that
-//! are guaranteed to not contain the optimal solution.
-//!
-//! The key components are:
+//! Trying every combination is exponentially slow (we were there...), as the number of possible
+//! plans is the product of the number of choices for each part of the query. So the plan comes
+//! from two cheap passes instead:
 //!
 //! 1.  The query is broken down into independent decision points.
 //!     For each point, there is a set of `Alternatives`, and each alternative is a
 //!     `Candidate` plan fragment. The goal is to pick exactly one `Candidate` from
 //!     each set of `Alternatives`. Leaves with one way to get them go in a `BasePlan`.
 //!
-//! 2.  Before the main search, a fast greedy search (`Search::greedy`)
-//!     is run to find a "good enough" initial plan.
-//!     This provides a strong `best_cost` value, which is critical for making the
-//!     pruning in the main search much more effective.
+//! 2.  A greedy pass (`Search::greedy`) goes a leaf at a time, fewest choices first, and takes
+//!     the candidate that adds the least to the plan so far, the cheapest on its own on a tie.
 //!
-//! 3.  The Bounding Function (`min_remaining_costs`) - this is the most important
-//!     optimization. We pre-compute a vector that contains an optimistic,
-//!     "best-case" cost for completing the plan from any given step to the end.
-//!     It never overestimates the true cost, which allows
-//!     for the pruning check: if a partial plan's cost plus the optimistic
-//!     remaining cost is already worse than our best-found solution, we can safely
-//!     abandon the entire branch.
+//! 3.  Going a leaf at a time, greedy can't see that one fetch could serve many leaves, so a
+//!     second plan prices each hop by the leaves that could share it (`Search::by_shares`),
+//!     and replaces greedy's when it makes fewer fetches. It's made twice, with hops told apart
+//!     by the edges that lead to them and by the fetch they end up in (`HopKey`), as neither
+//!     is always better.
 //!
-//! 4.  To find good solutions faster, we sort both the
-//!     decision points and the choices themselves:
-//!     -   Sets of `Alternatives` are sorted by size (fewest choices first) to reduce
-//!         the branching factor and find a complete plan sooner.
-//!     -   `Candidates` within each set are sorted by their individual cost to explore
-//!         the most promising options first.
+//! A branch-and-bound search used to run after greedy, but it never got past its first check:
+//! its bound was the sum of each leaf's cheapest cost on its own, and merging a candidate into
+//! a plan never adds more than that, so greedy's plan always met the bound.
 //!
-//! 5.  The `Candidate` struct uses `OnceCell` to ensure that the
-//!     potentially expensive work of building a `QueryTree` is only ever
-//!     done if a candidate is actually evaluated, and never more than once.
-//!
-//! 6.  Candidate combinations are costed incrementally (`Costs`). Since adding a candidate only
-//!     adds nodes not already present in the current tree, we avoid recalculating the
-//!     cost of the entire merged tree while preserving the exact branch-and-bound costs.
+//! A `Candidate` is costed and merged from its path, its `QueryTree` is built only when needed
+//! (`OnceCell`), and what merging adds is costed without re-costing the whole tree (`Costs`).
 
+use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use petgraph::graph::NodeIndex;
-use std::{cell::OnceCell, rc::Rc};
+use rustc_hash::FxHasher;
+use std::{
+    cell::OnceCell,
+    hash::{Hash, Hasher},
+    rc::Rc,
+};
 
 use crate::query_planner::{
     graph::{edge::Edge, error::GraphError, Graph},
@@ -94,46 +81,25 @@ pub fn find_best_combination(
         return Err(QueryPlanError::EmptyPlan);
     }
 
-    let base = BasePlan::merge(graph, leaves.singles, cancellation_token)?;
+    // with no choices to make, there's nothing to price hops for
+    let with_hops = !leaves.groups.is_empty();
+    let base = BasePlan::merge(graph, leaves.singles, with_hops, cancellation_token)?;
     let groups = leaves
         .groups
         .into_iter()
         .map(|paths| Candidate::alternatives(graph, paths))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let best_case_cost_per_leaf: Vec<u64> = base
-        .leaf_costs
-        .iter()
-        .copied()
-        .chain(
-            groups
-                .iter()
-                .map(|alternatives| alternatives.first().map_or(u64::MAX, |c| c.cost)),
-        )
-        .collect();
-    let min_remaining_costs = calculate_min_remaining_costs(&best_case_cost_per_leaf);
-
     let mut search = Search {
         graph,
         groups: &groups,
-        min_remaining_costs: &min_remaining_costs[base.leaf_costs.len()..],
-        cancellation_token,
-        best_cost: u64::MAX,
         best_tree: None,
     };
-
-    // A strong initial `best_cost` is critical for effective pruning.
-    search.greedy(base.tree.clone(), base.cost());
-
-    // the bounds the search would check on the single leaves
-    for (index, pair) in base.costs_before.windows(2).enumerate() {
-        if pair[0] + min_remaining_costs[index] >= search.best_cost || pair[1] >= search.best_cost {
-            return search.best_tree.ok_or(QueryPlanError::EmptyPlan);
-        }
+    search.greedy(base.tree.clone());
+    if with_hops {
+        search.by_shares(&base, HopKey::Edges);
+        search.by_shares(&base, HopKey::Fetch);
     }
-
-    let base_cost = base.cost();
-    search.explore(0, base.tree, base_cost)?;
 
     search.best_tree.ok_or(QueryPlanError::EmptyPlan)
 }
@@ -179,48 +145,37 @@ impl<'graph> Leaves<'graph> {
 /// instead of copying the tree on every search step.
 struct BasePlan {
     tree: Option<QueryTree>,
-    /// The cost before each leaf is merged, and after the last one.
-    costs_before: Vec<u64>,
-    leaf_costs: Vec<u64>,
+    /// The hops of the merged leaves by both keys, see `Candidate::hops`. The two kinds of key
+    /// are hashes of different things, so they don't mix up.
+    hops: HashSet<u64>,
 }
 
 impl BasePlan {
     fn merge(
         graph: &Graph<'_>,
         singles: Vec<PathAndPosition<'_>>,
+        with_hops: bool,
         cancellation_token: &CancellationToken,
     ) -> Result<Self, QueryPlanError> {
         let mut base = BasePlan {
             tree: None,
-            costs_before: Vec::with_capacity(singles.len() + 1),
-            leaf_costs: Vec::with_capacity(singles.len()),
+            hops: HashSet::new(),
         };
-        base.costs_before.push(0);
 
         for (path, mutation_field_position) in singles {
             cancellation_token.bail_if_cancelled()?;
             let candidate = Candidate::new(graph, path, mutation_field_position)?;
-            base.leaf_costs.push(candidate.cost);
-            let cost = base.cost();
+            if with_hops {
+                base.hops.extend(candidate.hops(graph, HopKey::Edges)?);
+                base.hops.extend(candidate.hops(graph, HopKey::Fetch)?);
+            }
             match base.tree.as_mut() {
-                Some(tree) => {
-                    let root = Rc::make_mut(&mut tree.root);
-                    base.costs_before
-                        .push(cost + candidate.added_cost(graph, root)?);
-                    candidate.merge_into(graph, root)?;
-                }
-                None => {
-                    base.costs_before.push(cost + candidate.cost);
-                    base.tree = Some(candidate.tree(graph)?);
-                }
+                Some(tree) => candidate.merge_into(graph, Rc::make_mut(&mut tree.root))?,
+                None => base.tree = Some(candidate.tree(graph)?),
             }
         }
 
         Ok(base)
-    }
-
-    fn cost(&self) -> u64 {
-        *self.costs_before.last().expect("starts with a zero")
     }
 }
 
@@ -233,6 +188,17 @@ struct Candidate<'graph> {
     uses_context: bool,
     cost: u64,
     tree: OnceCell<QueryTree>,
+}
+
+/// What makes two hops the same one, for `Search::by_shares`.
+#[derive(Clone, Copy)]
+enum HopKey {
+    /// The edges that lead to it, so paths that would share it in the tree share it.
+    Edges,
+    /// The fetch it ends up in: the subgraph it goes to and the response path it's at, the way
+    /// the fetch graph merges calls. So `... on T { name }` and `... on U { name }` both from one
+    /// subgraph share it, though they're apart in the tree.
+    Fetch,
 }
 
 /// The ways to get one leaf, the plan picks one.
@@ -278,6 +244,56 @@ impl<'graph> Candidate<'graph> {
         Ok(alternatives)
     }
 
+    /// The trips to other subgraphs on this path, the segments that cost a crossing: going into a
+    /// subgraph, or an entity call for a requirement, each keyed by `key`. Conditions on the way
+    /// aren't in either key, it's only for pricing, the plan is still costed on the tree.
+    fn hops(&self, graph: &Graph<'_>, key: HopKey) -> Result<Vec<u64>, GraphError> {
+        let hash = |value: &dyn Fn(&mut FxHasher)| {
+            let mut hasher = FxHasher::default();
+            value(&mut hasher);
+            hasher.finish()
+        };
+        let position = self.mutation_field_position;
+        let mut hops = Vec::new();
+        // the edges so far for `HopKey::Edges`, the response path so far for `HopKey::Fetch`
+        let mut prefix = 0;
+        for segment in self.path.get_segments() {
+            let edge = graph.edge(segment.edge_index)?;
+            match (key, edge) {
+                (HopKey::Edges, _) => {
+                    let edge = segment.edge_index.index();
+                    prefix = hash(&|h| (prefix, edge, position).hash(h));
+                }
+                (HopKey::Fetch, Edge::FieldMove(field)) => {
+                    let name = segment
+                        .selection_attributes
+                        .as_ref()
+                        .and_then(|attributes| attributes.alias.as_deref())
+                        .unwrap_or(field.name);
+                    prefix = hash(&|h| (prefix, name).hash(h));
+                }
+                (HopKey::Fetch, _) => {}
+            }
+            if segment.requirement_tree.is_none()
+                && !matches!(edge, Edge::SubgraphEntrypoint { .. })
+            {
+                continue;
+            }
+            hops.push(match key {
+                HopKey::Edges => prefix,
+                HopKey::Fetch => {
+                    let subgraph = graph
+                        .node(graph.get_edge_tail(&segment.edge_index)?)?
+                        .subgraph_index();
+                    // a @requires field's own call is apart from the entity calls at its parent
+                    let requires = matches!(edge, Edge::FieldMove(_));
+                    hash(&|h| (prefix, subgraph, requires, position).hash(h))
+                }
+            });
+        }
+        Ok(hops)
+    }
+
     fn tree(&self, graph: &Graph<'_>) -> Result<QueryTree, GraphError> {
         if let Some(tree) = self.tree.get() {
             return Ok(tree.clone());
@@ -312,30 +328,16 @@ impl<'graph> Candidate<'graph> {
     }
 }
 
-/// `min_remaining_costs[i]` is the best-case cost from leaf `i` to the end, what
-/// `Search::explore` prunes with.
-fn calculate_min_remaining_costs(best_case_cost_per_leaf: &[u64]) -> Vec<u64> {
-    let mut min_remaining_costs = vec![0; best_case_cost_per_leaf.len() + 1];
-    for i in (0..best_case_cost_per_leaf.len()).rev() {
-        min_remaining_costs[i] = min_remaining_costs[i + 1] + best_case_cost_per_leaf[i];
-    }
-    min_remaining_costs
-}
-
-/// Picks one candidate per group, keeping the cheapest complete plan it finds.
+/// Picks one candidate per group.
 struct Search<'a, 'graph> {
     graph: &'a Graph<'a>,
     groups: &'a [Alternatives<'graph>],
-    /// The best-case cost from each group to the end.
-    min_remaining_costs: &'a [u64],
-    cancellation_token: &'a CancellationToken,
-    best_cost: u64,
     best_tree: Option<QueryTree>,
 }
 
 impl Search<'_, '_> {
     /// A fast, good-enough plan: per leaf, the candidate that adds the least.
-    fn greedy(&mut self, mut current_tree: Option<QueryTree>, mut current_cost: u64) {
+    fn greedy(&mut self, mut current_tree: Option<QueryTree>) {
         let graph = self.graph;
         for alternatives in self.groups {
             let mut best_delta = u64::MAX;
@@ -359,78 +361,101 @@ impl Search<'_, '_> {
             let Some(candidate) = best_candidate else {
                 return;
             };
-            match current_tree.as_mut() {
-                Some(tree) => {
-                    if candidate
-                        .merge_into(graph, Rc::make_mut(&mut tree.root))
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
-                None => match candidate.tree(graph) {
-                    Ok(tree) => current_tree = Some(tree),
-                    Err(_) => return,
-                },
+            if self.add(&mut current_tree, candidate).is_none() {
+                return;
             }
-            current_cost += best_delta;
         }
 
-        if let Some(tree) = current_tree {
-            if current_cost < self.best_cost {
-                self.best_cost = current_cost;
-                self.best_tree = Some(tree);
+        self.best_tree = current_tree;
+    }
+
+    /// A second plan, for what greedy can't see. Going a leaf at a time, greedy opens the fetch
+    /// that's cheapest for that leaf, even when another one could serve many leaves. Here each
+    /// hop's crossing is split between the leaves that could use it (hops the plan already has
+    /// are free), and every leaf takes its cheapest candidate at those prices.
+    ///
+    /// It replaces the plan so far when it has fewer fetches (`Costs::by_fetches`), not by the
+    /// tree cost, which charges a crossing per requirement: a plan cheaper by that can still make
+    /// a fetch more.
+    fn by_shares(&mut self, base: &BasePlan, key: HopKey) {
+        let graph = self.graph;
+        let Ok(hops) = self
+            .groups
+            .iter()
+            .map(|alternatives| {
+                alternatives
+                    .iter()
+                    .map(|candidate| candidate.hops(graph, key))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<_>, _>>()
+        else {
+            return;
+        };
+
+        // How many leaves could use each hop
+        let mut users: HashMap<u64, u32> = HashMap::new();
+        let mut seen = HashSet::new();
+        for leaf in &hops {
+            seen.clear();
+            for &hop in leaf.iter().flatten() {
+                if seen.insert(hop) {
+                    *users.entry(hop).or_default() += 1;
+                }
             }
+        }
+        let crossing = CROSS_SUBGRAPH_COST as f64;
+        let price = |candidate: &Candidate, hops: &[u64]| {
+            let discount: f64 = hops
+                .iter()
+                .map(|hop| match base.hops.contains(hop) {
+                    true => crossing,
+                    false => crossing - crossing / f64::from(users[hop]),
+                })
+                .sum();
+            candidate.cost as f64 - discount
+        };
+
+        let mut plan = base.tree.clone();
+        for (alternatives, hops) in self.groups.iter().zip(&hops) {
+            // the first one on a tie, the cheapest on its own
+            let Some((candidate, _)) = alternatives
+                .iter()
+                .zip(hops)
+                .min_by(|(a, a_hops), (b, b_hops)| price(a, a_hops).total_cmp(&price(b, b_hops)))
+            else {
+                return;
+            };
+            if self.add(&mut plan, candidate).is_none() {
+                return;
+            }
+        }
+
+        let Some(tree) = plan else {
+            return;
+        };
+        let costs = Costs(graph);
+        let fewer_fetches = self
+            .best_tree
+            .as_ref()
+            .is_none_or(|best| costs.by_fetches(&tree.root) < costs.by_fetches(&best.root));
+        if fewer_fetches {
+            self.best_tree = Some(tree);
         }
     }
 
-    /// Branch and bound (to prune early) depth-first search for the best combination.
-    fn explore(
-        &mut self,
-        group_index: usize,
-        tree_so_far: Option<QueryTree>,
-        cost_so_far: u64,
-    ) -> Result<(), QueryPlanError> {
-        self.cancellation_token.bail_if_cancelled()?;
-
-        // even the best case from here can't beat the best plan
-        if cost_so_far + self.min_remaining_costs[group_index] >= self.best_cost {
-            return Ok(());
-        }
-
-        // a complete plan, and the best one so far
-        let Some(alternatives) = self.groups.get(group_index) else {
-            self.best_cost = cost_so_far;
-            self.best_tree = tree_so_far;
-            return Ok(());
-        };
-
-        let costs = Costs(self.graph);
-        for candidate in alternatives {
-            let candidate_tree = candidate.tree(self.graph)?;
-
-            let added_cost = match tree_so_far.as_ref() {
-                Some(tree) => costs.added_by_merge(&tree.root, &candidate_tree.root),
-                None => costs.tree(&candidate_tree.root),
-            };
-            let next_cost = cost_so_far + added_cost;
-            if next_cost >= self.best_cost {
-                continue;
+    /// Merges `candidate` into the plan so far. `None` if the graph is missing a node or edge
+    /// of its path.
+    fn add(&self, plan: &mut Option<QueryTree>, candidate: &Candidate) -> Option<()> {
+        match plan.as_mut() {
+            Some(tree) => candidate
+                .merge_into(self.graph, Rc::make_mut(&mut tree.root))
+                .ok(),
+            None => {
+                *plan = Some(candidate.tree(self.graph).ok()?);
+                Some(())
             }
-
-            let next_tree = match tree_so_far.as_ref() {
-                Some(tree) => {
-                    let mut merged = tree.clone();
-                    Rc::make_mut(&mut merged.root).merge_nodes(&candidate_tree.root);
-                    merged
-                }
-                None => candidate_tree,
-            };
-
-            self.explore(group_index + 1, Some(next_tree), next_cost)?;
         }
-
-        Ok(())
     }
 }
 
@@ -484,6 +509,52 @@ fn merge_path(
 #[derive(Clone, Copy)]
 struct Costs<'a>(&'a Graph<'a>);
 
+/// A fetch the way the fetch graph makes it: a subgraph's root fetch, or the entity calls to a
+/// subgraph after as many other entity calls. The fetch graph batches calls to a subgraph across
+/// response paths, so it's per depth, not per object.
+type FetchKey = (bool, Option<u16>, u32, MutationFieldPosition);
+
+/// Walks a tree for `Costs::by_fetches`, with how many entity calls lead to each node.
+struct FetchWalk<'a> {
+    graph: &'a Graph<'a>,
+    nodes: u64,
+    /// The nodes that resolve context
+    crossings: u64,
+    fetches: HashSet<FetchKey>,
+}
+
+impl FetchWalk<'_> {
+    fn node(&mut self, node: &QueryTreeNode, depth: u32, position: MutationFieldPosition) {
+        self.nodes += 1;
+        if !node.resolved_context_requirements().is_empty() {
+            self.crossings += 1;
+        }
+        let position = node.mutation_field_position.or(position);
+        let subgraph = self
+            .graph
+            .node(node.node_index)
+            .ok()
+            .and_then(|node| node.subgraph_index());
+        let entrypoint = node.edge_from_parent.is_some_and(|edge| {
+            matches!(self.graph.edge(edge), Ok(Edge::SubgraphEntrypoint { .. }))
+        });
+        if entrypoint {
+            self.fetches.insert((false, subgraph, 0, position));
+        }
+        for requirement in &node.requirements {
+            self.fetches.insert((true, subgraph, depth, position));
+            self.node(requirement, depth, position);
+        }
+        for context in node.context_requirements() {
+            self.node(context, depth, position);
+        }
+        let depth = depth + u32::from(!node.requirements.is_empty());
+        for child in &node.children {
+            self.node(child, depth, position);
+        }
+    }
+}
+
 impl Costs<'_> {
     fn tree(self, node: &QueryTreeNode) -> u64 {
         let mut current_cost = FIELD_COST;
@@ -509,6 +580,22 @@ impl Costs<'_> {
         }
 
         current_cost
+    }
+
+    /// What a whole plan costs counting fetches close to how the fetch graph makes them: a field
+    /// per node, a crossing per subgraph's root fetch, one per subgraph's entity calls at a depth
+    /// (however many nodes need them, see `FetchKey`), and one per node that resolves context.
+    // ponytail: depth stands in for the batching the fetch graph does, it's only exact when
+    // calls at the same depth don't depend on each other. Good enough to compare two plans.
+    fn by_fetches(self, root: &QueryTreeNode) -> u64 {
+        let mut walk = FetchWalk {
+            graph: self.0,
+            nodes: 0,
+            crossings: 0,
+            fetches: HashSet::new(),
+        };
+        walk.node(root, 0, None);
+        walk.nodes * FIELD_COST + (walk.fetches.len() as u64 + walk.crossings) * CROSS_SUBGRAPH_COST
     }
 
     /// What getting to `node` from its parent costs.

@@ -4,7 +4,7 @@ use tracing::{instrument, trace};
 
 use crate::query_planner::{
     ast::{arguments::ArgumentsMap, merge_path::Condition},
-    graph::{error::GraphError, Graph},
+    graph::{edge::Edge, error::GraphError, Graph},
     planner::walker::path::{ContextRequirement, OperationPath, PathSegment, SelectionAttributes},
 };
 
@@ -114,6 +114,54 @@ impl QueryTreeNode {
 
     pub fn context_coordinate(&self) -> Option<(EdgeIndex, usize)> {
         self.context.as_ref()?.coordinate
+    }
+
+    /// What the trips to other subgraphs in this tree cost: an entity call, with its key, for
+    /// each one, here and in the requirements below. Fields are left out, whoever needs this tree
+    /// already counts the selection it's for.
+    ///
+    /// The tree starts at an object the plan is already on. The fetch graph makes one entity call
+    /// per subgraph per object, so a trip from there into a subgraph in `entered` (or one the
+    /// tree went to already) is the same fetch, and free. Trips below a field are at other
+    /// objects, they all count. Adds the subgraphs it goes to at the object to `entered`.
+    pub fn hops_cost(&self, graph: &Graph<'_>, entered: &mut Vec<Option<u16>>) -> u64 {
+        self.hops_below(graph, true, entered)
+    }
+
+    fn hops_below(
+        &self,
+        graph: &Graph<'_>,
+        at_object: bool,
+        entered: &mut Vec<Option<u16>>,
+    ) -> u64 {
+        let mut cost = 0;
+        let mut children_at_object = at_object;
+        if let Some(edge) = self.edge_from_parent {
+            match graph.edge(edge).expect("tree edges are in the graph") {
+                edge @ (Edge::EntityMove(_) | Edge::InterfaceObjectTypeMove(_)) => {
+                    let subgraph = graph
+                        .node(self.node_index)
+                        .expect("tree nodes are in the graph")
+                        .subgraph_index();
+                    if !at_object {
+                        cost += edge.cost();
+                    } else if !entered.contains(&subgraph) {
+                        cost += edge.cost();
+                        entered.push(subgraph);
+                    }
+                }
+                Edge::FieldMove(_) => children_at_object = false,
+                _ => {}
+            }
+        }
+        // a move's requirements are read before it, on the object it starts from
+        for requirement in &self.requirements {
+            cost += requirement.hops_below(graph, at_object, entered);
+        }
+        for child in &self.children {
+            cost += child.hops_below(graph, children_at_object, entered);
+        }
+        cost
     }
 
     pub fn context_mut(&mut self) -> &mut NodeContext {

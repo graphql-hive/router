@@ -1,0 +1,72 @@
+schema @link(url: "https://specs.apollo.dev/link/v1.0") @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
+  query: Query
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__field(
+  graph: join__Graph
+  requires: join__FieldSet
+  provides: join__FieldSet
+  type: String
+  external: Boolean
+  override: String
+  usedOverridden: Boolean
+) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__implements(graph: join__Graph!, interface: String!) repeatable on OBJECT | INTERFACE
+
+directive @join__type(
+  graph: join__Graph!
+  key: join__FieldSet
+  extension: Boolean! = false
+  resolvable: Boolean! = true
+  isInterfaceObject: Boolean! = false
+) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(graph: join__Graph!, member: String!) repeatable on UNION
+
+scalar join__FieldSet
+
+directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+
+scalar link__Import
+
+enum link__Purpose {
+  """
+  `SECURITY` features provide metadata necessary to securely resolve fields.
+  """
+  SECURITY
+  """
+  `EXECUTION` features provide metadata necessary for operation execution.
+  """
+  EXECUTION
+}
+
+enum join__Graph {
+  B @join__graph(name: "b", url: "http://b")
+  C @join__graph(name: "c", url: "http://c")
+  ROOT @join__graph(name: "root", url: "http://root")
+}
+
+type U @join__type(graph: B, key: "k1 { id }") @join__type(graph: B, key: "k2") @join__type(graph: C, key: "k1 { id }") @join__type(graph: C, key: "k2") @join__type(graph: ROOT, key: "k1 { id }") {
+  k1: K @join__field(graph: B, type: "K!") @join__field(graph: C, type: "K!") @join__field(graph: ROOT, type: "K")
+  k2: ID! @join__field(graph: B) @join__field(graph: C)
+  v: V! @join__field(graph: B, external: true) @join__field(graph: C)
+  f: ID! @join__field(graph: B, requires: "v{v}")
+}
+
+type K @join__type(graph: B, key: "id") @join__type(graph: C, key: "id") @join__type(graph: ROOT, key: "id") {
+  id: ID!
+}
+
+type V @join__type(graph: B, key: "id") @join__type(graph: C, key: "id") {
+  v: String! @join__field(graph: B, external: true) @join__field(graph: C)
+  id: ID!
+}
+
+type Query @join__type(graph: B) @join__type(graph: C) @join__type(graph: ROOT) {
+  u: U! @join__field(graph: ROOT)
+}

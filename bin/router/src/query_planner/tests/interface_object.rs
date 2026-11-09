@@ -368,6 +368,7 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
                 ... on User {
                   age
                   name
+                  id
                 }
                 name
               }
@@ -384,7 +385,6 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
             } =>
             {
               ... on NodeWithName {
-                id
                 username
               }
             }
@@ -418,7 +418,7 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
               "kind": "Fetch",
               "serviceName": "a",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{__typename ...on User{age name} name}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{__typename ...on User{age name id} name}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -466,7 +466,7 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
               "kind": "Fetch",
               "serviceName": "b",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{id username}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{username}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
