@@ -63,7 +63,11 @@ use opentelemetry_sdk::{
 use prometheus::{Encoder, TextEncoder};
 use std::{io::IsTerminal, str::FromStr, sync::Mutex};
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::{filter::ParseError, fmt::time::UtcTime, Registry};
+use tracing_subscriber::{
+    filter::{FilterExt, ParseError},
+    fmt::time::UtcTime,
+    Registry,
+};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use tracing_subscriber::{EnvFilter, Layer};
 use utils::resolve_string_map;
@@ -446,10 +450,15 @@ where
         tracing_appender::non_blocking::NonBlockingBuilder::default()
             .lossy(false)
             .finish(stdout_stream);
-    let targets_filter = create_targets_filter(&config.level, config.log_internals);
-    let ignore_otel_filter = create_ignore_otel_filter();
-    let env_filter =
-        EnvFilter::from_str(config.env_filter_str())?.add_directive(config.level.as_str().parse()?);
+    // one filter, not three stacked `with_filter`s: stacked, the outermost one (which takes
+    // everything) decides what `enabled!` says and the level hint is lost, so every
+    // `debug!` was built and dropped late, and the request summary was collected at any level
+    let filter = create_targets_filter(&config.level, config.log_internals)
+        .and(
+            EnvFilter::from_str(config.env_filter_str())?
+                .add_directive(config.level.as_str().parse()?),
+        )
+        .and(create_ignore_otel_filter());
     let stdout_layer = tracing_subscriber::fmt::layer();
     let timer = UtcTime::rfc_3339();
 
@@ -457,9 +466,7 @@ where
         LogFormat::Json => stdout_layer
             .event_format(RouterJsonFormat)
             .with_writer(stdout_writer)
-            .with_filter(targets_filter)
-            .with_filter(env_filter)
-            .with_filter(ignore_otel_filter)
+            .with_filter(filter)
             .boxed(),
         LogFormat::Text => {
             let compact = tracing_subscriber::fmt::format::Format::default()
@@ -472,9 +479,7 @@ where
             stdout_layer
                 .event_format(RouterTextFormat(compact))
                 .with_writer(stdout_writer)
-                .with_filter(targets_filter)
-                .with_filter(env_filter)
-                .with_filter(ignore_otel_filter)
+                .with_filter(filter)
                 .boxed()
         }
     };
