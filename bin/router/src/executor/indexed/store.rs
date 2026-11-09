@@ -92,11 +92,14 @@ pub struct Arena {
 }
 
 /// Arenas kept for the next request on this thread. A request takes one and gives it back
-/// when it ends, wherever it ends.
-const POOL_SIZE: usize = 4;
-/// An arena that grew past this many cells isn't kept, so one huge response doesn't pin its
-/// memory for the life of the worker.
-const MAX_RETAINED_CELLS: usize = 1 << 20;
+/// when it ends, wherever it ends. A worker has many requests in flight at once (one waiting
+/// on subgraphs doesn't block the next), so the pool holds up to one arena per request in
+/// flight, not just a few: with 4, half the requests at 50 connections started from an empty
+/// arena and grew it again.
+const POOL_SIZE: usize = 64;
+/// The most the pool keeps on one thread, in bytes. An arena that doesn't fit isn't kept, so a
+/// few huge responses don't pin their memory for the life of the worker.
+const POOL_BUDGET: usize = 4 << 20;
 
 thread_local! {
     static POOL: RefCell<Vec<Arena>> = const { RefCell::new(Vec::new()) };
@@ -110,18 +113,25 @@ impl Arena {
 
     pub fn give_back(mut self) {
         self.clear();
-        if self.cells.capacity() + self.items.capacity() > MAX_RETAINED_CELLS
-            || self.reps.capacity() > MAX_RETAINED_CELLS * 16
-            || self.edits.capacity() > MAX_RETAINED_CELLS * 16
-        {
-            return;
-        }
         POOL.with(|pool| {
             let mut pool = pool.borrow_mut();
-            if pool.len() < POOL_SIZE {
+            if pool.len() < POOL_SIZE
+                && pool.iter().map(Arena::kept_bytes).sum::<usize>() + self.kept_bytes()
+                    <= POOL_BUDGET
+            {
                 pool.push(self);
             }
         });
+    }
+
+    /// Roughly what a pooled arena holds on to: its buffers' capacity
+    fn kept_bytes(&self) -> usize {
+        let cells = self.cells.capacity()
+            + self.items.capacity()
+            + self.scratch.capacity()
+            + self.found.capacity()
+            + self.frontier.capacity();
+        cells * size_of::<ValueCell>() + self.reps.capacity() + self.edits.capacity()
     }
 
     pub fn give_back_targets(&mut self, mut targets: Vec<(ValueCell, u32)>) {
@@ -357,5 +367,35 @@ impl<'a> crate::executor::execution::demand_control::CostData<'a> for CellView<'
         }
         self.arena
             .plain_str(self.arena.cells[(first + field_index as u32) as usize])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_pool_keeps_arenas_up_to_its_budget() {
+        // a new thread, so the pool starts empty
+        std::thread::spawn(|| {
+            let mut big = Arena::default();
+            big.reps.reserve(POOL_BUDGET + 1);
+            big.give_back();
+            assert_eq!(
+                Arena::take().reps.capacity(),
+                0,
+                "over the budget: not kept"
+            );
+
+            for _ in 0..3 {
+                let mut arena = Arena::default();
+                arena.cells.reserve(64);
+                arena.give_back();
+            }
+            let kept: Vec<Arena> = (0..3).map(|_| Arena::take()).collect();
+            assert!(kept.iter().all(|arena| arena.cells.capacity() >= 64));
+        })
+        .join()
+        .unwrap();
     }
 }
