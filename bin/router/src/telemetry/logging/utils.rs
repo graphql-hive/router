@@ -18,6 +18,8 @@ static INTERNAL_CRATES: &[&str] = &[
 
 pub fn create_ignore_otel_filter(
 ) -> tracing_subscriber::filter::FilterFn<impl Fn(&tracing::Metadata<'_>) -> bool> {
+    // the hint keeps a filter combined with this one from losing its own (`And` takes the
+    // stricter of two hints, and none when either has none)
     filter_fn(|metadata| {
         if metadata.is_span() && metadata.fields().field("hive.kind").is_some() {
             return false;
@@ -25,6 +27,7 @@ pub fn create_ignore_otel_filter(
 
         true
     })
+    .with_max_level_hint(LevelFilter::TRACE)
 }
 
 pub fn create_targets_filter(log_level: &LogLevel, internals: bool) -> Targets {
