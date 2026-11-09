@@ -10,3 +10,4 @@ hive-router: patch
 - The same `@fromContext` field selected twice in one entity call shares one context variable, instead of sending one response key with two different arguments, which the subgraph rejects.
 - Demand control applies `@include`/`@skip` on inline fragments when estimating cost.
 - Demand control counts the fields of a conditional fragment on an interface or union, like `... on Product @include(if: $v)`, in the actual cost. They were left out.
+- Demand control counts every object of a list of lists, like `[[Product]]`, and its fields in the actual cost, instead of one per inner list.

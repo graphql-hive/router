@@ -259,7 +259,8 @@ struct CompiledFieldActualCostPlan {
     response_key: String,
     field_base_cost: u64,
     return_type_cost: u64,
-    is_list: bool,
+    /// How many lists wrap the type, 2 for `[[Product]]`
+    list_depth: usize,
     include_if: Option<String>,
     skip_if: Option<String>,
     child: CompiledSelectionSetActualCostPlan,
@@ -497,7 +498,7 @@ fn compile_field_actual_cost_plan(
             response_key: field.selection_identifier().to_string(),
             field_base_cost: 0,
             return_type_cost: 0,
-            is_list: false,
+            list_depth: 0,
             include_if: field.include_if.clone(),
             skip_if: field.skip_if.clone(),
             child: CompiledSelectionSetActualCostPlan { items: Vec::new() },
@@ -555,7 +556,7 @@ fn compile_field_actual_cost_plan(
         response_key: field.selection_identifier().to_string(),
         field_base_cost,
         return_type_cost: demand_control_definition_cost(supergraph_state, return_type_name),
-        is_list: field_type.is_list(),
+        list_depth: field_type.list_depth(),
         include_if: field.include_if.clone(),
         skip_if: field.skip_if.clone(),
         child: compile_selection_set_actual_cost_plan(
@@ -616,22 +617,19 @@ fn evaluate_field_actual_cost_plan(
         .as_object()
         .and_then(|obj| response_object_get(obj, field.response_key.as_str()));
 
-    if field.is_list {
-        let Some(items) = value.and_then(|v| match v {
-            Value::Array(items) => Some(items),
-            _ => None,
-        }) else {
+    if field.list_depth > 0 {
+        let Some(Value::Array(items)) = value else {
             return field.field_base_cost;
         };
 
-        let mut list_total = 0_u64;
-        for item in items.iter() {
-            let child =
-                evaluate_selection_set_actual_cost_plan(&field.child, item, variable_values);
-            list_total = list_total.saturating_add(field.return_type_cost.saturating_add(child));
-        }
-
-        return field.field_base_cost.saturating_add(list_total);
+        return field
+            .field_base_cost
+            .saturating_add(evaluate_list_items_actual_cost(
+                field,
+                items,
+                field.list_depth,
+                variable_values,
+            ));
     }
 
     let Some(value) = value else {
@@ -648,6 +646,32 @@ fn evaluate_field_actual_cost_plan(
         .field_base_cost
         .saturating_add(field.return_type_cost)
         .saturating_add(child)
+}
+
+/// The items of a list `depth` lists deep, like 2 for `[[Product]]`. Only the innermost items
+/// cost, the lists around them are free, and so is a `null` in place of an inner list.
+fn evaluate_list_items_actual_cost(
+    field: &CompiledFieldActualCostPlan,
+    items: &[Value<'_>],
+    depth: usize,
+    variable_values: &Option<HashMap<String, sonic_rs::Value>>,
+) -> u64 {
+    items.iter().fold(0_u64, |total, item| {
+        let cost = match item {
+            Value::Array(inner) if depth > 1 => {
+                evaluate_list_items_actual_cost(field, inner, depth - 1, variable_values)
+            }
+            _ if depth > 1 => 0,
+            item => field
+                .return_type_cost
+                .saturating_add(evaluate_selection_set_actual_cost_plan(
+                    &field.child,
+                    item,
+                    variable_values,
+                )),
+        };
+        total.saturating_add(cost)
+    })
 }
 
 fn inline_fragment_applies(
@@ -880,5 +904,43 @@ mod tests {
         assert_eq!(cost("Similar"), cost("Book"));
         // and the fragment's fields do count, a `User` isn't `Similar`
         assert!(cost("Book") > cost("User"));
+    }
+
+    /// Every `Product` in `[[Product]]` costs, and so do its own `reviews`, not every inner list
+    #[test]
+    fn list_of_lists_costs_every_object() {
+        let schema = parse_schema(&read_supergraph(
+            "fixture/tests/nested-entity-lists.supergraph.graphql",
+        ));
+        let supergraph = SupergraphState::new(&schema);
+        let cost = |query: &str, data: &str| {
+            let normalized =
+                normalize_operation(&supergraph, &parse_operation(query), None).unwrap();
+            let plan = compile_actual_response_shape_cost_plan(
+                normalized.executable_operation(),
+                "Query",
+                &supergraph,
+            );
+            let json: sonic_rs::Value = sonic_rs::from_str(data).unwrap();
+            estimate_actual_response_shape_cost_with_compiled_plan(
+                &plan,
+                &Value::from(json.as_ref()),
+                &None,
+            )
+        };
+
+        let grid = r#"{"grid":[[{"id":"1"},{"id":"2"}],[{"id":"3"}]]}"#;
+        assert_eq!(cost("{ grid { id } }", grid), 3);
+        // a `null` row is no product
+        let grid = r#"{"grid":[[{"id":"1"},{"id":"2"}],null]}"#;
+        assert_eq!(cost("{ grid { id } }", grid), 2);
+        let cube = r#"{"cube":[[[{"id":"1"}],[{"id":"2"}]],[[{"id":"3"}]]]}"#;
+        assert_eq!(cost("{ cube { id } }", cube), 3);
+        // 2 products and 3 reviews
+        let grid = r#"{"grid":[[
+          {"reviews":[[{"id":"r1"},{"id":"r2"}]]},
+          {"reviews":[[{"id":"r3"}]]}
+        ]]}"#;
+        assert_eq!(cost("{ grid { reviews { id } } }", grid), 5);
     }
 }
