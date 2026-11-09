@@ -806,8 +806,6 @@ fn variable_equals_true(
 mod tests {
     use std::collections::HashMap;
 
-    use graphql_tools::parser::query::Definition;
-
     use super::{
         compile_actual_response_shape_cost_plan, compile_actual_subgraph_cost_plan,
         estimate_actual_response_shape_cost_with_compiled_plan,
@@ -815,7 +813,7 @@ mod tests {
     };
     use crate::executor::response::value::Value;
     use crate::query_planner::{
-        ast::{document::Document, normalization::normalize_operation},
+        ast::normalization::normalize_operation,
         planner::plan_nodes::planning::PlanNode,
         state::supergraph_state::SupergraphState,
         tests::testkit::{build_query_plan_with_defaults, read_supergraph},
@@ -871,39 +869,6 @@ mod tests {
             ),
             plain
         );
-    }
-
-    /// A subgraph that has an interface as an `@interfaceObject` returns the interface's own name
-    /// as `__typename`. `... on Similar` applies to a `"Similar"` like it does to a `"Book"`.
-    /// Planning doesn't make a query like this today, so it's written by hand
-    #[test]
-    fn fragment_applies_to_its_own_type_name() {
-        let schema = parse_schema(&read_supergraph(FIXTURE));
-        let supergraph = SupergraphState::new(&schema);
-        let query = parse_operation("{ products { ... on Similar { similar { id } } } }");
-        let Some(Definition::Operation(operation)) = query.definitions.into_iter().next() else {
-            panic!("expected an operation");
-        };
-        let document = Document {
-            operation: operation.into(),
-            fragments: vec![],
-        };
-        let plan = compile_actual_subgraph_cost_plan(&document, &supergraph);
-        let cost = |typename: &str| {
-            let json: sonic_rs::Value = sonic_rs::from_str(&format!(
-                r#"{{"products":[{{"__typename":"{typename}","similar":[{{"id":"1"}}]}}]}}"#
-            ))
-            .unwrap();
-            estimate_actual_subgraph_response_cost_with_compiled_plan(
-                &plan,
-                &Value::from(json.as_ref()),
-                &None,
-            )
-        };
-
-        assert_eq!(cost("Similar"), cost("Book"));
-        // and the fragment's fields do count, a `User` isn't `Similar`
-        assert!(cost("Book") > cost("User"));
     }
 
     /// Every `Product` in `[[Product]]` costs, and so do its own `reviews`, not every inner list

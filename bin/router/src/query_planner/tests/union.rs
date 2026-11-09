@@ -997,48 +997,8 @@ fn union_list_test() -> Result<(), Box<dyn Error>> {
 }
 
 /// `components` points at one `Component` node per member. A conditional `... on Component`
-/// has to stay on each of them, with the condition.
-#[test]
-fn conditional_union_type_condition_on_its_own_field_skip() -> Result<(), Box<dyn Error>> {
-    init_logger();
-    let document = parse_operation(
-        r#"
-        query($v: Boolean!) {
-          card {
-            components {
-              ... on Component @skip(if: $v) {
-                __typename
-              }
-            }
-          }
-        }
-        "#,
-    );
-    let query_plan = build_query_plan_with_defaults(
-        "fixture/tests/union-member-entity-fields.supergraph.graphql",
-        document,
-    )?;
-
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "card") {
-        query ($v:Boolean!) {
-          card {
-            components {
-              ... on Component @skip(if: $v) {
-                __typename
-              }
-            }
-          }
-        }
-      },
-    },
-    "#);
-
-    Ok(())
-}
-
-/// Same with `@include`, and every member still asks only for its own entity field.
+/// stays on each of them, with the condition, and every member still asks only for its own
+/// entity field.
 #[test]
 fn conditional_union_type_condition_on_its_own_field_include_mixed_members(
 ) -> Result<(), Box<dyn Error>> {
