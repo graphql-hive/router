@@ -267,10 +267,10 @@ struct CompiledFieldActualCostPlan {
 
 #[derive(Debug)]
 struct CompiledInlineFragmentActualCostPlan {
-    type_condition: String,
-    // If parent and fragment type are the same at compile time, the fragment
-    // deterministically applies even when runtime __typename is not present.
-    apply_when_typename_missing: bool,
+    /// The object types the fragment applies to. `None` when it's on its parent's own type, like
+    /// `products { ... on Product @include(if: $v) { ... } }`, so it applies to every object,
+    /// with or without `__typename`.
+    applies_to: Option<AHashSet<String>>,
     child: CompiledSelectionSetActualCostPlan,
 }
 
@@ -453,8 +453,18 @@ fn compile_selection_set_actual_cost_plan(
             SelectionItem::InlineFragment(fragment) => {
                 items.push(CompiledSelectionItemActualCostPlan::InlineFragment(
                     CompiledInlineFragmentActualCostPlan {
-                        type_condition: fragment.type_condition.clone(),
-                        apply_when_typename_missing: fragment.type_condition == parent_type_name,
+                        applies_to: (fragment.type_condition != parent_type_name).then(|| {
+                            // `... on Product` applies to a `Book`, and to a `Product` too, which
+                            // is what a subgraph with `Product` as an `@interfaceObject` returns
+                            let mut types: AHashSet<String> = supergraph_state
+                                .all_possible_types(&fragment.type_condition)
+                                .into_iter()
+                                .flatten()
+                                .cloned()
+                                .collect();
+                            types.insert(fragment.type_condition.clone());
+                            types
+                        }),
                         child: compile_selection_set_actual_cost_plan(
                             &fragment.selections,
                             fragment.type_condition.as_str(),
@@ -573,11 +583,7 @@ fn evaluate_selection_set_actual_cost_plan(
                 ));
             }
             CompiledSelectionItemActualCostPlan::InlineFragment(fragment) => {
-                if should_skip_inline_fragment(
-                    parent_value,
-                    &fragment.type_condition,
-                    fragment.apply_when_typename_missing,
-                ) {
+                if !inline_fragment_applies(parent_value, fragment.applies_to.as_ref()) {
                     continue;
                 }
 
@@ -644,21 +650,18 @@ fn evaluate_field_actual_cost_plan(
         .saturating_add(child)
 }
 
-fn should_skip_inline_fragment(
+fn inline_fragment_applies(
     parent_value: &Value<'_>,
-    type_condition: &str,
-    apply_when_typename_missing: bool,
+    applies_to: Option<&AHashSet<String>>,
 ) -> bool {
-    let typename = parent_value
+    let Some(applies_to) = applies_to else {
+        return true;
+    };
+    parent_value
         .as_object()
         .and_then(|obj| response_object_get(obj, "__typename"))
-        .and_then(|value| value.as_str());
-
-    if let Some(typename) = typename {
-        return typename != type_condition;
-    }
-
-    !apply_when_typename_missing
+        .and_then(|value| value.as_str())
+        .is_some_and(|typename| applies_to.contains(typename))
 }
 
 #[inline]
@@ -773,4 +776,109 @@ fn variable_equals_true(
         .and_then(|vars| vars.get(variable_name))
         .and_then(|value| value.as_bool())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use graphql_tools::parser::query::Definition;
+
+    use super::{
+        compile_actual_response_shape_cost_plan, compile_actual_subgraph_cost_plan,
+        estimate_actual_response_shape_cost_with_compiled_plan,
+        estimate_actual_subgraph_response_cost_with_compiled_plan,
+    };
+    use crate::executor::response::value::Value;
+    use crate::query_planner::{
+        ast::{document::Document, normalization::normalize_operation},
+        planner::plan_nodes::planning::PlanNode,
+        state::supergraph_state::SupergraphState,
+        tests::testkit::{build_query_plan_with_defaults, read_supergraph},
+        utils::parsing::{parse_operation, parse_schema},
+    };
+
+    const FIXTURE: &str = "fixture/tests/abstract-types.supergraph.graphql";
+
+    /// The actual cost of `query` for one `Book` and one `Magazine`, with the client's
+    /// operation and with the subgraph's
+    fn actual_costs(query: &str) -> (u64, u64) {
+        let schema = parse_schema(&read_supergraph(FIXTURE));
+        let supergraph = SupergraphState::new(&schema);
+        let variables = Some(HashMap::from([("v".to_string(), sonic_rs::json!(true))]));
+        let json: sonic_rs::Value = sonic_rs::from_str(
+            r#"{"products":[
+              {"__typename":"Book","dimensions":{"size":"1"}},
+              {"__typename":"Magazine","dimensions":{"size":"2"}}
+            ]}"#,
+        )
+        .unwrap();
+        let data = Value::from(json.as_ref());
+
+        let normalized = normalize_operation(&supergraph, &parse_operation(query), None).unwrap();
+        let plan = compile_actual_response_shape_cost_plan(
+            normalized.executable_operation(),
+            "Query",
+            &supergraph,
+        );
+        let by_response_shape =
+            estimate_actual_response_shape_cost_with_compiled_plan(&plan, &data, &variables);
+
+        let query_plan = build_query_plan_with_defaults(FIXTURE, parse_operation(query)).unwrap();
+        let Some(PlanNode::Fetch(fetch)) = &query_plan.node else {
+            panic!("expected a single fetch, got {query_plan}");
+        };
+        let plan = compile_actual_subgraph_cost_plan(&fetch.operation.document, &supergraph);
+        let by_subgraph =
+            estimate_actual_subgraph_response_cost_with_compiled_plan(&plan, &data, &variables);
+
+        (by_response_shape, by_subgraph)
+    }
+
+    /// `... on Product @include(if: $v)` stays on `Product`, the interface, and a `Book` is still
+    /// a `Product`, so its fields count
+    #[test]
+    fn conditional_fragment_on_an_interface_counts_its_fields() {
+        let plain = actual_costs("{ products { dimensions { size } } }");
+        assert_eq!(plain, (4, 4));
+        assert_eq!(
+            actual_costs(
+                "query($v: Boolean!) { products { ... on Product @include(if: $v) { dimensions { size } } } }"
+            ),
+            plain
+        );
+    }
+
+    /// A subgraph that has an interface as an `@interfaceObject` returns the interface's own name
+    /// as `__typename`. `... on Similar` applies to a `"Similar"` like it does to a `"Book"`.
+    /// Planning doesn't make a query like this today, so it's written by hand
+    #[test]
+    fn fragment_applies_to_its_own_type_name() {
+        let schema = parse_schema(&read_supergraph(FIXTURE));
+        let supergraph = SupergraphState::new(&schema);
+        let query = parse_operation("{ products { ... on Similar { similar { id } } } }");
+        let Some(Definition::Operation(operation)) = query.definitions.into_iter().next() else {
+            panic!("expected an operation");
+        };
+        let document = Document {
+            operation: operation.into(),
+            fragments: vec![],
+        };
+        let plan = compile_actual_subgraph_cost_plan(&document, &supergraph);
+        let cost = |typename: &str| {
+            let json: sonic_rs::Value = sonic_rs::from_str(&format!(
+                r#"{{"products":[{{"__typename":"{typename}","similar":[{{"id":"1"}}]}}]}}"#
+            ))
+            .unwrap();
+            estimate_actual_subgraph_response_cost_with_compiled_plan(
+                &plan,
+                &Value::from(json.as_ref()),
+                &None,
+            )
+        };
+
+        assert_eq!(cost("Similar"), cost("Book"));
+        // and the fragment's fields do count, a `User` isn't `Similar`
+        assert!(cost("Book") > cost("User"));
+    }
 }

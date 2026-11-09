@@ -9,3 +9,4 @@ hive-router: patch
 - A conditional fragment on a union field's own union type, like `... on Component @skip(if: $v)`, no longer fails with `NoPathsFound`.
 - The same `@fromContext` field selected twice in one entity call shares one context variable, instead of sending one response key with two different arguments, which the subgraph rejects.
 - Demand control applies `@include`/`@skip` on inline fragments when estimating cost.
+- Demand control counts the fields of a conditional fragment on an interface or union, like `... on Product @include(if: $v)`, in the actual cost. They were left out.
