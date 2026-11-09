@@ -201,8 +201,9 @@ fn process_inline_fragment(
 
 /// `... on Animal @include(if: $x) { ... on Dog { tricks } }` on an `Animal` is
 /// `... on Dog @include(if: $x) { tricks }`. Kept as is, those Dogs are at another path than a
-/// `... on Dog` next to it, and get looked up twice. `None` when a child isn't an inline fragment
-/// or already has the same directive with other arguments, the two can't go on one fragment.
+/// `... on Dog` next to it, and get looked up twice.
+/// `None` when a child isn't an inline fragment or already has the same directive with other arguments,
+/// the two can't go on one fragment.
 fn with_conditions_pushed_down(
     fragment: &InlineFragment<'static, String>,
 ) -> Option<Vec<Selection<'static, String>>> {
