@@ -1,7 +1,7 @@
 use ahash::{HashMap, HashSet, HashSetExt};
 use std::collections::VecDeque;
 
-use crate::query_planner::planner::plan_nodes::{FetchNodePathSegment, KeyRenamer};
+use crate::query_planner::planner::plan_nodes::FetchNodePathSegment;
 
 use petgraph::{
     graph::NodeIndex,
@@ -380,44 +380,18 @@ impl FetchStepData<MultiTypeFetchStep> {
             for rewrite in &mut rewrites {
                 rewrite.path.drain(..levels);
             }
-            // A variable of `other` that reads what one of ours does, like the same field again
-            // under `@include`, becomes ours. Kept apart, the two would be one response key with
-            // other arguments, which the subgraph rejects.
-            let reads = |rewrites: &[KeyRenamer], name: &str| -> Vec<Vec<FetchNodePathSegment>> {
-                rewrites
-                    .iter()
-                    .filter(|rewrite| rewrite.rename_key_to == name)
-                    .map(|rewrite| rewrite.path.clone())
-                    .collect()
-            };
-            let our_rewrites = self.context_rewrites.as_deref().unwrap_or_default();
-            let renamed: Vec<(String, String)> = other
+            // a variable both steps read, like the same field under `@include` and `@skip`,
+            // is read once
+            let ours = self.context_rewrites.get_or_insert_default();
+            rewrites.retain(|rewrite| !ours.contains(rewrite));
+            ours.extend(rewrites);
+        }
+        other.context_variable_definitions.retain(|theirs| {
+            !self
                 .context_variable_definitions
                 .iter()
-                .filter_map(|theirs| {
-                    let their_reads = reads(&rewrites, &theirs.name);
-                    self.context_variable_definitions
-                        .iter()
-                        .find(|ours| {
-                            ours.variable_type == theirs.variable_type
-                                && reads(our_rewrites, &ours.name) == their_reads
-                        })
-                        .map(|ours| (theirs.name.clone(), ours.name.clone()))
-                })
-                .collect();
-            for (theirs, ours) in &renamed {
-                for (_, selections) in other.output.iter_selections_mut() {
-                    selections.rename_variable(theirs, ours);
-                }
-                rewrites.retain(|rewrite| &rewrite.rename_key_to != theirs);
-                other
-                    .context_variable_definitions
-                    .retain(|definition| &definition.name != theirs);
-            }
-            self.context_rewrites
-                .get_or_insert_default()
-                .extend(rewrites);
-        }
+                .any(|ours| ours.name == theirs.name)
+        });
         self.context_variable_definitions
             .append(&mut other.context_variable_definitions);
         self.context_producers.append(&mut other.context_producers);

@@ -3326,43 +3326,20 @@ fn requires_selection_that_sets_its_own_context() -> Result<(), Box<dyn Error>> 
             }
           }
         },
-        BatchFetch(service: "a") {
-          {
-            _e0 {
-              paths: [
-                "plan.offer"
-              ]
-              {
-                ... on Offer {
-                  __typename
-                  id
-                }
+        Flatten(path: "plan.offer") {
+          Fetch(service: "a") {
+            {
+              ... on Offer {
+                __typename
+                id
               }
-            }
-            _e1 {
-              paths: [
-                "plan.offer"
-              ]
-              {
-                ... on Offer {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-          ($__context_0:String,$__context_1:String) {
-            _e0: _entities(representations: $__batch_reps_0) {
+            } =>
+            ($__context_0:String) {
               ... on Offer {
                 value(tier: $__context_0)
               }
             }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on Offer {
-                value(tier: $__context_1)
-              }
-            }
-          }
+          },
         },
         Flatten(path: "plan") {
           Fetch(service: "b") {
@@ -3446,7 +3423,7 @@ fn per_type_contextual_fields_under_other_aliases_stay_apart() -> Result<(), Box
         },
         BatchFetch(service: "a") {
           {
-            _e0(if: (!$v15 && !$v4) || (!$v15 && !$v6)) {
+            _e0(if: !$v15) {
               paths: [
                 "accounts.@|[Member].wallet"
               ]
@@ -3459,28 +3436,6 @@ fn per_type_contextual_fields_under_other_aliases_stay_apart() -> Result<(), Box
             }
             _e1(if: !$v15) {
               paths: [
-                "accounts.@|[Member].wallet"
-              ]
-              {
-                ... on Wallet {
-                  __typename
-                  id
-                }
-              }
-            }
-            _e2(if: (!$v15 && !$v4) || (!$v15 && !$v6)) {
-              paths: [
-                "accounts.@|[Guest].wallet"
-              ]
-              {
-                ... on Wallet {
-                  __typename
-                  id
-                }
-              }
-            }
-            _e3(if: !$v15) {
-              paths: [
                 "accounts.@|[Guest].wallet"
               ]
               {
@@ -3491,36 +3446,42 @@ fn per_type_contextual_fields_under_other_aliases_stay_apart() -> Result<(), Box
               }
             }
           }
-          ($v4:Boolean!,$v6:Boolean!=false,$__context_5:String,$__context_3:String,$__context_2:String,$__context_0:String) {
+          ($v15:Boolean!=false,$v4:Boolean!,$v6:Boolean!=false,$__context_1:String,$__context_0:String) {
             _e0: _entities(representations: $__batch_reps_0) {
               ... on Wallet {
                 ... on Wallet @skip(if: $v4) {
-                  discount(plan: $__context_5)
+                  ...a
                 }
                 ... on Wallet @skip(if: $v6) {
-                  a3_discount: discount(plan: $__context_5)
+                  a3_discount: discount(plan: $__context_1)
+                }
+                ... on Wallet @skip(if: $v15) {
+                  ...a
                 }
               }
             }
             _e1: _entities(representations: $__batch_reps_1) {
               ... on Wallet {
-                discount(plan: $__context_3)
-              }
-            }
-            _e2: _entities(representations: $__batch_reps_2) {
-              ... on Wallet {
                 ... on Wallet @skip(if: $v4) {
-                  discount(plan: $__context_2)
+                  ...b
                 }
                 ... on Wallet @skip(if: $v6) {
-                  a3_discount: discount(plan: $__context_2)
+                  a3_discount: discount(plan: $__context_0)
+                }
+                ... on Wallet @skip(if: $v15) {
+                  ...b
                 }
               }
             }
-            _e3: _entities(representations: $__batch_reps_3) {
-              ... on Wallet {
-                discount(plan: $__context_0)
-              }
+          }
+          fragment a on Wallet {
+            ... on Wallet {
+              discount(plan: $__context_1)
+            }
+          }
+          fragment b on Wallet {
+            ... on Wallet {
+              discount(plan: $__context_0)
             }
           }
         },
@@ -3577,7 +3538,7 @@ fn same_context_value_under_a_condition_shares_its_variable() -> Result<(), Box<
                 id
               }
             } =>
-            ($a:Boolean!,$b:Boolean!,$__context_1:String) {
+            ($a:Boolean!,$b:Boolean!,$__context_0:String) {
               ... on User {
                 __typename
                 id
@@ -3600,7 +3561,7 @@ fn same_context_value_under_a_condition_shares_its_variable() -> Result<(), Box<
               }
             }
             fragment a on Transaction {
-              amountInUserCurrency(currencyCode: $__context_1)
+              amountInUserCurrency(currencyCode: $__context_0)
             }
           },
         },
