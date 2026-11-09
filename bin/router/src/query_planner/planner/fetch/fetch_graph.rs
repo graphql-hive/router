@@ -1490,10 +1490,12 @@ fn process_abstract_edge(
     condition: Option<&Condition>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
-    // The fragment's condition goes down to its children, and each one applies it. A child with
-    // a condition of its own only carries that one though, so in
-    // `... on Dog @include(if: $x) { name @skip(if: $y) }` `name` would lose `$x`. Then the
-    // fragment keeps the condition, like a field does.
+    // Everything under the fragment has to stay behind its condition. The condition goes down to
+    // the children and each one applies it, but a child with a condition of its own carries only
+    // that one, like `name` in `... on Dog @include(if: $x) { name @skip(if: $y) }` would lose
+    // `$x`. So when a child has another condition, the fragment keeps its own, like a field does.
+    // Only the children need checking. Deeper down, whatever they sit under already applies it:
+    // a field carries it, an entity call is skipped with it, and a fragment checks again here.
     let child_has_other_condition = condition.is_some_and(|condition| {
         query_node
             .children

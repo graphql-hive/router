@@ -1981,6 +1981,125 @@ fn spread_condition_kept_around_same_type_fragment_with_its_own() -> Result<(), 
     Ok(())
 }
 
+/// `tricks` sits under two `@include`s, which no single field can carry, so the entity call needs
+/// both. Same with three levels of fragments, each one adds its condition.
+#[test]
+fn entity_call_under_nested_fragments_needs_every_condition() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($x: Boolean!, $z: Boolean!) {
+          listings {
+            pet {
+              ... on Dog @include(if: $x) {
+                ... on Dog @include(if: $z) {
+                  tricks
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1309.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "search") {
+          query ($x:Boolean!,$z:Boolean!) {
+            listings {
+              pet {
+                __typename
+                ... on Dog @include(if: $x) {
+                  ... on Dog @include(if: $z) {
+                    __typename
+                    id
+                  }
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "listings.@.pet|[Dog]|[Dog]") {
+          Fetch(service: "catalog", if: $x && $z) {
+            {
+              ... on Dog {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Dog {
+                tricks
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    let document = parse_operation(
+        r#"
+        query($x: Boolean!, $y: Boolean!, $z: Boolean!) {
+          listings {
+            pet {
+              ... on Dog @include(if: $x) {
+                ... on Dog @skip(if: $y) {
+                  ... on Dog @include(if: $z) {
+                    name
+                  }
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1309.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "search") {
+          query ($x:Boolean!,$y:Boolean!,$z:Boolean!) {
+            listings {
+              pet {
+                __typename
+                ... on Dog @include(if: $x) {
+                  ... on Dog @skip(if: $y) @include(if: $z) {
+                    __typename
+                    id
+                  }
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "listings.@.pet|[Dog]|[Dog]") {
+          Fetch(service: "catalog", if: $x && $z && !$y) {
+            {
+              ... on Dog {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Dog {
+                name
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
+
 /// The Book and Magazine calls below `similar|[Book].reviews` get batched. `[Book]` is about
 /// `similar`, not about the products, so `$a` has to gate the Magazines too.
 #[test]
