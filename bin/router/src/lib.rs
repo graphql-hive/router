@@ -315,7 +315,9 @@ async fn graphql_endpoint_dispatch(
         // inside the graphql_request_handler function.
         let mut response_mode = ResponseMode::default();
 
-        let req_handler_fut = graphql_request_handler(
+        // boxed: the handler's future is ~24 KB, and held inline here (and again inside
+        // `handle_timeout`) it made this future ~98 KB, copied every time ntex moved it
+        let req_handler_fut = Box::pin(graphql_request_handler(
             request,
             body_stream,
             app_state.get_ref(),
@@ -323,7 +325,7 @@ async fn graphql_endpoint_dispatch(
             &root_http_request_span,
             &mut response_mode,
             response_header_sink.clone(),
-        );
+        ));
 
         // Handle the request with a timeout. If the timeout is reached, a timeout error response will be generated.
         let result = handle_timeout(req_handler_fut, &app_state).await;
