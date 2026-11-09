@@ -63,7 +63,7 @@ value cell holds the value.
 |---|---|---|
 | `ValueCell` | `Missing`, `Null`, `True`, `False`, `RawJson(JsonSpan)`, `Object { layout, first }`, `List { start, len }`. Checked to be 16 bytes at compile time. | The unit of storage. Nothing to drop, so clearing a request is O(1). |
 | `JsonSpan` | `{ body, start, len }`: a number, a quoted string, a custom scalar, or a passthrough subtree, as the subgraph wrote it. | Values are never decoded, only copied. |
-| `Arena` | One request's storage: `bodies`, object blocks (`cells`), list items (`items`), and scratch space for walks (`found`), dedupe, fingerprints and plugin edits. Kept in a per-thread pool (4 arenas; one that grew past 1M cells isn't kept). | Reused across requests, so a request allocates almost nothing. |
+| `Arena` | One request's storage: `bodies`, object blocks (`cells`), list items (`items`), and scratch space for walks (`found`), dedupe, fingerprints and plugin edits. Kept in a per-thread pool, up to 64 arenas (one per request in flight) and 4 MB in all. | Reused across requests, so a request allocates almost nothing. |
 | `EDITS_BODY` / `Arena::edits` | The body index of values a plugin set, and the buffer that holds them. | A plugin edit is just another JSON span. |
 | `CellView` | A cell plus its arena and layouts, read like a value. | Demand control counts actual cost on cells. |
 
