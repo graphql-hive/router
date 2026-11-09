@@ -239,13 +239,13 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             .edge_index,
     )?;
 
-    // if type condition if matching the tail's type name,
-    // ignore the fragment and do not check if `... on X` is possible.
-    // In case of
-    //  - interfaces - `... on Interface` - we look for interface's fields.
-    //  - object types - `... on Object`-  we look for object's fields.
-    //  - union types - `... on Union` will cause a graphql validation error.
-    // We don't need to worry about correctness here as it's handled by graphql validations.
+    // a fragment on the tail's own type always applies, so there's no `... on X` to look for
+    //  - interfaces - `... on Interface` - we look for the interface's fields.
+    //  - object types - `... on Object` - we look for the object's fields.
+    //  - union types - `... on Union` on a field that returns the union. The tail is one of the
+    //    union's member nodes, named after the union, and the path stays on that member.
+    // without a condition we go straight to the fragment's selections, with one the fragment is
+    // kept through a selfie edge, every one of these nodes has one
     let tail = graph.node(tail_index)?;
     let tail_type_name = match tail {
         Node::SubgraphType(t) => &t.name,

@@ -1840,15 +1840,6 @@ fn process_requires_field_edge(
             }
         };
         arguments.add_argument(argument.name.clone(), Value::Variable(variable.clone()));
-        if fetch_graph
-            .get_step_data(step_for_children_index)?
-            .context_variable_definitions
-            .iter()
-            .any(|definition| definition.name == variable)
-        {
-            // the step already reads it
-            continue;
-        }
         let selection = &argument.selections[requirement.selection];
         let output = fetch_graph
             .response_keys
@@ -1868,6 +1859,13 @@ fn process_requires_field_edge(
             context_selection_rewrites(std::slice::from_ref(item), path, &variable, &mut rewrites);
         }
         let step = fetch_graph.get_step_data_mut(step_for_children_index)?;
+        if step
+            .context_variable_definitions
+            .iter()
+            .any(|definition| definition.name == variable)
+        {
+            continue;
+        }
         step.context_rewrites
             .get_or_insert_default()
             .extend(rewrites);
