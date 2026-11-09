@@ -1413,3 +1413,186 @@ Allocations and peak bytes identical. The shift is consistent across rounds and 
 Value pipeline, which the batch doesn't touch, so it reads as code layout from 16 codegen units
 re-partitioned by the renamed items, not a cost the rename adds. It wasn't measured with LTO and
 one codegen unit (the production profile); the user accepted it as is.
+
+## Whole-router profile after the renames: where the rest of the request goes (2026-11-08)
+
+Setup: release without LTO, `http.workers: 1`, no dedupe, bench subgraphs, `wrk -t4 -c50`,
+router CPU from `ps` (`bench/cpu-per-request.sh`), every response validated. Profile: samply on
+the router under wrk, weighted by thread CPU. Baseline: indexed + reuse 182.6 µs/req, indexed
+247.7, matching the 2026-11-08 regression check.
+
+Where 182 µs goes (indexed + reuse), by the frame a sample is under:
+
+| part | share |
+|---|---|
+| socket syscalls: subgraph client 22.6%, client connection 11%, runtime 2.2% | ~37% |
+| parse subgraph bodies | 11.2% |
+| representations / entity reuse (`prepare`, `collect`, `walk`) | 9.6% |
+| write the client response | 7.1% |
+| subgraph calls in user space (`send_request`, executor plumbing, hyper's connection task) | ~15.5% |
+| request handling before the plan (request JSON, operation cache, client id…) | 5.5% |
+| ntex middleware chain and handler | 4.7% |
+| runtime, timers, the rest | ~9% |
+
+So the pipeline proper is about 28% of the router's CPU; the kernel is more.
+
+### Kept: box the request handler's future (`lib.rs`, `graphql_endpoint_dispatch`)
+
+Hypothesis from the profile: 2.3% of router CPU was `memmove` called from
+`HandlerWrapper::call` and `Instrumented<graphql_endpoint_dispatch…>::poll`, not from the
+pipeline. The client body isn't it (`vec_into_ntex_bytes` is already zero-copy). Printing
+`size_of_val` of the futures: `graphql_endpoint_dispatch` was **98,096 bytes**, the
+`graphql_request_handler` future in it 24,416. The async block held the handler future inline
+and `handle_timeout` held it again (a moved-from slot keeps its space), so every move of the
+request future by ntex copied ~100 KB. `Box::pin` on the handler future: the dispatch future
+is 2,464 bytes, one ~24 KB allocation per request instead.
+
+Router CPU µs/req and req/s, base `a1e9a436f` vs boxed, 3 alternating rounds:
+
+| config | base | boxed | change |
+|---|---|---|---|
+| indexed + reuse | 182.7 / 183.1 / 184.2 | 176.1 / 176.9 / 177.2 | −3.5%, req/s 5,324 → 5,473 |
+| indexed | 246.4 / 247.6 / 248.9 | 239.7 / 240.9 / 240.5 | −2.9%, req/s 4,027 → 4,137 |
+| tree-based (default) | 328.3 / 328.2 / 329.2 | 321.7 / 321.3 / 324.4 | −2.0%, req/s 3,036 → 3,097 |
+
+The same ~6.5 µs comes off every config, as expected from a fix outside the pipeline. The
+in-process pipeline bench doesn't run the handler, so it doesn't see this. Other futures on the
+path were checked the same way and are small: `execute_plan` 9.5 KB (awaited in place), the
+indexed `execute` 2.8 KB, a subgraph job 2 KB (boxed once).
+
+### Rejected
+
+- **Fixed 128 KB hyper read buffer** (`http1_read_buf_exact_size`), on the guess that the
+  ~17 socket receives per request (6 needed) come from hyper's 8 KB starting buffer. A probe
+  counting chunks per subgraph body: 1.30 chunks per body, ~20 KB average, one 79 KB body per
+  request in ~2.5 chunks. With the fixed buffer: 16.0 receives instead of 17.2, CPU 182.5 / 182.1 with it
+  and 182.1 / 182.5 without (no change), RSS +25 MB. The extra receives come from data arriving in
+  pieces, not from the buffer size. (`ru_msgrcv` on macOS counts receives that carry data,
+  checked with a socket pair.)
+- **mimalloc options** for the 1.6% in `madvise` (large buffers, the 87 KB output and the
+  79 KB body, go to single-block pages committed per allocation): `MIMALLOC_PURGE_DELAY=-1`,
+  `MIMALLOC_ARENA_EAGER_COMMIT=1`, `MIMALLOC_PURGE_DECOMMITS=0`. All within ±1.5 µs of the
+  baseline over 2 rounds. A pooled output buffer would save at most ~1% (bounded by the
+  allocation frames), at the edge of what this setup can measure; not tried.
+- **Two writes for the client response**: 6 sends per request with reuse (4 subgraph
+  requests), 9 without (7), so the 87 KB response always takes 2 `writev`s. That's the kernel
+  taking part of the write, not something the router does; left alone.
+
+### Looked at, no structural change found
+
+- **Representations** (in process, 21% of 51 µs with reuse): the three reuse aliases have 130,
+  59 and 130 entity targets matched against 5–6 known entities, ~30 ns per entity target for
+  the walk, fingerprint, lookup and copy. Line profile: the fingerprint's match and hash words,
+  body slicing, `Vec` pushes, nothing dominant. A cheaper design would need the identity of
+  entities across fetches, which this fixture's repetition would reward far more than real
+  traffic would.
+- **Parse** (37% in process): the SIMD string scan and the `"key":` compare lead the line
+  profile; already at simdjson-like throughput (see the 2026-11-07 entries).
+- **Request handling before the plan**: request JSON 0.7%, the operation cache key 0.5%,
+  nothing else above 0.2%.
+
+Tests: fmt, workspace build, `test_all` 2117/2117, e2e 847/848 (`file_watch_works`).
+
+### Kept: an arena per request in flight, under a byte budget (`indexed/store.rs`)
+
+Hypothesis: the in-process bench runs one request at a time, so the arena pool always hits
+there; a worker under load has many requests in flight (each waits on subgraphs), and the pool
+kept only 4 arenas. Probe on `Arena::take` (one worker, indexed + reuse):
+
+| wrk connections | takes that got a pooled arena |
+|---|---|
+| 10 | 98% |
+| 50 | 46% |
+
+So at 50 connections half the requests started from an empty arena and grew `cells`, `items`
+and the scratch vectors again (the reallocs in the profile under `shaped_object`, `collect`,
+`walk`). An arena for the bench op holds ~2.8K cells, ~370 items: ~60 KB.
+
+Change: up to 64 arenas per thread, and a 4 MB budget for the whole pool instead of the
+per-arena cap (1M cells, plus 16 MB each for `reps` and `edits`, so 4 arenas could pin ~190 MB
+per thread before). An arena that doesn't fit the budget isn't kept. Test:
+`the_pool_keeps_arenas_up_to_its_budget` (fails without the budget check).
+
+Router CPU µs/req, boxed-handler build vs + this, 3 rounds:
+
+| config | before | after |
+|---|---|---|
+| 1 worker, indexed + reuse | 177.9 / 177.8 / 176.2 | 175.1 / 175.6 / 175.2 (−1.4%), RSS same |
+| all workers, c=500, 6 rounds | 368–377 | 366–372, RSS 186–189 MB vs 188–198 |
+| all workers, c=50, 3 rounds | 302–307 | 299–307 |
+
+With all workers the effect is within noise (each worker has fewer requests in flight). A
+first c=500 series showed p99 92 → 100 ms; run in the opposite order it flipped (92.8 / 92.7 /
+95.0 vs 98.3 / 91.2 / 90.3 ms), so it was the run order. In process (one request at a time,
+the pool always hit before too): bench_op 50.3 / 50.3, search 7.2 / 7.2, ct 624 / 623 µs,
+allocations and peak identical; ct's arena still fits the budget.
+
+(ct's request reference in `$CT_DIR/pipeline-ref` predates the 2026-11-07 fragment change, so
+the bench stops at the request check; these runs used a re-blessed copy in the scratchpad. The
+output is unchanged, byte for byte.)
+
+### Also measured this round
+
+- **Strict HTTP/1 pool** (`traffic_shaping.experimental_http1_pool`, already there, opt-in),
+  one worker, indexed + reuse: 176.6 / 177.0 → 172.1 / 172.2 µs/req (−2.6%), 191 allocations
+  per request instead of 212. Whether it becomes the default is a separate call.
+- **Allocations per request, whole router** (a counting probe in the global allocator, not
+  kept): indexed + reuse 212 allocs + 29 reallocs, 400 KB; with the strict pool 191 + 25;
+  the tree-based pipeline 886 + 408, 497 KB. The allocator's own frames are ~1.5–2.5% of CPU,
+  so removing the small ones has a low ceiling.
+- **Executor futures**: the plan's job future 2 KB, `SubgraphExecutorMap::execute` 1 KB, the
+  HTTP executor's boxed `execute` 16 bytes, `send_request` 2.6 KB. Nothing big is moved on the
+  subgraph path; its memmove is the 79 KB body copy (multi-chunk bodies, ~0.9%).
+- **`madvise` (~1.1%) is macOS only**: mimalloc calls `madvise(MADV_FREE_REUSE)` each time it
+  reuses committed arena memory for a large block (`_mi_prim_reuse`; a no-op on Linux). It
+  stays with `MIMALLOC_PURGE_DELAY=-1`. A recycler for the output and body buffers would mostly
+  win this laptop's syscall back, not production's; rejected.
+- **ntex outside the GraphQL handler**: ~2% of CPU besides the socket write. The 4.7%
+  "middleware" share in the first profile was the future copy.
+- **hyper's connection task**: 5.5% of CPU in user space, no frame above 0.5%.
+- **Request handling before the plan**: deserializing the request JSON 0.7%, the rest ≤0.3%
+  each.
+
+### Kept: one log filter instead of three stacked ones (`telemetry/mod.rs`, `logging/utils.rs`)
+
+Found from the profile at `log.level: error`: `summary::record_subgraph` and
+`record_subgraph_call_duration` still ran (a mutex, a `HashSet<String>`, a
+`HashMap<String, Vec<Duration>>` per request), though nothing was logged. The stdout layer had
+`.with_filter(targets).with_filter(env).with_filter(ignore_otel)`. Stacked, the outermost filter
+(`ignore_otel`, a `filter_fn` that takes everything and gives no level hint) is what the
+registry asks, so `tracing::enabled!(router::request, INFO)` said yes at any level, and with no
+hint every `debug!` callsite was checked at run time, built, and dropped by the inner filters.
+
+Change: `targets.and(env).and(ignore_otel)` as one filter, and `ignore_otel` gets a `TRACE`
+hint (`And` takes the stricter hint, or none when either side has none). The same events reach
+the output: at `info` the bench op and a failing query log the same lines before and after
+(timestamps and request ids aside), at `error` both log nothing.
+
+Router CPU µs/req, one worker, indexed + reuse, 3 rounds:
+
+| level | before | after |
+|---|---|---|
+| error | 174.6 / 175.6 / 175.3 | 170.4 / 170.1 / 170.4 (−2.8%) |
+| info (default) | 192.5 / 192.0 / 191.7 | 190.6 / 191.7 / 190.6 (−0.7%, about noise) |
+
+### Measured, not built: the cost of logging one line per request
+
+At `info` the router spends ~17 µs/request more than at `error`, for one summary line. Profile
+at `info`: the `tracing-appender` thread is 7.4% of the process's CPU, of which 79% is
+`semaphore_wait_trap` and 15% `swtch_pri` (crossbeam spinning, then parking), and 4.6% the
+`write` itself; the worker spends ~1% signalling it and 2% formatting the line. So it's a
+thread wake-up per request, not the writing. Bound, with a throwaway probe that writes each
+line to stdout from the worker (no hand-off): 189.5 → 179.9 µs/req at `info` (error: 170.2).
+Writing from the worker isn't acceptable (it blocks a worker on stdout; req/s dropped).
+
+The design that should keep most of that: a writer that keeps the thread but doesn't wake it
+per line. Lines go into a shared buffer (one mutex, one append per line); the thread drains it
+every few ms in one `write`, waits on a condvar when idle, and producers block when the buffer
+is over a cap (as `lossy(false)` does now); the guard flushes and joins on drop. Expected:
+most of the ~10 µs/request, and one thread wake-up per tick instead of per request, which
+matters more with all workers feeding one appender. Costs: ~80 lines replacing
+`tracing_appender::non_blocking` for stdout, log lines up to one tick late. Not started.
+
+Tests after this round: fmt, clippy (lib) clean, workspace build, `test_all` 2118/2118, e2e
+847/848 (`file_watch_works`), with the indexed pipeline and reuse forced on 844/848 (the four
+in the glossary).
