@@ -846,6 +846,30 @@ fn process_noop_edge(
     )
 }
 
+/// The object types an entity call asks something of, when it's all in their fragments: every
+/// child is `... on Type` or `__typename`. Empty when something is asked of every entity.
+fn only_asked_types<'a>(
+    graph: &'a Graph<'_>,
+    query_node: &QueryTreeNode,
+) -> Result<Vec<&'a str>, FetchGraphError> {
+    let mut types = Vec::new();
+    for child in &query_node.children {
+        let Some(edge_index) = child.edge_from_parent else {
+            return Ok(Vec::new());
+        };
+        match graph.edge(edge_index)? {
+            Edge::AbstractMove(type_name) => {
+                if !types.contains(&type_name.as_str()) {
+                    types.push(type_name.as_str());
+                }
+            }
+            Edge::FieldMove(field_move) if field_move.name == "__typename" => {}
+            _ => return Ok(Vec::new()),
+        }
+    }
+    Ok(types)
+}
+
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 #[instrument(level = "trace",skip_all, fields(
@@ -882,14 +906,36 @@ fn process_entity_move_edge(
             ))
         }
     };
-    let requirement = fetch_graph.read_at(response_path, &requirement);
+    let mut requirement = fetch_graph.read_at(response_path, &requirement);
 
     let head_node_index = graph.get_edge_head(&edge_index)?;
-    let head_node = graph.node(head_node_index)?;
-    let input_type_name = match head_node {
-        Node::SubgraphType(t) => &t.name,
+    let head_type = match graph.node(head_node_index)? {
+        Node::SubgraphType(t) => t,
         _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
+    let input_type_name = &head_type.name;
+
+    // A key of an interface, like `Animal @key(fields: "id")`, sends every animal. When all that's
+    // asked of them is in `... on Dog` and `... on Cat`, a Bird would go with nothing to ask of
+    // it, so the input only takes the types that are asked for. Not from an
+    // `@interfaceObject` though, its data has the interface's name in `__typename`.
+    let asked_types = only_asked_types(graph, query_node)?;
+    let narrowed = is_interface && !head_type.is_interface_object && !asked_types.is_empty();
+    if narrowed {
+        requirement.selection_set = SelectionSet {
+            items: asked_types
+                .into_iter()
+                .map(|type_name| {
+                    SelectionItem::InlineFragment(InlineFragmentSelection {
+                        type_condition: type_name.to_string(),
+                        selections: requirement.selection_set.clone(),
+                        skip_if: None,
+                        include_if: None,
+                    })
+                })
+                .collect(),
+        };
+    }
 
     let tail_node_index = graph.get_edge_tail(&edge_index)?;
     let tail_node = graph.node(tail_node_index)?;
@@ -923,7 +969,7 @@ fn process_entity_move_edge(
     );
     fetch_step.input.add(&requirement.selection_set)?;
 
-    if is_interface {
+    if is_interface && !narrowed {
         // We use `output_type_name` as there's no connection from `Interface` to `Object`,
         // it's always Object -> Interface.
         trace!(
