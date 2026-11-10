@@ -3,7 +3,7 @@ use std::collections::{btree_map::Entry, BTreeMap};
 
 use petgraph::graph::EdgeIndex;
 
-use crate::query_planner::graph::Graph;
+use crate::query_planner::graph::{edge::SUBGRAPH_HOP_COST, Graph};
 
 use super::{error::WalkOperationError, path::OperationPath};
 
@@ -32,9 +32,6 @@ pub fn find_best_paths<'graph>(paths: Vec<OperationPath<'graph>>) -> Vec<Operati
 
     best_paths
 }
-
-/// What a trip to another subgraph costs on a path, see `Edge::cost`.
-pub(super) const SUBGRAPH_HOP_COST: u64 = 1000;
 
 /// The paths to a leaf the search should choose from: the cheapest, and the best one to each
 /// other subgraph that costs less than one more trip. Such a path loses for the leaf alone, by a

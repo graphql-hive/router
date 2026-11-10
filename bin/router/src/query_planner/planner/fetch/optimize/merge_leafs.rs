@@ -1,7 +1,11 @@
 use ahash::{HashMap, HashMapExt};
 use std::hash::{Hash, Hasher};
 
-use petgraph::graph::NodeIndex;
+use petgraph::{
+    algo::toposort,
+    graph::NodeIndex,
+    visit::{EdgeRef, NodeIndexable},
+};
 use rustc_hash::FxHasher;
 use tracing::instrument;
 
@@ -15,18 +19,8 @@ use crate::query_planner::{
 };
 
 impl FetchStepData<MultiTypeFetchStep> {
-    pub fn can_merge_leafs(
-        &self,
-        self_index: NodeIndex,
-        other_index: NodeIndex,
-        other: &Self,
-        fetch_graph: &FetchGraph<MultiTypeFetchStep>,
-    ) -> bool {
+    pub fn can_merge_leafs(&self, other: &Self) -> bool {
         if !self.can_merge_context(other) {
-            return false;
-        }
-
-        if self_index == other_index {
             return false;
         }
 
@@ -50,20 +44,6 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
-        // `other` must still be a leaf node (no children).
-        if fetch_graph.children_of(other_index).next().is_some() {
-            return false;
-        }
-
-        // We can't merge if one is a descendant of the other,
-        // because there's a dependency between them,
-        // that could lead to incorrect results.
-        // Either input of "other" depends on the output of "self",
-        // or input of "other" depends on the output of one of the steps in between.
-        if fetch_graph.is_descendant_of(other_index, self_index) {
-            return false;
-        }
-
         if self.has_arguments_conflicts_with(other) {
             return false;
         }
@@ -82,13 +62,14 @@ struct GroupKey {
 
 impl FetchGraph<MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
-    /// This optimization is about merging leaf nodes in the fetch nodes with other nodes.
-    /// It reduces the number of fetch steps, without degrading the query performance.
-    /// The query performance is not degraded, because the leaf node has no children,
-    /// meaning the overall depth (amount of parallel layers) is not increased.
+    /// Merges steps to the same subgraph at the same spot, when it costs no wave: the merged
+    /// step runs when the later of the two did, so every child of both has to run after that.
+    /// A leaf only has to fit before the other step's children. Like `c` asked for `x` right
+    /// after `b`, and for `y` after `a`, where `d` waits for both: asking `c` for both after `a`
+    /// is as fast.
     pub(crate) fn merge_leafs(&mut self) -> Result<(), FetchGraphError> {
         let mut group_indexes = HashMap::<GroupKey, usize>::new();
-        let mut groups = Vec::<Vec<(NodeIndex, bool)>>::new();
+        let mut groups = Vec::<Vec<NodeIndex>>::new();
 
         for node_index in self.graph.node_indices() {
             if self.root_index == Some(node_index) {
@@ -96,8 +77,6 @@ impl FetchGraph<MultiTypeFetchStep> {
             }
 
             let step = self.get_step_data(node_index)?;
-            let is_leaf = self.children_of(node_index).next().is_none();
-
             let group_key = GroupKey {
                 service_name: step.service_name.clone(),
                 response_path_hash: response_path_hash(step),
@@ -113,39 +92,61 @@ impl FetchGraph<MultiTypeFetchStep> {
                     group_index
                 }
             };
-            groups[group_index].push((node_index, is_leaf));
+            groups[group_index].push(node_index);
         }
 
-        for group in groups {
-            // Any step can be a target, but only leaf steps can be merged into another step.
-            // Keeping targets first preserves node order and makes selection order stable.
-            for (target_index, _) in &group {
-                if self.graph.node_weight(*target_index).is_none() {
-                    continue;
-                }
-
-                for (leaf_index, _) in group.iter().filter(|(_, is_leaf)| *is_leaf) {
-                    if target_index == leaf_index
+        // worked out when first needed, and again after each merge, as it moves edges around
+        let mut cached_waves: Option<Vec<usize>> = None;
+        for group in groups.iter().filter(|group| group.len() > 1) {
+            for target_index in group {
+                for other_index in group {
+                    if target_index == other_index
                         || self.graph.node_weight(*target_index).is_none()
-                        || self.graph.node_weight(*leaf_index).is_none()
+                        || self.graph.node_weight(*other_index).is_none()
                     {
                         continue;
                     }
-
-                    let can_merge = {
-                        let target_step = self.get_step_data(*target_index)?;
-                        let leaf_step = self.get_step_data(*leaf_index)?;
-                        target_step.can_merge_leafs(*target_index, *leaf_index, leaf_step, self)
+                    let waves = match &cached_waves {
+                        Some(waves) => waves,
+                        None => cached_waves.insert(self.waves()?),
                     };
-
-                    if can_merge {
-                        perform_fetch_step_merge(*target_index, *leaf_index, self, false)?;
+                    // When one step feeds the other, a child on the way runs no later than the
+                    // merged step, so this keeps them apart too.
+                    let merged_wave = waves[target_index.index()].max(waves[other_index.index()]);
+                    let costs_no_wave = self
+                        .children_of(*target_index)
+                        .chain(self.children_of(*other_index))
+                        .all(|edge| waves[edge.target().index()] > merged_wave);
+                    if !costs_no_wave {
+                        continue;
+                    }
+                    let target_step = self.get_step_data(*target_index)?;
+                    let other_step = self.get_step_data(*other_index)?;
+                    if target_step.can_merge_leafs(other_step) {
+                        perform_fetch_step_merge(*target_index, *other_index, self, false)?;
+                        cached_waves = None;
                     }
                 }
             }
         }
 
         Ok(())
+    }
+
+    /// The round each step runs in: one after the latest of its parents.
+    fn waves(&self) -> Result<Vec<usize>, FetchGraphError> {
+        let order = toposort(&self.graph, None)
+            .map_err(|_| FetchGraphError::Internal("the fetch graph has a cycle".to_string()))?;
+        let mut waves = vec![0; self.graph.node_bound()];
+        for index in order {
+            let wave = self
+                .parents_of(index)
+                .map(|edge| waves[edge.source().index()] + 1)
+                .max()
+                .unwrap_or(0);
+            waves[index.index()] = wave;
+        }
+        Ok(waves)
     }
 }
 

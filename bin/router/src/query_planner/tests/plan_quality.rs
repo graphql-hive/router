@@ -126,3 +126,37 @@ fn requires_hidden_hop() -> Result<(), Box<dyn Error>> {
     assert_eq!(plan("requires-hidden-hop", "{ t { x } }")?, (2, 2));
     Ok(())
 }
+
+fn plan_in(supergraph: &str, query: &str) -> Result<(usize, usize), Box<dyn Error>> {
+    init_logger();
+    let plan = build_query_plan_with_defaults(
+        &format!("fixture/tests/{supergraph}.supergraph.graphql"),
+        parse_operation(query),
+    )?;
+    Ok(fetches_and_waves(&plan))
+}
+
+// `canAffordWithDiscount` needs `isExpensiveWithDiscount` from `c`, which can go right after
+// `b`, and `canAfford` needs `isExpensive` from `c`, which waits for `price` from `a`. `d` waits
+// for both, so asking `c` for both at once, after `a`, adds no wave and saves a fetch.
+#[test]
+fn later_step_takes_an_earlier_one() -> Result<(), Box<dyn Error>> {
+    let query = "{ product { canAfford canAffordWithDiscount } }";
+    assert_eq!(plan_in("requires_requires", query)?, (4, 4));
+    Ok(())
+}
+
+// `b` has `bTitle` of `Book`s, `a` has everything else. `song` is a `Book` only in `a`, so its
+// `bTitle` takes a call to `b` after `a` anyway, and that call can take `media` and `book`'s
+// `bTitle` too, where asking `b` for them at the root made a fetch more.
+#[test]
+#[ignore = "the walker keeps one path per subgraph, so `media`'s way into `b` through `a` loses \
+            to the root one, and hops at other paths aren't priced as sharing a batch"]
+fn entity_call_takes_a_root_fetch() -> Result<(), Box<dyn Error>> {
+    let selection = "__typename ... on Song { title aTitle } ... on Movie { title bTitle } ... on Book { title aTitle bTitle }";
+    let query = format!(
+        "{{ viewer {{ media {{ {selection} }} book {{ {selection} }} song {{ {selection} }} }} }}"
+    );
+    assert_eq!(plan_in("union-intersection", &query)?, (2, 2));
+    Ok(())
+}

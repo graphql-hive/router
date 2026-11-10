@@ -259,6 +259,10 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field_simple
     // as it's fake interface, an true object type.
     // To resolve the User part, we need to confirm correct __typename.
     // To resolve `User.username`, we need to call the NodeWithName interfaceObject,
+    //
+    // `b` could send `username` with the list right away, as it's the same field for every type,
+    // and save a wave. We don't: `b` would work it out for every item, also the ones that turn
+    // out not to be users, and the field could be expensive or fail for them.
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {

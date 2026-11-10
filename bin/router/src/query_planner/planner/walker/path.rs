@@ -7,10 +7,9 @@ use petgraph::{
 };
 
 use crate::query_planner::ast::merge_path::Condition;
+use crate::query_planner::graph::edge::SUBGRAPH_HOP_COST;
 use crate::query_planner::graph::node::UnionMembersData;
-use crate::query_planner::planner::walker::{
-    best_path::SUBGRAPH_HOP_COST, pathfinder::NavigationTarget,
-};
+use crate::query_planner::planner::walker::pathfinder::NavigationTarget;
 use crate::query_planner::{
     ast::arguments::ArgumentsMap,
     graph::{edge::Edge, edge::EdgeReference, Graph},

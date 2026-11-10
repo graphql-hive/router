@@ -39,7 +39,11 @@ use std::{
 };
 
 use crate::query_planner::{
-    graph::{edge::Edge, error::GraphError, Graph},
+    graph::{
+        edge::{Edge, SUBGRAPH_HOP_COST},
+        error::GraphError,
+        Graph,
+    },
     planner::{
         error::QueryPlanError,
         tree::{
@@ -57,9 +61,8 @@ use crate::query_planner::{
 
 type PathAndPosition<'graph> = (OperationPath<'graph>, MutationFieldPosition);
 
-/// The high-penalty cost for crossing a subgraph boundary or satisfying a requirement.
-/// This is the primary driver of the optimization, encouraging plans with fewer subgraphs.
-const CROSS_SUBGRAPH_COST: u64 = 1000;
+/// A field's cost, next to `SUBGRAPH_HOP_COST` for crossing a subgraph boundary or satisfying a
+/// requirement, which is what drives the search to plans with fewer subgraphs.
 const FIELD_COST: u64 = 1;
 
 pub fn find_best_combination(
@@ -404,7 +407,7 @@ impl Search<'_, '_> {
                 }
             }
         }
-        let crossing = CROSS_SUBGRAPH_COST as f64;
+        let crossing = SUBGRAPH_HOP_COST as f64;
         let price = |candidate: &Candidate, hops: &[u64]| {
             let discount: f64 = hops
                 .iter()
@@ -561,14 +564,14 @@ impl Costs<'_> {
 
         for child in &node.children {
             if self.edge(child) > 0 {
-                current_cost += CROSS_SUBGRAPH_COST;
+                current_cost += SUBGRAPH_HOP_COST;
             }
 
             current_cost += self.tree(child);
         }
 
         for requirement in &node.requirements {
-            current_cost += CROSS_SUBGRAPH_COST;
+            current_cost += SUBGRAPH_HOP_COST;
             current_cost += self.tree(requirement);
         }
 
@@ -576,7 +579,7 @@ impl Costs<'_> {
             current_cost += self.tree(requirement);
         }
         if !node.resolved_context_requirements().is_empty() {
-            current_cost += CROSS_SUBGRAPH_COST;
+            current_cost += SUBGRAPH_HOP_COST;
         }
 
         current_cost
@@ -595,7 +598,7 @@ impl Costs<'_> {
             fetches: HashSet::new(),
         };
         walk.node(root, 0, None);
-        walk.nodes * FIELD_COST + (walk.fetches.len() as u64 + walk.crossings) * CROSS_SUBGRAPH_COST
+        walk.nodes * FIELD_COST + (walk.fetches.len() as u64 + walk.crossings) * SUBGRAPH_HOP_COST
     }
 
     /// What getting to `node` from its parent costs.
@@ -606,7 +609,7 @@ impl Costs<'_> {
                 Edge::SubgraphEntrypoint { .. }
             )
         }) {
-            CROSS_SUBGRAPH_COST
+            SUBGRAPH_HOP_COST
         } else {
             0
         }
@@ -621,10 +624,10 @@ impl Costs<'_> {
                 self.0.edge(segment.edge_index)?,
                 Edge::SubgraphEntrypoint { .. }
             ) {
-                cost += CROSS_SUBGRAPH_COST;
+                cost += SUBGRAPH_HOP_COST;
             }
             if let Some(requirement) = &segment.requirement_tree {
-                cost += CROSS_SUBGRAPH_COST + self.tree(requirement);
+                cost += SUBGRAPH_HOP_COST + self.tree(requirement);
             }
         }
         Ok(cost)
@@ -682,7 +685,7 @@ impl Costs<'_> {
         let resolved_context_cost = if target.resolved_context_requirements().is_empty()
             && !source.resolved_context_requirements().is_empty()
         {
-            CROSS_SUBGRAPH_COST
+            SUBGRAPH_HOP_COST
         } else {
             0
         };
@@ -708,7 +711,7 @@ impl Costs<'_> {
                 {
                     self.added_by_merge(target_node, source_node)
                 } else if is_requirement {
-                    CROSS_SUBGRAPH_COST + self.tree(source_node)
+                    SUBGRAPH_HOP_COST + self.tree(source_node)
                 } else {
                     self.edge(source_node) + self.tree(source_node)
                 }

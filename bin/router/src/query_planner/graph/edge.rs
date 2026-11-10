@@ -13,6 +13,9 @@ use crate::query_planner::{
     state::supergraph_state::{OperationKind, SubgraphName, TypeNode},
 };
 
+/// What a trip to another subgraph costs, next to a field's 1.
+pub const SUBGRAPH_HOP_COST: u64 = 1000;
+
 #[derive(Debug, Clone)]
 pub struct EntityMove<'graph> {
     pub key: &'graph str,
@@ -283,7 +286,7 @@ impl<'graph> Edge<'graph> {
     pub fn cost(&self) -> u64 {
         let move_cost = match self {
             Self::FieldMove(_) => 1,
-            _ => 1000,
+            _ => SUBGRAPH_HOP_COST,
         };
 
         let requirement_cost = match self.requirements() {

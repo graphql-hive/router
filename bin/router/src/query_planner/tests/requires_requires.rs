@@ -26,37 +26,19 @@ fn overlapping_requires_chains_survive_fetch_step_merges() -> Result<(), Box<dyn
             }
           }
         },
-        Parallel {
-          Flatten(path: "product") {
-            Fetch(service: "c") {
-              {
-                ... on Product {
-                  __typename
-                  hasDiscount
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  isExpensiveWithDiscount
-                }
+        Flatten(path: "product") {
+          Fetch(service: "a") {
+            {
+              ... on Product {
+                __typename
+                id
               }
-            },
-          },
-          Flatten(path: "product") {
-            Fetch(service: "a") {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  price
-                }
+            } =>
+            {
+              ... on Product {
+                price
               }
-            },
+            }
           },
         },
         Flatten(path: "product") {
@@ -64,12 +46,14 @@ fn overlapping_requires_chains_survive_fetch_step_merges() -> Result<(), Box<dyn
             {
               ... on Product {
                 __typename
-                price
+                hasDiscount
                 id
+                price
               }
             } =>
             {
               ... on Product {
+                isExpensiveWithDiscount
                 isExpensive
               }
             }
@@ -975,37 +959,19 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Parallel {
-          Flatten(path: "product") {
-            Fetch(service: "c") {
-              {
-                ... on Product {
-                  __typename
-                  hasDiscount
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  isExpensiveWithDiscount
-                }
+        Flatten(path: "product") {
+          Fetch(service: "a") {
+            {
+              ... on Product {
+                __typename
+                id
               }
-            },
-          },
-          Flatten(path: "product") {
-            Fetch(service: "a") {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  price
-                }
+            } =>
+            {
+              ... on Product {
+                price
               }
-            },
+            }
           },
         },
         Flatten(path: "product") {
@@ -1013,12 +979,14 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
             {
               ... on Product {
                 __typename
-                price
+                hasDiscount
                 id
+                price
               }
             } =>
             {
               ... on Product {
+                isExpensiveWithDiscount
                 isExpensive
               }
             }
@@ -1058,73 +1026,34 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
             "operation": "{product{__typename id hasDiscount}}"
           },
           {
-            "kind": "Parallel",
-            "nodes": [
+            "kind": "Flatten",
+            "path": [
               {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "product"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "c",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensiveWithDiscount}}}",
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "Product",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "hasDiscount"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              },
-              {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "product"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "a",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price}}}",
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "Product",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
-                        }
-                      ]
-                    }
-                  ]
-                }
+                "Field": "product"
               }
-            ]
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "a",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Product",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
           },
           {
             "kind": "Flatten",
@@ -1137,7 +1066,7 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "c",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensive}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensiveWithDiscount isExpensive}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -1149,11 +1078,15 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
                     },
                     {
                       "kind": "Field",
-                      "name": "price"
+                      "name": "hasDiscount"
                     },
                     {
                       "kind": "Field",
                       "name": "id"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "price"
                     }
                   ]
                 }
@@ -1234,37 +1167,19 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Parallel {
-          Flatten(path: "product") {
-            Fetch(service: "c") {
-              {
-                ... on Product {
-                  __typename
-                  hasDiscount
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  isExpensiveWithDiscount
-                }
+        Flatten(path: "product") {
+          Fetch(service: "a") {
+            {
+              ... on Product {
+                __typename
+                id
               }
-            },
-          },
-          Flatten(path: "product") {
-            Fetch(service: "a") {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  price
-                }
+            } =>
+            {
+              ... on Product {
+                price
               }
-            },
+            }
           },
         },
         Flatten(path: "product") {
@@ -1272,12 +1187,14 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
             {
               ... on Product {
                 __typename
-                price
+                hasDiscount
                 id
+                price
               }
             } =>
             {
               ... on Product {
+                isExpensiveWithDiscount
                 isExpensive
               }
             }
@@ -1317,73 +1234,34 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
             "operation": "{product{__typename id hasDiscount}}"
           },
           {
-            "kind": "Parallel",
-            "nodes": [
+            "kind": "Flatten",
+            "path": [
               {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "product"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "c",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensiveWithDiscount}}}",
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "Product",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "hasDiscount"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              },
-              {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "product"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "a",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price}}}",
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "Product",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
-                        }
-                      ]
-                    }
-                  ]
-                }
+                "Field": "product"
               }
-            ]
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "a",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Product",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
           },
           {
             "kind": "Flatten",
@@ -1396,7 +1274,7 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "c",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensive}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensiveWithDiscount isExpensive}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -1408,11 +1286,15 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
                     },
                     {
                       "kind": "Field",
-                      "name": "price"
+                      "name": "hasDiscount"
                     },
                     {
                       "kind": "Field",
                       "name": "id"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "price"
                     }
                   ]
                 }
@@ -1500,37 +1382,19 @@ fn many() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Parallel {
-          Flatten(path: "product") {
-            Fetch(service: "c") {
-              {
-                ... on Product {
-                  __typename
-                  hasDiscount
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  isExpensiveWithDiscount
-                }
+        Flatten(path: "product") {
+          Fetch(service: "a") {
+            {
+              ... on Product {
+                __typename
+                id
               }
-            },
-          },
-          Flatten(path: "product") {
-            Fetch(service: "a") {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  price
-                }
+            } =>
+            {
+              ... on Product {
+                price
               }
-            },
+            }
           },
         },
         Flatten(path: "product") {
@@ -1540,11 +1404,13 @@ fn many() -> Result<(), Box<dyn Error>> {
                 __typename
                 price
                 id
+                hasDiscount
               }
             } =>
             {
               ... on Product {
                 isExpensive
+                isExpensiveWithDiscount
               }
             }
           },
@@ -1585,73 +1451,34 @@ fn many() -> Result<(), Box<dyn Error>> {
             "operation": "{product{__typename id hasDiscount}}"
           },
           {
-            "kind": "Parallel",
-            "nodes": [
+            "kind": "Flatten",
+            "path": [
               {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "product"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "c",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensiveWithDiscount}}}",
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "Product",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "hasDiscount"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              },
-              {
-                "kind": "Flatten",
-                "path": [
-                  {
-                    "Field": "product"
-                  }
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "a",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price}}}",
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "Product",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
-                        }
-                      ]
-                    }
-                  ]
-                }
+                "Field": "product"
               }
-            ]
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "a",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Product",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
           },
           {
             "kind": "Flatten",
@@ -1664,7 +1491,7 @@ fn many() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "c",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensive}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensive isExpensiveWithDiscount}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -1681,6 +1508,10 @@ fn many() -> Result<(), Box<dyn Error>> {
                     {
                       "kind": "Field",
                       "name": "id"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "hasDiscount"
                     }
                   ]
                 }

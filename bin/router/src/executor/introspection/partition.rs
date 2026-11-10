@@ -67,6 +67,12 @@ fn partition_selection_set(
     for item in selection_set.items {
         match item {
             SelectionItem::Field(field) => {
+                // The response writes the root's `__typename` from the operation type, so no
+                // subgraph has to send it, and `{ __typename }` needs no fetch. Validation keeps
+                // it out of a subscription's root.
+                if field.name == "__typename" && matches!(level, SelectionSetLevel::Root) {
+                    continue;
+                }
                 if field.name.starts_with("__") && field.name != "__typename" {
                     introspection_items.push(SelectionItem::Field(field));
                 } else {
