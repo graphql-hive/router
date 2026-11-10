@@ -380,10 +380,18 @@ impl FetchStepData<MultiTypeFetchStep> {
             for rewrite in &mut rewrites {
                 rewrite.path.drain(..levels);
             }
-            self.context_rewrites
-                .get_or_insert_default()
-                .extend(rewrites);
+            // a variable both steps read, like the same field under `@include` and `@skip`,
+            // is read once
+            let ours = self.context_rewrites.get_or_insert_default();
+            rewrites.retain(|rewrite| !ours.contains(rewrite));
+            ours.extend(rewrites);
         }
+        other.context_variable_definitions.retain(|theirs| {
+            !self
+                .context_variable_definitions
+                .iter()
+                .any(|ours| ours.name == theirs.name)
+        });
         self.context_variable_definitions
             .append(&mut other.context_variable_definitions);
         self.context_producers.append(&mut other.context_producers);

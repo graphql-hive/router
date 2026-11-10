@@ -2130,6 +2130,32 @@ fn allows_different_order_of_input_object_fields_in_arg_values() {
     assert_eq!(messages.len(), 0);
 }
 
+// A list argument and a prefix of it, `[]` included, aren't the same value. The same list is.
+#[test]
+fn list_arg_values_conflict_unless_identical() {
+    use crate::validation::test_utils::*;
+
+    let schema = "
+      type Query {
+        artists(ids: [ID!]!): [String]
+      }
+    ";
+    let conflict = "Fields \"artists\" conflict because they have differing arguments. Use different aliases on the fields to fetch both if this was intentional.";
+    for (first, second, expected) in [
+        ("[]", "[\"a\"]", vec![conflict]),
+        ("[\"a\"]", "[\"a\", \"b\"]", vec![conflict]),
+        ("[\"a\", \"b\"]", "[\"a\", \"b\"]", vec![]),
+    ] {
+        let mut plan = create_plan_from_rule(Box::new(OverlappingFieldsCanBeMerged::new()));
+        let errors = test_operation_with_schema(
+            &format!("{{ artists(ids: {first}) artists(ids: {second}) }}"),
+            schema,
+            &mut plan,
+        );
+        assert_eq!(get_messages(&errors), expected, "{first} and {second}");
+    }
+}
+
 #[test]
 fn works_for_field_names_that_are_js_keywords() {
     use crate::validation::test_utils::*;

@@ -41,6 +41,22 @@ use tracing::{instrument, trace};
 
 use super::error::FetchGraphError;
 
+/// Where a contextual argument reads its value from. Two arguments with the same one read the
+/// same value, so they share a variable.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct ContextVariableKey {
+    /// The response path of the ancestor that sets the context
+    ancestor_path: MergePath,
+    /// The contextual field
+    edge_index: EdgeIndex,
+    /// Which of the field's contextual arguments
+    argument: usize,
+    /// Which of the argument's selections, one per type that sets the context
+    selection: usize,
+    /// How many fields up the ancestor is
+    levels: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct FetchGraph<State> {
     pub(crate) graph: StableDiGraph<FetchStepData<State>, ()>,
@@ -55,6 +71,9 @@ pub struct FetchGraph<State> {
     /// The keys of the fields the planner adds itself. Only needed while the graph is built.
     pub(crate) response_keys: ResponseKeys,
     pub(crate) context_producers: HashMap<(MergePath, (EdgeIndex, usize)), Vec<NodeIndex>>,
+    /// The variable each contextual argument reads its value into, by where it reads it from.
+    /// Only needed while the graph is built.
+    pub(crate) context_variables: HashMap<ContextVariableKey, String>,
     pub(crate) context_variable_counter: usize,
     pub(crate) operation_variables: HashSet<String>,
     /// Each step's children by the entity call they make, see `entity_call_hash`, newest last. So
@@ -78,6 +97,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             entity_sources: HashMap::new(),
             response_keys: ResponseKeys::default(),
             context_producers: HashMap::new(),
+            context_variables: HashMap::new(),
             context_variable_counter: 0,
             operation_variables: HashSet::new(),
             children_by_entity_call: None,
@@ -93,6 +113,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             entity_sources: HashMap::new(),
             response_keys: ResponseKeys::default(),
             context_producers: HashMap::new(),
+            context_variables: HashMap::new(),
             context_variable_counter: 0,
             operation_variables: HashSet::new(),
             children_by_entity_call: Some(HashMap::new()),
@@ -1281,7 +1302,7 @@ fn process_subgraph_reentry(
         field_alias,
     ));
     let mut child_response_path = response_path.push(Segment::Field(segment_field, 0, None));
-    if reentry_move.is_list {
+    for _ in 0..reentry_move.list_depth {
         child_response_path = child_response_path.push(Segment::List);
     }
 
@@ -1476,7 +1497,7 @@ fn process_abstract_edge(
   alias = query_node.selection_attributes.as_ref().and_then(|v| v.alias.as_ref()),
   arguments = query_node.selection_attributes.as_ref().and_then(|v| v.arguments.as_ref()).map(|v| format!("{}", v)),
   leaf = field_move.is_leaf,
-  list = field_move.is_list,
+  list_depth = field_move.list_depth,
   response_path = response_path.to_string(),
   fetch_path = fetch_path.to_string(),
 ))]
@@ -1585,7 +1606,7 @@ fn process_plain_field_edge(
         segment_condition,
     ));
 
-    if field_move.is_list {
+    for _ in 0..field_move.list_depth {
         child_response_path = child_response_path.push(Segment::List);
         child_fetch_path = child_fetch_path.push(Segment::List);
     }
@@ -1795,11 +1816,27 @@ fn process_requires_field_edge(
                 .context_producers
                 .insert(id);
         }
-        let variable = loop {
-            let name = format!("__context_{}", fetch_graph.context_variable_counter);
-            fetch_graph.context_variable_counter += 1;
-            if !fetch_graph.operation_variables.contains(&name) {
-                break name;
+        // same field, same ancestor, same value, so same variable. two copies of the field, like
+        // one under `@include` and one under `@skip`, then have the same arguments and merge
+        let key = ContextVariableKey {
+            ancestor_path: ancestor_path.clone(),
+            edge_index,
+            argument: requirement.argument,
+            selection: requirement.selection,
+            levels: requirement.levels,
+        };
+        let variable = match fetch_graph.context_variables.get(&key) {
+            Some(name) => name.clone(),
+            None => {
+                let name = loop {
+                    let name = format!("__context_{}", fetch_graph.context_variable_counter);
+                    fetch_graph.context_variable_counter += 1;
+                    if !fetch_graph.operation_variables.contains(&name) {
+                        break name;
+                    }
+                };
+                fetch_graph.context_variables.insert(key, name.clone());
+                name
             }
         };
         arguments.add_argument(argument.name.clone(), Value::Variable(variable.clone()));
@@ -1822,6 +1859,13 @@ fn process_requires_field_edge(
             context_selection_rewrites(std::slice::from_ref(item), path, &variable, &mut rewrites);
         }
         let step = fetch_graph.get_step_data_mut(step_for_children_index)?;
+        if step
+            .context_variable_definitions
+            .iter()
+            .any(|definition| definition.name == variable)
+        {
+            continue;
+        }
         step.context_rewrites
             .get_or_insert_default()
             .extend(rewrites);
@@ -2019,7 +2063,7 @@ fn process_requires_field_edge(
     let mut child_fetch_path =
         MergePath::default().push(Segment::Field(segment_field, fetch_arguments_hash, None));
 
-    if field_move.is_list {
+    for _ in 0..field_move.list_depth {
         child_response_path = child_response_path.push(Segment::List);
         child_fetch_path = child_fetch_path.push(Segment::List);
     }

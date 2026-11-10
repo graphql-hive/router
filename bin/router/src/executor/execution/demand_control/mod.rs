@@ -259,7 +259,8 @@ struct CompiledFieldActualCostPlan {
     response_key: String,
     field_base_cost: u64,
     return_type_cost: u64,
-    is_list: bool,
+    /// How many lists wrap the type, 2 for `[[Product]]`
+    list_depth: usize,
     include_if: Option<String>,
     skip_if: Option<String>,
     child: CompiledSelectionSetActualCostPlan,
@@ -267,10 +268,10 @@ struct CompiledFieldActualCostPlan {
 
 #[derive(Debug)]
 struct CompiledInlineFragmentActualCostPlan {
-    type_condition: String,
-    // If parent and fragment type are the same at compile time, the fragment
-    // deterministically applies even when runtime __typename is not present.
-    apply_when_typename_missing: bool,
+    /// The object types the fragment applies to. `None` when it's on its parent's own type, like
+    /// `products { ... on Product @include(if: $v) { ... } }`, so it applies to every object,
+    /// with or without `__typename`.
+    applies_to: Option<AHashSet<String>>,
     child: CompiledSelectionSetActualCostPlan,
 }
 
@@ -453,8 +454,18 @@ fn compile_selection_set_actual_cost_plan(
             SelectionItem::InlineFragment(fragment) => {
                 items.push(CompiledSelectionItemActualCostPlan::InlineFragment(
                     CompiledInlineFragmentActualCostPlan {
-                        type_condition: fragment.type_condition.clone(),
-                        apply_when_typename_missing: fragment.type_condition == parent_type_name,
+                        applies_to: (fragment.type_condition != parent_type_name).then(|| {
+                            // `... on Product` applies to a `Book`, and to a `Product` too, which
+                            // is what a subgraph with `Product` as an `@interfaceObject` returns
+                            let mut types: AHashSet<String> = supergraph_state
+                                .all_possible_types(&fragment.type_condition)
+                                .into_iter()
+                                .flatten()
+                                .cloned()
+                                .collect();
+                            types.insert(fragment.type_condition.clone());
+                            types
+                        }),
                         child: compile_selection_set_actual_cost_plan(
                             &fragment.selections,
                             fragment.type_condition.as_str(),
@@ -487,7 +498,7 @@ fn compile_field_actual_cost_plan(
             response_key: field.selection_identifier().to_string(),
             field_base_cost: 0,
             return_type_cost: 0,
-            is_list: false,
+            list_depth: 0,
             include_if: field.include_if.clone(),
             skip_if: field.skip_if.clone(),
             child: CompiledSelectionSetActualCostPlan { items: Vec::new() },
@@ -545,7 +556,7 @@ fn compile_field_actual_cost_plan(
         response_key: field.selection_identifier().to_string(),
         field_base_cost,
         return_type_cost: demand_control_definition_cost(supergraph_state, return_type_name),
-        is_list: field_type.is_list(),
+        list_depth: field_type.list_depth(),
         include_if: field.include_if.clone(),
         skip_if: field.skip_if.clone(),
         child: compile_selection_set_actual_cost_plan(
@@ -573,11 +584,7 @@ fn evaluate_selection_set_actual_cost_plan(
                 ));
             }
             CompiledSelectionItemActualCostPlan::InlineFragment(fragment) => {
-                if should_skip_inline_fragment(
-                    parent_value,
-                    &fragment.type_condition,
-                    fragment.apply_when_typename_missing,
-                ) {
+                if !inline_fragment_applies(parent_value, fragment.applies_to.as_ref()) {
                     continue;
                 }
 
@@ -610,22 +617,19 @@ fn evaluate_field_actual_cost_plan(
         .as_object()
         .and_then(|obj| response_object_get(obj, field.response_key.as_str()));
 
-    if field.is_list {
-        let Some(items) = value.and_then(|v| match v {
-            Value::Array(items) => Some(items),
-            _ => None,
-        }) else {
+    if field.list_depth > 0 {
+        let Some(Value::Array(items)) = value else {
             return field.field_base_cost;
         };
 
-        let mut list_total = 0_u64;
-        for item in items.iter() {
-            let child =
-                evaluate_selection_set_actual_cost_plan(&field.child, item, variable_values);
-            list_total = list_total.saturating_add(field.return_type_cost.saturating_add(child));
-        }
-
-        return field.field_base_cost.saturating_add(list_total);
+        return field
+            .field_base_cost
+            .saturating_add(evaluate_list_items_actual_cost(
+                field,
+                items,
+                field.list_depth,
+                variable_values,
+            ));
     }
 
     let Some(value) = value else {
@@ -644,21 +648,46 @@ fn evaluate_field_actual_cost_plan(
         .saturating_add(child)
 }
 
-fn should_skip_inline_fragment(
+/// The items of a list `depth` lists deep, like 2 for `[[Product]]`. Only the innermost items
+/// cost, the lists around them are free, and so is a `null`, in place of an inner list or of an
+/// item, like a `null` field outside a list.
+fn evaluate_list_items_actual_cost(
+    field: &CompiledFieldActualCostPlan,
+    items: &[Value<'_>],
+    depth: usize,
+    variable_values: &Option<HashMap<String, sonic_rs::Value>>,
+) -> u64 {
+    items.iter().fold(0_u64, |total, item| {
+        let cost = match item {
+            Value::Array(inner) if depth > 1 => {
+                evaluate_list_items_actual_cost(field, inner, depth - 1, variable_values)
+            }
+            _ if depth > 1 => 0,
+            Value::Null => 0,
+            item => field
+                .return_type_cost
+                .saturating_add(evaluate_selection_set_actual_cost_plan(
+                    &field.child,
+                    item,
+                    variable_values,
+                )),
+        };
+        total.saturating_add(cost)
+    })
+}
+
+fn inline_fragment_applies(
     parent_value: &Value<'_>,
-    type_condition: &str,
-    apply_when_typename_missing: bool,
+    applies_to: Option<&AHashSet<String>>,
 ) -> bool {
-    let typename = parent_value
+    let Some(applies_to) = applies_to else {
+        return true;
+    };
+    parent_value
         .as_object()
         .and_then(|obj| response_object_get(obj, "__typename"))
-        .and_then(|value| value.as_str());
-
-    if let Some(typename) = typename {
-        return typename != type_condition;
-    }
-
-    !apply_when_typename_missing
+        .and_then(|value| value.as_str())
+        .is_some_and(|typename| applies_to.contains(typename))
 }
 
 #[inline]
@@ -773,4 +802,114 @@ fn variable_equals_true(
         .and_then(|vars| vars.get(variable_name))
         .and_then(|value| value.as_bool())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::{
+        compile_actual_response_shape_cost_plan, compile_actual_subgraph_cost_plan,
+        estimate_actual_response_shape_cost_with_compiled_plan,
+        estimate_actual_subgraph_response_cost_with_compiled_plan,
+    };
+    use crate::executor::response::value::Value;
+    use crate::query_planner::{
+        ast::normalization::normalize_operation,
+        planner::plan_nodes::planning::PlanNode,
+        state::supergraph_state::SupergraphState,
+        tests::testkit::{build_query_plan_with_defaults, read_supergraph},
+        utils::parsing::{parse_operation, parse_schema},
+    };
+
+    const FIXTURE: &str = "fixture/tests/abstract-types.supergraph.graphql";
+
+    /// The actual cost of `query` for one `Book` and one `Magazine`, with the client's
+    /// operation and with the subgraph's
+    fn actual_costs(query: &str) -> (u64, u64) {
+        let schema = parse_schema(&read_supergraph(FIXTURE));
+        let supergraph = SupergraphState::new(&schema);
+        let variables = Some(HashMap::from([("v".to_string(), sonic_rs::json!(true))]));
+        let json: sonic_rs::Value = sonic_rs::from_str(
+            r#"{"products":[
+              {"__typename":"Book","dimensions":{"size":"1"}},
+              {"__typename":"Magazine","dimensions":{"size":"2"}}
+            ]}"#,
+        )
+        .unwrap();
+        let data = Value::from(json.as_ref());
+
+        let normalized = normalize_operation(&supergraph, &parse_operation(query), None).unwrap();
+        let plan = compile_actual_response_shape_cost_plan(
+            normalized.executable_operation(),
+            "Query",
+            &supergraph,
+        );
+        let by_response_shape =
+            estimate_actual_response_shape_cost_with_compiled_plan(&plan, &data, &variables);
+
+        let query_plan = build_query_plan_with_defaults(FIXTURE, parse_operation(query)).unwrap();
+        let Some(PlanNode::Fetch(fetch)) = &query_plan.node else {
+            panic!("expected a single fetch, got {query_plan}");
+        };
+        let plan = compile_actual_subgraph_cost_plan(&fetch.operation.document, &supergraph);
+        let by_subgraph =
+            estimate_actual_subgraph_response_cost_with_compiled_plan(&plan, &data, &variables);
+
+        (by_response_shape, by_subgraph)
+    }
+
+    /// `... on Product @include(if: $v)` stays on `Product`, the interface, and a `Book` is still
+    /// a `Product`, so its fields count
+    #[test]
+    fn conditional_fragment_on_an_interface_counts_its_fields() {
+        let plain = actual_costs("{ products { dimensions { size } } }");
+        assert_eq!(plain, (4, 4));
+        assert_eq!(
+            actual_costs(
+                "query($v: Boolean!) { products { ... on Product @include(if: $v) { dimensions { size } } } }"
+            ),
+            plain
+        );
+    }
+
+    /// Every `Product` in `[[Product]]` costs, and so do its own `reviews`, not every inner list
+    #[test]
+    fn list_of_lists_costs_every_object() {
+        let schema = parse_schema(&read_supergraph(
+            "fixture/tests/nested-entity-lists.supergraph.graphql",
+        ));
+        let supergraph = SupergraphState::new(&schema);
+        let cost = |query: &str, data: &str| {
+            let normalized =
+                normalize_operation(&supergraph, &parse_operation(query), None).unwrap();
+            let plan = compile_actual_response_shape_cost_plan(
+                normalized.executable_operation(),
+                "Query",
+                &supergraph,
+            );
+            let json: sonic_rs::Value = sonic_rs::from_str(data).unwrap();
+            estimate_actual_response_shape_cost_with_compiled_plan(
+                &plan,
+                &Value::from(json.as_ref()),
+                &None,
+            )
+        };
+
+        let grid = r#"{"grid":[[{"id":"1"},{"id":"2"}],[{"id":"3"}]]}"#;
+        assert_eq!(cost("{ grid { id } }", grid), 3);
+        // a `null` row is no product, and neither is a `null` in a row
+        let grid = r#"{"grid":[[{"id":"1"},{"id":"2"}],null]}"#;
+        assert_eq!(cost("{ grid { id } }", grid), 2);
+        let grid = r#"{"grid":[[{"id":"1"},null]]}"#;
+        assert_eq!(cost("{ grid { id } }", grid), 1);
+        let cube = r#"{"cube":[[[{"id":"1"}],[{"id":"2"}]],[[{"id":"3"}]]]}"#;
+        assert_eq!(cost("{ cube { id } }", cube), 3);
+        // 2 products and 3 reviews
+        let grid = r#"{"grid":[[
+          {"reviews":[[{"id":"r1"},{"id":"r2"}]]},
+          {"reviews":[[{"id":"r3"}]]}
+        ]]}"#;
+        assert_eq!(cost("{ grid { reviews { id } } }", grid), 5);
+    }
 }

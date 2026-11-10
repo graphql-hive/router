@@ -996,6 +996,229 @@ fn union_list_test() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// `components` points at one `Component` node per member. A conditional `... on Component`
+/// stays on each of them, with the condition, and every member still asks only for its own
+/// entity field.
+#[test]
+fn conditional_union_type_condition_on_its_own_field_include_mixed_members(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($v: Boolean!) {
+          card {
+            components {
+              ... on Component @include(if: $v) {
+                __typename
+                ... on ComponentA { product { id a } }
+                ... on ComponentC { product { id c } }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/union-member-entity-fields.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "card") {
+          query ($v:Boolean!) {
+            card {
+              components {
+                ... on Component @include(if: $v) {
+                  __typename
+                  ... on ComponentA {
+                    product {
+                      ...a
+                    }
+                  }
+                  ... on ComponentC {
+                    product {
+                      ...a
+                    }
+                  }
+                }
+              }
+            }
+          }
+          fragment a on Product {
+            __typename
+            id
+          }
+        },
+        BatchFetch(service: "product") {
+          {
+            _e0(if: $v) {
+              paths: [
+                "card.components.@|[Component]|[ComponentC].product"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1(if: $v) {
+              paths: [
+                "card.components.@|[Component]|[ComponentA].product"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Product {
+                c
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Product {
+                a
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// The review's operation: conditions on the union and on a member inside it.
+#[test]
+fn conditional_member_inside_a_conditional_union_type_condition() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($a: Boolean!, $b: Boolean!) {
+          card {
+            components {
+              ... on Component @skip(if: $a) {
+                ... on ComponentC @skip(if: $b) {
+                  product { b }
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/union-member-entity-fields.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "card") {
+          query ($a:Boolean!,$b:Boolean!) {
+            card {
+              components {
+                ... on Component @skip(if: $a) {
+                  __typename
+                  ... on ComponentC {
+                    product @skip(if: $b) {
+                      __typename
+                      id
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "card.components.@|[Component]|[ComponentC].product") {
+          Fetch(service: "product", if: !$a && !$b) {
+            {
+              ... on Product {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                b
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `a`'s `actions` has only `Common`, the condition doesn't let `OnlyA` or `OnlyB` back in.
+#[test]
+fn conditional_union_type_condition_keeps_only_common_members() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($v: Boolean!) {
+          rootA {
+            wrapper {
+              actions {
+                ... on Action @skip(if: $v) {
+                  __typename
+                  ... on Common {
+                    label
+                  }
+                  ... on OnlyA {
+                    a
+                  }
+                  ... on OnlyB {
+                    b
+                  }
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/partial-union-complex.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($v:Boolean!) {
+          rootA {
+            wrapper {
+              actions {
+                ... on Action @skip(if: $v) {
+                  __typename
+                  ... on Common {
+                    label
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
 /// Each union member asks for its own field of the same `Product` entity. One entity call for all
 /// of them would ask every product for `a`, `b` and `c`, whatever member it sits under, see #1732.
 #[test]
