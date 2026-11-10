@@ -47,7 +47,8 @@ pub struct FetchStepData<State> {
     /// The step only runs when all of these hold, top first. A step under
     /// `orders @include(if: $a) { ... on Order @include(if: $b) { name } }` only has `$b` as its
     /// `condition`, it relies on the `orders` step for `$a`, but it's gated by both. Merged with
-    /// a step of another branch, only the conditions both have stay.
+    /// a step of another branch, only the conditions both have stay, the rest go on each side's
+    /// own fields.
     pub gated_by: Vec<Condition>,
     pub variable_usages: Option<BTreeSet<String>>,
     pub variable_definitions: Option<Vec<VariableDefinition>>,

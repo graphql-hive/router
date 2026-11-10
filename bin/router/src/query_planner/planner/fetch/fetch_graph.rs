@@ -676,6 +676,8 @@ fn ensure_fetch_step_for_subgraph(
             .find(|&child_index| {
                 fetch_graph.get_step_data(child_index).is_ok_and(|step| {
                     step.matches_entity_call(subgraph_name, input_type_name, response_path, condition)
+                        // planned under other gates, the merge works out where they go
+                        && step.gated_by == conditions.from_root
                         // the requested key fields have to be part of the input
                         && key.is_none_or(|key| {
                             step.input.definition_name() == key.type_name
@@ -697,12 +699,6 @@ fn ensure_fetch_step_for_subgraph(
                 key.map(|r| r.to_string()).unwrap_or_default(),
                 parent_fetch_step_index.index(),
             );
-            let step = fetch_graph
-                .graph
-                .node_weight_mut(idx)
-                .ok_or(FetchGraphError::IndexNone)?;
-            step.gated_by
-                .retain(|condition| conditions.from_root.contains(condition));
             Ok(idx)
         }
         None => {
