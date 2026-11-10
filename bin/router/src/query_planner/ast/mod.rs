@@ -1,4 +1,5 @@
 pub mod document;
+pub mod flat;
 pub mod fragment;
 pub mod fragment_expansion;
 pub mod hash;
