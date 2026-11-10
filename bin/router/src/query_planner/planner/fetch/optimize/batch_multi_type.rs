@@ -40,7 +40,8 @@ impl BatchKey {
         normalized_path_hash: u64,
         type_condition_layout_hash: u64,
     ) -> Option<Self> {
-        if !step.is_entity_call() {
+        // can't batch with anything, so it's left out rather than checked against every sibling
+        if !step.is_entity_call() || has_stacked_type_conditions(&step.response_path) {
             return None;
         }
 
@@ -511,6 +512,17 @@ fn type_condition_layout_hash(path: &MergePath) -> u64 {
     hasher.finish()
 }
 
+/// More than one type condition in a row. It means "both", which merging them as a union would
+/// get wrong, so such a step isn't batched.
+fn has_stacked_type_conditions(path: &MergePath) -> bool {
+    path.inner.windows(2).any(|pair| {
+        matches!(
+            pair,
+            [Segment::TypeCondition(..), Segment::TypeCondition(..)]
+        )
+    })
+}
+
 impl FetchStepData<MultiTypeFetchStep> {
     pub fn can_be_batched_with(&self, other: &Self, supergraph: &SupergraphState) -> bool {
         if !self.can_merge_context(other) {
@@ -594,16 +606,6 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
-        // One slot with a type condition in a row. More than one means "both", which merging
-        // them as a union would get wrong.
-        let has_stacked_type_conditions = |path: &MergePath| {
-            path.inner.windows(2).any(|pair| {
-                matches!(
-                    pair,
-                    [Segment::TypeCondition(..), Segment::TypeCondition(..)]
-                )
-            })
-        };
         if has_stacked_type_conditions(&self.response_path)
             || has_stacked_type_conditions(&other.response_path)
         {

@@ -242,11 +242,7 @@ fn perform_passthrough_child_merge(
 
     // 3. Drop other -> child and parent -> other
     trace!("removing other [{}] from graph", other_index.index());
-    for step in fetch_graph.graph.node_weights_mut() {
-        if step.context_producers.remove(&source_id) {
-            step.context_producers.insert(target_id);
-        }
-    }
+    fetch_graph.replace_context_producer(source_id, target_id);
     fetch_graph.remove_step(other_index);
 
     Ok(())
