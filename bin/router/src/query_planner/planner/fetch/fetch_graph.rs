@@ -326,6 +326,31 @@ impl<State> FetchGraph<State> {
         };
         has_condition(step_index) || requiring_step_index.is_some_and(has_condition)
     }
+
+    /// The condition a field or fragment that `step_index` gets at `fetch_path` has to carry.
+    /// `None` when something already applies it: a field or fragment on the way, like
+    /// `... | [Product] @include(if: $bool)`, or a step, see `is_condition_on_step`.
+    pub fn condition_to_apply(
+        &self,
+        step_index: NodeIndex,
+        requiring_step_index: Option<NodeIndex>,
+        fetch_path: &MergePath,
+        condition: Option<&Condition>,
+    ) -> Option<Condition> {
+        let condition = condition?;
+        let condition_in_path = fetch_path.inner.iter().any(|segment| {
+            matches!(
+                segment,
+                Segment::TypeCondition(_, Some(c)) | Segment::Field(_, _, Some(c)) if c == condition
+            )
+        });
+        if condition_in_path
+            || self.is_condition_on_step(step_index, requiring_step_index, condition)
+        {
+            return None;
+        }
+        Some(condition.clone())
+    }
 }
 
 impl FetchGraph<MultiTypeFetchStep> {
@@ -1291,22 +1316,12 @@ fn process_subgraph_reentry(
     // separate (re-entered) fetch. Record the field in the parent output with a `__typename`
     // so the parent operation stays valid.
     //
-    let condition_in_path = if let Some(condition) = condition {
-        fetch_path.inner.iter().any(|segment| {
-            matches!(
-                segment,
-                Segment::TypeCondition(_, Some(c)) | Segment::Field(_, _, Some(c)) if c == condition
-            )
-        })
-    } else {
-        false
-    };
-
-    let condition_on_step = condition.is_some_and(|c| {
-        fetch_graph.is_condition_on_step(parent_fetch_step_index, requiring_fetch_step_index, c)
-    });
-
-    let should_strip_condition = condition_in_path || condition_on_step;
+    let field_condition = fetch_graph.condition_to_apply(
+        parent_fetch_step_index,
+        requiring_fetch_step_index,
+        fetch_path,
+        condition,
+    );
     let field_alias = fetch_graph.alias_at(
         response_path,
         query_node,
@@ -1324,20 +1339,8 @@ fn process_subgraph_reentry(
                     items: vec![SelectionItem::Field(FieldSelection::new_typename())],
                 },
                 arguments: query_node.selection_arguments().cloned(),
-                skip_if: condition.and_then(|c| {
-                    if should_strip_condition {
-                        None
-                    } else {
-                        c.to_skip_if()
-                    }
-                }),
-                include_if: condition.and_then(|c| {
-                    if should_strip_condition {
-                        None
-                    } else {
-                        c.to_include_if()
-                    }
-                }),
+                skip_if: field_condition.as_ref().and_then(Condition::to_skip_if),
+                include_if: field_condition.as_ref().and_then(Condition::to_include_if),
                 omit_from_response: false,
             })],
         },
@@ -1487,6 +1490,25 @@ fn process_abstract_edge(
     condition: Option<&Condition>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
+    // Everything under the fragment has to stay behind its condition. The condition goes down to
+    // the children and each one applies it, but a child with a condition of its own carries only
+    // that one, like `name` in `... on Dog @include(if: $x) { name @skip(if: $y) }` would lose
+    // `$x`. So when a child has another condition, the fragment keeps its own, like a field does.
+    // Only the children need checking. Deeper down, whatever they sit under already applies it:
+    // a field carries it, an entity call is skipped with it, and a fragment checks again here.
+    let child_has_other_condition = condition.is_some_and(|condition| {
+        query_node
+            .children
+            .iter()
+            .any(|child| child.condition.as_ref().is_some_and(|c| c != condition))
+    });
+    let segment_condition = fetch_graph.condition_to_apply(
+        parent_fetch_step_index,
+        requiring_fetch_step_index,
+        fetch_path,
+        condition.filter(|_| child_has_other_condition),
+    );
+
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
     trace!(
         "adding output field '__typename' and starting an inline fragment for type '{}' to fetch step [{}]",
@@ -1502,8 +1524,10 @@ fn process_abstract_edge(
                 SelectionItem::InlineFragment(InlineFragmentSelection {
                     type_condition: target_type_name.clone(),
                     selections: SelectionSet::default(),
-                    skip_if: None,
-                    include_if: None,
+                    skip_if: segment_condition.as_ref().and_then(Condition::to_skip_if),
+                    include_if: segment_condition
+                        .as_ref()
+                        .and_then(Condition::to_include_if),
                 }),
             ],
         },
@@ -1511,11 +1535,11 @@ fn process_abstract_edge(
 
     let child_response_path = response_path.push(Segment::TypeCondition(
         Rc::new(BTreeSet::from([target_type_name.clone()])),
-        None,
+        segment_condition.clone(),
     ));
     let child_fetch_path = fetch_path.push(Segment::TypeCondition(
         Rc::new(BTreeSet::from([target_type_name.clone()])),
-        None,
+        segment_condition,
     ));
 
     process_children_for_fetch_steps(
@@ -1570,23 +1594,12 @@ fn process_plain_field_edge(
         fetch_graph.connect(parent_fetch_step_index, requiring_fetch_step_index);
     }
 
-    // If we are inserting into "... | [Product] @include(if: $bool)", we don't need the condition on the field.
-    let condition_in_path = if let Some(condition) = condition {
-        fetch_path.inner.iter().any(|segment| {
-            matches!(
-                segment,
-                Segment::TypeCondition(_, Some(c)) | Segment::Field(_, _, Some(c)) if c == condition
-            )
-        })
-    } else {
-        false
-    };
-
-    let condition_on_step = condition.is_some_and(|c| {
-        fetch_graph.is_condition_on_step(parent_fetch_step_index, requiring_fetch_step_index, c)
-    });
-
-    let should_strip_condition = condition_in_path || condition_on_step;
+    let segment_condition = fetch_graph.condition_to_apply(
+        parent_fetch_step_index,
+        requiring_fetch_step_index,
+        fetch_path,
+        condition,
+    );
 
     let field_alias = fetch_graph.alias_at(
         response_path,
@@ -1609,20 +1622,10 @@ fn process_plain_field_edge(
                 alias: field_alias.clone(),
                 selections: SelectionSet::default(),
                 arguments: query_node.selection_arguments().cloned(),
-                skip_if: condition.and_then(|c| {
-                    if should_strip_condition {
-                        None
-                    } else {
-                        c.to_skip_if()
-                    }
-                }),
-                include_if: condition.and_then(|c| {
-                    if should_strip_condition {
-                        None
-                    } else {
-                        c.to_include_if()
-                    }
-                }),
+                skip_if: segment_condition.as_ref().and_then(Condition::to_skip_if),
+                include_if: segment_condition
+                    .as_ref()
+                    .and_then(Condition::to_include_if),
                 omit_from_response: false,
             })],
         },
@@ -1636,11 +1639,6 @@ fn process_plain_field_edge(
         field_move.name.to_string(),
         field_alias,
     ));
-    let segment_condition = if should_strip_condition {
-        None
-    } else {
-        condition.cloned()
-    };
     let mut child_response_path = response_path.push(Segment::Field(
         segment_field.clone(),
         segment_args_hash,
