@@ -461,6 +461,28 @@ impl<State> Display for FetchGraph<State> {
     }
 }
 
+/// The `@include`/`@skip` conditions a query node sits under.
+#[derive(Clone, Copy, Default)]
+struct Conditions<'a> {
+    /// All of them, top first. A step created here copies them into `gated_by`.
+    from_root: &'a [Condition],
+    /// The one the next field or fragment puts on itself as a directive. Usually the last of
+    /// `from_root`, but `None` right after entering a subgraph: the field we entered through
+    /// already has it.
+    current: Option<&'a Condition>,
+}
+
+impl Conditions<'_> {
+    /// For what comes right after entering a subgraph: the field we entered through already has
+    /// `current`, so nothing below puts it on again. `from_root` stays, the fetches still need it.
+    fn without_current(self) -> Self {
+        Self {
+            current: None,
+            ..self
+        }
+    }
+}
+
 fn create_noop_fetch_step(
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     created_from_requires: bool,
@@ -479,6 +501,7 @@ fn create_noop_fetch_step(
         output: FetchStepSelections::new_empty(),
         flags,
         condition: None,
+        gated_by: Vec::new(),
         kind: FetchStepKind::Root,
         operation_kind: OperationKind::Query,
         input_rewrites: None,
@@ -500,9 +523,10 @@ fn create_fetch_step_for_entity_call(
     input_type_name: &str,
     output_type_name: &str,
     response_path: &MergePath,
-    condition: Option<&Condition>,
+    conditions: Conditions<'_>,
     used_for_requires: bool,
 ) -> NodeIndex {
+    let condition = conditions.current;
     let flags = if used_for_requires {
         FetchStepFlags::USED_FOR_REQUIRES
     } else {
@@ -523,6 +547,7 @@ fn create_fetch_step_for_entity_call(
         output: FetchStepSelections::new(output_type_name),
         flags,
         condition: condition.cloned(),
+        gated_by: conditions.from_root.to_vec(),
         kind: FetchStepKind::Entity,
         operation_kind: OperationKind::Query,
         input_rewrites: None,
@@ -549,8 +574,9 @@ fn create_fetch_step_for_root_move(
     operation_kind: OperationKind,
     mutation_field_position: MutationFieldPosition,
     response_path: &MergePath,
-    condition: Option<&Condition>,
+    conditions: Conditions<'_>,
 ) -> NodeIndex {
+    let condition = conditions.current;
     let idx = fetch_graph.add_step(FetchStepData {
         id: fetch_graph.create_fetch_id(),
         service_name: subgraph_name.clone(),
@@ -559,6 +585,7 @@ fn create_fetch_step_for_root_move(
         output: FetchStepSelections::new(type_name),
         flags: FetchStepFlags::empty(),
         condition: condition.cloned(),
+        gated_by: conditions.from_root.to_vec(),
         kind: FetchStepKind::Root,
         operation_kind,
         variable_usages: None,
@@ -616,9 +643,10 @@ fn ensure_fetch_step_for_subgraph(
     response_path: &MergePath,
     key: Option<&TypeAwareSelection<'_>>,
     requires: Option<&TypeAwareSelection<'_>>,
-    condition: Option<&Condition>,
+    conditions: Conditions<'_>,
     created_from_requires: bool,
 ) -> Result<NodeIndex, FetchGraphError> {
+    let condition = conditions.current;
     let matching_child_index = if requires.is_some() {
         None
     } else {
@@ -654,6 +682,12 @@ fn ensure_fetch_step_for_subgraph(
                 key.map(|r| r.to_string()).unwrap_or_default(),
                 parent_fetch_step_index.index(),
             );
+            let step = fetch_graph
+                .graph
+                .node_weight_mut(idx)
+                .ok_or(FetchGraphError::IndexNone)?;
+            step.gated_by
+                .retain(|condition| conditions.from_root.contains(condition));
             Ok(idx)
         }
         None => {
@@ -664,7 +698,7 @@ fn ensure_fetch_step_for_subgraph(
                 input_type_name,
                 output_type_name,
                 response_path,
-                condition,
+                conditions,
                 created_from_requires || requires.is_some(),
             );
             if let Some(selection) = key {
@@ -693,9 +727,10 @@ fn ensure_fetch_step_for_requirement(
     subgraph_name: &SubgraphName,
     type_name: &str,
     response_path: &MergePath,
-    condition: Option<&Condition>,
+    conditions: Conditions<'_>,
     requirement: &TypeAwareSelection<'_>,
 ) -> Result<NodeIndex, FetchGraphError> {
+    let condition = conditions.current;
     let matching_child_index = fetch_graph
         .same_entity_calls(
             parent_fetch_step_index,
@@ -731,7 +766,7 @@ fn ensure_fetch_step_for_requirement(
                 type_name,
                 type_name,
                 response_path,
-                condition,
+                conditions,
                 true,
             );
 
@@ -768,7 +803,7 @@ fn process_children_for_fetch_steps(
     response_path: &MergePath,
     fetch_path: &MergePath,
     requiring_fetch_step_index: Option<NodeIndex>,
-    condition: Option<&Condition>,
+    conditions: Conditions<'_>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     if query_node.children.is_empty() {
@@ -787,7 +822,7 @@ fn process_children_for_fetch_steps(
             response_path,
             fetch_path,
             requiring_fetch_step_index,
-            condition,
+            conditions,
             created_from_requires,
         )?);
     }
@@ -810,7 +845,7 @@ fn process_requirements_for_fetch_steps(
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
     requiring_fetch_step_index: Option<NodeIndex>,
-    condition: Option<&Condition>,
+    conditions: Conditions<'_>,
     response_path: &MergePath,
     fetch_path: &MergePath,
 ) -> Result<(), FetchGraphError> {
@@ -829,7 +864,7 @@ fn process_requirements_for_fetch_steps(
             response_path,
             fetch_path,
             requiring_fetch_step_index,
-            condition,
+            conditions,
             true,
         )?;
     }
@@ -849,7 +884,7 @@ fn process_noop_edge(
     response_path: &MergePath,
     fetch_path: &MergePath,
     requiring_fetch_step_index: Option<NodeIndex>,
-    condition: Option<&Condition>,
+    conditions: Conditions<'_>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     // We're at the root
@@ -866,7 +901,7 @@ fn process_noop_edge(
         response_path,
         fetch_path,
         requiring_fetch_step_index,
-        condition,
+        conditions,
         created_from_requires,
     )
 }
@@ -913,7 +948,7 @@ fn process_entity_move_edge(
     fetch_path: &MergePath,
     requiring_fetch_step_index: Option<NodeIndex>,
     edge_index: EdgeIndex,
-    condition: Option<&Condition>,
+    conditions: Conditions<'_>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     let edge = graph.edge(edge_index)?;
@@ -978,7 +1013,7 @@ fn process_entity_move_edge(
         response_path,
         Some(&requirement),
         None,
-        condition,
+        conditions,
         created_from_requires,
     )?;
     fetch_graph
@@ -1038,7 +1073,7 @@ fn process_entity_move_edge(
         query_node,
         parent_fetch_step_index,
         Some(fetch_step_index),
-        condition,
+        conditions,
         response_path,
         fetch_path,
     )?;
@@ -1053,7 +1088,7 @@ fn process_entity_move_edge(
         response_path,
         &MergePath::default(),
         requiring_fetch_step_index,
-        condition,
+        conditions,
         created_from_requires,
     )
 }
@@ -1077,7 +1112,7 @@ fn process_interface_object_type_move_edge(
     requiring_fetch_step_index: Option<NodeIndex>,
     edge_index: EdgeIndex,
     object_type_name: &str,
-    condition: Option<&Condition>,
+    conditions: Conditions<'_>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     let edge = graph.edge(edge_index)?;
@@ -1118,7 +1153,7 @@ fn process_interface_object_type_move_edge(
         response_path,
         Some(&requirement),
         None,
-        condition,
+        conditions,
         created_from_requires,
     )?;
 
@@ -1174,7 +1209,7 @@ fn process_interface_object_type_move_edge(
         object_type_name,
         interface_type_name,
         response_path,
-        condition,
+        conditions,
         false,
     );
     let step_for_requirements = fetch_graph.get_step_data_mut(step_for_requirements_index)?;
@@ -1212,7 +1247,7 @@ fn process_interface_object_type_move_edge(
         response_path,
         &MergePath::default(),
         None,
-        condition,
+        conditions,
         true,
     )?;
 
@@ -1235,7 +1270,7 @@ fn process_interface_object_type_move_edge(
         response_path,
         &MergePath::default(),
         requiring_fetch_step_index,
-        condition,
+        conditions,
         created_from_requires,
     )
 }
@@ -1257,6 +1292,7 @@ fn process_subgraph_entrypoint_edge(
     subgraph_name: &SubgraphName,
     type_name: &str,
     operation_kind: OperationKind,
+    conditions: Conditions<'_>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     let fetch_step_index = create_fetch_step_for_root_move(
@@ -1267,7 +1303,7 @@ fn process_subgraph_entrypoint_edge(
         operation_kind,
         query_node.mutation_field_position,
         &MergePath::default(),
-        None,
+        conditions.without_current(),
     );
 
     process_children_for_fetch_steps(
@@ -1280,7 +1316,7 @@ fn process_subgraph_entrypoint_edge(
         &MergePath::default(),
         &MergePath::default(),
         None,
-        None,
+        conditions.without_current(),
         created_from_requires,
     )
 }
@@ -1302,8 +1338,9 @@ fn process_subgraph_reentry(
     response_path: &MergePath,
     fetch_path: &MergePath,
     requiring_fetch_step_index: Option<NodeIndex>,
-    condition: Option<&Condition>,
+    conditions: Conditions<'_>,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
+    let condition = conditions.current;
     let node_index = graph.get_edge_tail(&edge_index).unwrap();
     let node = graph.node(node_index).unwrap();
 
@@ -1363,7 +1400,7 @@ fn process_subgraph_reentry(
         OperationKind::Query,
         query_node.mutation_field_position,
         &child_response_path,
-        condition,
+        conditions,
     );
 
     process_children_for_fetch_steps(
@@ -1376,7 +1413,7 @@ fn process_subgraph_reentry(
         &child_response_path,
         &MergePath::default(),
         requiring_fetch_step_index,
-        None,
+        conditions.without_current(),
         created_from_requires,
     )
 }
@@ -1401,9 +1438,10 @@ fn process_selfie_edge(
     response_path: &MergePath,
     fetch_path: &MergePath,
     target_type_name: &String,
-    condition: Option<&Condition>,
+    conditions: Conditions<'_>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
+    let condition = conditions.current;
     let condition_on_step = condition.is_some_and(|c| {
         fetch_graph.is_condition_on_step(parent_fetch_step_index, requiring_fetch_step_index, c)
     });
@@ -1462,7 +1500,7 @@ fn process_selfie_edge(
         &child_response_path,
         &child_fetch_path,
         requiring_fetch_step_index,
-        condition,
+        conditions,
         created_from_requires,
     )
 }
@@ -1487,9 +1525,10 @@ fn process_abstract_edge(
     response_path: &MergePath,
     fetch_path: &MergePath,
     target_type_name: &String,
-    condition: Option<&Condition>,
+    conditions: Conditions<'_>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
+    let condition = conditions.current;
     // Everything under the fragment has to stay behind its condition. The condition goes down to
     // the children and each one applies it, but a child with a condition of its own carries only
     // that one, like `name` in `... on Dog @include(if: $x) { name @skip(if: $y) }` would lose
@@ -1552,7 +1591,7 @@ fn process_abstract_edge(
         &child_response_path,
         &child_fetch_path,
         requiring_fetch_step_index,
-        condition,
+        conditions,
         created_from_requires,
     )
 }
@@ -1582,9 +1621,10 @@ fn process_plain_field_edge(
     response_path: &MergePath,
     fetch_path: &MergePath,
     field_move: &FieldMove,
-    condition: Option<&Condition>,
+    conditions: Conditions<'_>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
+    let condition = conditions.current;
     if let Some(requiring_fetch_step_index) = requiring_fetch_step_index {
         trace!(
             "connecting parent fetch step [{}] to requiring fetch step [{}]",
@@ -1665,7 +1705,7 @@ fn process_plain_field_edge(
         &child_response_path,
         &child_fetch_path,
         requiring_fetch_step_index,
-        condition,
+        conditions,
         created_from_requires,
     )
 }
@@ -1719,7 +1759,7 @@ fn process_requires_field_edge(
     requiring_fetch_step_index: Option<NodeIndex>,
     field_move: &FieldMove,
     edge_index: EdgeIndex,
-    condition: Option<&Condition>,
+    conditions: Conditions<'_>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     let requires = field_move.requirements.as_ref();
@@ -1800,7 +1840,7 @@ fn process_requires_field_edge(
             head_subgraph_name,
             head_type_name,
             response_path,
-            condition,
+            conditions,
             requires_input
                 .as_ref()
                 .ok_or(FetchGraphError::MissingRequires)?,
@@ -1813,7 +1853,7 @@ fn process_requires_field_edge(
             head_type_name,
             head_type_name,
             response_path,
-            condition,
+            conditions,
             true,
         )
     };
@@ -2013,7 +2053,7 @@ fn process_requires_field_edge(
             head_type_name,
             head_type_name,
             response_path,
-            condition,
+            conditions,
             true,
         );
         let step_for_requirements = fetch_graph.get_step_data_mut(step_for_requirements_index)?;
@@ -2127,7 +2167,7 @@ fn process_requires_field_edge(
             response_path,
             &requirements_fetch_path,
             None,
-            condition,
+            conditions,
             true,
         )?
     } else {
@@ -2173,7 +2213,7 @@ fn process_requires_field_edge(
         &child_response_path,
         &child_fetch_path,
         requiring_fetch_step_index,
-        condition,
+        conditions,
         created_from_requires,
     )
 }
@@ -2273,10 +2313,25 @@ fn process_query_node(
     response_path: &MergePath,
     fetch_path: &MergePath,
     requiring_fetch_step_index: Option<NodeIndex>,
-    condition: Option<&Condition>,
+    conditions: Conditions<'_>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
-    let condition = query_node.condition.as_ref().or(condition);
+    // a condition of its own goes on top of the ones around it
+    let with_own;
+    let conditions = match &query_node.condition {
+        Some(own) if conditions.from_root.last() != Some(own) => {
+            with_own = [conditions.from_root, std::slice::from_ref(own)].concat();
+            Conditions {
+                from_root: &with_own,
+                current: Some(own),
+            }
+        }
+        Some(own) => Conditions {
+            current: Some(own),
+            ..conditions
+        },
+        None => conditions,
+    };
     if let Some(edge_index) = query_node.edge_from_parent {
         let parent_fetch_step_index = parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?;
         let edge = graph.edge(edge_index)?;
@@ -2297,7 +2352,7 @@ fn process_query_node(
                     response_path,
                     fetch_path,
                     None,
-                    condition,
+                    conditions,
                     true,
                 )?;
                 let coordinate = requirement.context_coordinate().ok_or_else(|| {
@@ -2335,6 +2390,7 @@ fn process_query_node(
                     name,
                     type_name,
                     operation_kind.clone(),
+                    conditions,
                     created_from_requires,
                 )
             }
@@ -2349,7 +2405,7 @@ fn process_query_node(
                 fetch_path,
                 requiring_fetch_step_index,
                 edge_index,
-                condition,
+                conditions,
                 created_from_requires,
             ),
             Edge::ReentryMove(field) => process_subgraph_reentry(
@@ -2365,7 +2421,7 @@ fn process_query_node(
                 response_path,
                 fetch_path,
                 requiring_fetch_step_index,
-                condition,
+                conditions,
             ),
             Edge::FieldMove(field) => match !field.context_arguments.is_empty()
                 || (field.requirements.is_some()
@@ -2382,7 +2438,7 @@ fn process_query_node(
                     requiring_fetch_step_index,
                     field,
                     edge_index,
-                    condition,
+                    conditions,
                     created_from_requires,
                 ),
                 false => {
@@ -2395,7 +2451,7 @@ fn process_query_node(
                         query_node,
                         parent_fetch_step_index,
                         requiring_fetch_step_index,
-                        condition,
+                        conditions,
                         response_path,
                         fetch_path,
                     )?;
@@ -2410,7 +2466,7 @@ fn process_query_node(
                         response_path,
                         fetch_path,
                         field,
-                        condition,
+                        conditions,
                         created_from_requires,
                     )
                 }
@@ -2426,7 +2482,7 @@ fn process_query_node(
                 response_path,
                 fetch_path,
                 type_name,
-                condition,
+                conditions,
                 created_from_requires,
             ),
             Edge::AbstractMove(type_name) => process_abstract_edge(
@@ -2440,7 +2496,7 @@ fn process_query_node(
                 response_path,
                 fetch_path,
                 type_name,
-                condition,
+                conditions,
                 created_from_requires,
             ),
             Edge::InterfaceObjectTypeMove(InterfaceObjectTypeMove {
@@ -2457,7 +2513,7 @@ fn process_query_node(
                 requiring_fetch_step_index,
                 edge_index,
                 object_type_name,
-                condition,
+                conditions,
                 created_from_requires,
             ),
         }
@@ -2472,7 +2528,7 @@ fn process_query_node(
             response_path,
             fetch_path,
             requiring_fetch_step_index,
-            condition,
+            conditions,
             created_from_requires,
         )
     }
@@ -2569,7 +2625,7 @@ pub fn build_fetch_graph_from_query_tree(
         &MergePath::default(),
         &MergePath::default(),
         None,
-        None,
+        Conditions::default(),
         false,
     )?;
 
@@ -2623,7 +2679,7 @@ mod tests {
                 "User",
                 "User",
                 &path,
-                None,
+                Conditions::default(),
                 false,
             );
             fetch_graph.connect(parent, index);
