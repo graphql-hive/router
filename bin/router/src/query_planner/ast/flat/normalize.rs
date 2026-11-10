@@ -1,9 +1,12 @@
-//! `normalization::normalize_operation` on a flat `Document`.
+//! Normalizes an operation, or a federation field set, on a flat `Document`.
 //!
-//! The same passes in the same order, with the same quirks, so the result is the same
-//! `NormalizedDocument`. The first three passes run before any subtree is shared, so they
-//! change nodes in place. From inlining fragments on, nodes are only appended: a new list for
-//! a changed selection set, a new node for a changed selection, the rest is reused by index.
+//! The passes run in order over the whole operation: drop skipped selections, tidy fields,
+//! inline fragment spreads, flatten fragments into object types, expand interface fields,
+//! merge inline fragments, flatten object fragments, merge fields, drop repeated fields.
+//!
+//! The first three run before any subtree is shared, so they change nodes in place. From
+//! inlining fragments on, nodes are only appended: a new list for a changed selection set, a
+//! new node for a changed selection, the rest is reused by index.
 
 use ahash::{HashMap, HashMapExt, HashSet};
 
@@ -13,6 +16,7 @@ use super::{
 };
 use crate::query_planner::ast::document::NormalizedDocument;
 use crate::query_planner::ast::normalization::error::NormalizationError;
+use crate::query_planner::ast::selection_set::SelectionSet;
 use crate::query_planner::state::supergraph_state::{
     SupergraphDefinition, SupergraphField, SupergraphObjectType, SupergraphState,
 };
@@ -26,6 +30,10 @@ pub(super) struct FieldInfo<'a> {
 
 pub(super) struct Norm<'a> {
     pub(super) state: &'a SupergraphState,
+    /// Possible types only in this subgraph, for a field set (`@key`, `@requires`, ...).
+    subgraph: Option<&'a str>,
+    /// The type a field set is on, instead of the query type.
+    query_root: Option<&'a str>,
     pub(super) doc: &'a Document,
     /// Names the document doesn't have, the type names fragments get from the schema.
     pub(super) extra: Interner,
@@ -58,8 +66,45 @@ pub fn normalize_operation(
     doc: &Document,
     operation_name: Option<&str>,
 ) -> Result<NormalizedDocument> {
+    let (mut n, op) = run(state, doc, operation_name, None, None)?;
+    Ok(super::convert::normalized_document(
+        &mut n,
+        op,
+        operation_name,
+    ))
+}
+
+/// A field set of a federation directive, like `@key(fields: "id")` or `@requires`, on
+/// `type_name` in a subgraph. Normalized like `{ <fields> }` with `type_name` as the root,
+/// the possible types of abstract types limited to that subgraph.
+pub fn normalize_field_set(
+    state: &SupergraphState,
+    type_name: &str,
+    subgraph_name: &str,
+    fields: &str,
+) -> std::result::Result<SelectionSet, String> {
+    let doc = super::parse::parse(&format!("{{{fields}}}")).map_err(|err| err.to_string())?;
+    let (mut n, op) = run(state, &doc, None, Some(type_name), Some(subgraph_name))
+        .map_err(|err| err.to_string())?;
+    // no `__typename` step, that's for the operations the router executes
+    Ok(super::convert::selection_set(
+        &mut n,
+        op.selection_set,
+        None,
+    ))
+}
+
+fn run<'a>(
+    state: &'a SupergraphState,
+    doc: &'a Document,
+    operation_name: Option<&str>,
+    query_root: Option<&'a str>,
+    subgraph: Option<&'a str>,
+) -> Result<(Norm<'a>, Operation)> {
     let mut n = Norm {
         state,
+        subgraph,
+        query_root,
         doc,
         extra: Interner::default(),
         args: doc.args.clone(),
@@ -161,7 +206,7 @@ pub fn normalize_operation(
     op.selection_set = n.merge_fields(op.selection_set)?;
     op.selection_set = n.drop_duplicated_fields(op.selection_set);
 
-    Ok(n.into_normalized(op, operation_name))
+    Ok((n, op))
 }
 
 impl<'a> Norm<'a> {
@@ -189,7 +234,11 @@ impl<'a> Norm<'a> {
     /// Looks up what the schema has by that name, for the next name.
     fn add_name(&mut self, name: &str) {
         self.defs.push(self.state.definitions.get(name));
-        self.possible.push(self.state.all_possible_types(name));
+        let possible = match self.subgraph {
+            Some(subgraph) => self.state.possible_types_in_subgraph(name, subgraph),
+            None => self.state.all_possible_types(name),
+        };
+        self.possible.push(possible);
     }
 
     pub(super) fn field_info(
@@ -327,7 +376,9 @@ impl<'a> Norm<'a> {
     fn root_type(&self, kind: OperationKind) -> Result<&'a SupergraphDefinition> {
         let state = self.state;
         let name = match kind {
-            OperationKind::Query | OperationKind::Shorthand => state.query_type.as_str(),
+            OperationKind::Query | OperationKind::Shorthand => {
+                self.query_root.unwrap_or(state.query_type.as_str())
+            }
             OperationKind::Mutation => state.mutation_type.as_deref().ok_or_else(|| {
                 NormalizationError::TypeForOperationNotFound {
                     kind: "mutation".to_string(),
@@ -419,7 +470,9 @@ impl<'a> Norm<'a> {
         }
     }
 
-    // ---- normalize_fields, only into inline fragments like the original
+    // ---- normalize_fields: an alias that's the field's name goes, arguments and directives
+    // get sorted. Only the top-level fields and the ones in inline fragments, never inside a
+    // field's selections.
 
     fn normalize_fields(&mut self, list: Span) {
         let doc: &'a Document = self.doc;
@@ -601,12 +654,67 @@ impl<'a> Norm<'a> {
                 return self.expand_abstract_fragment(parent, fragment);
             }
         }
+        if self.push_conditions_down(fragment) {
+            return Ok(());
+        }
         let id = match fragment.type_condition == self.sels[id as usize].type_condition {
             true => self.with_children(id, children),
             false => self.push_sel(fragment),
         };
         self.scratch.push(id);
         Ok(())
+    }
+
+    /// `... on Animal @include(if: $x) { ... on Dog { tricks } }` on an `Animal` is
+    /// `... on Dog @include(if: $x) { tricks }`. Kept as is, those Dogs are at another path than a
+    /// `... on Dog` next to it, and get looked up twice. Pushes the children on the scratch list
+    /// and returns true, or false when a child isn't an inline fragment or already has the same
+    /// directive with other arguments, the two can't go on one fragment.
+    fn push_conditions_down(&mut self, fragment: Selection) -> bool {
+        let conditions = fragment.directives;
+        let (skip, include) = (self.skip, self.include);
+        if self.directives[conditions.range()]
+            .iter()
+            .any(|d| Some(d.name) != skip && Some(d.name) != include)
+        {
+            return false;
+        }
+        let rollback = self.directives.len();
+        let mut children = Vec::with_capacity(fragment.children.len as usize);
+        for index in 0..fragment.children.len as usize {
+            let (_, child) = self.sel(fragment.children, index);
+            if child.kind != Kind::InlineFragment {
+                self.directives.truncate(rollback);
+                return false;
+            }
+            let start = self.directives.len() as u32;
+            self.directives.extend_from_within(child.directives.range());
+            for at in conditions.range() {
+                let condition = self.directives[at].clone();
+                let existing = self.directives[child.directives.range()]
+                    .iter()
+                    .find(|d| d.name == condition.name)
+                    .map(|d| d.args);
+                match existing {
+                    Some(args) if self.args_eq(args, condition.args) => {}
+                    Some(_) => {
+                        self.directives.truncate(rollback);
+                        return false;
+                    }
+                    None => self.directives.push(condition),
+                }
+            }
+            let directives = Span {
+                start,
+                len: self.directives.len() as u32 - start,
+            };
+            children.push(Selection { directives, ..child });
+        }
+        for child in children {
+            let id = self.push_sel(child);
+            self.scratch.push(id);
+        }
+        true
     }
 
     fn expand_fragment_with_type_condition(
@@ -636,10 +744,12 @@ impl<'a> Norm<'a> {
     }
 
     fn possible_types(&self, name: &str) -> Result<&'a HashSet<String>> {
-        self.state.all_possible_types(name).ok_or_else(|| {
-            NormalizationError::PossibleTypesNotFound {
-                type_name: name.to_string(),
-            }
+        let possible = match self.subgraph {
+            Some(subgraph) => self.state.possible_types_in_subgraph(name, subgraph),
+            None => self.state.all_possible_types(name),
+        };
+        possible.ok_or_else(|| NormalizationError::PossibleTypesNotFound {
+            type_name: name.to_string(),
         })
     }
 
@@ -879,7 +989,7 @@ impl<'a> Norm<'a> {
         Ok(self.finish(mark, list))
     }
 
-    /// `handle_type_expansion_candidate`: whether the field went out as a fragment per object.
+    /// Sends the interface's field out as a fragment per object, when it has to. Whether it did.
     /// The objects of an interface, sorted by name.
     fn interface_objects(
         &mut self,
@@ -890,7 +1000,18 @@ impl<'a> Norm<'a> {
             return Ok(objects.clone());
         }
         let state = self.state;
-        let names = self.possible_types(&interface.name)?;
+        // the subgraph has to know the interface, but it goes to every object implementing it
+        let is_known = self.subgraph.is_none_or(|subgraph| {
+            state
+                .possible_types_in_subgraph(&interface.name, subgraph)
+                .is_some()
+        });
+        let names = state
+            .all_possible_types(&interface.name)
+            .filter(|_| is_known)
+            .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
+                type_name: interface.name.clone(),
+            })?;
         let mut objects = Vec::with_capacity(names.len());
         for name in names {
             let Some(SupergraphDefinition::Object(object)) = state.definitions.get(name) else {
@@ -906,8 +1027,9 @@ impl<'a> Norm<'a> {
         Ok(objects)
     }
 
-    /// `handle_type_expansion_candidate`'s check: whether the interface's field has to go out
-    /// as a fragment per object.
+    /// Whether the interface's field has to go out as a fragment per object: an object
+    /// doesn't have it or can't resolve it itself, or not every subgraph with the interface
+    /// resolves it.
     fn should_expand_field(
         &self,
         objects: &[&'a SupergraphObjectType],
@@ -1223,7 +1345,8 @@ impl<'a> Norm<'a> {
         Ok(self.finish(mark, list))
     }
 
-    // ---- drop_duplicated_fields, only into inline fragments like the original
+    // ---- drop_duplicated_fields: a leaf field the list already has. Only into inline
+    // fragments, never inside a field's selections.
 
     fn drop_duplicated_fields(&mut self, list: Span) -> Span {
         if list.len < 2 {
@@ -1257,13 +1380,5 @@ impl<'a> Norm<'a> {
             }
         }
         self.finish(mark, list)
-    }
-
-    fn into_normalized(
-        mut self,
-        op: Operation,
-        operation_name: Option<&str>,
-    ) -> NormalizedDocument {
-        super::convert::normalized_document(&mut self, op, operation_name)
     }
 }

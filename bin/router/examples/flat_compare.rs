@@ -1,7 +1,9 @@
-// Throwaway: parse + normalize every corpus operation with the parser's tree and with the flat
-// AST, check both give the same `NormalizedDocument`, then time both.
+// Parse + normalize every corpus operation both ways into the flat AST, from the text with
+// `flat::parse` and from the parser's tree like the pipeline, check both give the same
+// `NormalizedDocument`, and time them.
 //
-// MODE=check (default), MODE=bench, or MODE=prof (only the flat normalizer, on CASE).
+// MODE=check (default), MODE=bench, MODE=prof (only the flat normalizer, on CASE), or
+// MODE=graphs (builds every supergraph's planner graph, which normalizes every field set).
 // MANIFEST=<json> and AUDIT_DIR=<dir> add more cases to check.
 use std::alloc::{GlobalAlloc, Layout};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -10,9 +12,7 @@ use std::time::{Duration, Instant};
 
 use graphql_tools::parser::query::{Definition, OperationDefinition};
 use hive_router::query_planner::ast::flat;
-use hive_router::query_planner::ast::normalization::{
-    normalize_operation, normalize_operation_tree,
-};
+use hive_router::query_planner::ast::normalization::normalize_operation;
 use hive_router::query_planner::state::supergraph_state::SupergraphState;
 use hive_router::query_planner::utils::parsing::{parse_schema, safe_parse_operation};
 
@@ -163,7 +163,7 @@ fn main() {
             });
         }
     }
-    if mode == "check" {
+    if mode == "check" || mode == "graphs" {
         if let Ok(manifest) = std::env::var("MANIFEST") {
             let entries: Vec<serde_json::Value> = serde_json::from_str(&read(&manifest)).unwrap();
             let mut paths: Vec<String> = Vec::new();
@@ -241,6 +241,25 @@ fn main() {
         }
         return;
     }
+    if mode == "graphs" {
+        // builds the planner's graph for every supergraph, which normalizes every field set
+        let (mut built, mut failed) = (0, 0);
+        for sdl in &sdls {
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                hive_router::query_planner::planner::Planner::new_from_supergraph(
+                    &parse_schema(sdl),
+                    Default::default(),
+                )
+                .is_ok()
+            }));
+            match result {
+                Ok(_) => built += 1,
+                Err(_) => failed += 1,
+            }
+        }
+        println!("{built} graphs built, {failed} panicked");
+        return;
+    }
     if mode == "check" {
         check(&cases, &states);
     } else {
@@ -276,7 +295,7 @@ fn check(cases: &[Case], states: &[Option<SupergraphState>]) {
         };
         for name in operation_names(&case.query) {
             let old = catch_unwind(AssertUnwindSafe(|| {
-                normalize_operation_tree(state, &tree, name.as_deref())
+                normalize_operation(state, &tree, name.as_deref())
                     .map(|d| (format!("{:?}", d.operation), d.operation_name))
                     .map_err(|e| e.to_string())
             }));
@@ -285,17 +304,6 @@ fn check(cases: &[Case], states: &[Option<SupergraphState>]) {
                     .map(|d| (format!("{:?}", d.operation), d.operation_name))
                     .map_err(|e| e.to_string())
             }));
-            // the pipeline's way in: the parser's tree turned into the flat form
-            let piped = catch_unwind(AssertUnwindSafe(|| {
-                normalize_operation(state, &tree, name.as_deref())
-                    .map(|d| (format!("{:?}", d.operation), d.operation_name))
-                    .map_err(|e| e.to_string())
-            }));
-            if piped.as_ref().ok() != new.as_ref().ok() {
-                differ += 1;
-                println!("TREE CONVERSION DIFFERS {} {:?}", case.label, name);
-                continue;
-            }
             let (old, new) = match (old, new) {
                 (Ok(old), Ok(new)) => (old, new),
                 (Err(_), Err(_)) => {
@@ -328,19 +336,20 @@ fn check(cases: &[Case], states: &[Option<SupergraphState>]) {
     println!("{same} same, {differ} differ, {skipped} skipped (supergraph didn't build)");
 }
 
+/// The pipeline's way (the parser, then the tree turned into the flat form) and the flat
+/// parser's.
 fn bench(cases: &[Case], states: &[Option<SupergraphState>]) {
     let runs: usize = std::env::var("RUNS")
         .ok()
         .and_then(|r| r.parse().ok())
         .unwrap_or(20);
     println!(
-        "{:<44} {:>10} {:>10} {:>12} {:>12} {:>12}   {:>9} {:>9}  {:>9} {:>9}  {:>9} {:>9}",
+        "{:<44} {:>10} {:>10} {:>12} {:>12}   {:>9} {:>9}  {:>9} {:>9}  {:>9} {:>9}",
         "case",
         "parse tree",
         "parse flat",
         "norm tree",
         "norm flat",
-        "norm piped",
         "allocs t",
         "allocs f",
         "peak t",
@@ -361,9 +370,6 @@ fn bench(cases: &[Case], states: &[Option<SupergraphState>]) {
         let parse_flat = best(runs, || flat::parse::parse(&case.query).unwrap());
         let norm_runs = runs.clamp(1, 5);
         let norm_tree = best(norm_runs, || {
-            normalize_operation_tree(state, &tree, name).unwrap()
-        });
-        let norm_piped = best(norm_runs, || {
             normalize_operation(state, &tree, name).unwrap()
         });
         let norm_flat = best(norm_runs, || {
@@ -373,7 +379,7 @@ fn bench(cases: &[Case], states: &[Option<SupergraphState>]) {
         // what's live after is the normalized operation, the parsed document is dropped
         let (kept, allocs_t, peak_t, live_t) = measure(|| {
             let doc = safe_parse_operation(&case.query).unwrap();
-            normalize_operation_tree(state, &doc, name).unwrap()
+            normalize_operation(state, &doc, name).unwrap()
         });
         drop(kept);
         let (kept, allocs_f, peak_f, live_f) = measure(|| {
@@ -388,13 +394,12 @@ fn bench(cases: &[Case], states: &[Option<SupergraphState>]) {
         let ms = |d: Duration| format!("{:.3}", d.as_secs_f64() * 1e3);
         let mib = |b: usize| format!("{:.1}M", b as f64 / 1048576.0);
         println!(
-            "{:<44} {:>10} {:>10} {:>12} {:>12} {:>12}   {:>9} {:>9}  {:>9} {:>9}  {:>9} {:>9}",
+            "{:<44} {:>10} {:>10} {:>12} {:>12}   {:>9} {:>9}  {:>9} {:>9}  {:>9} {:>9}",
             label,
             ms(parse_tree),
             ms(parse_flat),
             ms(norm_tree),
             ms(norm_flat),
-            ms(norm_piped),
             allocs_t,
             allocs_f,
             mib(peak_t),

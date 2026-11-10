@@ -4,16 +4,13 @@ use ahash::AHashMap;
 use directives::JoinFieldDirective;
 use graphql_tools::parser::{
     parse_query,
-    query::{
-        Definition, OperationDefinition, Selection, SelectionSet,
-        SelectionSet as QuerySelectionSet, TypeCondition,
-    },
+    query::{Definition, OperationDefinition, Selection, SelectionSet as QuerySelectionSet},
 };
 
 use crate::query_planner::{
     ast::{
-        normalization::{context::RootTypes, normalize_operation_mut},
-        type_aware_selection::TypeAwareSelection,
+        flat::normalize::normalize_field_set, selection_item::SelectionItem,
+        selection_set::SelectionSet, type_aware_selection::TypeAwareSelection,
     },
     state::supergraph_state::{SupergraphDefinition, SupergraphField, SupergraphState},
 };
@@ -40,44 +37,15 @@ fn normalize_fields_argument_value_mut(
     type_name: &str,
     subgraph_name: &str,
     fields_str: &str,
-) -> SelectionSet<'static, String> {
-    let selection_set_str = format!("{{{fields_str}}}");
-    // TODO: Far from ideal, but we can use the graphql_parser here to get it parsed for us
-    let mut parsed_doc = parse_query(&selection_set_str).unwrap().into_static();
-
-    normalize_operation_mut(
-        supergraph,
-        &mut parsed_doc,
-        None,
-        Some(RootTypes {
-            query: Some(type_name),
-            mutation: supergraph.mutation_type.as_deref(),
-            subscription: supergraph.subscription_type.as_deref(),
-        }),
-        Some(subgraph_name),
-    )
-    .unwrap_or_else(|err| panic!("Normalization error: {err}"));
-
-    match parsed_doc
-        .definitions
-        .first()
-        .expect("failed to parse selection set")
-    {
-        Definition::Operation(OperationDefinition::SelectionSet(selection_set)) => {
-            selection_set.to_owned()
-        }
-        _ => {
-            unreachable!(
-                "Internal error: 'fields' string '{{...}}' did not result in a SelectionSet"
-            )
-        }
-    }
+) -> SelectionSet {
+    normalize_field_set(supergraph, type_name, subgraph_name, fields_str)
+        .unwrap_or_else(|err| panic!("Normalization error: {err}"))
 }
 
 /// Walks a `sizedFields` selection set top-down, enforcing exactly one field per
 /// level and rejecting fragments, appending each field name to `path`.
 fn collect_sized_field_path(
-    selection_set: &SelectionSet<'_, String>,
+    selection_set: &QuerySelectionSet<'_, String>,
     original: &str,
     path: &mut Vec<String>,
 ) -> Result<(), String> {
@@ -116,7 +84,7 @@ struct SelectionCacheKey<'a> {
 /// The cache keys borrow the immutable supergraph; cached selections are shared by graph edges.
 #[derive(Debug, Default)]
 pub(crate) struct CachedFederationRules<'a> {
-    selections: AHashMap<SelectionCacheKey<'a>, Arc<QuerySelectionSet<'static, String>>>,
+    selections: AHashMap<SelectionCacheKey<'a>, Arc<SelectionSet>>,
     type_aware_selections: AHashMap<SelectionCacheKey<'a>, Arc<TypeAwareSelection<'a>>>,
 }
 
@@ -127,7 +95,7 @@ impl<'a> CachedFederationRules<'a> {
         subgraph_name: &'a str,
         type_name: &'a str,
         selection: &'a str,
-    ) -> Arc<QuerySelectionSet<'static, String>> {
+    ) -> Arc<SelectionSet> {
         let key = SelectionCacheKey {
             subgraph_name,
             type_name,
@@ -166,7 +134,7 @@ impl<'a> CachedFederationRules<'a> {
         let selection_set = self.parse_selection(supergraph, subgraph_name, type_name, selection);
         let selection = Arc::new(TypeAwareSelection {
             type_name,
-            selection_set: selection_set.as_ref().clone().into(),
+            selection_set: selection_set.as_ref().clone(),
         });
         self.type_aware_selections
             .insert(key, Arc::clone(&selection));
@@ -199,7 +167,7 @@ impl<'a> CachedFederationRules<'a> {
         join_field: &'a JoinFieldDirective,
         subgraph_name: &'a str,
         type_name: &'a str,
-    ) -> Option<Arc<QuerySelectionSet<'static, String>>> {
+    ) -> Option<Arc<SelectionSet>> {
         let provides = join_field.provides.as_deref()?;
         Some(self.parse_selection(supergraph, subgraph_name, type_name, provides))
     }
@@ -212,11 +180,14 @@ impl FederationRules {
         type_name: &'a str,
         key: &str,
     ) -> TypeAwareSelection<'a> {
-        let selection_set =
-            normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, key);
         TypeAwareSelection {
             type_name,
-            selection_set: selection_set.into(),
+            selection_set: normalize_fields_argument_value_mut(
+                supergraph,
+                type_name,
+                subgraph_name,
+                key,
+            ),
         }
     }
 
@@ -237,12 +208,10 @@ impl FederationRules {
         let mut selection_set =
             normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, fields);
         selection_set.items.retain(|selection| {
-            let Selection::InlineFragment(fragment) = selection else {
+            let SelectionItem::InlineFragment(fragment) = selection else {
                 return true;
             };
-            let Some(TypeCondition::On(condition)) = &fragment.type_condition else {
-                return true;
-            };
+            let condition = &fragment.type_condition;
             if condition == type_name {
                 return true;
             }
@@ -257,7 +226,7 @@ impl FederationRules {
         });
         TypeAwareSelection {
             type_name,
-            selection_set: selection_set.into(),
+            selection_set,
         }
     }
 
@@ -266,7 +235,7 @@ impl FederationRules {
         join_field: &JoinFieldDirective,
         subgraph_name: &str,
         type_name: &str,
-    ) -> Option<SelectionSet<'static, String>> {
+    ) -> Option<SelectionSet> {
         if let Some(provides) = &join_field.provides {
             return Some(normalize_fields_argument_value_mut(
                 supergraph,
@@ -284,7 +253,7 @@ impl FederationRules {
         subgraph_name: &str,
         type_name: &str,
         requires: &str,
-    ) -> SelectionSet<'static, String> {
+    ) -> SelectionSet {
         normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, requires)
     }
 

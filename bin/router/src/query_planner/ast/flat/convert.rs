@@ -1,6 +1,6 @@
-//! The planner's `OperationDefinition` from a normalized flat operation, the same as
-//! `create_normalized_document` makes from the parser's tree. Its last step, a skipped
-//! `__typename` in every composite field left with no selections, is done on the way.
+//! The planner's `OperationDefinition`, or a field set's `SelectionSet`, from a normalized flat
+//! operation. For an operation, every composite field left with no selections gets a skipped
+//! `__typename` on the way.
 
 use std::collections::BTreeMap;
 
@@ -61,7 +61,7 @@ pub(super) fn normalized_document<'a>(
 
 /// `parent` is the type of the selection set, when the `__typename` step goes into it. It doesn't
 /// go below a field whose type it can't tell, or isn't composite.
-fn selection_set<'a>(
+pub(super) fn selection_set<'a>(
     n: &mut Norm<'a>,
     list: Span,
     parent: Option<&'a SupergraphDefinition>,

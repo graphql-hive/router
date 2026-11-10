@@ -3,9 +3,7 @@ use std::{
     fmt::{self, Display},
 };
 
-use graphql_tools::parser::query::{Selection, SelectionSet};
-
-use crate::query_planner::ast::normalization::utils::extract_type_condition;
+use crate::query_planner::ast::{selection_item::SelectionItem, selection_set::SelectionSet};
 
 /// What a `@provides` path makes available, as a tree of fields and type conditions.
 ///
@@ -18,34 +16,28 @@ pub struct Provided {
 }
 
 impl Provided {
-    pub fn from_selection_set(selection_set: &SelectionSet<'static, String>) -> Self {
+    pub fn from_selection_set(selection_set: &SelectionSet) -> Self {
         let mut provided = Self::default();
         for selection in &selection_set.items {
             match selection {
-                Selection::Field(field) => {
+                SelectionItem::Field(field) => {
                     // Every node resolves `__typename` already.
                     if field.name != "__typename" {
                         provided
                             .fields
                             .entry(field.name.clone())
                             .or_default()
-                            .merge(Self::from_selection_set(&field.selection_set));
+                            .merge(Self::from_selection_set(&field.selections));
                     }
                 }
-                Selection::InlineFragment(fragment) => {
-                    let type_name = extract_type_condition(
-                        fragment
-                            .type_condition
-                            .as_ref()
-                            .expect("Inline fragment without type condition detected"),
-                    );
+                SelectionItem::InlineFragment(fragment) => {
                     provided
                         .on_types
-                        .entry(type_name.to_string())
+                        .entry(fragment.type_condition.clone())
                         .or_default()
-                        .merge(Self::from_selection_set(&fragment.selection_set));
+                        .merge(Self::from_selection_set(&fragment.selections));
                 }
-                Selection::FragmentSpread(_) => {
+                SelectionItem::FragmentSpread(_) => {
                     // Fragment spreads should have been normalized (converted into inline fragments) at this point
                     panic!(
                         "Fragment spread detected. Expected either a Field or an Inline Fragment"

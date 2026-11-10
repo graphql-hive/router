@@ -1,60 +1,13 @@
-use graphql_tools::parser::query::{self as query_ast, Definition, OperationDefinition};
+use graphql_tools::parser::query as query_ast;
 
 pub mod arguments_to_variables;
-pub mod context;
 pub mod error;
-pub mod pipeline;
 pub mod utils;
 
 use crate::query_planner::ast;
 use crate::query_planner::ast::document::NormalizedDocument;
-use crate::query_planner::ast::normalization::context::{NormalizationContext, RootTypes};
-use crate::query_planner::ast::normalization::pipeline::drop_skipped_fields;
-use crate::query_planner::ast::normalization::pipeline::drop_unused_operations;
-use crate::query_planner::ast::normalization::pipeline::flatten_fragments;
-use crate::query_planner::ast::normalization::pipeline::flatten_matching_object_fragments;
-use crate::query_planner::ast::normalization::pipeline::inline_fragment_spreads;
-use crate::query_planner::ast::normalization::pipeline::merge_fields;
-use crate::query_planner::ast::normalization::pipeline::merge_inline_fragments;
-use crate::query_planner::ast::normalization::pipeline::normalize_fields;
-use crate::query_planner::ast::normalization::pipeline::type_expand;
-use crate::query_planner::ast::normalization::pipeline::{
-    drop_duplicated_fields, drop_fragment_definitions,
-};
-use crate::query_planner::state::supergraph_state::{OperationKind, SupergraphState};
+use crate::query_planner::state::supergraph_state::SupergraphState;
 use error::NormalizationError;
-
-/// Normalizes the operation by mutating it
-#[inline]
-pub fn normalize_operation_mut(
-    supergraph: &SupergraphState,
-    query: &mut query_ast::Document<'static, String>,
-    operation_name: Option<&str>,
-    root_types_overwrite: Option<RootTypes>,
-    subgraph_name: Option<&str>,
-) -> Result<(), NormalizationError> {
-    let mut ctx = NormalizationContext {
-        supergraph,
-        operation_name,
-        document: query,
-        root_types: root_types_overwrite.unwrap_or_else(|| supergraph.into()),
-        subgraph_name,
-    };
-
-    drop_unused_operations(&mut ctx)?;
-    drop_skipped_fields(&mut ctx)?;
-    normalize_fields(&mut ctx)?;
-    inline_fragment_spreads(&mut ctx)?;
-    drop_fragment_definitions(&mut ctx)?;
-    flatten_fragments(&mut ctx)?;
-    type_expand(&mut ctx)?;
-    merge_inline_fragments(&mut ctx)?;
-    flatten_matching_object_fragments(&mut ctx)?;
-    merge_fields(&mut ctx)?;
-    drop_duplicated_fields(&mut ctx)?;
-
-    Ok(())
-}
 
 /// Normalizes the operation on the flat AST, see `ast::flat`.
 #[inline]
@@ -65,129 +18,6 @@ pub fn normalize_operation(
 ) -> Result<NormalizedDocument, NormalizationError> {
     let document = ast::flat::tree::from_tree(query);
     ast::flat::normalize::normalize_operation(supergraph, &document, operation_name)
-}
-
-/// The same, with the passes on the parser's tree. Kept to check the flat one against, and
-/// for `normalize_operation_mut`, which the flat one doesn't do yet.
-pub fn normalize_operation_tree(
-    supergraph: &SupergraphState,
-    query: &query_ast::Document<'static, String>,
-    operation_name: Option<&str>,
-) -> Result<NormalizedDocument, NormalizationError> {
-    let mut query_mut = query.clone();
-    normalize_operation_mut(supergraph, &mut query_mut, operation_name, None, None)?;
-    let operation = query_mut.definitions.iter_mut().find_map(|def| match def {
-        Definition::Operation(op) => Some(op),
-        _ => None,
-    });
-
-    let op_def = operation.ok_or(NormalizationError::ExpectedTransformedOperationNotFound)?;
-
-    // Use the operation name from the operation definition if available,
-    // as a fallback if the user did not provide an operation name.
-    let operation_name = operation_name
-        .or(match op_def {
-            OperationDefinition::Query(query) => query.name.as_deref(),
-            OperationDefinition::Mutation(mutation) => mutation.name.as_deref(),
-            OperationDefinition::Subscription(subscription) => subscription.name.as_deref(),
-            _ => None,
-        })
-        .map(|n| n.to_string());
-
-    Ok(create_normalized_document(
-        supergraph,
-        op_def.to_owned(),
-        operation_name,
-    ))
-}
-
-#[inline]
-pub fn create_normalized_document<'a>(
-    supergraph: &SupergraphState,
-    operation_ast: query_ast::OperationDefinition<'a, String>,
-    operation_name: Option<String>,
-) -> NormalizedDocument {
-    let mut operation: ast::operation::OperationDefinition = operation_ast.into();
-    inject_skipped_typename_for_empty_composites(&mut operation, supergraph);
-
-    NormalizedDocument {
-        operation,
-        operation_name,
-    }
-}
-
-fn inject_skipped_typename_for_empty_composites(
-    operation: &mut ast::operation::OperationDefinition,
-    supergraph: &SupergraphState,
-) {
-    let root_type_name = match operation.operation_kind.as_ref() {
-        Some(OperationKind::Query) | None => supergraph.query_type.as_str(),
-        Some(OperationKind::Mutation) => supergraph
-            .mutation_type
-            .as_deref()
-            .expect("mutation root type should exist"),
-        Some(OperationKind::Subscription) => supergraph
-            .subscription_type
-            .as_deref()
-            .expect("subscription root type should exist"),
-    };
-    inject_skipped_typename_for_selection_set(
-        &mut operation.selection_set,
-        root_type_name,
-        supergraph,
-    );
-}
-
-fn inject_skipped_typename_for_selection_set(
-    selection_set: &mut ast::selection_set::SelectionSet,
-    parent_type_name: &str,
-    supergraph: &SupergraphState,
-) {
-    use ast::selection_item::SelectionItem;
-    use ast::selection_set::FieldSelection;
-
-    for item in &mut selection_set.items {
-        match item {
-            SelectionItem::Field(field) => {
-                let Some(field_type_name) = supergraph
-                    .definitions
-                    .get(parent_type_name)
-                    .and_then(|definition| definition.fields().get(&field.name))
-                    .map(|field_definition| field_definition.field_type.inner_type())
-                else {
-                    continue;
-                };
-                let is_composite = supergraph
-                    .definitions
-                    .get(field_type_name)
-                    .is_some_and(|definition| definition.is_composite_type());
-                if !is_composite {
-                    continue;
-                }
-                inject_skipped_typename_for_selection_set(
-                    &mut field.selections,
-                    field_type_name,
-                    supergraph,
-                );
-                if field.selections.items.is_empty() {
-                    field
-                        .selections
-                        .items
-                        .push(SelectionItem::Field(FieldSelection::new_skipped_typename()));
-                }
-            }
-            SelectionItem::InlineFragment(fragment) => {
-                inject_skipped_typename_for_selection_set(
-                    &mut fragment.selections,
-                    fragment.type_condition.as_str(),
-                    supergraph,
-                );
-            }
-            SelectionItem::FragmentSpread(_) => {
-                // Fragment spreads are removed earlier in normalization.
-            }
-        }
-    }
 }
 
 #[cfg(test)]
