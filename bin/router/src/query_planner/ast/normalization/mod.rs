@@ -56,8 +56,20 @@ pub fn normalize_operation_mut(
     Ok(())
 }
 
+/// Normalizes the operation on the flat AST, see `ast::flat`.
 #[inline]
 pub fn normalize_operation(
+    supergraph: &SupergraphState,
+    query: &query_ast::Document<'static, String>,
+    operation_name: Option<&str>,
+) -> Result<NormalizedDocument, NormalizationError> {
+    let document = ast::flat::tree::from_tree(query);
+    ast::flat::normalize::normalize_operation(supergraph, &document, operation_name)
+}
+
+/// The same, with the passes on the parser's tree. Kept to check the flat one against, and
+/// for `normalize_operation_mut`, which the flat one doesn't do yet.
+pub fn normalize_operation_tree(
     supergraph: &SupergraphState,
     query: &query_ast::Document<'static, String>,
     operation_name: Option<&str>,

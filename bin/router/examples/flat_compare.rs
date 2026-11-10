@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 
 use graphql_tools::parser::query::{Definition, OperationDefinition};
 use hive_router::query_planner::ast::flat;
-use hive_router::query_planner::ast::normalization::normalize_operation;
+use hive_router::query_planner::ast::normalization::{
+    normalize_operation, normalize_operation_tree,
+};
 use hive_router::query_planner::state::supergraph_state::SupergraphState;
 use hive_router::query_planner::utils::parsing::{parse_schema, safe_parse_operation};
 
@@ -274,7 +276,7 @@ fn check(cases: &[Case], states: &[Option<SupergraphState>]) {
         };
         for name in operation_names(&case.query) {
             let old = catch_unwind(AssertUnwindSafe(|| {
-                normalize_operation(state, &tree, name.as_deref())
+                normalize_operation_tree(state, &tree, name.as_deref())
                     .map(|d| (format!("{:?}", d.operation), d.operation_name))
                     .map_err(|e| e.to_string())
             }));
@@ -283,6 +285,17 @@ fn check(cases: &[Case], states: &[Option<SupergraphState>]) {
                     .map(|d| (format!("{:?}", d.operation), d.operation_name))
                     .map_err(|e| e.to_string())
             }));
+            // the pipeline's way in: the parser's tree turned into the flat form
+            let piped = catch_unwind(AssertUnwindSafe(|| {
+                normalize_operation(state, &tree, name.as_deref())
+                    .map(|d| (format!("{:?}", d.operation), d.operation_name))
+                    .map_err(|e| e.to_string())
+            }));
+            if piped.as_ref().ok() != new.as_ref().ok() {
+                differ += 1;
+                println!("TREE CONVERSION DIFFERS {} {:?}", case.label, name);
+                continue;
+            }
             let (old, new) = match (old, new) {
                 (Ok(old), Ok(new)) => (old, new),
                 (Err(_), Err(_)) => {
@@ -321,12 +334,13 @@ fn bench(cases: &[Case], states: &[Option<SupergraphState>]) {
         .and_then(|r| r.parse().ok())
         .unwrap_or(20);
     println!(
-        "{:<44} {:>10} {:>10} {:>12} {:>12}   {:>9} {:>9}  {:>9} {:>9}  {:>9} {:>9}",
+        "{:<44} {:>10} {:>10} {:>12} {:>12} {:>12}   {:>9} {:>9}  {:>9} {:>9}  {:>9} {:>9}",
         "case",
         "parse tree",
         "parse flat",
         "norm tree",
         "norm flat",
+        "norm piped",
         "allocs t",
         "allocs f",
         "peak t",
@@ -347,17 +361,19 @@ fn bench(cases: &[Case], states: &[Option<SupergraphState>]) {
         let parse_flat = best(runs, || flat::parse::parse(&case.query).unwrap());
         let norm_runs = runs.clamp(1, 5);
         let norm_tree = best(norm_runs, || {
+            normalize_operation_tree(state, &tree, name).unwrap()
+        });
+        let norm_piped = best(norm_runs, || {
             normalize_operation(state, &tree, name).unwrap()
         });
         let norm_flat = best(norm_runs, || {
             flat::normalize::normalize_operation(state, &flat_doc, name).unwrap()
         });
 
-        // parse + normalize, allocations and memory, the parsed document dropped at the end
         // what's live after is the normalized operation, the parsed document is dropped
         let (kept, allocs_t, peak_t, live_t) = measure(|| {
             let doc = safe_parse_operation(&case.query).unwrap();
-            normalize_operation(state, &doc, name).unwrap()
+            normalize_operation_tree(state, &doc, name).unwrap()
         });
         drop(kept);
         let (kept, allocs_f, peak_f, live_f) = measure(|| {
@@ -372,12 +388,13 @@ fn bench(cases: &[Case], states: &[Option<SupergraphState>]) {
         let ms = |d: Duration| format!("{:.3}", d.as_secs_f64() * 1e3);
         let mib = |b: usize| format!("{:.1}M", b as f64 / 1048576.0);
         println!(
-            "{:<44} {:>10} {:>10} {:>12} {:>12}   {:>9} {:>9}  {:>9} {:>9}  {:>9} {:>9}",
+            "{:<44} {:>10} {:>10} {:>12} {:>12} {:>12}   {:>9} {:>9}  {:>9} {:>9}  {:>9} {:>9}",
             label,
             ms(parse_tree),
             ms(parse_flat),
             ms(norm_tree),
             ms(norm_flat),
+            ms(norm_piped),
             allocs_t,
             allocs_f,
             mib(peak_t),

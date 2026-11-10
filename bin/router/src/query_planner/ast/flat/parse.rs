@@ -546,23 +546,11 @@ impl<'s> Parser<'s> {
                     self.field_stack.push((name, value));
                 }
                 self.advance()?;
-                // like a BTreeMap: sorted by name, the last one wins on a repeat
-                let strings = &self.doc.strings;
-                let fields = &mut self.field_stack[mark..];
-                fields.sort_by(|a, b| strings.str(a.0).cmp(strings.str(b.0)));
+                // as written, repeats too, like the parser's tree
                 let start = self.doc.object_fields.len() as u32;
-                let mut index = mark;
-                while index < self.field_stack.len() {
-                    let mut last = index;
-                    while last + 1 < self.field_stack.len()
-                        && self.field_stack[last + 1].0 == self.field_stack[index].0
-                    {
-                        last += 1;
-                    }
-                    self.doc.object_fields.push(self.field_stack[last]);
-                    index = last + 1;
-                }
-                self.field_stack.truncate(mark);
+                self.doc
+                    .object_fields
+                    .extend(self.field_stack.drain(mark..));
                 Value::Object(Span {
                     start,
                     len: self.doc.object_fields.len() as u32 - start,

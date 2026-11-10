@@ -11,6 +11,7 @@
 pub mod convert;
 pub mod normalize;
 pub mod parse;
+pub mod tree;
 
 use ahash::HashMap;
 
@@ -91,7 +92,7 @@ pub enum Value {
     Enum(Sym),
     /// Into `Document::value_items`
     List(Span),
-    /// Into `Document::object_fields`, sorted by name and without repeats, like a `BTreeMap`
+    /// Into `Document::object_fields`, as written, repeats too. The planner's AST keeps the last.
     Object(Span),
 }
 
@@ -197,3 +198,6 @@ impl Document {
         self.strings.str(sym)
     }
 }
+
+#[cfg(test)]
+mod tests;
