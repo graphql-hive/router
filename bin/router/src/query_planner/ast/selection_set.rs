@@ -21,13 +21,12 @@ pub struct SelectionSet {
 
 impl<'a, T: query_ast::Text<'a>> From<query_ast::SelectionSet<'a, T>> for SelectionSet {
     fn from(selection_set: query_ast::SelectionSet<'a, T>) -> Self {
-        Self {
-            items: selection_set
-                .items
-                .into_iter()
-                .map(|item| item.into())
-                .collect::<Vec<SelectionItem>>(),
-        }
+        // A new Vec of the exact size. `collect` would reuse the parser's buffer, which is
+        // sized for its bigger items and has room left from the pushes in normalization,
+        // and the normalized operation is kept in a cache.
+        let mut items = Vec::with_capacity(selection_set.items.len());
+        items.extend(selection_set.items.into_iter().map(SelectionItem::from));
+        Self { items }
     }
 }
 

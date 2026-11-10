@@ -140,14 +140,14 @@ fn handle_selection_set(
                 })?;
 
                 if let Some(possible_object_types) = &possible_object_types {
-                    if handle_type_expansion_candidate(
-                        state,
-                        subgraph_name,
-                        possible_object_types,
-                        type_def,
-                        &field,
-                        &mut new_items,
-                    )? {
+                    if should_expand_to_objects(state, possible_object_types, type_def, &field) {
+                        expand_to_objects(
+                            state,
+                            subgraph_name,
+                            possible_object_types,
+                            field,
+                            &mut new_items,
+                        )?;
                         continue;
                     }
                 }
@@ -194,24 +194,21 @@ fn handle_selection_set(
     selection_set.items = new_items;
     Ok(())
 }
-type ShouldContinue = bool;
 
 #[inline]
-fn handle_type_expansion_candidate<'a>(
+fn should_expand_to_objects(
     state: &SupergraphState,
-    subgraph_name: Option<&str>,
     possible_object_types: &[&SupergraphObjectType],
     type_def: &SupergraphDefinition,
-    field: &Field<'a, String>,
-    new_items: &mut Vec<Selection<'a, String>>,
-) -> Result<ShouldContinue, NormalizationError> {
+    field: &Field<'_, String>,
+) -> bool {
     let interface_type = match type_def {
         SupergraphDefinition::Interface(interface_type) => Some(interface_type),
         _ => None,
     };
 
     if interface_type.is_none() {
-        return Ok(false);
+        return false;
     }
     let interface_type = interface_type.unwrap(); // safe due to previous check
 
@@ -246,18 +243,18 @@ fn handle_type_expansion_candidate<'a>(
 
         if subgraphs_with_interface <= 1 {
             // No need to expand if interface is in at most one subgraph.
-            return Ok(false);
+            return false;
         }
 
         let field_def = interface_type.fields.get(&field.name);
         if field_def.is_none() {
-            return Ok(false);
+            return false;
         }
 
         let field_def = field_def.unwrap(); // safe due to previous check
         if field_def.join_field.is_empty() {
             // The field is available everywhere the interface is defined if there's no join info
-            return Ok(false);
+            return false;
         }
 
         // Check if the field is contributed by the interface object,
@@ -284,7 +281,7 @@ fn handle_type_expansion_candidate<'a>(
             });
 
         if is_interface_object_field {
-            return Ok(false);
+            return false;
         }
 
         // All subgraphs where this field is resolvable
@@ -296,13 +293,27 @@ fn handle_type_expansion_candidate<'a>(
 
         if subgraphs_resolving_field >= subgraphs_with_interface {
             // All subgraphs are resolving the field
-            return Ok(false);
+            return false;
         }
     }
 
-    let mut fragments = Vec::with_capacity(possible_object_types.len());
-    for obj in possible_object_types {
-        let mut new_field = field.clone();
+    true
+}
+
+/// The field as one inline fragment per object type, its selections normalized for that type.
+fn expand_to_objects<'a>(
+    state: &SupergraphState,
+    subgraph_name: Option<&str>,
+    possible_object_types: &[&SupergraphObjectType],
+    field: Field<'a, String>,
+    new_items: &mut Vec<Selection<'a, String>>,
+) -> Result<(), NormalizationError> {
+    // a copy for each type, the last one takes the field itself
+    let copies = std::iter::repeat_n(
+        (field.directives.clone(), field),
+        possible_object_types.len(),
+    );
+    for ((directives, mut new_field), obj) in copies.zip(possible_object_types) {
         if !new_field.selection_set.items.is_empty() {
             if let Some(obj_field) = obj.fields.get(&new_field.name) {
                 let inner_type_name = obj_field.field_type.inner_type();
@@ -319,9 +330,9 @@ fn handle_type_expansion_candidate<'a>(
                 )?;
             }
         }
-        fragments.push(Selection::InlineFragment(InlineFragment {
+        new_items.push(Selection::InlineFragment(InlineFragment {
             type_condition: Some(TypeCondition::On(obj.name.clone())),
-            directives: field.directives.clone(),
+            directives,
             selection_set: SelectionSet {
                 span: Default::default(),
                 items: vec![Selection::Field(new_field)],
@@ -329,7 +340,6 @@ fn handle_type_expansion_candidate<'a>(
             position: Default::default(),
         }));
     }
-    new_items.extend(fragments);
 
-    Ok(true)
+    Ok(())
 }
