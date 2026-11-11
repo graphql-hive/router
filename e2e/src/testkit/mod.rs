@@ -48,8 +48,8 @@ use hive_router::{
     pipeline::request_identifiers::RequestIdentifiersService,
     pipeline::request_summary::RequestSummaryService,
     pipeline::response_compression::ResponseCompressionService,
-    plugins::plugins_service::PluginService, telemetry::Telemetry, PluginRegistry, RouterPaths,
-    RouterSharedState, SchemaState,
+    plugins::plugins_service::PluginService, telemetry::Telemetry, PluginRegistry, RouterAppState,
+    RouterPaths, RouterSharedState, SchemaState,
 };
 use subgraphs::{subgraphs_app, HTTPStreamingSubscriptionProtocol};
 
@@ -886,8 +886,10 @@ impl TestRouter<Built> {
         let serv_dispatch = tracing::dispatcher::get_default(|d| d.clone());
 
         let serv_shared_state = shared_state.clone();
-        let serv_schema_state = schema_state.clone();
-        let serv_callback_subs = schema_state.callback_subscriptions.clone();
+        let app_state = RouterAppState {
+            shared: shared_state.clone(),
+            schema: schema_state.clone(),
+        };
         let serv_graphql_path = self.graphql_path.clone();
         let serv_websocket_path = self.websocket_path.clone();
 
@@ -901,23 +903,23 @@ impl TestRouter<Built> {
             }) => {
                 let cb_path = path.to_string();
                 let cb_addr = listen.to_string();
-                let cb_subs = schema_state.callback_subscriptions.clone();
-                let cb_telemetry_context = shared_state.telemetry_context.clone();
+                let cb_state = app_state.clone();
 
                 let cb_cfg = SharedCfg::new("HIVE_ROUTER_TEST_CALLBACK")
                     .add(hive_router::build_http_service_config(config));
-                let server = web::HttpServer::new(async move || {
-                    let cb_subs = cb_subs.clone();
-                    let cb_path = cb_path.clone();
-                    let telemetry_context = cb_telemetry_context.clone();
-                    web::App::new()
-                        .state(cb_subs)
-                        .state(telemetry_context)
-                        .configure(move |m| add_callback_handler(m, &cb_path))
-                })
-                .config(cb_cfg)
-                .shutdown_timeout(config.shutdown_timeout())
-                .bind(&cb_addr)
+                // same typed state as the main server, like the production callback server
+                let server = web::HttpServer::with_config(
+                    async move || Ok::<_, std::io::Error>(cb_state.clone()),
+                    async move |_| {
+                        let cb_path = cb_path.clone();
+                        web::App::<RouterAppState>::new()
+                            .configure(move |m| add_callback_handler(m, &cb_path))
+                    },
+                )
+                // unpinned like the production callback server
+                .affinity(ntex::server::Affinity::Disabled)
+                .graceful_shutdown_timeout(config.shutdown_timeout())
+                .bind(&cb_addr, cb_cfg)
                 .expect("failed to bind callback server")
                 .run();
 
@@ -970,13 +972,11 @@ impl TestRouter<Built> {
             ))
             .build();
 
-        let app_factory = move || {
-            let shared_state = serv_shared_state.clone();
-            let schema_state = serv_schema_state.clone();
+        // builds the app for the typed state of a worker, both servers below call it
+        let app_factory = move |_: &RouterAppState| {
             let paths = serv_paths.clone();
             let prometheus = serv_prometheus.clone();
             let serv_callback_path = serv_callback_path.clone();
-            let callback_subs = serv_callback_subs.clone();
             let long_lived_limit = long_lived_limit.clone();
             let response_compression = response_compression.clone();
 
@@ -991,21 +991,19 @@ impl TestRouter<Built> {
             std::mem::forget(guard);
 
             async move {
-                web::App::new()
-                    .middleware(long_lived_limit)
+                // the first registered middleware is the outermost layer, same order as the router
+                web::App::<RouterAppState>::new()
+                    .middleware(response_compression)
+                    .middleware(RequestIdentifiersService)
+                    .middleware(RequestSummaryService::new(&paths.graphql))
                     .middleware(PluginService::new(
                         paths.clone(),
                         prometheus.as_ref().map(|p| p.endpoint.clone()),
                     ))
-                    .middleware(RequestSummaryService::new(&paths.graphql))
-                    .middleware(RequestIdentifiersService)
-                    .middleware(response_compression)
-                    .state(shared_state.clone())
-                    .state(schema_state)
-                    .state(callback_subs)
-                    .state(shared_state.telemetry_context.clone())
-                    .configure(|m| configure_ntex_app(m, &paths, prometheus))
+                    .middleware(long_lived_limit)
+                    // `App::configure` can only be called once, so both registrations share it
                     .configure(|m| {
+                        configure_ntex_app(m, &paths, prometheus);
                         if let Some(ref callback) = serv_callback_path {
                             add_callback_handler(m, callback);
                         }
@@ -1021,13 +1019,17 @@ impl TestRouter<Built> {
             // worker count, ntex's per-worker connection accounting loses track of the one
             // in-flight connection during a graceful stop, so the client hangs forever
             // instead of seeing the connection force-dropped at the shutdown timeout.
-            let server = web::HttpServer::new(app_factory)
-                .config(srv_cfg)
-                .shutdown_timeout(config.shutdown_timeout())
-                .workers(1)
-                .listen(serv_listener)
-                .expect("failed to bind real http server for test router")
-                .run();
+            let server = web::HttpServer::with_config(
+                async move || Ok::<_, std::io::Error>(app_state.clone()),
+                app_factory,
+            )
+            // unpinned like the production server
+            .affinity(ntex::server::Affinity::Disabled)
+            .graceful_shutdown_timeout(config.shutdown_timeout())
+            .workers(1)
+            .listen(serv_listener, srv_cfg)
+            .expect("failed to bind real http server for test router")
+            .run();
 
             ntex::util::Either::Right(RealHttpServer {
                 addr: serv_local_addr,
@@ -1047,7 +1049,13 @@ impl TestRouter<Built> {
                 serv_config = serv_config.rustls(rustls_config);
             }
 
-            ntex::util::Either::Left(test::server_with(serv_config, app_factory).await)
+            // the test server only serves apps with unit state, so the app binds its typed
+            // state itself with `build_with` and is served like any `()` app
+            ntex::util::Either::Left(test::server_with(serv_config, async move |_: &()| {
+                app_factory(&app_state)
+                    .await
+                    .build_with::<()>(app_state.clone())
+            }))
         };
 
         let mut hold_until_drop = self._hold_until_drop;

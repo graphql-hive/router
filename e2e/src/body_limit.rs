@@ -1,7 +1,5 @@
 #[cfg(test)]
 mod body_limit_e2e_tests {
-    use ntex::web::WebResponseError;
-
     use crate::testkit::{ClientResponseExt, TestRouter};
     #[ntex::test]
     async fn should_return_payload_too_large_if_limit_exceeds_while_reading_the_stream() {
@@ -97,7 +95,8 @@ mod body_limit_e2e_tests {
             "#);
             }
             Err(e) => {
-                assert_eq!(e.status_code(), ntex::http::StatusCode::PAYLOAD_TOO_LARGE);
+                // a client error carries no http status, so it can never be the expected 413
+                panic!("expected a 413 response, got a client error: {e}");
             }
         }
     }

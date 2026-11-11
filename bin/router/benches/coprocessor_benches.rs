@@ -1,5 +1,5 @@
 use bytes::Bytes as HyperBytes;
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, Bencher, Criterion};
 use hive_router::config::coprocessor::{
     ContextSelection, CoprocessorGraphqlRequestIncludeConfig,
     CoprocessorGraphqlResponseIncludeConfig, CoprocessorHookConfig,
@@ -16,9 +16,11 @@ use hive_router::executor::coprocessor::stages::router::{
 use hive_router::executor::hooks::on_graphql_params::GraphQLParams;
 use hive_router::executor::request_context::SharedRequestContext;
 use ntex::http::header::{HeaderName, HeaderValue};
-use ntex::http::StatusCode;
+use ntex::http::HeaderMap;
+use ntex::http::{Payload, StatusCode};
 use ntex::util::Bytes as NtexBytes;
-use ntex::web::{self, test, DefaultError};
+use ntex::web::{self, test};
+use std::cell::RefCell;
 use std::hint::black_box;
 use std::ops::ControlFlow;
 
@@ -37,7 +39,8 @@ fn run_stage<'a, 'b, S>(
     context: &'a SharedRequestContext,
     response_bytes: &'b HyperBytes,
     id: &'a str,
-) where
+) -> S::Input<'a>
+where
     S: Stage,
 {
     let request = <S as Stage>::build_request(
@@ -59,45 +62,121 @@ fn run_stage<'a, 'b, S>(
         ControlFlow::Continue(parsed) => {
             <S as Stage>::apply_mutations(stage, black_box(parsed), black_box(&mut input))
                 .expect("apply_mutations should succeed");
-            let _ = black_box(input);
         }
         ControlFlow::Break(response) => {
             let _ = black_box(response);
         }
     }
+
+    // handed back so callers can reuse the request, see `RequestPool`
+    black_box(input)
 }
 
-fn make_web_request(
-    method: ntex::http::Method,
-    path: &str,
-    body: &'static [u8],
-    header_count: usize,
-) -> web::WebRequest<DefaultError> {
-    let mut req = test::TestRequest::default()
-        .method(method)
-        .uri(path)
-        .set_payload(body);
+// ntex gives every `TestRequest` its own config and parks each dropped request forever in a
+// thread-local pool keyed by that config. a fresh request per iteration leaks ~1KiB and criterion
+// runs millions of them, so all router stage benches share one pool of reused requests. it grows
+// up to the largest criterion batch and is dropped only once, when all benchmarks are done
+type RequestPool = RefCell<Vec<web::WebRequest<()>>>;
 
+// pops a pooled request, or makes the pool grow, and resets whatever the previous iteration or
+// bench left on it. the stages read the body from the input bytes, never from the payload
+fn take_request(
+    pool: &RequestPool,
+    method: &ntex::http::Method,
+    headers: &HeaderMap,
+) -> web::WebRequest<()> {
+    let reused = pool.borrow_mut().pop();
+    let mut req = reused.unwrap_or_else(|| {
+        test::TestRequest::default()
+            .uri("/graphql")
+            .to_srv_request()
+    });
+    req.head_mut().method = method.clone();
+    *req.headers_mut() = headers.clone();
+    req.set_payload(Payload::None);
+    req
+}
+
+fn make_headers(prefix: &str, header_count: usize) -> HeaderMap {
+    let mut headers = HeaderMap::new();
     for i in 0..header_count {
-        req = req.header(format!("x-bench-{i}"), "value");
+        let name = HeaderName::from_bytes(format!("{prefix}-{i}").as_bytes()).unwrap();
+        headers.insert(name, HeaderValue::from_static("value"));
     }
-
-    req.to_srv_request()
+    headers
 }
 
-fn make_web_response(
-    status_code: ntex::http::StatusCode,
+fn bench_router_request<'a>(
+    pool: &'a RequestPool,
+    stage: &'a RouterRequestStage,
+    method: ntex::http::Method,
+    body: Option<&'static [u8]>,
+    header_count: usize,
+    response_json: &'static [u8],
+) -> impl FnMut(&mut Bencher) + 'a {
+    let headers = make_headers("x-bench", header_count);
+
+    move |b| {
+        b.iter_batched(
+            || take_request(pool, &method, &headers),
+            |req| {
+                let input = RouterRequestInput::new(req, body.map(NtexBytes::from_static));
+                let context = SharedRequestContext::default();
+                let response_bytes = HyperBytes::from_static(response_json);
+                let id = "id";
+                let input = run_stage(
+                    black_box(stage),
+                    black_box(input),
+                    black_box(&context),
+                    black_box(&response_bytes),
+                    black_box(id),
+                );
+                pool.borrow_mut().push(input.into_request());
+            },
+            BatchSize::SmallInput,
+        )
+    }
+}
+
+fn bench_router_response<'a>(
+    pool: &'a RequestPool,
+    stage: &'a RouterResponseStage,
     body: &'static str,
     header_count: usize,
-) -> web::WebResponse {
-    let req = test::TestRequest::default().to_srv_request();
-    let mut builder = web::HttpResponse::build(status_code);
-    for i in 0..header_count {
-        let name = HeaderName::from_bytes(format!("x-resp-{i}").as_bytes()).unwrap();
-        builder.set_header(name, HeaderValue::from_static("value"));
-    }
+    response_json: &'static [u8],
+) -> impl FnMut(&mut Bencher) + 'a {
+    let response_headers = make_headers("x-resp", header_count);
+    let no_headers = HeaderMap::new();
 
-    req.into_response(builder.body(body))
+    move |b| {
+        b.iter_batched(
+            || {
+                let req = take_request(pool, &ntex::http::Method::GET, &no_headers);
+                let mut builder = web::HttpResponse::builder(StatusCode::OK);
+                for (name, value) in response_headers.iter() {
+                    builder.set_header(name.clone(), value.clone());
+                }
+                req.into_response(builder.body(body))
+            },
+            |response| {
+                let input = RouterResponseInput::new(response);
+                let context = SharedRequestContext::default();
+                let response_bytes = HyperBytes::from_static(response_json);
+                let id = "id";
+                let input = run_stage(
+                    black_box(stage),
+                    black_box(input),
+                    black_box(&context),
+                    black_box(&response_bytes),
+                    black_box(id),
+                );
+                let (_, request) = input.into_response().into_parts();
+                pool.borrow_mut()
+                    .push(web::WebRequest::from_request(request));
+            },
+            BatchSize::SmallInput,
+        )
+    }
 }
 
 fn make_http_request(
@@ -127,7 +206,7 @@ fn make_graphql_http_response(
     body: &'static [u8],
     header_count: usize,
 ) -> web::HttpResponse {
-    let mut response = web::HttpResponse::build(status);
+    let mut response = web::HttpResponse::builder(status);
     for i in 0..header_count {
         let name = HeaderName::from_bytes(format!("x-graphql-resp-{i}").as_bytes()).unwrap();
         response.set_header(name, HeaderValue::from_static("value"));
@@ -136,7 +215,7 @@ fn make_graphql_http_response(
     response.body(NtexBytes::from_static(body))
 }
 
-fn bench_router_request_stage(c: &mut Criterion) {
+fn bench_router_request_stage(c: &mut Criterion, pool: &RequestPool) {
     let minimal_stage = RouterRequestStage::from_config(&CoprocessorHookConfig::new(
         None,
         CoprocessorRouterRequestIncludeConfig::default(),
@@ -155,93 +234,60 @@ fn bench_router_request_stage(c: &mut Criterion) {
     .expect("router.request stage should compile");
 
     let mut group = c.benchmark_group("coprocessor/router.request");
+    const BODY: &[u8] = b"{\"query\":\"{ me { id } }\"}";
 
-    group.bench_function("end_to_end/minimal_continue", |b| {
-        b.iter_batched(
-            || make_web_request(ntex::http::Method::GET, "/graphql", b"", 8),
-            |req| {
-                let input = RouterRequestInput::new(req, None);
-                let context = SharedRequestContext::default();
-                let response_bytes = HyperBytes::from_static(MINIMAL_CONTINUE_RESPONSE_JSON);
-                let id = "id";
-                run_stage(
-                    black_box(&minimal_stage),
-                    black_box(input),
-                    black_box(&context),
-                    black_box(&response_bytes),
-                    black_box(id),
-                );
-            },
-            BatchSize::SmallInput,
-        )
-    });
+    group.bench_function(
+        "end_to_end/minimal_continue",
+        bench_router_request(
+            pool,
+            &minimal_stage,
+            ntex::http::Method::GET,
+            None,
+            8,
+            MINIMAL_CONTINUE_RESPONSE_JSON,
+        ),
+    );
 
-    group.bench_function("end_to_end/full_continue", |b| {
-        const BODY: &[u8] = b"{\"query\":\"{ me { id } }\"}";
-        b.iter_batched(
-            || make_web_request(ntex::http::Method::POST, "/graphql", BODY, 32),
-            |req| {
-                let input = RouterRequestInput::new(req, Some(NtexBytes::from_static(BODY)));
-                let context = SharedRequestContext::default();
-                let response_bytes = HyperBytes::from_static(CONTINUE_RESPONSE_JSON);
-                let id = "id";
-                run_stage(
-                    black_box(&full_stage),
-                    black_box(input),
-                    black_box(&context),
-                    black_box(&response_bytes),
-                    black_box(id),
-                );
-            },
-            BatchSize::SmallInput,
-        )
-    });
+    group.bench_function(
+        "end_to_end/full_continue",
+        bench_router_request(
+            pool,
+            &full_stage,
+            ntex::http::Method::POST,
+            Some(BODY),
+            32,
+            CONTINUE_RESPONSE_JSON,
+        ),
+    );
 
-    group.bench_function("end_to_end/minimal_break", |b| {
-        b.iter_batched(
-            || make_web_request(ntex::http::Method::GET, "/graphql", b"", 8),
-            |req| {
-                let input = RouterRequestInput::new(req, None);
-                let context = SharedRequestContext::default();
-                let response_bytes = HyperBytes::from_static(MINIMAL_BREAK_RESPONSE_JSON);
-                let id = "id";
-                run_stage(
-                    black_box(&minimal_stage),
-                    black_box(input),
-                    black_box(&context),
-                    black_box(&response_bytes),
-                    black_box(id),
-                );
-            },
-            BatchSize::SmallInput,
-        )
-    });
+    group.bench_function(
+        "end_to_end/minimal_break",
+        bench_router_request(
+            pool,
+            &minimal_stage,
+            ntex::http::Method::GET,
+            None,
+            8,
+            MINIMAL_BREAK_RESPONSE_JSON,
+        ),
+    );
 
-    group.bench_function("end_to_end/full_break", |b| {
-        const BODY: &[u8] = b"{\"query\":\"{ me { id } }\"}";
-        b.iter_batched(
-            || make_web_request(ntex::http::Method::POST, "/graphql", BODY, 32),
-            |req| {
-                let input = RouterRequestInput::new(req, Some(NtexBytes::from_static(BODY)));
-                let context = SharedRequestContext::default();
-                let response_bytes = HyperBytes::from_static(BREAK_RESPONSE_JSON);
-                let id = "id";
-                run_stage(
-                    black_box(&full_stage),
-                    black_box(input),
-                    black_box(&context),
-                    black_box(&response_bytes),
-                    black_box(id),
-                );
-            },
-            BatchSize::SmallInput,
-        )
-    });
+    group.bench_function(
+        "end_to_end/full_break",
+        bench_router_request(
+            pool,
+            &full_stage,
+            ntex::http::Method::POST,
+            Some(BODY),
+            32,
+            BREAK_RESPONSE_JSON,
+        ),
+    );
 
     group.finish();
 }
 
-fn bench_router_response_stage(c: &mut Criterion) {
+fn bench_router_response_stage(c: &mut Criterion, pool: &RequestPool) {
     let minimal_stage =
         RouterResponseStage::from_config(&CoprocessorHookConfig::new(None, Default::default()))
             .expect("router.response stage should compile");
@@ -258,98 +304,27 @@ fn bench_router_response_stage(c: &mut Criterion) {
     .expect("router.response stage should compile");
 
     let mut group = c.benchmark_group("coprocessor/router.response");
+    const BODY: &str = "{\"data\":{\"hello\":\"world\"}}";
 
-    group.bench_function("end_to_end/minimal_continue", |b| {
-        b.iter_batched(
-            || make_web_response(ntex::http::StatusCode::OK, "", 8),
-            |response| {
-                let input = RouterResponseInput::new(response);
-                let context = SharedRequestContext::default();
-                let response_bytes = HyperBytes::from_static(MINIMAL_CONTINUE_RESPONSE_JSON);
-                let id = "id";
-                run_stage(
-                    black_box(&minimal_stage),
-                    black_box(input),
-                    black_box(&context),
-                    black_box(&response_bytes),
-                    black_box(id),
-                );
-            },
-            BatchSize::SmallInput,
-        )
-    });
+    group.bench_function(
+        "end_to_end/minimal_continue",
+        bench_router_response(pool, &minimal_stage, "", 8, MINIMAL_CONTINUE_RESPONSE_JSON),
+    );
 
-    group.bench_function("end_to_end/full_continue", |b| {
-        b.iter_batched(
-            || {
-                make_web_response(
-                    ntex::http::StatusCode::OK,
-                    "{\"data\":{\"hello\":\"world\"}}",
-                    32,
-                )
-            },
-            |response| {
-                let input = RouterResponseInput::new(response);
-                let context = SharedRequestContext::default();
-                let response_bytes = HyperBytes::from_static(CONTINUE_RESPONSE_JSON);
-                let id = "id";
-                run_stage(
-                    black_box(&full_stage),
-                    black_box(input),
-                    black_box(&context),
-                    black_box(&response_bytes),
-                    black_box(id),
-                );
-            },
-            BatchSize::SmallInput,
-        )
-    });
+    group.bench_function(
+        "end_to_end/full_continue",
+        bench_router_response(pool, &full_stage, BODY, 32, CONTINUE_RESPONSE_JSON),
+    );
 
-    group.bench_function("end_to_end/minimal_break", |b| {
-        b.iter_batched(
-            || make_web_response(ntex::http::StatusCode::OK, "", 8),
-            |response| {
-                let input = RouterResponseInput::new(response);
-                let context = SharedRequestContext::default();
-                let response_bytes = HyperBytes::from_static(MINIMAL_BREAK_RESPONSE_JSON);
-                let id = "id";
-                run_stage(
-                    black_box(&minimal_stage),
-                    black_box(input),
-                    black_box(&context),
-                    black_box(&response_bytes),
-                    black_box(id),
-                );
-            },
-            BatchSize::SmallInput,
-        )
-    });
+    group.bench_function(
+        "end_to_end/minimal_break",
+        bench_router_response(pool, &minimal_stage, "", 8, MINIMAL_BREAK_RESPONSE_JSON),
+    );
 
-    group.bench_function("end_to_end/full_break", |b| {
-        b.iter_batched(
-            || {
-                make_web_response(
-                    ntex::http::StatusCode::OK,
-                    "{\"data\":{\"hello\":\"world\"}}",
-                    32,
-                )
-            },
-            |response| {
-                let input = RouterResponseInput::new(response);
-                let context = SharedRequestContext::default();
-                let response_bytes = HyperBytes::from_static(BREAK_RESPONSE_JSON);
-                let id = "id";
-                run_stage(
-                    black_box(&full_stage),
-                    black_box(input),
-                    black_box(&context),
-                    black_box(&response_bytes),
-                    black_box(id),
-                );
-            },
-            BatchSize::SmallInput,
-        )
-    });
+    group.bench_function(
+        "end_to_end/full_break",
+        bench_router_response(pool, &full_stage, BODY, 32, BREAK_RESPONSE_JSON),
+    );
 
     group.finish();
 }
@@ -373,116 +348,92 @@ fn bench_graphql_request_stage(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("coprocessor/graphql.request");
 
+    // built once per bench, see `RequestPool` for why
+    let request = make_http_request(ntex::http::Method::GET, "/graphql", 8);
     group.bench_function("end_to_end/minimal_continue", |b| {
-        b.iter_batched(
-            || make_http_request(ntex::http::Method::GET, "/graphql", 8),
-            |request| {
-                let mut request_headers = request.headers().clone();
-                let mut graphql_params = GraphQLParams::default();
-                let context = SharedRequestContext::default();
-                let input = GraphqlRequestInput::new(
-                    &request,
-                    &mut request_headers,
-                    &mut graphql_params,
-                    None,
-                );
+        b.iter(|| {
+            let mut request_headers = request.headers().clone();
+            let mut graphql_params = GraphQLParams::default();
+            let context = SharedRequestContext::default();
+            let input =
+                GraphqlRequestInput::new(&request, &mut request_headers, &mut graphql_params, None);
 
-                let response_bytes = HyperBytes::from_static(MINIMAL_CONTINUE_RESPONSE_JSON);
-                let id = "id";
-                run_stage(
-                    black_box(&minimal_stage),
-                    black_box(input),
-                    black_box(&context),
-                    black_box(&response_bytes),
-                    black_box(id),
-                );
-            },
-            BatchSize::SmallInput,
-        )
+            let response_bytes = HyperBytes::from_static(MINIMAL_CONTINUE_RESPONSE_JSON);
+            let id = "id";
+            run_stage(
+                black_box(&minimal_stage),
+                black_box(input),
+                black_box(&context),
+                black_box(&response_bytes),
+                black_box(id),
+            );
+        })
     });
 
+    // built once per bench, see `RequestPool` for why
+    let request = make_http_request(ntex::http::Method::POST, "/graphql", 32);
     group.bench_function("end_to_end/full_continue", |b| {
-        b.iter_batched(
-            || make_http_request(ntex::http::Method::POST, "/graphql", 32),
-            |request| {
-                let mut request_headers = request.headers().clone();
-                let mut graphql_params = make_graphql_params();
-                let context = SharedRequestContext::default();
-                let input = GraphqlRequestInput::new(
-                    &request,
-                    &mut request_headers,
-                    &mut graphql_params,
-                    None,
-                );
+        b.iter(|| {
+            let mut request_headers = request.headers().clone();
+            let mut graphql_params = make_graphql_params();
+            let context = SharedRequestContext::default();
+            let input =
+                GraphqlRequestInput::new(&request, &mut request_headers, &mut graphql_params, None);
 
-                let response_bytes = HyperBytes::from_static(GRAPHQL_CONTINUE_RESPONSE_JSON);
-                let id = "id";
-                run_stage(
-                    black_box(&full_stage),
-                    black_box(input),
-                    black_box(&context),
-                    black_box(&response_bytes),
-                    black_box(id),
-                );
-            },
-            BatchSize::SmallInput,
-        )
+            let response_bytes = HyperBytes::from_static(GRAPHQL_CONTINUE_RESPONSE_JSON);
+            let id = "id";
+            run_stage(
+                black_box(&full_stage),
+                black_box(input),
+                black_box(&context),
+                black_box(&response_bytes),
+                black_box(id),
+            );
+        })
     });
 
+    // built once per bench, see `RequestPool` for why
+    let request = make_http_request(ntex::http::Method::GET, "/graphql", 8);
     group.bench_function("end_to_end/minimal_break", |b| {
-        b.iter_batched(
-            || make_http_request(ntex::http::Method::GET, "/graphql", 8),
-            |request| {
-                let mut request_headers = request.headers().clone();
-                let mut graphql_params = GraphQLParams::default();
-                let context = SharedRequestContext::default();
-                let input = GraphqlRequestInput::new(
-                    &request,
-                    &mut request_headers,
-                    &mut graphql_params,
-                    None,
-                );
+        b.iter(|| {
+            let mut request_headers = request.headers().clone();
+            let mut graphql_params = GraphQLParams::default();
+            let context = SharedRequestContext::default();
+            let input =
+                GraphqlRequestInput::new(&request, &mut request_headers, &mut graphql_params, None);
 
-                let response_bytes = HyperBytes::from_static(MINIMAL_BREAK_RESPONSE_JSON);
-                let id = "id";
-                run_stage(
-                    black_box(&minimal_stage),
-                    black_box(input),
-                    black_box(&context),
-                    black_box(&response_bytes),
-                    black_box(id),
-                );
-            },
-            BatchSize::SmallInput,
-        )
+            let response_bytes = HyperBytes::from_static(MINIMAL_BREAK_RESPONSE_JSON);
+            let id = "id";
+            run_stage(
+                black_box(&minimal_stage),
+                black_box(input),
+                black_box(&context),
+                black_box(&response_bytes),
+                black_box(id),
+            );
+        })
     });
 
+    // built once per bench, see `RequestPool` for why
+    let request = make_http_request(ntex::http::Method::POST, "/graphql", 32);
     group.bench_function("end_to_end/full_break", |b| {
-        b.iter_batched(
-            || make_http_request(ntex::http::Method::POST, "/graphql", 32),
-            |request| {
-                let mut request_headers = request.headers().clone();
-                let mut graphql_params = make_graphql_params();
-                let context = SharedRequestContext::default();
-                let input = GraphqlRequestInput::new(
-                    &request,
-                    &mut request_headers,
-                    &mut graphql_params,
-                    None,
-                );
+        b.iter(|| {
+            let mut request_headers = request.headers().clone();
+            let mut graphql_params = make_graphql_params();
+            let context = SharedRequestContext::default();
+            let input =
+                GraphqlRequestInput::new(&request, &mut request_headers, &mut graphql_params, None);
 
-                let response_bytes = HyperBytes::from_static(GRAPHQL_BREAK_RESPONSE_JSON);
-                let id = "id";
-                run_stage(
-                    black_box(&full_stage),
-                    black_box(input),
-                    black_box(&context),
-                    black_box(&response_bytes),
-                    black_box(id),
-                );
-            },
-            BatchSize::SmallInput,
-        )
+            let response_bytes = HyperBytes::from_static(GRAPHQL_BREAK_RESPONSE_JSON);
+            let id = "id";
+            run_stage(
+                black_box(&full_stage),
+                black_box(input),
+                black_box(&context),
+                black_box(&response_bytes),
+                black_box(id),
+            );
+        })
     });
 
     group.finish();
@@ -596,8 +547,9 @@ fn bench_graphql_response_stage(c: &mut Criterion) {
 }
 
 fn all_benchmarks(c: &mut Criterion) {
-    bench_router_request_stage(c);
-    bench_router_response_stage(c);
+    let pool = RequestPool::default();
+    bench_router_request_stage(c, &pool);
+    bench_router_response_stage(c, &pool);
     bench_graphql_request_stage(c);
     bench_graphql_response_stage(c);
 }

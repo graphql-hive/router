@@ -7,6 +7,29 @@ pub use vrl::{compiler::Program as VrlProgram, core::Value as VrlValue};
 
 pub use vrl::prelude::{ExpressionError as VrlExpressionError, Function as VrlFunction};
 
+/// Converts a request URL into the VRL `.request.url` object with `host`, `path` and `port`
+/// fields, the same shape that [`ToVrlValue`] produces for `http::Uri`.
+///
+/// A URL without a host (like an origin-form request target) reports the host as `unknown`.
+/// A URL without an explicit port reports the default port of its scheme.
+pub fn url_to_vrl_value(url: &ntex::url::Url) -> VrlValue {
+    // ToVrlValue lives in hive-console-sdk which has no ntex dependency, hence the free fn
+    VrlValue::Object(std::collections::BTreeMap::from([
+        ("host".into(), url.host().unwrap_or("unknown").into()),
+        ("path".into(), url.path().as_str().into()),
+        (
+            "port".into(),
+            url.port_u16()
+                .unwrap_or(if url.scheme_str() == Some("https") {
+                    443
+                } else {
+                    80
+                })
+                .into(),
+        ),
+    ]))
+}
+
 /// Generic enum for a value that can be either static or computed via VRL expression
 #[derive(Clone)]
 pub enum ValueOrProgram<T> {

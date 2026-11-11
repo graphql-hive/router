@@ -1336,4 +1336,82 @@ mod compression_e2e_tests {
         assert_eq!(res.status(), 200);
         assert!(res.header(CONTENT_ENCODING.as_str()).is_none());
     }
+
+    /// Short-circuits graphql requests with a body that is already gzip-encoded, like a plugin
+    /// serving a pre-compressed payload from a cache.
+    #[derive(Default)]
+    struct PreEncodedResponsePlugin;
+
+    #[hive_router::async_trait]
+    impl hive_router::plugins::plugin_trait::RouterPlugin for PreEncodedResponsePlugin {
+        type Config = ();
+
+        fn plugin_name() -> &'static str {
+            "test_pre_encoded_response"
+        }
+
+        fn on_plugin_init(
+            payload: hive_router::plugins::hooks::on_plugin_init::OnPluginInitPayload<Self>,
+        ) -> hive_router::plugins::hooks::on_plugin_init::OnPluginInitResult<Self> {
+            payload.initialize_plugin_with_defaults()
+        }
+
+        fn on_http_request<'req>(
+            &self,
+            payload: hive_router::plugins::hooks::on_http_request::OnHttpRequestHookPayload<'req>,
+        ) -> hive_router::plugins::hooks::on_http_request::OnHttpRequestHookFuture<'req> {
+            use hive_router::plugins::plugin_trait::StartHookPayload;
+            Box::pin(async move {
+                let response = ntex::web::HttpResponse::Ok()
+                    .header(CONTENT_TYPE, "application/json")
+                    .header(CONTENT_ENCODING, "gzip")
+                    .body(gzip_compress(br#"{"data":{"__typename":"Query"}}"#));
+                payload.end_with_response(response)
+            })
+        }
+    }
+
+    #[ntex::test]
+    async fn should_not_compress_responses_that_already_have_a_content_encoding() {
+        let router = TestRouter::builder()
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    router:
+                        compression:
+                            response:
+                                min_size: 1B
+                plugins:
+                    test_pre_encoded_response:
+                        enabled: true
+                "#,
+            )
+            .register_plugin::<PreEncodedResponsePlugin>()
+            .build()
+            .start()
+            .await;
+
+        // gzip and br cover both the small body in-place path and the blocking pool path
+        for accept_encoding in ["gzip", "br"] {
+            let res = send_graphql_request_raw(
+                &router,
+                "{ __typename }",
+                some_header_map! { ACCEPT_ENCODING => accept_encoding }.unwrap(),
+            )
+            .await;
+
+            assert_eq!(res.status(), 200);
+            assert_eq!(
+                res.header(CONTENT_ENCODING.as_str()).map(|v| v.as_bytes()),
+                Some(b"gzip".as_slice()),
+                "the plugin's encoding must be kept for accept-encoding {accept_encoding}"
+            );
+
+            let raw_body = res.body().await.expect("failed to read response body");
+            assert_typename_response(&gzip_decompress(&raw_body));
+        }
+    }
 }

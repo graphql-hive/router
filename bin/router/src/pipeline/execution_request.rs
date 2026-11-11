@@ -501,7 +501,7 @@ impl<'a, 'p> OperationPreparation<'a, 'p> {
 
     #[inline]
     fn decode_get(&self) -> Result<PreparedOperation, PipelineError> {
-        let query_params_str = self.req.uri().query();
+        let query_params_str = self.req.uri().query().map(|q| q.as_str());
         let query_params = if let Some(q) = query_params_str {
             Query::<GraphQLGetInput>::from_query(q)?.0
         } else {

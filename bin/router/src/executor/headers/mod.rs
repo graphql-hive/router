@@ -376,7 +376,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut response = ntex::http::Response::Ok().finish();
+        let mut response = ntex::http::Response::Ok().build();
         accumulator
             .modify_client_response_headers(response.headers_mut())
             .unwrap();
@@ -444,7 +444,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut response = ntex::http::Response::Ok().finish();
+        let mut response = ntex::http::Response::Ok().build();
         accumulator
             .modify_client_response_headers(response.headers_mut())
             .unwrap();
@@ -505,7 +505,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut response = ntex::http::Response::Ok().finish();
+        let mut response = ntex::http::Response::Ok().build();
         accumulator
             .modify_client_response_headers(response.headers_mut())
             .unwrap();
@@ -566,7 +566,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut response = ntex::http::Response::Ok().finish();
+        let mut response = ntex::http::Response::Ok().build();
         accumulator
             .modify_client_response_headers(response.headers_mut())
             .unwrap();
@@ -622,7 +622,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut response = ntex::http::Response::Ok().finish();
+        let mut response = ntex::http::Response::Ok().build();
         accumulator
             .modify_client_response_headers(response.headers_mut())
             .unwrap();

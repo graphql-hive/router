@@ -23,7 +23,7 @@ impl RequestContextExt for web::HttpRequest {
     }
 }
 
-impl RequestContextExt for web::WebRequest<web::DefaultError> {
+impl RequestContextExt for web::WebRequest<()> {
     #[inline]
     fn read_request_context(&self) -> Result<SharedRequestContext, RequestContextError> {
         self.extensions()

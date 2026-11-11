@@ -29,7 +29,7 @@ use tracing::{field::Empty, info_span, record_all, Level, Span};
 pub trait HttpServerSpanRequest {
     fn headers(&self) -> &NtexHeaderMap;
     fn method(&self) -> &Method;
-    fn uri(&self) -> &Uri;
+    fn uri(&self) -> &ntex::url::Url;
     fn version(&self) -> Version;
     fn peer_addr(&self) -> Option<SocketAddr>;
     fn route_pattern(&self) -> &'static str;
@@ -51,7 +51,7 @@ impl HttpServerSpanRequest for ntex::web::HttpRequest {
             .unwrap_or_default()
     }
 
-    fn uri(&self) -> &Uri {
+    fn uri(&self) -> &ntex::url::Url {
         self.uri()
     }
 
@@ -134,7 +134,7 @@ impl HttpServerRequestSpan {
             "server.address" = server_address,
             "server.port" = server_port.map(otel_int),
             "url.full" = %url,
-            "url.path" = url.path(),
+            "url.path" = url.path().as_str(),
             "url.scheme" = url_scheme,
             "http.request.body.size" = Empty,
             "http.request.method" = request_method,

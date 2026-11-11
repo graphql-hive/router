@@ -4,7 +4,7 @@ use crate::config::coprocessor::{
     CoprocessorHookConfig, CoprocessorRouterRequestIncludeConfig,
     CoprocessorRouterResponseIncludeConfig,
 };
-use crate::vrl::expressions::{BooleanOrProgram, ToVrlValue};
+use crate::vrl::expressions::{url_to_vrl_value, BooleanOrProgram};
 use futures::stream;
 use ntex::http::{
     body::{Body, ResponseBody},
@@ -12,7 +12,7 @@ use ntex::http::{
     Payload, Response, StatusCode,
 };
 use ntex::util::Bytes as NtexBytes;
-use ntex::web::{self, DefaultError};
+use ntex::web;
 
 use crate::executor::coprocessor::stage::{
     compile_condition, evaluate_condition, CoprocessorRequest, CoprocessorRequestBody,
@@ -38,7 +38,7 @@ pub struct RouterResponseStage {
 }
 
 pub struct RouterRequestInput {
-    pub(crate) request: web::WebRequest<DefaultError>,
+    pub(crate) request: web::WebRequest<()>,
     request_body: Option<NtexBytes>,
     /// This tells runtime whether it should restore original body bytes after stage execution
     body_replaced: bool,
@@ -75,12 +75,17 @@ impl RouterResponseStage {
 }
 
 impl RouterRequestInput {
-    pub fn new(request: web::WebRequest<DefaultError>, request_body: Option<NtexBytes>) -> Self {
+    pub fn new(request: web::WebRequest<()>, request_body: Option<NtexBytes>) -> Self {
         Self {
             request,
             request_body,
             body_replaced: false,
         }
+    }
+
+    /// Consumes the input and returns the request, including any mutations applied by the stage.
+    pub fn into_request(self) -> web::WebRequest<()> {
+        self.request
     }
 
     pub(crate) fn restore_request_body_if_unchanged(&mut self) {
@@ -101,6 +106,11 @@ impl RouterResponseInput {
     pub fn new(response: web::WebResponse) -> Self {
         Self { response }
     }
+
+    /// Consumes the input and returns the response, including any mutations applied by the stage.
+    pub fn into_response(self) -> web::WebResponse {
+        self.response
+    }
 }
 
 impl Stage for RouterRequestStage {
@@ -116,7 +126,7 @@ impl Stage for RouterRequestStage {
                         .insert_lazy("headers", || {
                             ntex_header_map_to_vrl_value(input.request.headers())
                         })
-                        .insert_lazy("url", || input.request.uri().to_vrl_value());
+                        .insert_lazy("url", || url_to_vrl_value(input.request.uri()));
                 });
             })
         })
@@ -209,7 +219,7 @@ impl Stage for RouterResponseStage {
                     .insert_lazy("headers", || {
                         ntex_header_map_to_vrl_value(input.response.request().headers())
                     })
-                    .insert_lazy("url", || input.response.request().uri().to_vrl_value());
+                    .insert_lazy("url", || url_to_vrl_value(input.response.request().uri()));
                 })
                 .insert_object("response", |res| {
                     res.insert_lazy("headers", || {

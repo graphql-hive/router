@@ -211,10 +211,13 @@ mod graceful_shutdown_tests {
         let pid = child.id().expect("spawned child must have a pid");
 
         let client = reqwest::Client::new();
-        let health_url = format!("http://127.0.0.1:{port}/health");
+        // /health is ok as soon as the listener is up, but the supergraph loads in the
+        // background. /readiness waits for the schema, otherwise graphql requests on slow ci
+        // runners get an instant error without ever reaching the subgraph
+        let readiness_url = format!("http://127.0.0.1:{port}/readiness");
         tokio::time::timeout(Duration::from_secs(15), async {
             loop {
-                if let Ok(res) = client.get(&health_url).send().await {
+                if let Ok(res) = client.get(&readiness_url).send().await {
                     if res.status().is_success() {
                         break;
                     }
@@ -223,7 +226,7 @@ mod graceful_shutdown_tests {
             }
         })
         .await
-        .expect("hive_router subprocess did not become healthy in time");
+        .expect("hive_router subprocess did not become ready in time");
 
         let graphql_url = format!("http://127.0.0.1:{port}/graphql");
         // Spawned so it actually starts executing concurrently: an un-awaited reqwest
@@ -238,8 +241,16 @@ mod graceful_shutdown_tests {
                 .await
         });
 
-        // Give the request a moment to actually reach the slow subgraph call before SIGTERM.
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        // wait until the router actually forwarded the request to the slow subgraph, a fixed
+        // sleep races on slow ci runners where sigterm lands before the request is in flight
+        // and the graceful stop has nothing to drain
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while subgraphs.get_requests_log("products").is_none() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the in-flight request never reached the products subgraph");
 
         let sigterm_sent = Instant::now();
         let kill_status = std::process::Command::new("kill")

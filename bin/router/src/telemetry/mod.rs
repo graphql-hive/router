@@ -360,19 +360,20 @@ fn create_prometheus_runtime(
     let path_for_result = path.clone();
 
     let listen_address = (config.host(), port);
-    let server = HttpServer::new(move || {
+    let server = HttpServer::new(async move |_| {
         let registry = registry.clone();
-        let path = path.clone();
-        async move {
-            App::new()
-                .state(registry)
-                .service(web::resource(path).route(web::get().to(metrics_handler)))
-                .default_service(web::to(|| async { HttpResponse::NotFound() }))
-        }
+        App::new()
+            .service(
+                web::resource(path.as_str())
+                    .route(web::get().to(async move || build_metrics_response(&registry))),
+            )
+            .default_service(web::to(async || HttpResponse::NotFound()))
     })
     .workers(1)
+    // unpinned like the main server, otherwise this worker shares its core with main worker 0
+    .affinity(ntex::server::Affinity::Disabled)
     .disable_signals()
-    .bind(listen_address);
+    .bind(listen_address, ntex::SharedCfg::default());
 
     let server = {
         let server = server?;
@@ -427,10 +428,6 @@ pub(crate) fn build_metrics_response(registry: &prometheus::Registry) -> HttpRes
     HttpResponse::Ok()
         .content_type(encoder.format_type())
         .body(buffer)
-}
-
-async fn metrics_handler(registry: web::types::State<prometheus::Registry>) -> HttpResponse {
-    build_metrics_response(&registry)
 }
 
 pub fn init_logging<S>(config: &LoggingConfig) -> Result<(DynLayer<S>, WorkerGuard), ParseError>
