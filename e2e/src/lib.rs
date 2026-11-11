@@ -7,6 +7,8 @@ mod authorization_directives_filter;
 #[cfg(test)]
 mod authorization_directives_reject;
 #[cfg(test)]
+mod authorization_directives_without_jwt;
+#[cfg(test)]
 mod body_limit;
 #[cfg(test)]
 mod cache;
