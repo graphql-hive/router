@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use ntex::rt::{spawn, JoinHandle};
+use ntex::rt::{spawn_sendable, SendableJoinHandle};
 use std::future::Future;
 pub use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
@@ -14,8 +14,8 @@ pub trait BackgroundTask: Send + Sync {
 
 pub struct BackgroundTasksManager {
     cancellation_token: CancellationToken,
-    handles: Vec<JoinHandle<()>>,
-    graceful_handles: Vec<JoinHandle<()>>,
+    handles: Vec<SendableJoinHandle<()>>,
+    graceful_handles: Vec<SendableJoinHandle<()>>,
 }
 
 impl Default for BackgroundTasksManager {
@@ -44,7 +44,7 @@ impl BackgroundTasksManager {
         );
 
         let child_token = self.cancellation_token.clone();
-        let handle = spawn(async move {
+        let handle = spawn_sendable(async move {
             task.run(child_token).await;
         });
         self.handles.push(handle);
@@ -62,7 +62,7 @@ impl BackgroundTasksManager {
         );
 
         let child_token = self.cancellation_token.clone();
-        self.graceful_handles.push(spawn(async move {
+        self.graceful_handles.push(spawn_sendable(async move {
             task.run(child_token).await;
         }));
     }
@@ -71,7 +71,7 @@ impl BackgroundTasksManager {
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        self.handles.push(spawn(f));
+        self.handles.push(spawn_sendable(f));
     }
 
     pub fn shutdown(&mut self) {
