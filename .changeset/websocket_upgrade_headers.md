@@ -19,3 +19,5 @@ websocket:
 The listed headers are taken only from the upgrade request. Values with the same name sent by the client in the `connection_init` payload or in the operation extensions are discarded, so the client cannot spoof them. The headers are visible to plugins, coprocessor stages, JWT authentication and expressions, and respect the header propagation rules.
 
 Additionally, the `coprocessor.stages.router.request` documentation now states that for WebSocket connections the hook runs once on the upgrade request, and that the context entries it sets are visible to the per-operation stages of every operation on the connection.
+
+Closes #1679
