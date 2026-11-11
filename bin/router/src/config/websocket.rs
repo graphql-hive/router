@@ -33,7 +33,10 @@ pub struct WebSocketConfig {
 #[serde(rename_all = "lowercase")]
 #[non_exhaustive]
 pub enum WebSocketHeadersSource {
-    /// Do not accept headers from any source inside WebSocket connections.
+    /// Do not accept headers sent by the client, neither from the connection init payload
+    /// nor from the operation extensions.
+    ///
+    /// Headers listed in `upgrade` are still taken from the upgrade request.
     None,
     /// Accept headers from the connection init payload. This is the default.
     ///
