@@ -79,6 +79,18 @@ impl SupergraphTrafficShapingConfig {
             .unwrap_or_default()
     }
 
+    /// Returns whether the `permessage-deflate` extension should be offered to a subgraph.
+    ///
+    /// A per-subgraph value takes precedence over the value configured in `all`.
+    pub fn websocket_permessage_deflate(&self, subgraph_name: &str) -> bool {
+        self.subgraphs
+            .get(subgraph_name)
+            .and_then(|config| config.websocket.as_ref())
+            .and_then(|config| config.permessage_deflate)
+            .or(self.all.websocket.permessage_deflate)
+            .unwrap_or(false)
+    }
+
     /// Returns the idle timeout used by HTTP and pooled WebSocket connections for a subgraph.
     ///
     /// A per-subgraph value takes precedence over `traffic_shaping.all.pool_idle_timeout`.
@@ -374,6 +386,28 @@ pub struct TrafficShapingWebSocketConfig {
     /// At the per-subgraph level omission inherits the `all` value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execute_mode: Option<WebSocketExecuteMode>,
+
+    /// Offers the `permessage-deflate` extension (RFC 7692) when connecting to WebSocket-enabled
+    /// subgraphs.
+    ///
+    /// When the subgraph accepts the offer, text and binary messages are compressed in both
+    /// directions. A subgraph that does not support the extension declines the offer and the
+    /// connection continues uncompressed.
+    ///
+    /// Compression trades CPU and memory for bandwidth. Each compressed connection allocates its
+    /// own compressor and decompressor, which use about 420KiB together.
+    ///
+    /// ```yaml
+    /// traffic_shaping:
+    ///   all:
+    ///     websocket:
+    ///       permessage_deflate: true
+    /// ```
+    ///
+    /// At the `all` level `permessage_deflate` defaults to `false`. At the per-subgraph level
+    /// omission inherits the `all` value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permessage_deflate: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
