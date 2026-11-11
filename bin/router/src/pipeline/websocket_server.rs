@@ -374,16 +374,6 @@ async fn handle_text_frame(
                     headers.insert(key.clone(), value.clone());
                 }
 
-                let parent_ctx = shared_state
-                    .telemetry_context
-                    .extract_context(&HeaderExtractor(&headers));
-                let request_identifiers =
-                  Arc::new(shared_state
-                        .telemetry_context
-                        .logging_correlation_extractor
-                        .extract(&headers, &parent_ctx));
-                let headers = Arc::new(headers);
-
                 // store the merged headers back to init_payload if configured to do so
                 if config.headers.persist {
                     if let Some(ref mut init_payload) = state.borrow_mut().init_payload {
@@ -396,6 +386,25 @@ async fn handle_text_frame(
                         }
                     }
                 }
+
+                // done after persisting so that init_payload only ever holds what the client sent
+                for name in &config.headers.upgrade {
+                    let name = name.get_header_ref();
+                    headers.remove(name);
+                    for value in req.headers().get_all(name) {
+                        headers.append(name.clone(), value.clone());
+                    }
+                }
+
+                let parent_ctx = shared_state
+                    .telemetry_context
+                    .extract_context(&HeaderExtractor(&headers));
+                let request_identifiers =
+                  Arc::new(shared_state
+                        .telemetry_context
+                        .logging_correlation_extractor
+                        .extract(&headers, &parent_ctx));
+                let headers = Arc::new(headers);
 
                 let inner_res = async {
                   let _summary = summary::SummaryOnDrop::new(started_at);
