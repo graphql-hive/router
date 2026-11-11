@@ -623,3 +623,100 @@ mod progressive_override {
         request_stage_mock.assert_async().await;
     }
 }
+
+mod websocket {
+    use futures::StreamExt;
+    use hive_router::executor::executors::{
+        graphql_transport_ws::SubscribePayload, websocket_client::WsClient,
+    };
+
+    use super::*;
+
+    #[ntex::test]
+    async fn context_set_on_upgrade_persists_for_connection_operations() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let mut coprocessor = TestCoprocessor::new().await;
+        let host = coprocessor.host_with_port();
+
+        let router_request_mock = coprocessor
+            .mock_stage("router.request")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "version": 1,
+                    "control": "continue",
+                    "context": { "custom::client_ip": "1.2.3.4" }
+                })
+                .to_string(),
+            )
+            .expect(1)
+            .create();
+
+        let analysis_mock = coprocessor
+            .mock_stage_with_matcher("graphql.analysis", |payload| {
+                payload
+                    .pointer(&["context", "custom::client_ip"])
+                    .and_then(|value| value.as_str())
+                    == Some("1.2.3.4")
+            })
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({"version": 1, "control": "continue"}).to_string())
+            .expect(2)
+            .create();
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                websocket:
+                    enabled: true
+                coprocessor:
+                    url: http://{host}/coprocessor
+                    protocol: http1
+                    stages:
+                        router:
+                            request: {{}}
+                        graphql:
+                            analysis:
+                                include:
+                                    context: true
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let mut client = WsClient::new(router.ws().await)
+            .init(None)
+            .await
+            .expect("Failed to init WsClient");
+
+        for _ in 0..2 {
+            let mut stream = client
+                .subscribe(
+                    SubscribePayload {
+                        query: "{ topProducts { name } }".into(),
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .await
+                .expect("Failed to subscribe")
+                .map(|response| response.expect("WebSocket response failed"));
+            let response = stream.next().await.expect("Expected a response");
+            assert!(
+                response.errors.is_none(),
+                "unexpected errors: {:?}",
+                response.errors
+            );
+        }
+
+        router_request_mock.assert_async().await;
+        analysis_mock.assert_async().await;
+    }
+}
