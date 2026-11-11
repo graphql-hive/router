@@ -69,7 +69,8 @@ jobs:
           RUST_LOG: info
 
   plugin_examples:
-    name: test / plugin examples
+    # saz: only our plugin (saz/logger); the end-to-end check is saz-ci's smoke test
+    name: test / saz plugins
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -81,39 +82,14 @@ jobs:
         uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         with:
           tool: cargo-nextest@${{ env.NEXTEST_VERSION }}
-      - name: test plugin examples
-        run: cargo test_plugin_examples
+      - name: test saz plugins
+        run: cargo nextest run --locked --manifest-path saz/logger/Cargo.toml --target-dir target
         timeout-minutes: 15
-        working-directory: plugin_examples
         env:
           RUST_BACKTRACE: full
           RUST_LOG: debug
 
-  node-addon-test:
-    name: test / node-addon
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: setup node
-        uses: the-guild-org/shared-config/setup@v1
-        with:
-          node-version-file: .node-version
-      - name: build
-        run: npm run build:debug
-        working-directory: lib/node-addon
-      - name: test
-        working-directory: lib/node-addon
-        run: npm test
-
-  build:
-    name: check / build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: setup rust
-        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
-      - name: build
-        run: cargo build --release
+  # saz: "check / build" removed, saz-ci already builds hive-router in release (with our plugin)
 
   fmt:
     name: check / fmt
@@ -138,58 +114,6 @@ jobs:
           components: clippy
       - name: cargo clippy
         run: cargo clippy --all
-
-  semver-checks:
-    name: breaking changes / hive-router crate
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - name: check semver
-        uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
-        with:
-          package: hive-router
-          baseline-rev: origin/main
-
-  benchmark:
-    strategy:
-      matrix:
-        include:
-          - name: "graphql-tools"
-            package: "./lib/graphql-tools"
-            bench_args: ""
-          - name: "query-planner"
-            package: "./bin/router"
-            bench_args: "--bench qp_benches"
-          - name: "executor"
-            package: "./bin/router"
-            bench_args: "--bench executor_benches --bench demand_control_benches --bench coprocessor_benches"
-          - name: "router"
-            package: "./bin/router"
-            bench_args: "--features testing --bench persisted_documents_matcher_benches --bench router_benches"
-    name: benchmark / ${{ matrix.name }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: setup rust
-        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
-      - if: matrix.name == 'executor'
-        name: Build subgraphs
-        run: cargo build --release -p subgraphs
-      - if: matrix.name == 'executor'
-        name: Run subgraphs
-        run: ./target/release/subgraphs & sleep 5
-      - name: Run benchmarks
-        run: cargo bench ${{ matrix.bench_args }}
-        working-directory: ${{ matrix.package }}
-      - name: Upload benchmark results
-        if: always() # Upload results even if benchmarks fail
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: ${{matrix.package}}-benchmark-results
-          path: ${{matrix.package}}/target/criterion
 
   router-benchmark:
     strategy:

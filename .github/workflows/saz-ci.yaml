@@ -1,0 +1,71 @@
+name: saz-ci
+# Builds hive-router with the saz plugins (saz/logger), smoke-tests the graphql-poc image
+# with the real config (saz/config/router.yaml) and the repo's e2e supergraph, and pushes the image on main.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write # GCP Workload Identity Federation
+
+env:
+  IMAGE: eu.gcr.io/saz-shared-services/ci-graphql-poc
+
+jobs:
+  image:
+    name: build / smoke test / push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+
+      - name: build hive-router with saz plugins
+        run: cargo build --release --locked --manifest-path saz/logger/Cargo.toml --target-dir target
+
+      - name: build image
+        run: |
+          cp target/release/hive_router_with_logger_and_mutipart saz/hive-router
+          docker build -t router-under-test saz
+
+      - name: smoke test (graphql-poc router.yaml, repo's e2e supergraph instead of Hive CDN)
+        run: |
+          docker run -d --name router -p 8080:8080 \
+            -e CI_ENVIRONMENT=develop \
+            -e SUPERGRAPH_FILE_PATH=/app/supergraph.graphql \
+            -v "$PWD/e2e/supergraph.graphql:/app/supergraph.graphql:ro" \
+            router-under-test
+          saz/smoke-test.sh 'docker logs router'
+
+      - name: router logs
+        if: failure()
+        run: docker logs router || true
+
+      - name: authenticate to GCP
+        id: gcp
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: google-github-actions/auth@v2
+        with:
+          token_format: access_token
+          # Workload Identity Federation if configured, otherwise the JSON key
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          credentials_json: ${{ secrets.GCR_JSON_KEY }}
+
+      - name: push image
+        if: steps.gcp.outcome == 'success'
+        run: |
+          echo "${{ steps.gcp.outputs.access_token }}" | docker login -u oauth2accesstoken --password-stdin https://eu.gcr.io
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' bin/router/Cargo.toml | head -1)
+          for tag in "${GITHUB_SHA::7}" "hive-router-$version"; do
+            docker tag router-under-test "$IMAGE:$tag"
+            docker push "$IMAGE:$tag"
+          done

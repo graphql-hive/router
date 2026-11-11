@@ -1,0 +1,20 @@
+[workspace]
+
+[package]
+name = "logger"
+version = "1.0.0"
+edition = "2024"
+license = "MIT"
+authors = ["Saz"]
+publish = false
+
+[lib]
+
+[[bin]]
+name = "hive_router_with_logger_and_mutipart"
+path = "src/main.rs"
+
+[dependencies]
+hive-router = { version = "*", path = "../../bin/router" }
+multipart-plugin-example = { version = "*", path = "../../plugin_examples/multipart" }
+serde_json = "1.0.151"

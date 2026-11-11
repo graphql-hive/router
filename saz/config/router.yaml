@@ -1,0 +1,68 @@
+supergraph:
+  source: hive
+
+http:
+  port: 8080
+  graphql_endpoint: /
+
+introspection:
+  expression: env("CI_ENVIRONMENT") == "develop"
+
+headers:
+  all:
+    request:
+      - propagate:
+          named: x-correlation-id
+      - propagate:
+          named: x-session-id
+      - propagate:
+          named: authorization
+      - propagate:
+          named: x-app
+      - propagate:
+          named: x-version
+      - propagate:
+          named: x-device
+      - propagate:
+          named: referer
+      - propagate:
+          named: origin
+
+log:
+  level: 'info'
+  format: 'json'
+
+plugins:
+  multipart:
+    enabled: true
+  logger:
+    enabled: true
+
+limits:
+  max_depth:
+    n: 8
+
+demand_control:
+  enabled: true
+  default_list_size:
+    all: 10
+  operation_cost:
+    max: 6000
+    mode: enforce # mode: measure for get cost
+    expose_headers:
+      estimated: true
+      actual: true
+  subgraphs_budget:
+    mode: enforce # mode: measure for get cost
+    all: 1200
+    # composition is not in the Hive supergraph; restore with the published subgraph name
+    # subgraphs:
+    #   composition: 2000
+
+telemetry:
+  metrics:
+    exporters:
+      - kind: prometheus
+        enabled: true
+        port: 9090
+        path: /metrics

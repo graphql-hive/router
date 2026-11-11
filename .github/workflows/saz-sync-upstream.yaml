@@ -1,0 +1,83 @@
+name: saz-sync-upstream
+# Mirrors graphql-hive/router main into the upstream/main branch and opens a PR merging it into our main.
+# saz-ci validates it; merging the PR publishes the image.
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  BRANCH: saz/sync-upstream
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          # PAT: GITHUB_TOKEN can't push upstream changes to .github/workflows, and PRs it opens don't trigger saz-ci
+          token: ${{ secrets.SYNC_TOKEN }}
+
+      - name: update upstream/main mirror
+        id: up
+        run: |
+          git fetch --no-tags https://github.com/graphql-hive/router main
+          up=$(git rev-parse FETCH_HEAD)
+          # upstream/main = exact copy of graphql-hive/router main (no force: never commit to it)
+          git push origin "$up:refs/heads/upstream/main"
+          if git merge-base --is-ancestor "$up" HEAD; then echo "up to date"; exit 0; fi
+          # one sync PR at a time: if it's still open, new upstream commits wait for the next run after merging it
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then echo "$BRANCH already exists"; exit 0; fi
+          echo "sha=$up" >> "$GITHUB_OUTPUT"
+
+      - name: setup rust
+        if: steps.up.outputs.sha
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache: false
+
+      - name: merge upstream main and open PR
+        if: steps.up.outputs.sha
+        env:
+          SHA: ${{ steps.up.outputs.sha }}
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git merge --no-edit -m "chore: merge upstream/main (${SHA::7})" "$SHA" || true
+
+          # only saz-* and our trimmed ci.yaml run here: drop other upstream workflows and dependabot
+          # (resolves modify/delete conflicts and new upstream files)
+          for f in .github/workflows/*; do
+            case "$(basename "$f")" in saz-*|ci.yaml) ;; *) git rm -q -f "$f" ;; esac
+          done
+          git rm -q -f --ignore-unmatch .github/dependabot.yml
+
+          # ci.yaml: take upstream changes, but conflicting hunks (jobs we removed/changed) keep our version
+          f=.github/workflows/ci.yaml
+          if git diff --name-only --diff-filter=U | grep -qx "$f"; then
+            git show ":1:$f" > /tmp/base; git show ":2:$f" > /tmp/ours; git show ":3:$f" > /tmp/theirs
+            git merge-file --ours /tmp/ours /tmp/base /tmp/theirs
+            cp /tmp/ours "$f"; git add "$f"
+          fi
+          if [ -n "$(git diff --name-only --diff-filter=U)" ]; then
+            echo "::error::conflicts to resolve by hand on a branch named $BRANCH:"; git diff --name-only --diff-filter=U; exit 1
+          fi
+          if git rev-parse -q --verify MERGE_HEAD >/dev/null; then git commit -q --no-edit
+          elif ! git diff --cached --quiet; then git commit -q -m "chore(saz): drop upstream workflows"; fi
+
+          # minimal lockfile refresh for the new path dependencies (saz-ci builds with --locked)
+          cargo metadata --format-version 1 --manifest-path saz/logger/Cargo.toml > /dev/null
+          git add saz/logger/Cargo.lock
+          git diff --cached --quiet || git commit -m "chore(saz): refresh logger Cargo.lock"
+
+          git push origin "$BRANCH"
+          gh pr create --base main --head "$BRANCH" \
+            --title "chore: sync upstream/main (${SHA::7})" \
+            --body "Merge of [graphql-hive/router main @ ${SHA::7}](https://github.com/graphql-hive/router/commits/$SHA). If the logger plugin no longer compiles, fix it in this PR."
