@@ -45,6 +45,7 @@ pub struct WebSocketConnectionId {
     subgraph_name: Arc<str>,
     endpoint: Uri,
     fingerprint: ConnectionFingerprint,
+    permessage_deflate: bool,
 }
 
 impl WebSocketConnectionId {
@@ -57,7 +58,16 @@ impl WebSocketConnectionId {
             subgraph_name: subgraph_name.into(),
             endpoint,
             fingerprint,
+            permessage_deflate: false,
         }
+    }
+
+    /// Offers the `permessage-deflate` extension (RFC 7692) when the connection is created.
+    ///
+    /// Connections with and without the extension are never shared.
+    pub fn with_permessage_deflate(mut self, enabled: bool) -> Self {
+        self.permessage_deflate = enabled;
+        self
     }
 }
 
@@ -357,9 +367,13 @@ async fn initialize_connection(
     id: &WebSocketConnectionId,
     init: WebSocketInit,
 ) -> Result<InitializedConnection, PoolInitError> {
-    let wsconn = websocket_client::connect(&init.endpoint, init.tls_config)
-        .await
-        .map_err(|error| PoolInitError::Connect(error.to_string()))?;
+    let wsconn = websocket_client::connect_with_permessage_deflate(
+        &init.endpoint,
+        init.tls_config,
+        id.permessage_deflate,
+    )
+    .await
+    .map_err(|error| PoolInitError::Connect(error.to_string()))?;
     let client = WsClient::new(wsconn);
     let init_payload = (!init.headers.is_empty()).then(|| init.headers.into());
     let mut client = client

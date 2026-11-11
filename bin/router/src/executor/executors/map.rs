@@ -424,6 +424,13 @@ impl SubgraphExecutorMap {
                                                     subgraph_name,
                                                     executor.endpoint().clone(),
                                                     fingerprint,
+                                                )
+                                                .with_permessage_deflate(
+                                                    self.config
+                                                        .traffic_shaping
+                                                        .websocket_permessage_deflate(
+                                                            subgraph_name,
+                                                        ),
                                                 );
                                                 self.websocket_pool.get_initialized(&id)
                                             })
@@ -913,6 +920,11 @@ impl SubgraphExecutorMap {
                     self.config
                         .traffic_shaping
                         .websocket_reuse_connections(subgraph_name),
+                )
+                .with_permessage_deflate(
+                    self.config
+                        .traffic_shaping
+                        .websocket_permessage_deflate(subgraph_name),
                 )
                 .to_boxed_arc();
 

@@ -31,6 +31,7 @@ pub struct WsSubgraphExecutor {
     pool: Arc<WebSocketPool>,
     idle_timeout: Duration,
     reuse_connections: bool,
+    permessage_deflate: bool,
 }
 
 impl WsSubgraphExecutor {
@@ -54,7 +55,14 @@ impl WsSubgraphExecutor {
             pool,
             idle_timeout,
             reuse_connections,
+            permessage_deflate: false,
         }
+    }
+
+    /// Offers the `permessage-deflate` extension (RFC 7692) to the subgraph when `enabled`.
+    pub fn with_permessage_deflate(mut self, enabled: bool) -> Self {
+        self.permessage_deflate = enabled;
+        self
     }
 }
 
@@ -80,7 +88,8 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                     self.subgraph_name.clone(),
                     self.endpoint.clone(),
                     fingerprint,
-                );
+                )
+                .with_permessage_deflate(self.permessage_deflate);
                 let operation = async {
                     let executor = self
                         .pool
@@ -108,6 +117,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();
         let tls_config = self.tls_config.clone();
+        let permessage_deflate = self.permessage_deflate;
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
         debug!(
             target: targets::WEBSOCKET_CLIENT,
@@ -130,14 +140,18 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         // or earlier if connect/init fails.
         rt::spawn(async move {
             let result = async {
-                let wsconn = websocket_client::connect(&endpoint, tls_config)
-                    .await
-                    .map_err(|e| {
-                        SubgraphExecutorError::WebSocketConnectFailure(
-                            endpoint.to_string(),
-                            e.to_string(),
-                        )
-                    })?;
+                let wsconn = websocket_client::connect_with_permessage_deflate(
+                    &endpoint,
+                    tls_config,
+                    permessage_deflate,
+                )
+                .await
+                .map_err(|e| {
+                    SubgraphExecutorError::WebSocketConnectFailure(
+                        endpoint.to_string(),
+                        e.to_string(),
+                    )
+                })?;
                 let client = WsClient::new(wsconn);
 
                 let mut client = match client.init(init_payload).await {
@@ -196,7 +210,8 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                     self.subgraph_name.clone(),
                     self.endpoint.clone(),
                     fingerprint,
-                );
+                )
+                .with_permessage_deflate(self.permessage_deflate);
                 let executor = self
                     .pool
                     .get_or_initialize(
@@ -224,6 +239,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();
         let tls_config = self.tls_config.clone();
+        let permessage_deflate = self.permessage_deflate;
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
         let headers = execution_request.headers.clone();
         let init_payload = (!headers.is_empty()).then(|| headers.into());
@@ -245,7 +261,13 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         // If the channel fills due to back-pressure, the latest event is dropped (with a
         // warning log) and the subscription continues.
         drop(rt::spawn(async move {
-            let wsconn = match websocket_client::connect(&endpoint, tls_config).await {
+            let wsconn = match websocket_client::connect_with_permessage_deflate(
+                &endpoint,
+                tls_config,
+                permessage_deflate,
+            )
+            .await
+            {
                 Ok(client) => client,
                 Err(e) => {
                     let _ = tx.try_send(Err(SubgraphExecutorError::WebSocketConnectFailure(

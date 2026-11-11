@@ -99,6 +99,16 @@ pub async fn connect(
     uri: &http::Uri,
     custom_tls_config: Option<Arc<rustls::ClientConfig>>,
 ) -> Result<WsConnection<ntex::io::Sealed>, WsConnectError> {
+    connect_with_permessage_deflate(uri, custom_tls_config, false).await
+}
+
+/// Connects like [`connect`], and offers the `permessage-deflate` extension (RFC 7692) to the
+/// server when `permessage_deflate` is `true`.
+pub async fn connect_with_permessage_deflate(
+    uri: &http::Uri,
+    custom_tls_config: Option<Arc<rustls::ClientConfig>>,
+    permessage_deflate: bool,
+) -> Result<WsConnection<ntex::io::Sealed>, WsConnectError> {
     let scheme = uri
         .scheme_str()
         .ok_or_else(|| WsConnectError::MissingUriSchema(uri.to_string()))?;
@@ -113,11 +123,12 @@ pub async fn connect(
             ),
         };
 
-        let ws_client = NtexWsClient::new(uri, ws_client_config()?).rustls(tls_config);
+        let ws_client =
+            NtexWsClient::new(uri, ws_client_config(permessage_deflate)?).rustls(tls_config);
 
         Ok(ws_client.connect().await?.seal())
     } else if scheme == "ws" {
-        let ws_client = NtexWsClient::new(uri, ws_client_config()?);
+        let ws_client = NtexWsClient::new(uri, ws_client_config(permessage_deflate)?);
 
         Ok(ws_client.connect().await?.seal())
     } else {
@@ -126,12 +137,17 @@ pub async fn connect(
 }
 
 // shared by the ws and wss connections to subgraphs
-fn ws_client_config() -> Result<ws::WsClientConfig, WsConnectError> {
-    Ok(ws::WsClientConfig::new()
+fn ws_client_config(permessage_deflate: bool) -> Result<ws::WsClientConfig, WsConnectError> {
+    let cfg = ws::WsClientConfig::new()
         .set_max_frame_size(16 * 1024 * 1024) // default is 64kB which is too small
         .set_protocols([WS_SUBPROTOCOL])
         .map_err(|e| WsConnectError::BuilderError(e.to_string()))?
-        .set_handshake_timeout(ntex::time::Seconds(60)))
+        .set_handshake_timeout(ntex::time::Seconds(60));
+    Ok(if permessage_deflate {
+        cfg.set_deflate(ws::DeflateConfig::new())
+    } else {
+        cfg
+    })
 }
 
 type WsResponse = Result<SubgraphResponse<'static>, WsClientError>;
