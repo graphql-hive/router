@@ -89,6 +89,8 @@ pub enum WebSocketHeadersSource {
 #[non_exhaustive]
 pub struct WebSocketHeadersConfig {
     /// The source(s) from which to accept headers for WebSocket connections.
+    // defaulted so configs setting only `upgrade` or `persist` still load with `connection`
+    #[serde(default)]
     pub source: WebSocketHeadersSource,
     /// Whether to persist merged headers for the duration of the WebSocket connection
     /// when using the `both` source (headers are accepted from multiple sources).
@@ -145,5 +147,19 @@ impl WebSocketHeadersConfig {
             self.source,
             WebSocketHeadersSource::Operation | WebSocketHeadersSource::Both
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WebSocketHeadersConfig, WebSocketHeadersSource};
+
+    #[test]
+    fn upgrade_only_headers_config_defaults_source_to_connection() {
+        let config =
+            serde_json::from_str::<WebSocketHeadersConfig>(r#"{ "upgrade": ["x-real-ip"] }"#)
+                .expect("upgrade-only headers config should load");
+        assert!(matches!(config.source, WebSocketHeadersSource::Connection));
+        assert_eq!(config.upgrade.len(), 1);
     }
 }
