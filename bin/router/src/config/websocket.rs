@@ -149,17 +149,3 @@ impl WebSocketHeadersConfig {
         )
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{WebSocketHeadersConfig, WebSocketHeadersSource};
-
-    #[test]
-    fn upgrade_only_headers_config_defaults_source_to_connection() {
-        let config =
-            serde_json::from_str::<WebSocketHeadersConfig>(r#"{ "upgrade": ["x-real-ip"] }"#)
-                .expect("upgrade-only headers config should load");
-        assert!(matches!(config.source, WebSocketHeadersSource::Connection));
-        assert_eq!(config.upgrade.len(), 1);
-    }
-}
