@@ -1,5 +1,5 @@
 ---
-"hive-router": patch
+hive-router: minor
 ---
 
 Extract hard-coded field argument values into variables, so operations that differ only in those values share one query plan.
