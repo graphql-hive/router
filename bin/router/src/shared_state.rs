@@ -10,6 +10,7 @@ use crate::executor::executors::inflight::{InFlightCleanupGuard, InFlightMap};
 use crate::executor::extensions::{compile::compile_extensions_plan, plan::ExtensionsPlan};
 use crate::executor::headers::sanitizer::is_never_join_header;
 use crate::executor::plugin_trait::RouterPluginBoxed;
+use crate::pipeline::validation::flat::FlatRules;
 use crate::telemetry::logging::targets;
 use crate::telemetry::metrics::catalog::values::SubscriptionEndReason;
 use crate::telemetry::metrics::subscription_metrics::SubscriptionTransport;
@@ -322,6 +323,8 @@ impl Expiry<String, Arc<JwtTokenPayload>> for JwtClaimsExpiry {
 }
 pub struct RouterSharedState {
     pub validation_plan: Arc<ValidationPlan>,
+    /// The plan's rules on the flat document, by error code.
+    pub flat_validation_rules: FlatRules,
     pub validation_options: ValidationOptions,
     pub parse_cache: Cache<u64, ParseCacheEntry>,
     pub router_config: &'static HiveRouterConfig,
@@ -378,6 +381,7 @@ impl RouterSharedState {
 
         Ok(Self {
             validation_plan: Arc::new(validation_plan),
+            flat_validation_rules: FlatRules::new(validation_options, &router_config.limits),
             validation_options,
             extensions_plan: Arc::new(compile_extensions_plan(&router_config.response_extensions)),
             parse_cache,

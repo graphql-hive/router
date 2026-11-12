@@ -9,7 +9,7 @@ use crate::query_planner::ast::normalization::arguments_to_variables::{
     arguments_to_variables, ExtractedVariable,
 };
 use crate::query_planner::ast::normalization::error::NormalizationError;
-use crate::query_planner::ast::normalization::normalize_operation;
+use crate::query_planner::ast::normalization::normalize_flat_operation;
 use crate::query_planner::ast::operation::OperationDefinition;
 use crate::query_planner::ast::shrink::ShrinkMemory;
 use crate::query_planner::state::supergraph_state::OperationKind;
@@ -172,9 +172,9 @@ pub async fn normalize_request_with_cache(
             .normalize_cache
             .entry(cache_key)
             .or_try_insert_with::<_, NormalizationError>(async {
-                let doc = normalize_operation(
+                let doc = normalize_flat_operation(
                     &supergraph.planner.supergraph,
-                    &parser_payload.parsed_operation,
+                    &parser_payload.parsed_operation.flat,
                     graphql_params.operation_name.as_deref(),
                 )?;
 

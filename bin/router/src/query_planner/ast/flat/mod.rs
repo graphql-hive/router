@@ -11,113 +11,16 @@
 pub mod arena;
 pub mod convert;
 pub mod normalize;
-pub mod parse;
 pub mod selection_tree;
 pub mod tree;
 
-use ahash::HashMap;
+pub use graphql_tools::flat::{
+    Argument, Directive, Document, Interner, Kind, OperationKind, Pos, SelId, Span, Sym, TypeId,
+    TypeRef, Value, ValueId, VariableDefinition, NONE,
+};
 
-/// An interned string.
-pub type Sym = u32;
-/// No name, alias or type condition.
-pub const NONE: Sym = Sym::MAX;
-pub type SelId = u32;
-pub type ValueId = u32;
-pub type TypeId = u32;
-
-/// A run of items in one of the shared arrays.
-#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug)]
-pub struct Span {
-    pub start: u32,
-    pub len: u32,
-}
-
-impl Span {
-    pub const EMPTY: Span = Span { start: 0, len: 0 };
-
-    #[inline]
-    pub fn range(self) -> std::ops::Range<usize> {
-        self.start as usize..(self.start + self.len) as usize
-    }
-
-    #[inline]
-    pub fn is_empty(self) -> bool {
-        self.len == 0
-    }
-}
-
-#[derive(Default, Clone, Debug)]
-pub struct Interner {
-    map: HashMap<Box<str>, Sym>,
-    strings: Vec<Box<str>>,
-}
-
-impl Interner {
-    #[inline]
-    pub fn intern(&mut self, s: &str) -> Sym {
-        if let Some(&sym) = self.map.get(s) {
-            return sym;
-        }
-        let sym = self.strings.len() as Sym;
-        self.strings.push(s.into());
-        self.map.insert(s.into(), sym);
-        sym
-    }
-
-    #[inline]
-    pub fn get(&self, s: &str) -> Option<Sym> {
-        self.map.get(s).copied()
-    }
-
-    #[inline]
-    pub fn str(&self, sym: Sym) -> &str {
-        &self.strings[sym as usize]
-    }
-
-    pub fn len(&self) -> usize {
-        self.strings.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.strings.is_empty()
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum Value {
-    Variable(Sym),
-    Int(i64),
-    Float(f64),
-    String(Sym),
-    Boolean(bool),
-    Null,
-    Enum(Sym),
-    /// Into `Document::value_items`
-    List(Span),
-    /// Into `Document::object_fields`, as written, repeats too. The planner's AST keeps the last.
-    Object(Span),
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Argument {
-    pub name: Sym,
-    pub value: ValueId,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Directive {
-    pub name: Sym,
-    /// Into `Document::args`
-    pub args: Span,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Kind {
-    Field,
-    InlineFragment,
-    FragmentSpread,
-}
-
+/// A selection while normalization works on it: its selections are a `Span` of the normalizer's
+/// own list of items, so a changed list is a new `Span` and an unchanged one compares equal.
 #[derive(Clone, Copy, Debug)]
 pub struct Selection {
     pub kind: Kind,
@@ -129,33 +32,11 @@ pub struct Selection {
     pub args: Span,
     /// Into `Document::directives`
     pub directives: Span,
-    /// Into `Document::children`
+    /// Into the normalizer's items
     pub children: Span,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum TypeRef {
-    Named(Sym),
-    List(TypeId),
-    NonNull(TypeId),
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct VariableDefinition {
-    pub name: Sym,
-    pub ty: TypeId,
-    pub default_value: Option<ValueId>,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum OperationKind {
-    Query,
-    Mutation,
-    Subscription,
-    /// `{ ... }` with no keyword
-    Shorthand,
-}
-
+/// An operation while normalization works on it, see `Selection`.
 #[derive(Clone, Copy, Debug)]
 pub struct Operation {
     pub kind: OperationKind,
@@ -165,40 +46,12 @@ pub struct Operation {
     pub selection_set: Span,
 }
 
+/// A fragment definition while normalization works on it, see `Selection`.
 #[derive(Clone, Copy, Debug)]
 pub struct Fragment {
     pub name: Sym,
     pub type_condition: Sym,
     pub selection_set: Span,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum Definition {
-    Operation(Operation),
-    Fragment(Fragment),
-}
-
-#[derive(Default, Clone)]
-pub struct Document {
-    pub strings: Interner,
-    pub values: Vec<Value>,
-    pub value_items: Vec<ValueId>,
-    pub object_fields: Vec<(Sym, ValueId)>,
-    pub args: Vec<Argument>,
-    pub directives: Vec<Directive>,
-    pub selections: Vec<Selection>,
-    pub children: Vec<SelId>,
-    pub types: Vec<TypeRef>,
-    pub variables: Vec<VariableDefinition>,
-    /// In document order.
-    pub definitions: Vec<Definition>,
-}
-
-impl Document {
-    #[inline]
-    pub fn str(&self, sym: Sym) -> &str {
-        self.strings.str(sym)
-    }
 }
 
 #[cfg(test)]

@@ -14,7 +14,7 @@ fn flat_parse_matches_tree_conversion() {
         fragment F on T { other(arg: """ block
           string """) }
     "#;
-    let from_text = super::parse::parse(query).unwrap();
+    let from_text = graphql_tools::flat::parse(query).unwrap();
     let from_tree = super::tree::from_tree(&parse_operation(query));
     assert_eq!(
         format!("{:?}", flat_shape(&from_text)),
@@ -24,7 +24,7 @@ fn flat_parse_matches_tree_conversion() {
 
 /// The document's contents with the names written out, so two interners compare.
 fn flat_shape(doc: &super::Document) -> Vec<String> {
-    use super::{Definition, Value};
+    use graphql_tools::flat::{Definition, Value};
     let value = |id: u32| -> String {
         fn render(doc: &super::Document, id: u32) -> String {
             match doc.values[id as usize] {
@@ -80,7 +80,7 @@ fn flat_shape(doc: &super::Document) -> Vec<String> {
         out.push(header);
         let mut stack = vec![(0, list)];
         while let Some((depth, list)) = stack.pop() {
-            for id in doc.children[list.range()].iter().rev() {
+            for id in doc.items(list).iter().rev() {
                 let s = doc.selections[*id as usize];
                 let args: Vec<String> = doc.args[s.args.range()]
                     .iter()

@@ -1,14 +1,24 @@
-//! A flat `Document` from the parser's tree, the same one `parse::parse` makes from the text.
+//! A flat `Document` from the parser's tree, the same one `graphql_tools::flat::parse` makes
+//! from the text.
 //!
 //! The pipeline normalizes the parsed document it caches and hands to plugins, which may
 //! not be what the query text says, so it's walked rather than the text parsed again.
 
 use graphql_tools::parser::query as tree;
 
+use graphql_tools::flat::{Definition, Fragment, ListId, Operation, Selection};
+
 use super::{
-    Argument, Definition, Directive, Document, Fragment, Kind, Operation, OperationKind, Selection,
-    Span, Sym, TypeRef, Value, ValueId, VariableDefinition, NONE,
+    Argument, Directive, Document, Kind, OperationKind, Pos, Span, Sym, TypeRef, Value, ValueId,
+    VariableDefinition, NONE,
 };
+
+fn pos(p: graphql_tools::parser::Pos) -> Pos {
+    Pos {
+        line: p.line as u32,
+        column: p.column as u32,
+    }
+}
 
 pub fn from_tree<'a, T: tree::Text<'a>>(document: &tree::Document<'a, T>) -> Document {
     let mut builder = Builder {
@@ -23,7 +33,9 @@ pub fn from_tree<'a, T: tree::Text<'a>>(document: &tree::Document<'a, T>) -> Doc
             tree::Definition::Fragment(fragment) => Definition::Fragment(Fragment {
                 name: builder.name(fragment.name.as_ref()),
                 type_condition: builder.type_condition(&fragment.type_condition),
+                directives: builder.directives(&fragment.directives),
                 selection_set: builder.selection_set(&fragment.selection_set),
+                pos: pos(fragment.position),
             }),
         };
         builder.doc.definitions.push(definition);
@@ -51,27 +63,38 @@ impl Builder {
         &mut self,
         operation: &tree::OperationDefinition<'a, T>,
     ) -> Operation {
-        let (kind, name, variables, selection_set) = match operation {
-            tree::OperationDefinition::SelectionSet(selection_set) => {
-                (OperationKind::Shorthand, &None, &[][..], selection_set)
-            }
+        let (kind, name, variables, directives, selection_set, position) = match operation {
+            tree::OperationDefinition::SelectionSet(selection_set) => (
+                OperationKind::Shorthand,
+                &None,
+                &[][..],
+                &[][..],
+                selection_set,
+                selection_set.span.0,
+            ),
             tree::OperationDefinition::Query(q) => (
                 OperationKind::Query,
                 &q.name,
                 &q.variable_definitions[..],
+                &q.directives[..],
                 &q.selection_set,
+                q.position,
             ),
             tree::OperationDefinition::Mutation(m) => (
                 OperationKind::Mutation,
                 &m.name,
                 &m.variable_definitions[..],
+                &m.directives[..],
                 &m.selection_set,
+                m.position,
             ),
             tree::OperationDefinition::Subscription(s) => (
                 OperationKind::Subscription,
                 &s.name,
                 &s.variable_definitions[..],
+                &s.directives[..],
                 &s.selection_set,
+                s.position,
             ),
         };
         let name = match name {
@@ -84,10 +107,12 @@ impl Builder {
                 name: self.name(variable.name.as_ref()),
                 ty: self.type_ref(&variable.var_type),
                 default_value: variable.default_value.as_ref().map(|v| self.value(v)),
+                pos: pos(variable.position),
             })
             .collect();
         let start = self.doc.variables.len() as u32;
         self.doc.variables.extend(definitions);
+        let directives = self.directives(directives);
         Operation {
             kind,
             name,
@@ -95,7 +120,9 @@ impl Builder {
                 start,
                 len: variables.len() as u32,
             },
+            directives,
             selection_set: self.selection_set(selection_set),
+            pos: pos(position),
         }
     }
 
@@ -109,7 +136,7 @@ impl Builder {
         self.doc.types.len() as u32 - 1
     }
 
-    fn selection_set<'a, T: tree::Text<'a>>(&mut self, set: &tree::SelectionSet<'a, T>) -> Span {
+    fn selection_set<'a, T: tree::Text<'a>>(&mut self, set: &tree::SelectionSet<'a, T>) -> ListId {
         let mark = self.stack.len();
         for item in &set.items {
             let selection = match item {
@@ -129,6 +156,7 @@ impl Builder {
                         args,
                         directives,
                         children: self.selection_set(&field.selection_set),
+                        pos: pos(field.position),
                     }
                 }
                 tree::Selection::InlineFragment(fragment) => {
@@ -145,6 +173,7 @@ impl Builder {
                         args: Span::EMPTY,
                         directives,
                         children: self.selection_set(&fragment.selection_set),
+                        pos: pos(fragment.position),
                     }
                 }
                 tree::Selection::FragmentSpread(spread) => Selection {
@@ -154,18 +183,16 @@ impl Builder {
                     type_condition: NONE,
                     args: Span::EMPTY,
                     directives: self.directives(&spread.directives),
-                    children: Span::EMPTY,
+                    children: self.doc.new_list(),
+                    pos: pos(spread.position),
                 },
             };
             self.doc.selections.push(selection);
             self.stack.push(self.doc.selections.len() as u32 - 1);
         }
-        let start = self.doc.children.len() as u32;
-        self.doc.children.extend(self.stack.drain(mark..));
-        Span {
-            start,
-            len: self.doc.children.len() as u32 - start,
-        }
+        let list = self.doc.list_of(&self.stack[mark..]);
+        self.stack.truncate(mark);
+        list
     }
 
     /// The values go in their own arrays, so one list's arguments stay together.
@@ -191,7 +218,11 @@ impl Builder {
         for directive in directives {
             let name = self.name(directive.name.as_ref());
             let args = self.arguments(&directive.arguments);
-            self.doc.directives.push(Directive { name, args });
+            self.doc.directives.push(Directive {
+                name,
+                args,
+                pos: pos(directive.position),
+            });
         }
         Span {
             start,

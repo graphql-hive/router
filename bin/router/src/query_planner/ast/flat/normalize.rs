@@ -10,9 +10,11 @@
 
 use ahash::{HashMap, HashMapExt, HashSet};
 
+use graphql_tools::flat::Definition;
+
 use super::{
-    Definition, Document, Fragment, Interner, Kind, Operation, OperationKind, SelId, Selection,
-    Span, Sym, Value, ValueId, NONE,
+    Document, Fragment, Interner, Kind, Operation, OperationKind, SelId, Selection, Span, Sym,
+    Value, ValueId, NONE,
 };
 use crate::query_planner::ast::document::NormalizedDocument;
 use crate::query_planner::ast::normalization::error::NormalizationError;
@@ -83,7 +85,8 @@ pub fn normalize_field_set(
     subgraph_name: &str,
     fields: &str,
 ) -> std::result::Result<SelectionSet, String> {
-    let doc = super::parse::parse(&format!("{{{fields}}}")).map_err(|err| err.to_string())?;
+    let doc =
+        graphql_tools::flat::parse(&format!("{{{fields}}}")).map_err(|err| err.to_string())?;
     let (mut n, op) = run(state, &doc, None, Some(type_name), Some(subgraph_name))
         .map_err(|err| err.to_string())?;
     // no `__typename` step, that's for the operations the router executes
@@ -109,8 +112,21 @@ fn run<'a>(
         extra: Interner::default(),
         args: doc.args.clone(),
         directives: doc.directives.clone(),
-        sels: doc.selections.clone(),
-        kids: doc.children.clone(),
+        // the document's lists are runs of its items, so they're spans of a copy of them
+        sels: doc
+            .selections
+            .iter()
+            .map(|s| Selection {
+                kind: s.kind,
+                name: s.name,
+                alias: s.alias,
+                type_condition: s.type_condition,
+                args: s.args,
+                directives: s.directives,
+                children: doc.lists[s.children.0 as usize],
+            })
+            .collect(),
+        kids: doc.items.clone(),
         scratch: Vec::new(),
         skip: doc.strings.get("skip"),
         include: doc.strings.get("include"),
@@ -127,8 +143,9 @@ fn run<'a>(
     }
 
     // drop_unused_operations
+    let span = |list: graphql_tools::flat::ListId| doc.lists[list.0 as usize];
     let mut chosen = None;
-    for definition in &doc.definitions {
+    for (index, definition) in doc.definitions.iter().enumerate() {
         if let Definition::Operation(op) = definition {
             if chosen.is_some() {
                 continue;
@@ -138,11 +155,19 @@ fn run<'a>(
                 Some(name) => op.name != NONE && doc.str(op.name) == name,
             };
             if matches {
-                chosen = Some(*op);
+                chosen = Some((
+                    index,
+                    Operation {
+                        kind: op.kind,
+                        name: op.name,
+                        variables: op.variables,
+                        selection_set: span(op.selection_set),
+                    },
+                ));
             }
         }
     }
-    let Some(mut op) = chosen else {
+    let Some((op_index, mut op)) = chosen else {
         return Err(match operation_name {
             Some(name) => NormalizationError::SpecifiedOperationNotFound {
                 operation_name: name.to_string(),
@@ -153,12 +178,14 @@ fn run<'a>(
     // the operation and the fragments, in document order
     let mut fragments: Vec<Fragment> = Vec::new();
     let mut op_position = 0;
-    for definition in &doc.definitions {
+    for (index, definition) in doc.definitions.iter().enumerate() {
         match definition {
-            Definition::Operation(o) if o.selection_set == op.selection_set => {
-                op_position = fragments.len()
-            }
-            Definition::Fragment(f) => fragments.push(*f),
+            Definition::Operation(_) if index == op_index => op_position = fragments.len(),
+            Definition::Fragment(f) => fragments.push(Fragment {
+                name: f.name,
+                type_condition: f.type_condition,
+                selection_set: span(f.selection_set),
+            }),
             _ => {}
         }
     }

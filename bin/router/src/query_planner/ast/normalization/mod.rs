@@ -20,6 +20,16 @@ pub fn normalize_operation(
     ast::flat::normalize::normalize_operation(supergraph, &document, operation_name)
 }
 
+/// Normalizes a parsed flat document.
+#[inline]
+pub fn normalize_flat_operation(
+    supergraph: &SupergraphState,
+    document: &graphql_tools::flat::Document,
+    operation_name: Option<&str>,
+) -> Result<NormalizedDocument, NormalizationError> {
+    ast::flat::normalize::normalize_operation(supergraph, document, operation_name)
+}
+
 #[cfg(test)]
 mod tests {
     use graphql_tools::parser::parse_query;

@@ -9,15 +9,15 @@ use crate::executor::plugin_context::PluginRequestState;
 use crate::executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
 use crate::executor::plugins::hooks;
 use crate::pipeline::error::{ClientPipelineError, PipelineError};
-use crate::pipeline::parser::GraphQLParserPayload;
+use crate::pipeline::parser::{GraphQLParserPayload, ParsedOperation};
 use crate::schema_state::SelectedSupergraph;
 use crate::shared_state::RouterSharedState;
 use crate::telemetry::logging::targets;
 use crate::telemetry::traces::spans::graphql::GraphQLValidateSpan;
 use crate::SchemaState;
-use graphql_tools::validation::validate::validate;
 use tracing::{debug, warn, Instrument};
 use xxhash_rust::xxh3::Xxh3;
+pub mod flat;
 pub mod max_aliases_rule;
 pub mod max_depth_rule;
 pub mod max_directives_rule;
@@ -41,6 +41,8 @@ pub async fn validate_operation_with_cache(
         let mut validation_plan = app_state.validation_plan.clone();
 
         if let Some(plugin_req_state) = plugin_req_state {
+            // plugins get the tree, built only here
+            let tree = validation_operation.tree();
             let mut start_payload = OnGraphQLValidationStartHookPayload {
                 router_http_request: &plugin_req_state.router_http_request,
                 context: &plugin_req_state.context,
@@ -48,7 +50,7 @@ pub async fn validate_operation_with_cache(
                     .request_context
                     .for_plugin::<hooks::OnGraphqlValidation>(),
                 schema: validation_schema,
-                document: validation_operation,
+                document: tree.clone(),
                 validation_plan,
                 errors,
             };
@@ -73,7 +75,10 @@ pub async fn validate_operation_with_cache(
             }
 
             validation_schema = start_payload.schema;
-            validation_operation = start_payload.document;
+            if !Arc::ptr_eq(&start_payload.document, &tree) {
+                // a plugin swapped the document, validate that one
+                validation_operation = Arc::new(ParsedOperation::from_tree(start_payload.document));
+            }
             validation_plan = start_payload.validation_plan;
             errors = start_payload.errors;
         }
@@ -98,7 +103,7 @@ pub async fn validate_operation_with_cache(
                     .validate_cache
                     .entry(cache_key)
                     .or_insert_with(async {
-                        let res = validate(
+                        let res = app_state.flat_validation_rules.validate(
                             &validation_schema.document,
                             &validation_operation,
                             &validation_plan,
@@ -152,7 +157,7 @@ pub async fn validate_operation_with_cache(
 
         if !errors.is_empty() {
             warn!(target: targets::GRAPHQL_VALIDATION, total_errors = errors.len(), "GraphQL validation failed");
-            debug!(target: targets::GRAPHQL_VALIDATION, errors = ?errors, document = %validation_operation, "validation errors");
+            debug!(target: targets::GRAPHQL_VALIDATION, errors = ?errors, document = %graphql_tools::flat::minify(&validation_operation.flat), "validation errors");
 
             return Err(ClientPipelineError::ValidationErrors(errors).into());
         }

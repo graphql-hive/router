@@ -228,7 +228,7 @@ fn main() {
         for case in cases.iter().filter(|c| c.label.contains(&filter)) {
             let state = states[case.sdl_index].as_ref().unwrap();
             let name = operation_names(&case.query).into_iter().next().flatten();
-            let doc = flat::parse::parse(&case.query).unwrap();
+            let doc = graphql_tools::flat::parse(&case.query).unwrap();
             let t = Instant::now();
             for _ in 0..runs {
                 drop(flat::normalize::normalize_operation(state, &doc, name.as_deref()).unwrap());
@@ -275,7 +275,7 @@ fn check(cases: &[Case], states: &[Option<SupergraphState>]) {
             continue;
         };
         let tree = safe_parse_operation(&case.query);
-        let flat_doc = flat::parse::parse(&case.query);
+        let flat_doc = graphql_tools::flat::parse(&case.query);
         let (tree, flat_doc) = match (tree, flat_doc) {
             (Ok(tree), Ok(flat_doc)) => (tree, flat_doc),
             (Err(_), Err(_)) => {
@@ -364,10 +364,10 @@ fn bench(cases: &[Case], states: &[Option<SupergraphState>]) {
         let name = operation_names(&case.query).into_iter().next().flatten();
         let name = name.as_deref();
         let tree = safe_parse_operation(&case.query).unwrap();
-        let flat_doc = flat::parse::parse(&case.query).unwrap();
+        let flat_doc = graphql_tools::flat::parse(&case.query).unwrap();
 
         let parse_tree = best(runs, || safe_parse_operation(&case.query).unwrap());
-        let parse_flat = best(runs, || flat::parse::parse(&case.query).unwrap());
+        let parse_flat = best(runs, || graphql_tools::flat::parse(&case.query).unwrap());
         let norm_runs = runs.clamp(1, 5);
         let norm_tree = best(norm_runs, || {
             normalize_operation(state, &tree, name).unwrap()
@@ -383,7 +383,7 @@ fn bench(cases: &[Case], states: &[Option<SupergraphState>]) {
         });
         drop(kept);
         let (kept, allocs_f, peak_f, live_f) = measure(|| {
-            let doc = flat::parse::parse(&case.query).unwrap();
+            let doc = graphql_tools::flat::parse(&case.query).unwrap();
             flat::normalize::normalize_operation(state, &doc, name).unwrap()
         });
         drop(kept);

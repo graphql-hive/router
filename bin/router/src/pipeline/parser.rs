@@ -1,5 +1,5 @@
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::executor::hooks::on_graphql_params::GraphQLParams;
 use crate::executor::hooks::on_graphql_parse::{
@@ -15,58 +15,123 @@ use crate::query_planner::utils::parsing::{
 use crate::telemetry::logging::targets;
 use crate::telemetry::traces::spans::graphql::{GraphQLParseSpan, GraphQLSpanOperationIdentity};
 use combine::easy::Info;
+use graphql_tools::flat::{self, Document as FlatDocument, OperationKind as FlatOperationKind};
 use graphql_tools::parser::minify_query;
-use graphql_tools::parser::query::{Definition, Document, OperationDefinition};
+use graphql_tools::parser::query::Document;
 use graphql_tools::validation::utils::ValidationError;
 use hive_console_sdk::agent::utils::normalize_operation as hive_sdk_normalize_operation;
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::cache_state::{CacheHitMiss, EntryResultHitMissExt};
-use crate::pipeline::error::{InternalPipelineError, ParserCacheError, PipelineError};
+use crate::pipeline::error::{ParserCacheError, PipelineError};
 use crate::pipeline::execution_request::GetQueryStr;
 use crate::shared_state::RouterSharedState;
 use tracing::{debug, error, warn, Instrument};
 
+/// A parsed operation. The router works with the flat document. The tree is made only for
+/// plugins and the stages not on the flat AST yet, the first time one of them asks, by parsing
+/// the same text again.
+#[derive(Debug)]
+pub struct ParsedOperation {
+    pub flat: Arc<FlatDocument>,
+    /// The text the flat document was parsed from, for the tree.
+    source: Box<str>,
+    tree: OnceLock<Arc<Document<'static, String>>>,
+}
+
+impl ParsedOperation {
+    /// Parses `source`. A document the flat parser rejects goes through the tree parser too, for
+    /// the error clients have always seen.
+    fn parse(source: &str, token_limit: Option<usize>) -> Result<Self, ParserCacheError> {
+        let tree_error = |err: graphql_tools::parser::query::ParseError| {
+            if let Some(combine::stream::easy::Error::Message(Info::Static(msg))) =
+                err.0.errors.first()
+            {
+                if *msg == "Token limit exceeded" {
+                    warn!(target: targets::GRAPHQL_PARSING, "token limit exceeded");
+
+                    return ParserCacheError::ValidationErrors(
+                        vec![ValidationError {
+                            locations: vec![err.0.position],
+                            message: "Token limit exceeded.".to_string(),
+                            error_code: "TOKEN_LIMIT_EXCEEDED",
+                        }]
+                        .into(),
+                    );
+                }
+            }
+
+            debug!(target: targets::GRAPHQL_PARSING, error = ?err, "failed to parse GraphQL operation");
+
+            ParserCacheError::ParseError(Arc::new(err))
+        };
+
+        match flat::parse_with_limits(source, token_limit) {
+            Ok(flat) => Ok(Self {
+                flat: Arc::new(flat),
+                source: source.into(),
+                tree: OnceLock::new(),
+            }),
+            Err(flat_error) => {
+                let tree = match token_limit {
+                    Some(limit) => safe_parse_operation_with_token_limit(source, limit),
+                    None => safe_parse_operation(source),
+                }
+                .map_err(tree_error)?;
+                // the two parsers accept the same documents, this one is a bug to look into
+                error!(target: targets::GRAPHQL_PARSING, error = %flat_error, "the flat parser rejected an operation the tree parser accepts");
+                Ok(Self::from_tree(Arc::new(tree)))
+            }
+        }
+    }
+
+    /// From a tree a plugin gave back.
+    pub fn from_tree(tree: Arc<Document<'static, String>>) -> Self {
+        Self {
+            flat: Arc::new(crate::query_planner::ast::flat::tree::from_tree(&tree)),
+            source: Box::default(),
+            tree: OnceLock::from(tree),
+        }
+    }
+
+    /// The tree, parsed the first time it's asked for.
+    pub fn tree(&self) -> Arc<Document<'static, String>> {
+        Arc::clone(self.tree.get_or_init(|| {
+            let mut tree = safe_parse_operation(&self.source)
+                .expect("the flat parser accepted it, so does the tree parser");
+            shrink_parsed_operation(&mut tree);
+            Arc::new(tree)
+        }))
+    }
+
+    /// The kind and name of the first operation.
+    fn operation_identity(&self) -> (OperationKind, Option<String>) {
+        let doc = &self.flat;
+        match doc.operations().next() {
+            Some(op) => {
+                let kind = match op.kind {
+                    FlatOperationKind::Query | FlatOperationKind::Shorthand => OperationKind::Query,
+                    FlatOperationKind::Mutation => OperationKind::Mutation,
+                    FlatOperationKind::Subscription => OperationKind::Subscription,
+                };
+                (kind, doc.opt_str(op.name).map(str::to_string))
+            }
+            // the validation stage reports a document without operations
+            None => (OperationKind::Query, None),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ParseCacheEntry {
-    document: Arc<Document<'static, String>>,
+    document: Arc<ParsedOperation>,
     document_minified_string: Arc<String>,
     hive_operation_hash: Arc<String>,
 }
 
-impl ParseCacheEntry {
-    #[inline]
-    pub fn try_new(
-        parsed_arc: Arc<Document<'static, String>>,
-        query_str: &str,
-    ) -> Result<Self, PipelineError> {
-        let minified_arc = {
-            Arc::new(minify_query(query_str).map_err(|err| {
-                error!(target: targets::GRAPHQL_PARSING, error = ?err, "failed to minify parsed GraphQL operation");
-                InternalPipelineError::FailedToMinifyParsedOperation(err.to_string())
-            })?)
-        };
-        let hive_normalized_operation = hive_sdk_normalize_operation(&parsed_arc);
-        let hive_minified =
-            minify_query(hive_normalized_operation.to_string().as_ref()).map_err(|err| {
-                error!(
-                    target: targets::GRAPHQL_PARSING,
-                    error = ?err,
-                    "failed to minify GraphQL operation normalized for Hive SDK"
-                );
-                InternalPipelineError::FailedToMinifyParsedOperation(err.to_string())
-            })?;
-        Ok(ParseCacheEntry {
-            document: parsed_arc,
-            document_minified_string: minified_arc,
-            hive_operation_hash: Arc::new(format!("{:x}", md5::compute(hive_minified))),
-        })
-    }
-}
-
 #[derive(Debug)]
 pub struct GraphQLParserPayload {
-    pub parsed_operation: Arc<Document<'static, String>>,
+    pub parsed_operation: Arc<ParsedOperation>,
     pub minified_document: Arc<String>,
     pub operation_name: Option<String>,
     pub operation_type: OperationKind,
@@ -144,34 +209,8 @@ pub async fn parse_operation_with_cache(
             .parse_cache
             .entry(cache_key)
             .or_try_insert_with::<_, ParserCacheError>(async {
-                let mut parsed = match app_state.router_config.limits.max_tokens.as_ref() {
-                    Some(cfg) => safe_parse_operation_with_token_limit(query_str, cfg.n),
-                    _ => safe_parse_operation(query_str),
-                }
-                .map_err(|err| {
-                    if let Some(combine::stream::easy::Error::Message(Info::Static(msg))) =
-                        err.0.errors.first()
-                    {
-                        if *msg == "Token limit exceeded" {
-                            warn!(target: targets::GRAPHQL_PARSING, "token limit exceeded");
-
-                            return ParserCacheError::ValidationErrors(
-                                vec![ValidationError {
-                                    locations: vec![err.0.position],
-                                    message: "Token limit exceeded.".to_string(),
-                                    error_code: "TOKEN_LIMIT_EXCEEDED",
-                                }]
-                                .into(),
-                            );
-                        }
-                    }
-
-                    debug!(target: targets::GRAPHQL_PARSING, error = ?err, "failed to parse GraphQL operation");
-
-                    ParserCacheError::ParseError(Arc::new(err))
-                })?;
-
-                shrink_parsed_operation(&mut parsed);
+                let token_limit = app_state.router_config.limits.max_tokens.as_ref().map(|cfg| cfg.n);
+                let parsed = ParsedOperation::parse(query_str, token_limit)?;
 
                 let parsed_arc = Arc::new(parsed);
                 let minified_arc = Arc::new(minify_query(query_str).map_err(|err| {
@@ -179,7 +218,9 @@ pub async fn parse_operation_with_cache(
 
                     ParserCacheError::MinifyError(err.to_string())
                 })?);
-                let hive_normalized_operation = hive_sdk_normalize_operation(&parsed_arc);
+                // ponytail: the usage report still reads the tree, so every new operation
+                // parses twice until it reads the flat document
+                let hive_normalized_operation = hive_sdk_normalize_operation(&parsed_arc.tree());
                 let hive_minified = minify_query(hive_normalized_operation.to_string().as_ref())
                     .map_err(|err| {
                         error!(target: targets::GRAPHQL_PARSING, error = ?err, "failed to minify GraphQL operation normalized for Hive SDK");
@@ -210,8 +251,9 @@ pub async fn parse_operation_with_cache(
         let mut parsed_operation = parse_cache_item.document;
 
         if !on_end_callbacks.is_empty() {
+            let tree = parsed_operation.tree();
             let mut end_payload = OnGraphQLParseEndHookPayload {
-                document: parsed_operation,
+                document: Arc::clone(&tree),
                 cache_hint,
                 request_context: plugin_req_state
                     .as_ref()
@@ -232,40 +274,15 @@ pub async fn parse_operation_with_cache(
                     }
                 }
             }
-            // Give the ownership back to variables
-            parsed_operation = end_payload.document;
+            // a plugin may have put another document in its place
+            if !Arc::ptr_eq(&tree, &end_payload.document) {
+                parsed_operation = Arc::new(ParsedOperation::from_tree(end_payload.document));
+            }
         }
 
         let cache_key_string = cache_key.to_string();
 
-        let (operation_type, operation_name) =
-            match parsed_operation
-                .definitions
-                .iter()
-                .find_map(|def| match def {
-                    Definition::Operation(op) => Some(op),
-                    _ => None,
-                }) {
-                Some(OperationDefinition::Query(def)) => (
-                    OperationKind::Query,
-                    def.name.as_ref().map(|s| s.to_string()),
-                ),
-                Some(OperationDefinition::Mutation(def)) => (
-                    OperationKind::Mutation,
-                    def.name.as_ref().map(|s| s.to_string()),
-                ),
-                Some(OperationDefinition::Subscription(def)) => (
-                    OperationKind::Subscription,
-                    def.name.as_ref().map(|s| s.to_string()),
-                ),
-                Some(OperationDefinition::SelectionSet(_)) => (OperationKind::Query, None),
-                None => {
-                    // This should not happen as we must have at least one operation definition
-                    // but just in case, we handle it gracefully,
-                    // the error will be caught later in the pipeline, specifically in the validation stage
-                    (OperationKind::Query, None)
-                }
-            };
+        let (operation_type, operation_name) = parsed_operation.operation_identity();
 
         let payload = GraphQLParserPayload {
             parsed_operation,
