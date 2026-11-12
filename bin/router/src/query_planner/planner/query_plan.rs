@@ -117,11 +117,11 @@ pub fn build_query_plan_from_fetch_graph(
         let wave_size = queue.len();
 
         for _ in 0..wave_size {
-            let step_index = queue
-                .pop_front()
-                .ok_or(QueryPlanError::Internal(String::from(
+            let step_index = queue.pop_front().ok_or_else(|| {
+                QueryPlanError::Internal(String::from(
                     "Failed to pop a step from the queue. Queue should not be empty",
-                )))?;
+                ))
+            })?;
 
             let step_data = fetch_graph.get_step_data(step_index)?;
             current_wave_nodes.extend(PlanNode::from_fetch_step(step_data, supergraph, options));

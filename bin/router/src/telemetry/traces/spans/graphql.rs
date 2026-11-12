@@ -529,7 +529,7 @@ fn record_error_events_to_span(span: &Span, errors: Vec<ObservedError>) {
         attributes.push(KeyValue::new(ERROR_MESSAGE, message.to_string()));
         attributes.push(KeyValue::new(
             ERROR_TYPE,
-            error.code.unwrap_or(String::from("unknown")).to_string(),
+            error.code.unwrap_or_else(|| "unknown".to_string()),
         ));
 
         if let Some(service_name) = error.service_name {
