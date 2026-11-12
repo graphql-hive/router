@@ -343,6 +343,7 @@ impl<'a> BatchFetchBuilder<'a> {
                 .then_some(self.custom_scalar_paths),
             entity_batch: EntityBatch {
                 aliases: self.batched_aliases,
+                trie: Default::default(),
             },
             depends_on: FetchIdList::new(),
             completes: FetchIdList::new(),
@@ -2100,6 +2101,7 @@ mod tests {
                             PathSegment::List,
                         ])],
                         copy: Default::default(),
+                        trie: Default::default(),
                     }));
                     fetch.reuse_waits = reuse_waits.iter().copied().map(FetchId).collect();
                     fetch.depends_on = std::iter::once(FetchId(10))
@@ -3001,6 +3003,7 @@ mod tests {
         PlanNode::Flatten(FlattenNode {
             path,
             node: Box::new(PlanNode::Fetch(Box::new(fetch_node))),
+            trie: Default::default(),
         })
     }
 

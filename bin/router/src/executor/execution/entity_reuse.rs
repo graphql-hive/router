@@ -2,19 +2,18 @@
 //! A representation that matches an object at one of the planner's `EntityReuse` sources is the
 //! same entity with the same `@requires` inputs.
 
+use std::{ops::Range, sync::Arc};
+
 use crate::{
     executor::{
         execution::context::{EntityRef, Known, TargetEntities},
-        introspection::schema::{PossibleTypes, SchemaMetadata},
+        introspection::schema::PossibleTypes,
         response::{merge::EntityMerger, value::Value},
-        utils::{
-            prehashed_map::PrehashedMap,
-            traverse::{traverse_and_callback, traverse_and_callback_mut},
-        },
+        utils::{prehashed_map::PrehashedMap, traverse::PathTrie},
     },
     query_planner::{
         ast::requires::{RequiresSelection, RequiresSelectionSetRef},
-        planner::plan_nodes::{EntityReuse, ResponsePathRef},
+        planner::plan_nodes::EntityReuse,
     },
 };
 
@@ -27,54 +26,81 @@ pub(super) fn index_sources<'d, 'v>(
     possible_types: &PossibleTypes,
     seen: &mut PrehashedMap<Known<'d, 'v>>,
 ) {
-    for source in &reuse.sources {
-        traverse_and_callback(data, source.as_slice(), possible_types, &mut |object, _| {
-            if object.is_object() && holds_every_field(object, required_selections) {
-                seen.entry(object.to_hash(required_selections, possible_types))
-                    .or_insert(Known::InResponse(object));
-            }
-        });
-    }
+    let trie = reuse.trie();
+    trie.walk(data, possible_types, &mut |_, object, _| {
+        if object.is_object() && holds_every_field(object, required_selections) {
+            seen.entry(object.to_hash(required_selections, possible_types))
+                .or_insert(Known::InResponse(object));
+        }
+    });
 }
 
+/// The entities one fetch copied, and its `paths` among the ones of `trie`, with their targets.
 pub struct Copies<'a, 'v> {
-    pub paths: Vec<(ResponsePathRef<'a>, TargetEntities)>,
+    pub trie: &'a PathTrie,
+    pub paths: Range<usize>,
+    pub targets: Arc<TargetEntities>,
     pub copies: Vec<Value<'v>>,
 }
 
 /// Nothing was sent for the copies, so there are no errors or rewrites to apply.
 pub fn merge_copies<'v>(
     data: &mut Value<'v>,
-    copies: Vec<Copies<'_, 'v>>,
-    schema_metadata: &SchemaMetadata,
+    mut copies: Vec<Copies<'_, 'v>>,
+    possible_types: &PossibleTypes,
+) {
+    // the aliases of a batch come one after another and share its trie, so one walk merges all
+    // of them
+    let mut rest = copies.as_mut_slice();
+    while let Some(first) = rest.first() {
+        let shared = 1 + rest[1..]
+            .iter()
+            .take_while(|next| std::ptr::eq(next.trie, first.trie))
+            .count();
+        let (group, after) = rest.split_at_mut(shared);
+        merge_walk(data, group, possible_types);
+        rest = after;
+    }
+}
+
+fn merge_walk<'v>(
+    data: &mut Value<'v>,
+    group: &mut [Copies<'_, 'v>],
+    possible_types: &PossibleTypes,
 ) {
     let copied = |target: &Option<EntityRef>| match target {
         Some(EntityRef::Copied { index }) => Some(*index as usize),
         _ => None,
     };
-    for Copies { paths, mut copies } in copies {
-        let mut merger = EntityMerger::new(
-            &mut copies,
-            paths
-                .iter()
-                .flat_map(|(_, targets)| targets.iter())
-                .filter_map(copied),
-        );
-        for (path, targets) in &paths {
-            let mut targets = targets.iter();
-            traverse_and_callback_mut(
-                data,
-                path.as_slice(),
-                schema_metadata,
-                None,
-                &mut |target, _| {
-                    if let Some(index) = targets.next().and_then(copied) {
-                        merger.merge_into(target, index);
-                    }
-                },
-            );
+    let trie = group[0].trie;
+    let mut mergers = Vec::with_capacity(group.len());
+    // for every path of the trie that copies, its fetch and its next target
+    let mut next = vec![None; trie.ends().len()];
+    for (
+        fetch,
+        Copies {
+            paths,
+            targets,
+            copies,
+            ..
+        },
+    ) in group.iter_mut().enumerate()
+    {
+        for (path, trie_path) in paths.clone().enumerate() {
+            next[trie_path] = Some((fetch, targets.path(path).iter()));
         }
+        mergers.push(EntityMerger::new(copies, targets.iter().filter_map(copied)));
     }
+    trie.walk_mut(data, possible_types, None, &mut |node, target, _| {
+        for &path in trie.paths_ending_at(node) {
+            let Some((fetch, targets)) = &mut next[path] else {
+                continue;
+            };
+            if let Some(index) = targets.next().and_then(copied) {
+                mergers[*fetch].merge_into(target, index);
+            }
+        }
+    });
 }
 
 /// Whether `value` has every field of `selections`, none of them null. An entity with a missing
