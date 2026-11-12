@@ -487,10 +487,11 @@ mod tests {
     }
 
     fn payload_of(chunks: &[&'static [u8]]) -> web::types::Payload {
-        let (tx, rx) = ntex::channel::bstream::eof::<PayloadError>();
+        let (tx, rx) = ntex::channel::bstream::channel::<PayloadError>();
         for chunk in chunks {
             tx.feed_data(Bytes::from_static(chunk));
         }
+        tx.feed_eof();
         web::types::Payload(rx.into())
     }
 

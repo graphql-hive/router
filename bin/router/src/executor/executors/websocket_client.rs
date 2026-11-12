@@ -140,6 +140,8 @@ pub async fn connect_with_permessage_deflate(
 fn ws_client_config(permessage_deflate: bool) -> Result<ws::WsClientConfig, WsConnectError> {
     let cfg = ws::WsClientConfig::new()
         .set_max_frame_size(16 * 1024 * 1024) // default is 64kB which is too small
+        // default is 4MiB, which would reject single frame messages above it
+        .set_max_message_size(16 * 1024 * 1024)
         .set_protocols([WS_SUBPROTOCOL])
         .map_err(|e| WsConnectError::BuilderError(e.to_string()))?
         .set_handshake_timeout(ntex::time::Seconds(60));

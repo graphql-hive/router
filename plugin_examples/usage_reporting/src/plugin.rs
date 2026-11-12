@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use hive_router::{
     async_trait,
     background_tasks::{BackgroundTask, CancellationToken},
-    humantime_serde, ntex,
+    humantime_serde,
     plugins::{
         hooks::{
             on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
@@ -11,7 +11,7 @@ use hive_router::{
         },
         plugin_trait::{RouterPlugin, StartHookPayload},
     },
-    tokio::sync::Mutex,
+    tokio::{self, sync::Mutex},
     tracing,
 };
 use serde::{Deserialize, Serialize};
@@ -116,7 +116,7 @@ impl BackgroundTask for UsageReportingTask {
     }
     async fn run(&self, token: CancellationToken) {
         loop {
-            ntex::time::sleep(self.interval).await;
+            tokio::time::sleep(self.interval).await;
 
             if token.is_cancelled() {
                 tracing::trace!("Background task cancelled");
