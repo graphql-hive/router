@@ -18,27 +18,24 @@ use crate::executor::executors::error::SubgraphExecutorError;
 use crate::executor::executors::subscription_buffer::drain_into;
 use crate::executor::executors::websocket_client::{self, WsClient};
 use crate::executor::executors::websocket_pool::{
-    WebSocketConnectionId, WebSocketInit, WebSocketPool,
+    WebSocketConnectionId, WebSocketInit, WebSocketPool, WebSocketTarget,
 };
 use crate::executor::response::subgraph_response::SubgraphResponse;
 
 pub struct WsSubgraphExecutor {
-    subgraph_name: String,
-    endpoint: http::Uri,
+    target: Arc<WebSocketTarget>,
     tls_config: Option<Arc<rustls::ClientConfig>>,
     buffer_capacity: usize,
     telemetry_context: Arc<TelemetryContext>,
     pool: Arc<WebSocketPool>,
     idle_timeout: Duration,
     reuse_connections: bool,
-    permessage_deflate: bool,
 }
 
 impl WsSubgraphExecutor {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        subgraph_name: String,
-        endpoint: http::Uri,
+        target: Arc<WebSocketTarget>,
         tls_config: Option<Arc<rustls::ClientConfig>>,
         buffer_capacity: usize,
         telemetry_context: Arc<TelemetryContext>,
@@ -47,22 +44,14 @@ impl WsSubgraphExecutor {
         reuse_connections: bool,
     ) -> Self {
         Self {
-            subgraph_name,
-            endpoint,
+            target,
             tls_config,
             buffer_capacity,
             telemetry_context,
             pool,
             idle_timeout,
             reuse_connections,
-            permessage_deflate: false,
         }
-    }
-
-    /// Offers the `permessage-deflate` extension (RFC 7692) to the subgraph when `enabled`.
-    pub fn with_permessage_deflate(mut self, enabled: bool) -> Self {
-        self.permessage_deflate = enabled;
-        self
     }
 }
 
@@ -73,7 +62,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
     }
 
     fn endpoint(&self) -> &http::Uri {
-        &self.endpoint
+        &self.target.endpoint
     }
 
     async fn execute<'a>(
@@ -84,19 +73,13 @@ impl SubgraphExecutor for WsSubgraphExecutor {
     ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
         if self.reuse_connections {
             if let Some(fingerprint) = execution_request.connection_fingerprint {
-                let id = WebSocketConnectionId::new(
-                    self.subgraph_name.clone(),
-                    self.endpoint.clone(),
-                    fingerprint,
-                )
-                .with_permessage_deflate(self.permessage_deflate);
+                let id = WebSocketConnectionId::new(self.target.clone(), fingerprint);
                 let operation = async {
                     let executor = self
                         .pool
                         .get_or_initialize(
                             id,
                             WebSocketInit {
-                                endpoint: self.endpoint.clone(),
                                 headers: execution_request.headers.clone(),
                                 tls_config: self.tls_config.clone(),
                                 buffer_capacity: self.buffer_capacity,
@@ -114,14 +97,14 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             }
         }
 
-        let endpoint = self.endpoint.clone();
-        let subgraph_name = self.subgraph_name.clone();
+        let endpoint = self.target.endpoint.clone();
+        let subgraph_name = self.target.subgraph_name.clone();
         let tls_config = self.tls_config.clone();
-        let permessage_deflate = self.permessage_deflate;
+        let permessage_deflate = self.target.permessage_deflate;
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
         debug!(
             target: targets::WEBSOCKET_CLIENT,
-            subgraph = subgraph_name, endpoint = %endpoint,
+            subgraph = %subgraph_name, endpoint = %endpoint,
             "establishing WebSocket connection to subgraph"
         );
 
@@ -166,7 +149,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
 
                 debug!(
                     target: targets::WEBSOCKET_CLIENT,
-                    subgraph = subgraph_name, endpoint = %endpoint,
+                    subgraph = %subgraph_name, endpoint = %endpoint,
                     "WebSocket connection to subgraph established"
                 );
 
@@ -206,18 +189,12 @@ impl SubgraphExecutor for WsSubgraphExecutor {
     > {
         if self.reuse_connections {
             if let Some(fingerprint) = execution_request.connection_fingerprint {
-                let id = WebSocketConnectionId::new(
-                    self.subgraph_name.clone(),
-                    self.endpoint.clone(),
-                    fingerprint,
-                )
-                .with_permessage_deflate(self.permessage_deflate);
+                let id = WebSocketConnectionId::new(self.target.clone(), fingerprint);
                 let executor = self
                     .pool
                     .get_or_initialize(
                         id,
                         WebSocketInit {
-                            endpoint: self.endpoint.clone(),
                             headers: execution_request.headers.clone(),
                             tls_config: self.tls_config.clone(),
                             buffer_capacity: self.buffer_capacity,
@@ -236,10 +213,10 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             self.buffer_capacity,
         );
 
-        let endpoint = self.endpoint.clone();
-        let subgraph_name = self.subgraph_name.clone();
+        let endpoint = self.target.endpoint.clone();
+        let subgraph_name = self.target.subgraph_name.clone();
         let tls_config = self.tls_config.clone();
-        let permessage_deflate = self.permessage_deflate;
+        let permessage_deflate = self.target.permessage_deflate;
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
         let headers = execution_request.headers.clone();
         let init_payload = (!headers.is_empty()).then(|| headers.into());
@@ -247,11 +224,11 @@ impl SubgraphExecutor for WsSubgraphExecutor {
 
         debug!(
             target: targets::WEBSOCKET_CLIENT,
-            subgraph = self.subgraph_name, endpoint = %self.endpoint,
+            subgraph = %self.target.subgraph_name, endpoint = %self.target.endpoint,
             "establishing WebSocket subscription connection to subgraph"
         );
 
-        let subgraph_name_for_metrics = self.subgraph_name.clone();
+        let subgraph_name_for_metrics = self.target.subgraph_name.clone();
         let telemetry_context = self.telemetry_context.clone();
 
         // no await intentionally. the task runs the subscription in the background
@@ -292,7 +269,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
 
             debug!(
                 target: targets::WEBSOCKET_CLIENT,
-                subgraph = subgraph_name, endpoint = %endpoint,
+                subgraph = %subgraph_name, endpoint = %endpoint,
                 "WebSocket subscription connection to subgraph established"
             );
 
@@ -333,7 +310,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             .telemetry_context
             .metrics
             .subscriptions
-            .active_subgraph_operation(&self.subgraph_name);
+            .active_subgraph_operation(&self.target.subgraph_name);
         Ok(Box::pin(async_stream::stream! {
             let _op_guard = op_guard;
             while let Some(item) = rx.recv().await {
