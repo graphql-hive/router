@@ -13,6 +13,7 @@ use ahash::{AHasher, HashMap};
 
 use crate::query_planner::{
     ast::{
+        merge_path::MergePath,
         requires::RequiresSelectionSet,
         selection_item::SelectionItem,
         selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
@@ -131,6 +132,18 @@ struct Start {
     hasher: AHasher,
 }
 
+struct LazyStart<'p> {
+    response_path: &'p MergePath,
+    start: Option<Start>,
+}
+
+impl LazyStart<'_> {
+    fn get(&mut self) -> &Start {
+        self.start
+            .get_or_insert_with(|| Start::new(FlattenNodePath::from(self.response_path)))
+    }
+}
+
 impl Start {
     fn new(path: FlattenNodePath) -> Self {
         let mut hasher = AHasher::default();
@@ -168,10 +181,14 @@ impl<'a> EntityReuseIndex<'a> {
             return;
         }
         self.found.clear();
-        let start = Start::new(FlattenNodePath::from(&step.response_path));
+        // most steps hold no position, so the start is only built for the first one
+        let mut start = LazyStart {
+            response_path: &step.response_path,
+            start: None,
+        };
         let mut path = Vec::new();
         for (definition_name, selections) in step.output.iter_selections() {
-            self.walk(&start, &mut path, selections, definition_name);
+            self.walk(&mut start, &mut path, selections, definition_name);
         }
     }
 
@@ -221,13 +238,13 @@ impl<'a> EntityReuseIndex<'a> {
 
     fn walk(
         &mut self,
-        start: &Start,
+        start: &mut LazyStart<'_>,
         path: &mut Vec<Segment<'a>>,
         selections: &'a SelectionSet,
         current_type: &'a str,
     ) {
         if let Some(positions) = self.positions.get_mut(current_type) {
-            positions.add(start, path, selections);
+            positions.add(start.get(), path, selections);
         }
 
         for item in &selections.items {
