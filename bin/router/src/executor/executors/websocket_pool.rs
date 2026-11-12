@@ -39,35 +39,30 @@ type SubscriptionItem = Result<SubgraphResponse<'static>, SubgraphExecutorError>
 type InitResult = Result<Arc<PooledWebSocketExecutor>, PoolInitError>;
 type PoolEntries = DashMap<WebSocketConnectionId, PoolEntry>;
 
+/// What a subgraph WebSocket connects to. Built once per subgraph endpoint, together with its
+/// executor, so every pool key for that endpoint carries the same settings.
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub struct WebSocketTarget {
+    pub subgraph_name: Arc<str>,
+    pub endpoint: Uri,
+    /// Offers the `permessage-deflate` extension (RFC 7692) when the connection is created.
+    /// It's part of the key, so connections with and without the extension are never shared.
+    pub permessage_deflate: bool,
+}
+
 /// Identifies one reusable, initialized subgraph WebSocket connection.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct WebSocketConnectionId {
-    subgraph_name: Arc<str>,
-    endpoint: Uri,
+    target: Arc<WebSocketTarget>,
     fingerprint: ConnectionFingerprint,
-    permessage_deflate: bool,
 }
 
 impl WebSocketConnectionId {
-    pub fn new(
-        subgraph_name: impl Into<Arc<str>>,
-        endpoint: Uri,
-        fingerprint: ConnectionFingerprint,
-    ) -> Self {
+    pub fn new(target: Arc<WebSocketTarget>, fingerprint: ConnectionFingerprint) -> Self {
         Self {
-            subgraph_name: subgraph_name.into(),
-            endpoint,
+            target,
             fingerprint,
-            permessage_deflate: false,
         }
-    }
-
-    /// Offers the `permessage-deflate` extension (RFC 7692) when the connection is created.
-    ///
-    /// Connections with and without the extension are never shared.
-    pub fn with_permessage_deflate(mut self, enabled: bool) -> Self {
-        self.permessage_deflate = enabled;
-        self
     }
 }
 
@@ -112,7 +107,6 @@ enum PoolEntry {
 }
 
 pub struct WebSocketInit {
-    pub endpoint: Uri,
     pub headers: HeaderMap,
     pub tls_config: Option<Arc<rustls::ClientConfig>>,
     pub buffer_capacity: usize,
@@ -138,7 +132,7 @@ impl WebSocketPool {
         });
         trace!(
             target: targets::WEBSOCKET_POOL,
-            subgraph = %id.subgraph_name,
+            subgraph = %id.target.subgraph_name,
             found = executor.is_some(),
             "looked up WebSocket pool connection"
         );
@@ -150,13 +144,13 @@ impl WebSocketPool {
         id: WebSocketConnectionId,
         init: WebSocketInit,
     ) -> Result<Arc<PooledWebSocketExecutor>, SubgraphExecutorError> {
-        let endpoint = init.endpoint.clone();
+        let endpoint = &id.target.endpoint;
         let (wait_rx, generation) = match self.entries.entry(id.clone()) {
             Entry::Occupied(mut entry) => match entry.get_mut() {
                 PoolEntry::Initialized(executor) if !executor.commands.is_closed() => {
                     trace!(
                         target: targets::WEBSOCKET_POOL,
-                        subgraph = %id.subgraph_name,
+                        subgraph = %id.target.subgraph_name,
                         endpoint = %endpoint,
                         "reusing WebSocket pool connection"
                     );
@@ -194,13 +188,12 @@ impl WebSocketPool {
         if let Some(generation) = generation {
             debug!(
                 target: targets::WEBSOCKET_POOL,
-                subgraph = %id.subgraph_name,
+                subgraph = %id.target.subgraph_name,
                 endpoint = %endpoint,
                 "initializing WebSocket pool connection"
             );
             let cleanup = InitializationCleanup::new(self.entries.clone(), id.clone(), generation);
             let telemetry_context = init.telemetry_context.clone();
-            let log_endpoint = endpoint.clone();
             rt::spawn(async move {
                 let mut cleanup = cleanup;
                 match initialize_connection(&cleanup.entries, &cleanup.id, init).await {
@@ -208,21 +201,24 @@ impl WebSocketPool {
                         telemetry_context
                             .metrics
                             .websocket_pool
-                            .record_connection_initialization(&cleanup.id.subgraph_name, true);
+                            .record_connection_initialization(
+                                &cleanup.id.target.subgraph_name,
+                                true,
+                            );
                         let executor = connection.executor.clone();
                         let Some(waiters) = cleanup.publish(executor.clone()) else {
                             debug!(
                                 target: targets::WEBSOCKET_POOL,
-                                subgraph = %cleanup.id.subgraph_name,
-                                endpoint = %log_endpoint,
+                                subgraph = %cleanup.id.target.subgraph_name,
+                                endpoint = %cleanup.id.target.endpoint,
                                 "discarding stale WebSocket pool connection initialization"
                             );
                             return;
                         };
                         info!(
                             target: targets::WEBSOCKET_POOL,
-                            subgraph = %cleanup.id.subgraph_name,
-                            endpoint = %log_endpoint,
+                            subgraph = %cleanup.id.target.subgraph_name,
+                            endpoint = %cleanup.id.target.endpoint,
                             waiting_requests = waiters.len(),
                             "WebSocket pool connection initialized"
                         );
@@ -236,11 +232,14 @@ impl WebSocketPool {
                         telemetry_context
                             .metrics
                             .websocket_pool
-                            .record_connection_initialization(&cleanup.id.subgraph_name, false);
+                            .record_connection_initialization(
+                                &cleanup.id.target.subgraph_name,
+                                false,
+                            );
                         warn!(
                             target: targets::WEBSOCKET_POOL,
-                            subgraph = %cleanup.id.subgraph_name,
-                            endpoint = %log_endpoint,
+                            subgraph = %cleanup.id.target.subgraph_name,
+                            endpoint = %cleanup.id.target.endpoint,
                             error = %error,
                             "failed to initialize WebSocket pool connection"
                         );
@@ -252,14 +251,14 @@ impl WebSocketPool {
         } else {
             debug!(
                 target: targets::WEBSOCKET_POOL,
-                subgraph = %id.subgraph_name,
+                subgraph = %id.target.subgraph_name,
                 endpoint = %endpoint,
                 "waiting for WebSocket pool connection initialization"
             );
             init.telemetry_context
                 .metrics
                 .websocket_pool
-                .record_connection_initialization_waiter(&id.subgraph_name);
+                .record_connection_initialization_waiter(&id.target.subgraph_name);
         }
 
         wait_rx
@@ -267,13 +266,13 @@ impl WebSocketPool {
             .map_err(|_| {
                 warn!(
                     target: targets::WEBSOCKET_POOL,
-                    subgraph = %id.subgraph_name,
+                    subgraph = %id.target.subgraph_name,
                     endpoint = %endpoint,
                     "WebSocket pool connection initialization stopped before completion"
                 );
                 SubgraphExecutorError::WebSocketArbiterChannelClosed
             })?
-            .map_err(|error| error.into_executor_error(&endpoint))
+            .map_err(|error| error.into_executor_error(endpoint))
     }
 }
 
@@ -368,9 +367,9 @@ async fn initialize_connection(
     init: WebSocketInit,
 ) -> Result<InitializedConnection, PoolInitError> {
     let wsconn = websocket_client::connect_with_permessage_deflate(
-        &init.endpoint,
+        &id.target.endpoint,
         init.tls_config,
-        id.permessage_deflate,
+        id.target.permessage_deflate,
     )
     .await
     .map_err(|error| PoolInitError::Connect(error.to_string()))?;
@@ -382,14 +381,13 @@ async fn initialize_connection(
         .map_err(|error| PoolInitError::Handshake(error.to_string()))?;
     let dispatcher_done = client.take_dispatcher_done();
     let (commands, task_commands) = mpsc::channel(init.buffer_capacity);
-    let endpoint = Arc::<str>::from(init.endpoint.to_string());
+    let endpoint = Arc::<str>::from(id.target.endpoint.to_string());
     let executor = Arc::new(PooledWebSocketExecutor {
         commands,
         telemetry_context: init.telemetry_context.clone(),
         buffer_capacity: init.buffer_capacity,
         entries: Arc::downgrade(entries),
         id: id.clone(),
-        endpoint_uri: init.endpoint,
         endpoint: endpoint.clone(),
     });
     let owner = ConnectionOwner {
@@ -398,7 +396,7 @@ async fn initialize_connection(
         commands: task_commands,
         executor: Arc::downgrade(&executor),
         telemetry_context: init.telemetry_context,
-        subgraph_name: id.subgraph_name.clone(),
+        subgraph_name: id.target.subgraph_name.clone(),
         endpoint,
         idle_timeout: init.idle_timeout,
     };
@@ -419,7 +417,6 @@ pub struct PooledWebSocketExecutor {
     buffer_capacity: usize,
     entries: Weak<PoolEntries>,
     id: WebSocketConnectionId,
-    endpoint_uri: Uri,
     endpoint: Arc<str>,
 }
 
@@ -438,7 +435,7 @@ impl PooledWebSocketExecutor {
             {
                 debug!(
                     target: targets::WEBSOCKET_POOL,
-                    subgraph = %self.id.subgraph_name,
+                    subgraph = %self.id.target.subgraph_name,
                     endpoint = %self.endpoint,
                     "evicted WebSocket pool connection"
                 );
@@ -456,7 +453,7 @@ impl PooledWebSocketExecutor {
         let permit = self.commands.reserve().await.map_err(|_| {
             debug!(
                 target: targets::WEBSOCKET_POOL,
-                subgraph = %self.id.subgraph_name,
+                subgraph = %self.id.target.subgraph_name,
                 endpoint = %self.endpoint,
                 "WebSocket pool connection closed before operation could be queued"
             );
@@ -480,7 +477,7 @@ impl PooledWebSocketExecutor {
             Ok(Err(error)) => {
                 warn!(
                     target: targets::WEBSOCKET_POOL,
-                    subgraph = %self.id.subgraph_name,
+                    subgraph = %self.id.target.subgraph_name,
                     endpoint = %self.endpoint,
                     error = %error,
                     "failed to start operation on WebSocket pool connection"
@@ -490,7 +487,7 @@ impl PooledWebSocketExecutor {
             Err(_) => {
                 debug!(
                     target: targets::WEBSOCKET_POOL,
-                    subgraph = %self.id.subgraph_name,
+                    subgraph = %self.id.target.subgraph_name,
                     endpoint = %self.endpoint,
                     "WebSocket pool connection closed while starting operation"
                 );
@@ -508,7 +505,7 @@ impl SubgraphExecutor for PooledWebSocketExecutor {
     }
 
     fn endpoint(&self) -> &Uri {
-        &self.endpoint_uri
+        &self.id.target.endpoint
     }
 
     async fn execute<'a>(
@@ -521,7 +518,10 @@ impl SubgraphExecutor for PooledWebSocketExecutor {
             .telemetry_context
             .metrics
             .websocket_pool
-            .active_operation(&self.id.subgraph_name, WebSocketPoolOperationType::Execute);
+            .active_operation(
+                &self.id.target.subgraph_name,
+                WebSocketPoolOperationType::Execute,
+            );
         let operation = async {
             let mut responses = self.submit(execution_request, 1).await?;
             responses.recv().await.ok_or_else(|| {
@@ -544,7 +544,7 @@ impl SubgraphExecutor for PooledWebSocketExecutor {
             .metrics
             .websocket_pool
             .active_operation(
-                &self.id.subgraph_name,
+                &self.id.target.subgraph_name,
                 WebSocketPoolOperationType::Subscribe,
             );
         // timeout covers queueing and the subscribe write, not the lifetime of the returned stream.
@@ -553,7 +553,7 @@ impl SubgraphExecutor for PooledWebSocketExecutor {
             .telemetry_context
             .metrics
             .subscriptions
-            .active_subgraph_operation(&self.id.subgraph_name);
+            .active_subgraph_operation(&self.id.target.subgraph_name);
         Ok(Box::pin(async_stream::stream! {
             let _pool_operation_guard = pool_operation_guard;
             let _subscription_operation_guard = subscription_operation_guard;
