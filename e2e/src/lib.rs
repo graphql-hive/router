@@ -31,6 +31,8 @@ mod disable_introspection;
 #[cfg(test)]
 mod entity_batching;
 #[cfg(test)]
+mod entity_reuse;
+#[cfg(test)]
 mod env_vars;
 #[cfg(test)]
 mod error_handling;

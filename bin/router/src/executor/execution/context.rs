@@ -1,4 +1,5 @@
 use std::{
+    collections::hash_map::Entry,
     hash::{Hash, Hasher},
     sync::Arc,
 };
@@ -8,14 +9,14 @@ use xxhash_rust::xxh3::Xxh3;
 
 use crate::{
     executor::{
-        execution::rewrites::FetchRewriteExt,
+        execution::{entity_reuse::ReuseIndex, rewrites::FetchRewriteExt},
         introspection::schema::PossibleTypes,
         projection::request::project_requires,
         response::{
             graphql_error::GraphQLErrorPathSegment, subgraph_response::SubgraphResponse,
             value::Value,
         },
-        utils::traverse::traverse_and_callback,
+        utils::{prehashed_map::PrehashedMap, traverse::traverse_and_callback},
     },
     query_planner::{
         ast::{
@@ -27,22 +28,28 @@ use crate::{
     },
 };
 
-/// Which entity goes into a target: the context group it was sent in, and its index among that
-/// group's representations.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct EntityRef {
-    pub context_group: usize,
-    pub index: usize,
-}
-
 /// The [`EntityRef`] of each target on a path, in walk order. `None` when the target sends
 /// nothing (null, or not projected).
 pub(super) type TargetEntities = Arc<Vec<Option<EntityRef>>>;
 
+/// Which entity goes into a target: its index among the context group's representations, or
+/// among the fetch's copies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntityRef {
+    Fetched { context_group: u32, index: u32 },
+    Copied { index: u32 },
+}
+
 pub(super) struct ContextGroup<'a> {
     pub variables: Vec<(&'a str, Vec<u8>)>,
     pub representations: Vec<u8>,
-    pub hash_to_index: AHashMap<u64, usize>,
+    pub count: usize,
+}
+
+/// What one fetch knows about an entity, by the hash of its representation.
+pub(super) enum Known<'d, 'v> {
+    InResponse(&'d Value<'v>),
+    Target(EntityRef),
 }
 
 /// Borrows existing values, including whole objects and arrays. Only projected
@@ -147,7 +154,7 @@ impl<'a, 'd, 'v> ContextGroups<'a, 'd, 'v> {
             groups.push(ContextGroup {
                 variables: Vec::new(),
                 representations: vec![b'['],
-                hash_to_index: AHashMap::new(),
+                count: 0,
             });
         }
         Self {
@@ -221,7 +228,7 @@ impl<'a, 'd, 'v> ContextGroups<'a, 'd, 'v> {
                         .zip(values.iter().cloned())
                         .collect(),
                     representations: vec![b'['],
-                    hash_to_index: AHashMap::new(),
+                    count: 0,
                 });
                 index
             });
@@ -232,8 +239,8 @@ impl<'a, 'd, 'v> ContextGroups<'a, 'd, 'v> {
 
 /// Walks every flatten path, deduplicates the entities by hash and projects their
 /// representations. Entities are grouped by the tuple of their context values (one request per
-/// group), without context variables there is at most one group. Identical paths share their
-/// target entities.
+/// group), without context variables there is at most one group. With `reuse`, entities already
+/// in the response are copied instead of sent.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn collect_context_entities<'a, 'd, 'v>(
     data: &'d Value<'v>,
@@ -243,16 +250,19 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
     context: &'a Option<Box<FetchContext>>,
     possible_types: &PossibleTypes,
     subgraph_keys: Option<&KeysByType>,
+    reuse: Option<&mut ReuseIndex<'d, 'v>>,
 ) -> (Vec<ContextGroup<'a>>, Vec<TargetEntities>) {
     let mut contexts = ContextGroups::new(context);
-    let mut path_entities: Vec<TargetEntities> = Vec::new();
-    let mut seen_paths: Vec<(ResponsePathRef<'a>, TargetEntities)> = Vec::new();
+    let mut reuse = reuse.filter(|_| contexts.names.is_empty());
+    // every entity we know of, by its hash: the ones `reuse` could copy, and every one with a
+    // target. the hash covers the context group, so one map serves all of them
+    let mut seen: PrehashedMap<Known> = reuse
+        .as_mut()
+        .map(|reuse| std::mem::take(&mut reuse.seen))
+        .unwrap_or_default();
     let required_selections = requires.root_selections();
+    let mut path_entities: Vec<TargetEntities> = Vec::new();
     for path in paths {
-        if let Some((_, entities)) = seen_paths.iter().find(|(seen, _)| *seen == path) {
-            path_entities.push(Arc::clone(entities));
-            continue;
-        }
         let mut entities = Vec::new();
         // the callback gets references into `data`, which the ancestor cache relies on
         let mut collect = |entity: &'d Value<'v>, objects: &[&'d Value<'v>]| {
@@ -272,48 +282,58 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
                 group_index.hash(&mut hasher);
                 hasher.finish()
             };
-            let group = &mut contexts.groups[group_index];
-            if let Some(index) = group.hash_to_index.get(&hash) {
-                entities.push(Some(EntityRef {
-                    context_group: group_index,
-                    index: *index,
-                }));
-                return;
-            }
-            let mut rewritten;
-            let projected = if let Some(rewrites) = input_rewrites {
-                rewritten = entity.clone();
-                for rewrite in rewrites {
-                    rewrite.rewrite(possible_types, &mut rewritten);
-                }
-                &rewritten
-            } else {
-                entity
+            let known = seen.entry(hash);
+            let in_response = match &known {
+                Entry::Occupied(known) => match known.get() {
+                    Known::Target(entity) => {
+                        entities.push(Some(*entity));
+                        return;
+                    }
+                    Known::InResponse(source) => Some(*source),
+                },
+                Entry::Vacant(_) => None,
             };
-            if project_requires(
-                possible_types,
-                required_selections,
-                projected,
-                &mut group.representations,
-                group.hash_to_index.is_empty(),
-                None,
-                false,
-                subgraph_keys,
-            ) {
-                let index = group.hash_to_index.len();
-                group.hash_to_index.insert(hash, index);
-                entities.push(Some(EntityRef {
-                    context_group: group_index,
-                    index,
-                }));
-            } else {
-                entities.push(None);
+            let copied = in_response
+                .zip(reuse.as_mut())
+                .and_then(|(source, reuse)| reuse.copy(source))
+                .map(|index| EntityRef::Copied { index });
+            let target = copied.or_else(|| {
+                let group = &mut contexts.groups[group_index];
+                let mut rewritten;
+                let projected = if let Some(rewrites) = input_rewrites {
+                    rewritten = entity.clone();
+                    for rewrite in rewrites {
+                        rewrite.rewrite(possible_types, &mut rewritten);
+                    }
+                    &rewritten
+                } else {
+                    entity
+                };
+                project_requires(
+                    possible_types,
+                    required_selections,
+                    projected,
+                    &mut group.representations,
+                    group.count == 0,
+                    None,
+                    false,
+                    subgraph_keys,
+                )
+                .then(|| {
+                    group.count += 1;
+                    EntityRef::Fetched {
+                        context_group: group_index as u32,
+                        index: group.count as u32 - 1,
+                    }
+                })
+            });
+            if let Some(target) = target {
+                known.insert_entry(Known::Target(target));
             }
+            entities.push(target);
         };
         traverse_and_callback(data, path.as_slice(), possible_types, &mut collect);
-        let entities = Arc::new(entities);
-        seen_paths.push((path, Arc::clone(&entities)));
-        path_entities.push(entities);
+        path_entities.push(Arc::new(entities));
     }
     for group in &mut contexts.groups {
         group.representations.push(b']');
@@ -457,6 +477,14 @@ mod tests {
         utils::parsing::parse_operation,
     };
 
+    /// The context group a fetched entity was sent in
+    fn group_of(entity: Option<EntityRef>) -> usize {
+        let Some(EntityRef::Fetched { context_group, .. }) = entity else {
+            panic!("not fetched");
+        };
+        context_group as usize
+    }
+
     #[test]
     fn contexts_group_and_deduplicate_by_ancestor_values() {
         let data: Value<'_> = sonic_rs::from_str(r#"{
@@ -509,6 +537,7 @@ mod tests {
             &context,
             &PossibleTypes::default(),
             None,
+            None,
         );
         assert_eq!(groups.len(), 3);
         assert_eq!(
@@ -519,14 +548,65 @@ mod tests {
                 &b"null".to_vec()
             ]
         );
-        assert!(groups.iter().all(|g| g.hash_to_index.len() == 1));
+        assert!(groups.iter().all(|g| g.count == 1));
         assert_eq!(targets[0][0], targets[0][1]);
         assert_ne!(targets[0][0], targets[0][2]);
         assert_eq!(targets[0][4], None);
         // another parent with the same value lands in the same group
         assert_eq!(targets[0][5], targets[0][0]);
-        assert_eq!(targets[0][0].unwrap().context_group, 0);
-        assert_ne!(targets[0][2].unwrap().context_group, 0);
+        assert_eq!(group_of(targets[0][0]), 0);
+        assert_ne!(group_of(targets[0][2]), 0);
+    }
+
+    #[test]
+    fn an_entity_without_a_key_is_never_copied() {
+        use crate::query_planner::planner::plan_nodes::EntityReuse;
+        // neither user can be told apart from the other, so the subgraph answers for both
+        let data: Value<'_> = sonic_rs::from_str(
+            r#"{
+            "top": [{"__typename":"P", "id":null, "name":"A"}, {"__typename":"P", "name":"B"}],
+            "again": [{"__typename":"P", "id":null}]
+        }"#,
+        )
+        .unwrap();
+        let selection = |query: &str| {
+            let definition = parse_operation(query).definitions.remove(0);
+            let graphql_tools::parser::query::Definition::Operation(
+                graphql_tools::parser::query::OperationDefinition::SelectionSet(selection),
+            ) = definition
+            else {
+                panic!("selection");
+            };
+            RequiresSelectionSet::from(&SelectionSet::from(selection))
+        };
+        let requires = selection("{ __typename id }");
+        let reuse = EntityReuse {
+            sources: vec![vec![PathSegment::Field("top".into()), PathSegment::List].into()],
+            copy: selection("{ __typename name }"),
+        };
+        let possible_types = PossibleTypes::default();
+        let mut index =
+            ReuseIndex::build(&reuse, &data, requires.root_selections(), &possible_types);
+        let path: FlattenNodePath =
+            vec![PathSegment::Field("again".into()), PathSegment::List].into();
+        let (_, targets) = collect_context_entities(
+            &data,
+            [path.as_ref()],
+            &requires,
+            None,
+            &None,
+            &possible_types,
+            None,
+            Some(&mut index),
+        );
+        assert_eq!(
+            targets[0].as_slice(),
+            [Some(EntityRef::Fetched {
+                context_group: 0,
+                index: 0
+            })]
+        );
+        assert!(index.into_copies().is_empty());
     }
 
     #[test]
@@ -582,14 +662,12 @@ mod tests {
             &context,
             &possible_types,
             None,
+            None,
         );
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].variables[1].1, b"\"A\"");
         assert_eq!(groups[1].variables[1].1, b"\"B\"");
-        let entity_groups: Vec<usize> = targets[0]
-            .iter()
-            .map(|entity| entity.unwrap().context_group)
-            .collect();
+        let entity_groups: Vec<usize> = targets[0].iter().map(|entity| group_of(*entity)).collect();
         assert_eq!(entity_groups[..3], [0, 1, 0]);
 
         // resolving the same sources again reuses the cached group, a different entity under
@@ -687,6 +765,7 @@ mod tests {
             &context,
             &PossibleTypes::default(),
             None,
+            None,
         );
         assert_eq!(
             groups
@@ -705,13 +784,10 @@ mod tests {
         // posts 1 to 4, then drafts 5 and 6, with the group each one must land in
         let entities = targets[0].iter().chain(targets[1].iter());
         for (entity, group) in entities.zip([0, 0, 1, 2, 0, 2]) {
-            assert_eq!(entity.unwrap().context_group, group);
+            assert_eq!(group_of(*entity), group);
         }
         assert_eq!(
-            groups
-                .iter()
-                .map(|group| group.hash_to_index.len())
-                .collect::<Vec<_>>(),
+            groups.iter().map(|group| group.count).collect::<Vec<_>>(),
             vec![3, 1, 2]
         );
     }
@@ -742,10 +818,11 @@ mod tests {
             &context,
             &PossibleTypes::default(),
             Some(&keys),
+            None,
         );
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].variables, vec![("__context_0", b"null".to_vec())]);
-        assert_eq!(groups[0].hash_to_index.len(), 1);
+        assert_eq!(groups[0].count, 1);
         assert_eq!(
             std::str::from_utf8(&groups[0].representations).unwrap(),
             r#"[{"__typename":"Transaction","id":"1","missing":null}]"#
@@ -778,6 +855,7 @@ mod tests {
             None,
             &context,
             &PossibleTypes::default(),
+            None,
             None,
         );
         assert_eq!(groups.len(), 1);

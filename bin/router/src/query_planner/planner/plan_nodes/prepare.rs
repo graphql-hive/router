@@ -31,6 +31,7 @@ impl FetchNode<Planning> {
             context: self.context,
             run_if: self.run_if,
             depends_on: (),
+            entity_reuse: self.entity_reuse,
         }
     }
 }

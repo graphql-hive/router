@@ -26,6 +26,12 @@ pub struct TrafficShapingConfig {
     /// How the router keeps its HTTP clients (and connection pools) to subgraphs.
     #[serde(default)]
     pub http_client_mode: HttpClientMode,
+    /// Copy entities that are already in the response instead of asking a subgraph for them
+    /// again. Experimental, off by default.
+    ///
+    /// Can also be set using the `ROUTER_EXPERIMENTAL_ENTITY_REUSE` environment variable.
+    #[serde(default)]
+    pub experimental_entity_reuse: bool,
 
     #[serde(default)]
     /// Configuration for the router itself, e.g., for handling incoming requests, or other router-level traffic shaping configurations.
@@ -39,6 +45,7 @@ impl Default for TrafficShapingConfig {
             subgraphs: HashMap::new(),
             max_connections_per_host: default_max_connections_per_host(),
             http_client_mode: HttpClientMode::default(),
+            experimental_entity_reuse: false,
             router: TrafficShapingRouterConfig::default(),
         }
     }
@@ -52,6 +59,7 @@ pub struct SupergraphTrafficShapingConfig {
     pub subgraphs: HashMap<String, TrafficShapingExecutorSubgraphConfig>,
     pub max_connections_per_host: usize,
     pub http_client_mode: HttpClientMode,
+    pub experimental_entity_reuse: bool,
 }
 
 impl SupergraphTrafficShapingConfig {
@@ -139,6 +147,7 @@ impl Default for SupergraphTrafficShapingConfig {
             subgraphs: HashMap::new(),
             max_connections_per_host: default_max_connections_per_host(),
             http_client_mode: HttpClientMode::default(),
+            experimental_entity_reuse: false,
         }
     }
 }
@@ -150,6 +159,7 @@ impl From<&TrafficShapingConfig> for SupergraphTrafficShapingConfig {
             subgraphs: config.subgraphs.clone(),
             max_connections_per_host: config.max_connections_per_host,
             http_client_mode: config.http_client_mode,
+            experimental_entity_reuse: config.experimental_entity_reuse,
         }
     }
 }
