@@ -143,6 +143,111 @@ mod websocket_e2e_tests {
     }
 
     #[ntex::test]
+    async fn query_over_websocket_with_permessage_deflate() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                websocket:
+                    enabled: true
+                    permessage_deflate: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let ws_uri = router
+            .serv()
+            .url("/graphql")
+            .as_str()
+            .replace("http://", "ws://")
+            .parse::<hive_router::http::Uri>()
+            .expect("failed to parse ws url");
+        let wsconn =
+            hive_router::executor::executors::websocket_client::connect_with_permessage_deflate(
+                &ws_uri, None, true,
+            )
+            .await
+            .expect("failed to connect to websocket");
+
+        assert_eq!(
+            wsconn
+                .response()
+                .headers()
+                .get(ntex::http::header::SEC_WEBSOCKET_EXTENSIONS)
+                .expect("expected the extension to be accepted"),
+            "permessage-deflate"
+        );
+        assert!(wsconn.codec().deflate().is_some());
+
+        let mut client = WsClient::new(wsconn)
+            .init(None)
+            .await
+            .expect("Failed to init WsClient");
+
+        let mut stream = client
+            .subscribe(
+                SubscribePayload {
+                    query: "{ topProducts { name upc } }".into(),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .expect("Failed to subscribe")
+            .map(|response| response.expect("WebSocket response failed"));
+
+        let response = stream.next().await.expect("Expected a response");
+        assert!(response.errors.is_none(), "Expected no errors");
+        assert!(!response.data.is_null(), "Expected data");
+    }
+
+    #[ntex::test]
+    async fn permessage_deflate_is_not_accepted_by_default() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                websocket:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let ws_uri = router
+            .serv()
+            .url("/graphql")
+            .as_str()
+            .replace("http://", "ws://")
+            .parse::<hive_router::http::Uri>()
+            .expect("failed to parse ws url");
+        let wsconn =
+            hive_router::executor::executors::websocket_client::connect_with_permessage_deflate(
+                &ws_uri, None, true,
+            )
+            .await
+            .expect("failed to connect to websocket");
+
+        assert!(wsconn
+            .response()
+            .headers()
+            .get(ntex::http::header::SEC_WEBSOCKET_EXTENSIONS)
+            .is_none());
+        assert!(wsconn.codec().deflate().is_none());
+    }
+
+    #[ntex::test]
     async fn persisted_document_over_websocket() {
         let document_id = "sha256:abc123";
         let manifest =
