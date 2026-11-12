@@ -286,6 +286,8 @@ impl<'graph> Edge<'graph> {
     pub fn cost(&self) -> u64 {
         let move_cost = match self {
             Self::FieldMove(_) => 1,
+            // these stay in the same subgraph, so they're not a trip
+            Self::AbstractMove(_) | Self::Selfie(_) => 0,
             _ => SUBGRAPH_HOP_COST,
         };
 

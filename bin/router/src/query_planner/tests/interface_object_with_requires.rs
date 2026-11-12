@@ -544,17 +544,18 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
             {
               ... on NodeWithName {
                 __typename
-                name
                 ... on User {
+                  __typename
                   age
-                  name
                   id
+                  name
                 }
+                name
               }
             }
           },
         },
-        Flatten(path: "anotherUsers.@") {
+        Flatten(path: "anotherUsers.@|[User]") {
           Fetch(service: "b") {
             {
               ... on NodeWithName {
@@ -598,7 +599,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
               "kind": "Fetch",
               "serviceName": "a",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{__typename name ...on User{age name id}}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{__typename ...on User{__typename age id name} name}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -640,7 +641,12 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
               {
                 "Field": "anotherUsers"
               },
-              "@"
+              "@",
+              {
+                "TypeCondition": [
+                  "User"
+                ]
+              }
             ],
             "node": {
               "kind": "Fetch",
