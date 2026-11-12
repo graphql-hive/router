@@ -6,15 +6,15 @@ use petgraph::graph::{EdgeIndex, NodeIndex};
 use petgraph::visit::{EdgeRef, NodeRef};
 use tracing::{instrument, trace};
 
+use crate::query_planner::ast::flat::{
+    selection_tree::{Sel, SelectionTree},
+    Kind,
+};
 use crate::query_planner::ast::merge_path::Condition;
-use crate::query_planner::ast::selection_set::InlineFragmentSelection;
 use crate::query_planner::graph::edge::PlannerOverrideContext;
 use crate::query_planner::utils::cancellation::CancellationToken;
 use crate::query_planner::{
-    ast::{
-        selection_item::SelectionItem, selection_set::FieldSelection, selection_set::SelectionSet,
-        type_aware_selection::TypeAwareSelection,
-    },
+    ast::type_aware_selection::TypeAwareSelection,
     graph::{
         edge::{Edge, EdgeReference},
         Graph,
@@ -67,6 +67,8 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
         }
     }
 
+    // `TypeAwareSelection` hashes without its `flat` cache, the only part that changes
+    #[allow(clippy::mutable_key_type)]
     pub fn add(
         &mut self,
         visited_graphs: VisitedGraphs<'graph>,
@@ -90,7 +92,7 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
 #[derive(Debug)]
 pub enum NavigationTarget<'op> {
     Field {
-        field: &'op FieldSelection,
+        field: Sel<'op>,
         target_subgraph_ids: Option<&'op [u16]>,
     },
     ConcreteType(&'op str, Option<Condition>),
@@ -105,7 +107,7 @@ enum NavigationTargetKey<'op> {
 impl<'op> From<&'op NavigationTarget<'op>> for NavigationTargetKey<'op> {
     fn from(target: &'op NavigationTarget<'op>) -> Self {
         match target {
-            NavigationTarget::Field { field, .. } => NavigationTargetKey::Field(&field.name),
+            NavigationTarget::Field { field, .. } => NavigationTargetKey::Field(field.name()),
             NavigationTarget::ConcreteType(type_name, _) => {
                 NavigationTargetKey::ConcreteType(type_name)
             }
@@ -175,6 +177,8 @@ impl<'graph> PathSearch<'graph> {
                 Some(SupergraphDefinition::Union(union)) if union.types.iter().any(|name| name == current_type_name))
     }
 
+    // `TypeAwareSelection` hashes without its `flat` cache, the only part that changes
+    #[allow(clippy::mutable_key_type)]
     fn find_indirect_paths(
         &mut self,
         path: &OperationPath<'graph>,
@@ -274,7 +278,7 @@ impl<'graph> PathSearch<'graph> {
                 {
                     if let Some(requirements) = edge.requirements() {
                         if requirement_cycle_checker
-                            .requirements_depend_on_target_field(requirements, target_field)
+                            .requirements_depend_on_target_field(requirements, *target_field)
                         {
                             trace!("Ignoring. Edge's requirement depends on search target");
                             continue;
@@ -434,7 +438,7 @@ pub fn find_self_referencing_direct_path<'graph>(
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
-    type_name: &'graph str,
+    type_name: &str,
     condition: &Condition,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<OperationPath<'graph>, WalkOperationError> {
@@ -514,9 +518,10 @@ where
             Box::new(std::iter::empty())
         }
         NavigationTarget::Field { field, .. } => {
+            let name = field.name();
             Box::new(graph.edges_from(path_tail_index).filter(move |e| {
-                matches!(e.weight(), Edge::FieldMove(f) if f.name == field.name)
-                    || matches!(e.weight(), Edge::ReentryMove(r) if r.name == field.name)
+                matches!(e.weight(), Edge::FieldMove(f) if f.name == name)
+                    || matches!(e.weight(), Edge::ReentryMove(r) if r.name == name)
             }))
         }
         NavigationTarget::ConcreteType(type_name, _condition) => Box::new(
@@ -641,7 +646,7 @@ impl<'graph> PathSearch<'graph> {
         let paths = if let Some(selections) = edge.requirements() {
             let Some(paths) = self.resolve_requirements(
                 path,
-                &selections.selection_set,
+                selections.flat(),
                 excluded,
                 use_only_direct_edges,
                 false,
@@ -709,7 +714,7 @@ impl<'graph> PathSearch<'graph> {
                     let ancestor = path.before_segment(graph, segment);
                     let Some(paths) = self.resolve_requirements(
                         &ancestor,
-                        &selection.selection_set,
+                        selection.flat(),
                         excluded,
                         use_only_direct_edges,
                         true,
@@ -756,7 +761,7 @@ impl<'graph> PathSearch<'graph> {
     fn resolve_requirements(
         &mut self,
         path: &OperationPath<'graph>,
-        selection_set: &'graph SelectionSet,
+        selection_set: &'graph SelectionTree,
         excluded: &ExcludedFromLookup<'graph>,
         use_only_direct_edges: bool,
         skip_inapplicable_fragments: bool,
@@ -766,21 +771,20 @@ impl<'graph> PathSearch<'graph> {
         let mut requirements: VecDeque<MoveRequirement> = VecDeque::new();
         let mut tied_paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
 
-        for selection in selection_set.items.iter() {
+        for selection in selection_set.roots() {
             // context selections can carry type conditions for other ancestor types,
             // those don't apply here and get dropped instead of failing the edge
-            if let (true, SelectionItem::InlineFragment(fragment)) =
-                (skip_inapplicable_fragments, selection)
-            {
+            if skip_inapplicable_fragments && selection.kind() == Kind::InlineFragment {
+                let type_condition = selection.name();
                 let current_type = graph.node(path.tail())?.name_str();
                 if matches!(
                     self.supergraph.definitions.get(current_type),
                     Some(SupergraphDefinition::Object(_))
-                ) && !self.type_condition_matches(current_type, &fragment.type_condition)
+                ) && !self.type_condition_matches(current_type, type_condition)
                 {
                     continue;
                 }
-                if !path.can_resolve_union_member(&fragment.type_condition) {
+                if !path.can_resolve_union_member(type_condition) {
                     continue;
                 }
             }
@@ -793,8 +797,9 @@ impl<'graph> PathSearch<'graph> {
         // it's important to pop from the end as we want to process the last added requirement first
         while let Some(requirement) = requirements.pop_back() {
             cancellation_token.bail_if_cancelled()?;
-            match &requirement.selection {
-                SelectionItem::Field(selection_field_requirement) => {
+            match requirement.selection.kind() {
+                Kind::Field => {
+                    let selection_field_requirement = requirement.selection;
                     let result = self.validate_field_requirement(
                         &requirement,
                         selection_field_requirement,
@@ -828,7 +833,8 @@ impl<'graph> PathSearch<'graph> {
                         }
                     };
                 }
-                SelectionItem::InlineFragment(fragment_selection) => {
+                Kind::InlineFragment => {
+                    let fragment_selection = requirement.selection;
                     let fragment_requirements = self.validate_fragment_requirement(
                         &requirement,
                         fragment_selection,
@@ -853,7 +859,7 @@ impl<'graph> PathSearch<'graph> {
                         }
                     };
                 }
-                SelectionItem::FragmentSpread(_) => {
+                Kind::FragmentSpread => {
                     // No processing needed for FragmentSpread
                 }
             }
@@ -875,7 +881,7 @@ impl<'graph> PathSearch<'graph> {
 #[derive(Debug)]
 pub struct MoveRequirement<'graph> {
     pub paths: Rc<Vec<OperationPath<'graph>>>,
-    pub selection: &'graph SelectionItem,
+    pub selection: Sel<'graph>,
 }
 
 type FieldRequirementsResult<'graph> =
@@ -884,11 +890,11 @@ type FragmentRequirementsResult<'graph> =
     Option<(Vec<OperationPath<'graph>>, Vec<MoveRequirement<'graph>>)>;
 
 impl<'graph> PathSearch<'graph> {
-    #[instrument(level = "trace", skip_all, fields(field = field.name))]
+    #[instrument(level = "trace", skip_all, fields(field = field.name()))]
     fn validate_field_requirement(
         &mut self,
         move_requirement: &MoveRequirement<'graph>,
-        field: &FieldSelection,
+        field: Sel<'graph>,
         excluded: &ExcludedFromLookup<'graph>,
         use_only_direct_edges: bool,
     ) -> Result<FieldRequirementsResult<'graph>, WalkOperationError> {
@@ -898,7 +904,7 @@ impl<'graph> PathSearch<'graph> {
             Vec::with_capacity(move_requirement.paths.len());
         let target_subgraph_ids = super::field_target_subgraph_ids(
             self.supergraph,
-            field,
+            field.name(),
             move_requirement.paths.as_ref(),
             self.graph,
         )?;
@@ -951,12 +957,7 @@ impl<'graph> PathSearch<'graph> {
             return Ok(None);
         }
 
-        if move_requirement.selection.selections().is_none()
-            || move_requirement
-                .selection
-                .selections()
-                .is_some_and(|s| s.is_empty())
-        {
+        if move_requirement.selection.is_leaf() {
             // No sub-selections, next_paths is returned directly.
             return Ok(Some((next_paths, vec![])));
         }
@@ -964,9 +965,7 @@ impl<'graph> PathSearch<'graph> {
         let shared_next_paths_for_subs = Rc::new(next_paths.clone());
         let next_requirements: Vec<MoveRequirement<'graph>> = move_requirement
             .selection
-            .selections()
-            .unwrap() // Safe due to the check above
-            .iter()
+            .children()
             .map(|selection_item| MoveRequirement {
                 selection: selection_item,
                 paths: Rc::clone(&shared_next_paths_for_subs),
@@ -978,15 +977,15 @@ impl<'graph> PathSearch<'graph> {
 }
 
 impl<'graph> PathSearch<'graph> {
-    #[instrument(level = "trace", skip_all, fields(type_condition = fragment_selection.type_condition))]
+    #[instrument(level = "trace", skip_all, fields(type_condition = fragment_selection.name()))]
     fn validate_fragment_requirement(
         &mut self,
         requirement: &MoveRequirement<'graph>,
-        fragment_selection: &InlineFragmentSelection,
+        fragment_selection: Sel<'graph>,
         excluded: &ExcludedFromLookup<'graph>,
         use_only_direct_edges: bool,
     ) -> Result<FragmentRequirementsResult<'graph>, WalkOperationError> {
-        let type_name = &fragment_selection.type_condition;
+        let type_name = fragment_selection.name();
         // Collect all Vec<OperationPath<'graph>> results from find_direct_paths
         let mut direct_path_results: Vec<Vec<OperationPath<'graph>>> =
             Vec::with_capacity(requirement.paths.len());
@@ -1038,12 +1037,7 @@ impl<'graph> PathSearch<'graph> {
             return Ok(None);
         }
 
-        if requirement.selection.selections().is_none()
-            || requirement
-                .selection
-                .selections()
-                .is_some_and(|s| s.is_empty())
-        {
+        if requirement.selection.is_leaf() {
             // No sub-selections, next_paths is returned directly.
             return Ok(Some((next_paths, vec![])));
         }
@@ -1051,9 +1045,7 @@ impl<'graph> PathSearch<'graph> {
         let shared_next_paths_for_subs = Rc::new(next_paths.clone());
         let next_requirements: Vec<MoveRequirement<'graph>> = requirement
             .selection
-            .selections()
-            .unwrap() // Safe due to the check above
-            .iter()
+            .children()
             .map(|selection_item| MoveRequirement {
                 selection: selection_item,
                 paths: Rc::clone(&shared_next_paths_for_subs),
@@ -1096,15 +1088,14 @@ impl<'graph> RequirementCycleChecker<'graph> {
     fn requirements_depend_on_target_field(
         &self,
         requirements: &TypeAwareSelection<'graph>,
-        target_field: &FieldSelection,
+        target_field: Sel<'_>,
     ) -> bool {
         if !self.type_condition_matches(requirements.type_name) {
             return false;
         }
         requirements
-            .selection_set
-            .items
-            .iter()
+            .flat()
+            .roots()
             .any(|item| self.requirement_item_depends_on_target_field(item, target_field))
     }
 
@@ -1118,73 +1109,68 @@ impl<'graph> RequirementCycleChecker<'graph> {
             .is_some_and(|object_types| object_types.contains(self.current_type_name))
     }
 
-    fn same_field_identity(requirement: &FieldSelection, target: &FieldSelection) -> bool {
-        target.name == requirement.name && target.arguments_hash() == requirement.arguments_hash()
+    fn same_field_identity(requirement: Sel<'_>, target: Sel<'_>) -> bool {
+        target.name() == requirement.name()
+            && target.arguments_hash() == requirement.arguments_hash()
     }
 
     fn requirement_item_depends_on_target_field(
         &self,
-        requirement: &SelectionItem,
-        target_field: &FieldSelection,
+        requirement: Sel<'_>,
+        target_field: Sel<'_>,
     ) -> bool {
-        match requirement {
-            SelectionItem::Field(requirement_field)
-                if Self::same_field_identity(requirement_field, target_field) =>
-            {
-                self.selection_sets_overlap(&requirement_field.selections, &target_field.selections)
+        match requirement.kind() {
+            Kind::Field if Self::same_field_identity(requirement, target_field) => {
+                self.selection_sets_overlap(requirement, target_field)
             }
-            SelectionItem::Field(_) => false,
-            SelectionItem::InlineFragment(fragment) => {
-                if !self.type_condition_matches(&fragment.type_condition) {
+            Kind::Field => false,
+            Kind::InlineFragment => {
+                if !self.type_condition_matches(requirement.name()) {
                     return false;
                 }
-                fragment.selections.items.iter().any(|requirement_item| {
+                requirement.children().any(|requirement_item| {
                     self.requirement_item_depends_on_target_field(requirement_item, target_field)
                 })
             }
             // Fragment spreads are inlined by normalization
-            SelectionItem::FragmentSpread(_) => false,
+            Kind::FragmentSpread => false,
         }
     }
 
-    fn selection_sets_overlap(&self, requirement: &SelectionSet, target: &SelectionSet) -> bool {
-        if target.is_empty() || requirement.is_empty() {
+    /// Whether the selections under `requirement` and under `target` overlap.
+    fn selection_sets_overlap(&self, requirement: Sel<'_>, target: Sel<'_>) -> bool {
+        if target.is_leaf() || requirement.is_leaf() {
             return true;
         }
-        target.items.iter().any(|target_item| {
+        target.children().any(|target_item| {
             requirement
-                .items
-                .iter()
+                .children()
                 .any(|requirement_item| self.selection_items_overlap(requirement_item, target_item))
         })
     }
 
-    fn selection_items_overlap(&self, requirement: &SelectionItem, target: &SelectionItem) -> bool {
-        use SelectionItem::*;
-
-        match (target, requirement) {
-            (Field(t), Field(r)) if Self::same_field_identity(t, r) => {
-                return self.selection_sets_overlap(&t.selections, &r.selections);
+    fn selection_items_overlap(&self, requirement: Sel<'_>, target: Sel<'_>) -> bool {
+        match (target.kind(), requirement.kind()) {
+            (Kind::Field, Kind::Field) if Self::same_field_identity(target, requirement) => {
+                return self.selection_sets_overlap(target, requirement);
             }
-            (Field(_), InlineFragment(r)) if self.type_condition_matches(&r.type_condition) => {
-                return r
-                    .selections
-                    .items
-                    .iter()
+            (Kind::Field, Kind::InlineFragment)
+                if self.type_condition_matches(requirement.name()) =>
+            {
+                return requirement
+                    .children()
                     .any(|inner| self.selection_items_overlap(inner, target));
             }
-            (InlineFragment(t), Field(_)) if self.type_condition_matches(&t.type_condition) => {
-                return t
-                    .selections
-                    .items
-                    .iter()
+            (Kind::InlineFragment, Kind::Field) if self.type_condition_matches(target.name()) => {
+                return target
+                    .children()
                     .any(|target_item| self.selection_items_overlap(requirement, target_item));
             }
-            (InlineFragment(t), InlineFragment(r))
-                if self.type_condition_matches(&t.type_condition)
-                    && self.type_condition_matches(&r.type_condition) =>
+            (Kind::InlineFragment, Kind::InlineFragment)
+                if self.type_condition_matches(target.name())
+                    && self.type_condition_matches(requirement.name()) =>
             {
-                return self.selection_sets_overlap(&r.selections, &t.selections);
+                return self.selection_sets_overlap(requirement, target);
             }
             // Fragment spreads are inlined by normalization, so we don't have to compare them.
             _ => {}

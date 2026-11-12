@@ -70,8 +70,13 @@ pub fn build_query_plan_from_fetch_graph(
     let mut provides: Vec<FetchIdList> = vec![FetchIdList::new(); steps];
     // what finished waves put in the response. An entity fetch may copy entities the fetches it
     // depends on put there.
-    let mut entity_reuse =
-        entity_reuse::EntityReuseIndex::new(&fetch_graph, supergraph, options.entity_reuse);
+    let reuse_trees = entity_reuse::StepTrees::new(&fetch_graph, options.entity_reuse);
+    let mut entity_reuse = entity_reuse::EntityReuseIndex::new(
+        &fetch_graph,
+        &reuse_trees,
+        supergraph,
+        options.entity_reuse,
+    );
 
     while !queue.is_empty() {
         let mut current_wave_nodes: Vec<PlanNode> = Vec::new();
@@ -95,8 +100,13 @@ pub fn build_query_plan_from_fetch_graph(
             depends_on.sort_unstable();
             depends_on.dedup();
             // inline for one or two ids, so the copy doesn't allocate
-            let node =
-                PlanNode::from_fetch_step(step_data, supergraph, options, depends_on.clone());
+            let node = PlanNode::from_fetch_step(
+                step_data,
+                &fetch_graph.arena,
+                supergraph,
+                options,
+                depends_on.clone(),
+            );
             provides[step_index.index()] = match node {
                 Some(_) => smallvec![step_data.id],
                 None => depends_on,

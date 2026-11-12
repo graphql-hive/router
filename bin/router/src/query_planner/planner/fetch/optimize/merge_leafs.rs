@@ -46,7 +46,7 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
-        if !self.inputs_hold_when_merged(other) {
+        if !self.inputs_hold_when_merged(&fetch_graph.arena, other) {
             return false;
         }
 
@@ -64,7 +64,7 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
-        if self.has_arguments_conflicts_with(other) {
+        if self.has_arguments_conflicts_with(&fetch_graph.arena, other) {
             return false;
         }
 

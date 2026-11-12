@@ -38,6 +38,7 @@ use crate::query_planner::{
         fetch::{
             fetch_graph::FetchGraph,
             fetch_step_data::{FetchStepData, FetchStepFlags},
+            selections::FetchStepSelections,
             state::MultiTypeFetchStep,
         },
         plan_nodes::{
@@ -50,6 +51,70 @@ use crate::query_planner::{
 
 type Step = FetchStepData<MultiTypeFetchStep>;
 
+/// Each step's selections as the planner's trees, by type, which is what the comparisons here
+/// read.
+// ponytail: copied out of the arena once per plan, and only with reuse on. Port the comparisons
+// to the arena if it shows in a profile.
+#[derive(Default)]
+pub(super) struct StepTrees(HashMap<NodeIndex, StepTree>);
+
+struct StepTree {
+    input: Vec<(String, SelectionSet)>,
+    output: Vec<(String, SelectionSet)>,
+}
+
+impl StepTrees {
+    pub(super) fn new(fetch_graph: &FetchGraph<MultiTypeFetchStep>, enabled: bool) -> Self {
+        if !enabled || fetch_graph.operation_kind != OperationKind::Query {
+            return Self::default();
+        }
+        let arena = &fetch_graph.arena;
+        let export = |selections: &FetchStepSelections<MultiTypeFetchStep>| {
+            selections
+                .iter_selections()
+                .map(|(name, list)| (name.clone(), arena.export(list)))
+                .collect()
+        };
+        Self(
+            fetch_graph
+                .step_indices()
+                .filter_map(|index| {
+                    let step = fetch_graph.get_step_data(index).ok()?;
+                    Some((
+                        index,
+                        StepTree {
+                            input: export(&step.input),
+                            output: export(&step.output),
+                        },
+                    ))
+                })
+                .collect(),
+        )
+    }
+
+    fn find<'t>(list: &'t [(String, SelectionSet)], type_name: &str) -> Option<&'t SelectionSet> {
+        list.iter()
+            .find(|(name, _)| name == type_name)
+            .map(|(_, selections)| selections)
+    }
+
+    fn input(&self, index: NodeIndex, type_name: &str) -> Option<&SelectionSet> {
+        Self::find(&self.0.get(&index)?.input, type_name)
+    }
+
+    fn output(&self, index: NodeIndex, type_name: &str) -> Option<&SelectionSet> {
+        Self::find(&self.0.get(&index)?.output, type_name)
+    }
+
+    fn outputs(&self, index: NodeIndex) -> impl Iterator<Item = (&String, &SelectionSet)> {
+        self.0.get(&index).into_iter().flat_map(|tree| {
+            tree.output
+                .iter()
+                .map(|(name, selections)| (name, selections))
+        })
+    }
+}
+
 /// Whether an entity fetch may wait for the same fetch earlier on, see the module docs. It trades
 /// a subgraph call for a wait, which is usually short but not always, so it can be turned off
 /// here. Not a config option (yet).
@@ -60,6 +125,7 @@ const WAIT_FOR_SAME_FETCH: bool = true;
 /// walks nothing. A fetch's dependencies are always in earlier waves.
 pub(super) struct EntityReuseIndex<'a> {
     fetch_graph: &'a FetchGraph<MultiTypeFetchStep>,
+    trees: &'a StepTrees,
     supergraph: &'a SupergraphState,
     positions: HashMap<&'a str, Positions<'a>>,
     /// the subgraph of each step that filled a position, by step index, see [`resolved_by`]
@@ -315,13 +381,17 @@ impl Start {
 impl<'a> EntityReuseIndex<'a> {
     pub(super) fn new(
         fetch_graph: &'a FetchGraph<MultiTypeFetchStep>,
+        trees: &'a StepTrees,
         supergraph: &'a SupergraphState,
         enabled: bool,
     ) -> Self {
         let mut positions = HashMap::default();
         if enabled && fetch_graph.operation_kind == OperationKind::Query {
             for index in fetch_graph.step_indices() {
-                if let Some((type_name, _)) = fetch_graph.get_step_data(index).ok().and_then(wanted)
+                if let Some((type_name, _)) = fetch_graph
+                    .get_step_data(index)
+                    .ok()
+                    .and_then(|step| wanted(trees, index, step))
                 {
                     positions.entry(type_name).or_default();
                 }
@@ -329,6 +399,7 @@ impl<'a> EntityReuseIndex<'a> {
         }
         Self {
             fetch_graph,
+            trees,
             supergraph,
             positions,
             subgraphs: Vec::new(),
@@ -350,7 +421,9 @@ impl<'a> EntityReuseIndex<'a> {
         }
         self.subgraphs[index.index()] = subgraph;
         // without any, a fetch never waits for one
-        if let Some((type_name, needed)) = wanted(step).filter(|_| WAIT_FOR_SAME_FETCH) {
+        if let Some((type_name, needed)) =
+            wanted(self.trees, index, step).filter(|_| WAIT_FOR_SAME_FETCH)
+        {
             self.earlier_fetches.push(EarlierEntityFetch {
                 index,
                 id: step.id,
@@ -367,7 +440,7 @@ impl<'a> EntityReuseIndex<'a> {
             start: None,
         };
         let mut path = Vec::new();
-        for (definition_name, selections) in step.output.iter_selections() {
+        for (definition_name, selections) in self.trees.outputs(index) {
             self.walk(
                 &mut start,
                 &mut path,
@@ -408,12 +481,12 @@ impl<'a> EntityReuseIndex<'a> {
         index: NodeIndex,
         step: &'a Step,
     ) -> Option<(Arc<EntityReuse>, FetchIdList)> {
-        let (type_name, needed) = wanted(step)?;
+        let (type_name, needed) = wanted(self.trees, index, step)?;
         // nothing of the type in the response yet, not even from the same fetch earlier on
         if self.positions.get(type_name)?.steps.is_empty() {
             return None;
         }
-        let representation = step.input.selections_for_definition(type_name)?;
+        let representation = self.trees.input(index, type_name)?;
         if reads_renamed_keys(representation) {
             return None;
         }
@@ -741,7 +814,11 @@ fn find_in(
 }
 
 /// The type and fields an entity fetch could copy from the response, if it could copy at all
-fn wanted(step: &Step) -> Option<(&str, &SelectionSet)> {
+fn wanted<'a>(
+    trees: &'a StepTrees,
+    index: NodeIndex,
+    step: &'a Step,
+) -> Option<(&'a str, &'a SelectionSet)> {
     if !step.is_entity_call()
         || step.input_rewrites.is_some()
         || step.output_rewrites.is_some()
@@ -754,7 +831,7 @@ fn wanted(step: &Step) -> Option<(&str, &SelectionSet)> {
     if step.input.try_as_single() != Some(type_name) {
         return None;
     }
-    let needed = step.output.selections_for_definition(type_name)?;
+    let needed = trees.output(index, type_name)?;
     is_plain(needed).then_some((type_name, needed))
 }
 

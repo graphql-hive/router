@@ -6,6 +6,7 @@ use std::rc::Rc;
 use petgraph::{graph::NodeIndex, Direction};
 use tracing::{instrument, trace};
 
+use crate::query_planner::ast::flat::arena::Arena;
 use crate::query_planner::ast::merge_path::Condition;
 use crate::query_planner::planner::fetch::fetch_step_data::{
     type_condition_types_from_response_path, FetchStepFlags, FetchStepKind,
@@ -153,7 +154,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                         let can_still_batch = {
                             let left = self.get_step_data(*target_index)?;
                             let right = self.get_step_data(source_index)?;
-                            left.can_be_batched_with(right, supergraph)
+                            left.can_be_batched_with(&self.arena, right, supergraph)
                         };
 
                         // After the cheaper check, as it walks the graph.
@@ -169,7 +170,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                             source_index.index()
                         );
 
-                        let (me, other) =
+                        let (me, other, arena) =
                             self.get_pair_of_steps_mut(*target_index, source_index)?;
                         let original_me_path = me.response_path.clone();
                         let original_other_path = other.response_path.clone();
@@ -183,15 +184,15 @@ impl FetchGraph<MultiTypeFetchStep> {
                         // Declare the source types on the target so subsequent compatible
                         // merges can add selections for those types.
                         for (input_type_name, _) in other.input.iter_selections() {
-                            me.input.declare_known_type(input_type_name);
+                            me.input.declare_known_type(arena, input_type_name);
                         }
                         for (output_type_name, _) in other.output.iter_selections() {
-                            me.output.declare_known_type(output_type_name);
+                            me.output.declare_known_type(arena, output_type_name);
                         }
 
                         perform_fetch_step_merge(*target_index, source_index, self, true)?;
 
-                        let merged_step = self.get_step_data_mut(*target_index)?;
+                        let (merged_step, arena) = self.step_and_arena_mut(*target_index)?;
                         // After merge, update the path so Flatten(path) is correct.
                         // Example:
                         //   `me`     path: products.[Book].reviews
@@ -216,6 +217,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                                     // Keep a fetch-level condition on only the matching type
                                     // branches rather than gating the entire batched fetch.
                                     merged_step.output.wrap_with_condition_for_types(
+                                        arena,
                                         condition,
                                         &conditioned_types,
                                     );
@@ -512,7 +514,12 @@ fn type_condition_layout_hash(path: &MergePath) -> u64 {
 }
 
 impl FetchStepData<MultiTypeFetchStep> {
-    pub fn can_be_batched_with(&self, other: &Self, supergraph: &SupergraphState) -> bool {
+    pub fn can_be_batched_with(
+        &self,
+        arena: &Arena,
+        other: &Self,
+        supergraph: &SupergraphState,
+    ) -> bool {
         if !self.can_merge_context(other) {
             return false;
         }
@@ -572,7 +579,7 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
-        if !self.inputs_hold_when_merged(other) {
+        if !self.inputs_hold_when_merged(arena, other) {
             return false;
         }
 
@@ -628,7 +635,7 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
-        if self.has_arguments_conflicts_with(other) {
+        if self.has_arguments_conflicts_with(arena, other) {
             return false;
         }
 
@@ -636,7 +643,10 @@ impl FetchStepData<MultiTypeFetchStep> {
         // different places in the response. `thumbnail(width: 100)` under `Aquatics.photo` and
         // `thumbnail(width: 200)` under `Reptiles.photo` can't both be `Photo.thumbnail`.
         // `BatchFetch` can still send the two in one request.
-        if self.output.response_keys_conflict_with(&other.output) {
+        if self
+            .output
+            .response_keys_conflict_with(arena, &other.output)
+        {
             return false;
         }
 
@@ -646,7 +656,7 @@ impl FetchStepData<MultiTypeFetchStep> {
         // Those stay apart, `BatchFetch` still sends them in one request, an alias each.
         // At the same path it's the same entities, so asking for both is fine.
         if self.response_path != other.response_path
-            && outputs_differ_for_a_shared_type(&self.output, &other.output, supergraph)
+            && outputs_differ_for_a_shared_type(arena, &self.output, &other.output, supergraph)
         {
             return false;
         }
@@ -669,6 +679,7 @@ impl FetchStepData<MultiTypeFetchStep> {
 /// either that's the entity's own (`pet|[Cat]` and `pet|[Bird]`, the other side never reaches
 /// it), or the rest of the path is the same and so are the types both sides end up at.
 fn outputs_differ_for_a_shared_type(
+    arena: &Arena,
     left: &FetchStepSelections<MultiTypeFetchStep>,
     right: &FetchStepSelections<MultiTypeFetchStep>,
     supergraph: &SupergraphState,
@@ -676,7 +687,9 @@ fn outputs_differ_for_a_shared_type(
     // both are sorted by type name
     if left.iter_selections().count() == right.iter_selections().count()
         && left.iter_selections().zip(right.iter_selections()).all(
-            |((left_type, left), (right_type, right))| left_type == right_type && left == right,
+            |((left_type, left), (right_type, right))| {
+                left_type == right_type && arena.lists_equal(left, right)
+            },
         )
     {
         return false;
@@ -699,7 +712,8 @@ fn outputs_differ_for_a_shared_type(
         right
             .iter_selections()
             .any(|(right_type, right_selections)| {
-                overlap(left_type, right_type) && left_selections != right_selections
+                overlap(left_type, right_type)
+                    && !arena.lists_equal(left_selections, right_selections)
             })
     })
 }

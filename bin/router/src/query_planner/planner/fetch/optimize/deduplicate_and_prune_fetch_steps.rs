@@ -29,7 +29,9 @@ impl FetchGraph<MultiTypeFetchStep> {
                     Err(_) => return false,
                 };
 
-                if !step.output.is_empty() && self.parents_of(step_index).next().is_some() {
+                if !step.output.is_empty(&self.arena)
+                    && self.parents_of(step_index).next().is_some()
+                {
                     return false;
                 }
 
@@ -37,7 +39,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                     return false;
                 }
 
-                trace!("optimization found: remove '{}'", step);
+                trace!("optimization found: remove '{}'", step.display(&self.arena));
 
                 true
             })

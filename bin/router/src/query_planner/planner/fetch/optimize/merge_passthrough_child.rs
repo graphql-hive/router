@@ -7,15 +7,12 @@ use petgraph::{
 };
 use tracing::{instrument, trace};
 
-use crate::query_planner::{
-    ast::selection_set::selection_items_are_subset_of,
-    planner::fetch::{
-        error::FetchGraphError,
-        fetch_graph::FetchGraph,
-        fetch_step_data::{FetchStepData, FetchStepFlags},
-        optimize::utils::MergedSteps,
-        state::MultiTypeFetchStep,
-    },
+use crate::query_planner::planner::fetch::{
+    error::FetchGraphError,
+    fetch_graph::FetchGraph,
+    fetch_step_data::{FetchStepData, FetchStepFlags},
+    optimize::utils::MergedSteps,
+    state::MultiTypeFetchStep,
 };
 
 impl FetchGraph<MultiTypeFetchStep> {
@@ -121,10 +118,9 @@ impl FetchStepData<MultiTypeFetchStep> {
                     .input
                     .selections_for_definition(output_def_name)
                     .is_some_and(|input_selections| {
-                        selection_items_are_subset_of(
-                            &input_selections.items,
-                            &output_selections.items,
-                        )
+                        fetch_graph
+                            .arena
+                            .is_subset(input_selections, output_selections)
                     })
             })
     }
@@ -136,7 +132,7 @@ fn perform_passthrough_child_merge(
     other_index: NodeIndex,
     fetch_graph: &mut FetchGraph<MultiTypeFetchStep>,
 ) -> Result<(), FetchGraphError> {
-    let (me, other) = fetch_graph.get_pair_of_steps_mut(self_index, other_index)?;
+    let (me, other, arena) = fetch_graph.get_pair_of_steps_mut(self_index, other_index)?;
     let path = other.response_path.slice_from(me.response_path.len());
 
     trace!(
@@ -146,7 +142,8 @@ fn perform_passthrough_child_merge(
         path
     );
 
-    me.output.migrate_from_another(&other.output, &path)?;
+    me.output
+        .migrate_from_another(arena, &other.output, &path)?;
     me.merge_context_metadata(other);
     let source_id = other.id;
     let target_id = me.id;

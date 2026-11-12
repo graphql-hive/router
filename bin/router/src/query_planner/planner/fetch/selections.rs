@@ -6,12 +6,14 @@ use std::{
 
 use crate::query_planner::{
     ast::{
+        flat::{
+            arena::{Arena, ListId},
+            Kind,
+        },
         merge_path::{Condition, MergePath},
         selection_item::SelectionItem,
         selection_set::{
-            find_selection_set_by_path_mut, merge_selection_set, response_keys_conflict,
-            selection_items_are_subset_of, FieldSelection, InlineFragmentSelection,
-            ResponseKeyConflict, SelectionSet,
+            FieldSelection, InlineFragmentSelection, ResponseKeyConflict, SelectionSet,
         },
     },
     planner::fetch::state::{MultiTypeFetchStep, SingleTypeFetchStep},
@@ -27,53 +29,81 @@ pub enum FetchStepSelectionsError {
     ResponseKeyConflict(#[from] ResponseKeyConflict),
 }
 
-#[derive(Debug, Clone)]
+/// The selections of a fetch step's input or output, a list in the fetch graph's `Arena` per type.
+/// Every list belongs to this step: a copy for another step goes through `copy`.
+#[derive(Debug)]
 pub struct FetchStepSelections<State> {
-    selections: BTreeMap<String, SelectionSet>,
+    selections: BTreeMap<String, ListId>,
     _state: PhantomData<State>,
 }
 
-impl Display for FetchStepSelections<SingleTypeFetchStep> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let as_selection_set: SelectionSet = self.into();
+/// Prints the selections like the planner's tree does.
+pub struct DisplaySelections<'a, State> {
+    selections: &'a FetchStepSelections<State>,
+    arena: &'a Arena,
+}
 
-        write!(f, "{}", as_selection_set)
+impl Display for DisplaySelections<'_, SingleTypeFetchStep> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.arena.export(self.selections.selection_set()))
+    }
+}
+
+impl<State> FetchStepSelections<State> {
+    pub fn display<'a>(&'a self, arena: &'a Arena) -> DisplaySelections<'a, State> {
+        DisplaySelections {
+            selections: self,
+            arena,
+        }
+    }
+
+    /// A copy whose lists are its own.
+    pub fn copy(&self, arena: &mut Arena) -> Self {
+        Self {
+            selections: self
+                .selections
+                .iter()
+                .map(|(name, &list)| (name.clone(), arena.copy(list)))
+                .collect(),
+            _state: PhantomData,
+        }
     }
 }
 
 impl FetchStepSelections<MultiTypeFetchStep> {
     /// Meant for input and output of entity calls.
-    pub fn to_non_root_selection_set(&self) -> SelectionSet {
-        self.wrap_in_type_fragments()
+    pub fn to_non_root_selection_set(&self, arena: &Arena) -> SelectionSet {
+        self.wrap_in_type_fragments(arena)
     }
 
-    pub fn to_root_selection_set(&self, root_type_name: &str) -> SelectionSet {
+    pub fn to_root_selection_set(&self, arena: &Arena, root_type_name: &str) -> SelectionSet {
         if self.selections.len() == 1 {
-            let (type_name, selections) = self.selections.iter().next().unwrap();
+            let (type_name, &selections) = self.selections.iter().next().unwrap();
 
             if type_name == root_type_name {
-                return selections.clone();
+                return arena.export(selections);
             }
         }
 
-        self.wrap_in_type_fragments()
+        self.wrap_in_type_fragments(arena)
     }
 
-    fn wrap_in_type_fragments(&self) -> SelectionSet {
+    fn wrap_in_type_fragments(&self, arena: &Arena) -> SelectionSet {
         SelectionSet {
             items: self
                 .selections
                 .iter()
-                .map(|(type_name, selections)| {
+                .map(|(type_name, &list)| {
+                    let selections = arena.export(list);
                     // Build one `... on Type` wrapper item if needed
                     let Some((condition, selections_for_wrapper)) =
-                        try_lift_condition(type_name, selections)
+                        try_lift_condition(type_name, &selections)
                     else {
                         return SelectionItem::InlineFragment(InlineFragmentSelection {
                             type_condition: type_name.to_string(),
                             include_if: None,
                             skip_if: None,
-                            selections: selections.clone(),
+                            selections,
                         });
                     };
 
@@ -98,21 +128,19 @@ fn inline_fragment_condition(fragment: &InlineFragmentSelection) -> Option<Condi
 // A mixed selection like `isCheap` and `name @include($showName)` must stay scoped at selection level,
 // otherwise `isCheap` would incorrectly disappear when `$showName` is false.
 fn shared_top_level_fragment_condition(
+    arena: &Arena,
     type_name: &str,
-    selection_set: &SelectionSet,
+    list: ListId,
 ) -> Option<Condition> {
     let mut condition = None;
 
-    for item in selection_set.items.iter() {
-        let SelectionItem::InlineFragment(fragment) = item else {
-            return None;
-        };
-
-        if fragment.type_condition != type_name {
+    for &item in arena.items(list) {
+        let node = arena.node(item);
+        if node.kind != Kind::InlineFragment || arena.str(node.name) != type_name {
             return None;
         }
 
-        let fragment_condition = inline_fragment_condition(fragment)?;
+        let fragment_condition = arena.condition(item)?;
 
         match &condition {
             Some(condition) => {
@@ -130,13 +158,12 @@ fn shared_top_level_fragment_condition(
 // Clears only the top-level wrapper condition after it has been lifted to the
 // fetch step. Inner field/fragment conditions are preserved because those still
 // describe selection-level behavior, not whole-fetch behavior.
-fn clear_top_level_fragment_conditions(type_name: &str, selection_set: &mut SelectionSet) {
-    for item in selection_set.items.iter_mut() {
-        if let SelectionItem::InlineFragment(fragment) = item {
-            if fragment.type_condition == type_name {
-                fragment.include_if = None;
-                fragment.skip_if = None;
-            }
+fn clear_top_level_fragment_conditions(arena: &mut Arena, type_name: &str, list: ListId) {
+    for index in 0..arena.items(list).len() {
+        let item = arena.items(list)[index];
+        let node = arena.node(item);
+        if node.kind == Kind::InlineFragment && arena.str(node.name) == type_name {
+            arena.set_condition(item, None);
         }
     }
 }
@@ -215,19 +242,12 @@ fn try_lift_condition(
     Some((condition, lifted_selections))
 }
 
-impl From<&FetchStepSelections<SingleTypeFetchStep>> for SelectionSet {
-    fn from(value: &FetchStepSelections<SingleTypeFetchStep>) -> Self {
-        let (_type_name, selections) = value.selections.iter().next().unwrap();
-
-        selections.clone()
-    }
-}
-
 impl FetchStepSelections<SingleTypeFetchStep> {
-    pub fn into_multi_type(self) -> FetchStepSelections<MultiTypeFetchStep> {
+    /// The same lists, as a multi-type step's. Only for when this one goes away.
+    pub(crate) fn move_into_multi_type(&self) -> FetchStepSelections<MultiTypeFetchStep> {
         FetchStepSelections {
             _state: Default::default(),
-            selections: self.selections,
+            selections: self.selections.clone(),
         }
     }
 
@@ -236,46 +256,37 @@ impl FetchStepSelections<SingleTypeFetchStep> {
             .expect("SingleTypeFetchStep should have exactly one selection")
     }
 
-    pub fn selection_set(&self) -> &SelectionSet {
-        self.selections
-            .iter()
+    pub fn selection_set(&self) -> ListId {
+        *self
+            .selections
+            .values()
             .next()
             .expect("SingleTypeFetchStep should have exactly one selection")
-            .1
-    }
-
-    pub fn selection_set_mut(&mut self) -> &mut SelectionSet {
-        self.selections
-            .iter_mut()
-            .next()
-            .expect("SingleTypeFetchStep should have exactly one selection")
-            .1
     }
 
     pub fn add_at_path(
         &mut self,
+        arena: &mut Arena,
         fetch_path: &MergePath,
         selection_set: SelectionSet,
     ) -> Result<(), FetchStepSelectionsError> {
         let def_name = self.definition_name().to_string();
+        let source = arena.import(&selection_set);
 
-        self.add_at_path_inner(&def_name, fetch_path, selection_set, false)
+        self.add_at_path_inner(arena, &def_name, fetch_path, source, false)
     }
 
     pub fn add_selection_typename(
         &mut self,
+        arena: &mut Arena,
         fetch_path: &MergePath,
     ) -> Result<(), FetchStepSelectionsError> {
         let def_name = self.definition_name().to_string();
+        let source = arena.import(&SelectionSet {
+            items: vec![SelectionItem::Field(FieldSelection::new_typename())],
+        });
 
-        self.add_at_path_inner(
-            &def_name,
-            fetch_path,
-            SelectionSet {
-                items: vec![SelectionItem::Field(FieldSelection::new_typename())],
-            },
-            true,
-        )
+        self.add_at_path_inner(arena, &def_name, fetch_path, source, true)
     }
 }
 
@@ -289,9 +300,14 @@ impl<State> FetchStepSelections<State> {
         self.selections.len() > 1
     }
 
-    pub fn contains(&self, definition_name: &str, selection_set: &SelectionSet) -> bool {
-        if let Some(self_selections) = self.selections.get(definition_name) {
-            return selection_items_are_subset_of(&self_selections.items, &selection_set.items);
+    pub fn contains(
+        &self,
+        arena: &Arena,
+        definition_name: &str,
+        selection_set: &SelectionSet,
+    ) -> bool {
+        if let Some(&self_selections) = self.selections.get(definition_name) {
+            return arena.contains_tree(self_selections, selection_set);
         }
 
         false
@@ -301,67 +317,57 @@ impl<State> FetchStepSelections<State> {
         self.selections.contains_key(definition_name)
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.selections.is_empty()
-            || self
-                .selections
-                .values()
-                .all(|selection_set| selection_set.is_empty())
+    pub fn is_empty(&self, arena: &Arena) -> bool {
+        self.selections.is_empty() || self.selections.values().all(|&list| arena.is_empty(list))
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &SelectionSet)> {
-        self.selections.iter()
+    pub fn iter(&self) -> impl Iterator<Item = (&String, ListId)> {
+        self.selections.iter().map(|(name, &list)| (name, list))
     }
 
-    pub fn variable_usages(&self) -> BTreeSet<String> {
+    pub fn variable_usages(&self, arena: &Arena) -> BTreeSet<String> {
         let mut usages = BTreeSet::new();
 
-        for selection_set in self.selections.values() {
-            usages.extend(selection_set.variable_usages());
+        for &list in self.selections.values() {
+            arena.variable_usages(list, &mut usages);
         }
 
         usages
     }
 
-    pub fn iter_selections_mut(&mut self) -> impl Iterator<Item = (&str, &mut SelectionSet)> {
-        self.selections
-            .iter_mut()
-            .map(|(name, selection_set)| (name.as_str(), selection_set))
+    /// Puts `list` in place of the selections for `definition_name`, if it has some.
+    pub fn set_selections_for_definition(&mut self, definition_name: &str, list: ListId) {
+        if let Some(current) = self.selections.get_mut(definition_name) {
+            *current = list;
+        }
     }
 
-    pub fn selections_for_definition_mut(
-        &mut self,
-        definition_name: &str,
-    ) -> Option<&mut SelectionSet> {
-        self.selections.get_mut(definition_name)
-    }
-
-    pub fn selections_for_definition(&self, definition_name: &str) -> Option<&SelectionSet> {
-        self.selections.get(definition_name)
+    pub fn selections_for_definition(&self, definition_name: &str) -> Option<ListId> {
+        self.selections.get(definition_name).copied()
     }
 
     fn add_at_path_inner(
         &mut self,
+        arena: &mut Arena,
         definition_name: &str,
         fetch_path: &MergePath,
-        selection_set: SelectionSet,
+        source: ListId,
         as_first: bool,
     ) -> Result<(), FetchStepSelectionsError> {
         let current = self
-            .selections_for_definition_mut(definition_name)
+            .selections_for_definition(definition_name)
             .ok_or_else(|| {
                 FetchStepSelectionsError::UnexpectedMissingDefinition(definition_name.to_string())
             })?;
 
-        let selection_set_at_path = find_selection_set_by_path_mut(current, fetch_path)
-            .ok_or_else(|| {
-                FetchStepSelectionsError::MissingPathInSelection(
-                    fetch_path.to_string(),
-                    definition_name.to_string(),
-                )
-            })?;
+        let selection_set_at_path = arena.find_by_path(current, fetch_path).ok_or_else(|| {
+            FetchStepSelectionsError::MissingPathInSelection(
+                fetch_path.to_string(),
+                definition_name.to_string(),
+            )
+        })?;
 
-        merge_selection_set(selection_set_at_path, &selection_set, as_first)?;
+        arena.merge(selection_set_at_path, source, as_first)?;
 
         Ok(())
     }
@@ -369,46 +375,22 @@ impl<State> FetchStepSelections<State> {
 
 impl FetchStepSelections<MultiTypeFetchStep> {
     fn wrap_definition_selection_with_condition(
+        arena: &mut Arena,
         def_name: &str,
-        selection_set: &mut SelectionSet,
+        list: ListId,
         condition: &Condition,
     ) {
         // A type slot can be declared before it gets any selections (multi-type batching does
         // that right before a merge). Nothing to guard there, and `... on T @include { }` is
         // invalid GraphQL that ends up in the subgraph request.
-        if selection_set.items.is_empty() {
+        if arena.is_empty(list) {
             return;
         }
-        let prev = selection_set.clone();
-        match condition {
-            Condition::Include(var_name) => {
-                selection_set.items =
-                    vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-                        type_condition: def_name.to_string(),
-                        selections: prev,
-                        skip_if: None,
-                        include_if: Some(var_name.clone()),
-                    })];
-            }
-            Condition::Skip(var_name) => {
-                selection_set.items =
-                    vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-                        type_condition: def_name.to_string(),
-                        selections: prev,
-                        skip_if: Some(var_name.clone()),
-                        include_if: None,
-                    })];
-            }
-            Condition::SkipAndInclude { skip, include } => {
-                selection_set.items =
-                    vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-                        type_condition: def_name.to_string(),
-                        selections: prev,
-                        skip_if: Some(skip.clone()),
-                        include_if: Some(include.clone()),
-                    })];
-            }
-        }
+        let fragment = arena.new_fragment(def_name, Some(condition));
+        let fragment_list = arena.node(fragment).children;
+        let items = arena.items(list).to_vec();
+        arena.set_items(fragment_list, &items);
+        arena.set_items(list, &[fragment]);
     }
 
     pub fn selecting_same_types(&self, other: &Self) -> bool {
@@ -427,13 +409,13 @@ impl FetchStepSelections<MultiTypeFetchStep> {
 
     /// Whether a type both select would get a response key with two values, see
     /// `response_keys_conflict`.
-    pub fn response_keys_conflict_with(&self, other: &Self) -> bool {
+    pub fn response_keys_conflict_with(&self, arena: &Arena, other: &Self) -> bool {
         self.iter_selections().any(|(definition_name, selections)| {
             other
                 .selections
                 .get(definition_name)
-                .is_some_and(|other_selections| {
-                    response_keys_conflict(selections, other_selections)
+                .is_some_and(|&other_selections| {
+                    arena.response_keys_conflict(selections, other_selections)
                 })
         })
     }
@@ -446,29 +428,31 @@ impl FetchStepSelections<MultiTypeFetchStep> {
         }
     }
 
-    pub fn iter_selections(&self) -> impl Iterator<Item = (&String, &SelectionSet)> {
-        self.selections.iter()
+    pub fn iter_selections(&self) -> impl Iterator<Item = (&String, ListId)> {
+        self.iter()
     }
 
     /// Creates a slot in the internal HashMap and will allow to add selections for the given definition name.
     /// Without that, trying to add selections using any function will either fail or result in trying to force-add to a root type.
     /// Calling this method is crucial if you wish to create multi-type steps.
-    pub fn declare_known_type(&mut self, def_name: &str) {
-        self.selections.entry(def_name.to_string()).or_default();
+    pub fn declare_known_type(&mut self, arena: &mut Arena, def_name: &str) {
+        if !self.selections.contains_key(def_name) {
+            self.selections
+                .insert(def_name.to_string(), arena.new_list());
+        }
     }
 
-    pub fn replace_definitions_with_abstract(
-        &mut self,
-        abstract_type: &str,
-        selection_set: SelectionSet,
-    ) {
-        self.selections.clear();
-        self.selections
-            .insert(abstract_type.to_string(), selection_set);
+    /// A step's selections from its lists, by type name. The lists become its own.
+    pub fn from_lists(lists: impl IntoIterator<Item = (String, ListId)>) -> Self {
+        Self {
+            selections: lists.into_iter().collect(),
+            _state: PhantomData,
+        }
     }
 
     pub fn migrate_from_another(
         &mut self,
+        arena: &mut Arena,
         other: &Self,
         fetch_path: &MergePath,
     ) -> Result<(), FetchStepSelectionsError> {
@@ -476,26 +460,27 @@ impl FetchStepSelections<MultiTypeFetchStep> {
 
         for (definition_name, selection_set) in other.iter_selections() {
             let target_type = maybe_merge_into.as_ref().unwrap_or(definition_name);
-            self.add_at_path_inner(target_type, fetch_path, selection_set.clone(), false)?;
+            self.add_at_path_inner(arena, target_type, fetch_path, selection_set, false)?;
         }
 
         Ok(())
     }
 
-    pub fn wrap_with_condition(&mut self, condition: Condition) {
-        for (def_name, selection_set) in self.selections.iter_mut() {
-            Self::wrap_definition_selection_with_condition(def_name, selection_set, &condition);
+    pub fn wrap_with_condition(&mut self, arena: &mut Arena, condition: Condition) {
+        for (def_name, &list) in self.selections.iter() {
+            Self::wrap_definition_selection_with_condition(arena, def_name, list, &condition);
         }
     }
 
     pub fn wrap_with_condition_for_types(
         &mut self,
+        arena: &mut Arena,
         condition: Condition,
         type_names: &BTreeSet<&str>,
     ) {
-        for (def_name, selection_set) in self.selections.iter_mut() {
+        for (def_name, &list) in self.selections.iter() {
             if type_names.contains(def_name.as_str()) {
-                Self::wrap_definition_selection_with_condition(def_name, selection_set, &condition);
+                Self::wrap_definition_selection_with_condition(arena, def_name, list, &condition);
             }
         }
     }
@@ -505,15 +490,18 @@ impl FetchStepSelections<MultiTypeFetchStep> {
     // `Some` only when every type is guarded by the same top-level condition.
     // The lifted wrapper directives are cleared from the output
     // to avoid duplicating the same condition at both fetch and selection level.
-    pub fn take_shared_top_level_fragment_condition(&mut self) -> Option<Condition> {
-        if self.is_empty() {
+    pub fn take_shared_top_level_fragment_condition(
+        &mut self,
+        arena: &mut Arena,
+    ) -> Option<Condition> {
+        if self.is_empty(arena) {
             return None;
         }
 
         let mut common_condition = None;
 
-        for (type_name, selection_set) in self.iter() {
-            let condition = shared_top_level_fragment_condition(type_name, selection_set)?;
+        for (type_name, list) in self.iter() {
+            let condition = shared_top_level_fragment_condition(arena, type_name, list)?;
 
             match &common_condition {
                 Some(common_condition) => {
@@ -526,8 +514,8 @@ impl FetchStepSelections<MultiTypeFetchStep> {
         }
 
         let condition = common_condition?;
-        for (type_name, selection_set) in self.selections.iter_mut() {
-            clear_top_level_fragment_conditions(type_name, selection_set);
+        for (type_name, &list) in self.selections.iter() {
+            clear_top_level_fragment_conditions(arena, type_name, list);
         }
 
         Some(condition)
@@ -535,15 +523,20 @@ impl FetchStepSelections<MultiTypeFetchStep> {
 }
 
 impl FetchStepSelections<SingleTypeFetchStep> {
-    pub fn add(&mut self, selection_set: &SelectionSet) -> Result<(), FetchStepSelectionsError> {
-        merge_selection_set(self.selection_set_mut(), selection_set, false)?;
+    pub fn add(
+        &mut self,
+        arena: &mut Arena,
+        selection_set: &SelectionSet,
+    ) -> Result<(), FetchStepSelectionsError> {
+        let source = arena.import(selection_set);
+        arena.merge(self.selection_set(), source, false)?;
 
         Ok(())
     }
 
-    pub fn new(definition_name: &str) -> Self {
+    pub fn new(arena: &mut Arena, definition_name: &str) -> Self {
         let mut map = BTreeMap::new();
-        map.insert(definition_name.to_string(), SelectionSet::default());
+        map.insert(definition_name.to_string(), arena.new_list());
 
         Self {
             _state: Default::default(),
@@ -571,6 +564,7 @@ mod tests {
     use crate::query_planner::utils::pretty_display::PrettyDisplay;
 
     use super::{FetchStepSelections, MultiTypeFetchStep};
+    use crate::query_planner::ast::flat::arena::Arena;
 
     fn parse_selection_set(input: &str) -> SelectionSet {
         let op = parse_operation(input);
@@ -582,6 +576,7 @@ mod tests {
     }
 
     fn multi_type_from_top_level_inline_fragments(
+        arena: &mut Arena,
         query: &str,
     ) -> FetchStepSelections<MultiTypeFetchStep> {
         let parsed = parse_selection_set(query);
@@ -599,7 +594,10 @@ mod tests {
         }
 
         FetchStepSelections {
-            selections: map,
+            selections: map
+                .into_iter()
+                .map(|(name, set)| (name, arena.import(&set)))
+                .collect(),
             _state: PhantomData,
         }
     }
@@ -614,7 +612,9 @@ mod tests {
 
     #[test]
     fn lifts_single_conditional_fragment_without_extra_nesting() {
+        let mut arena = Arena::new();
         let fetch_selections = multi_type_from_top_level_inline_fragments(
+            &mut arena,
             r#"
             {
               ... on Book @skip(if: $title) {
@@ -624,7 +624,7 @@ mod tests {
             "#,
         );
         insta::assert_snapshot!(
-            format!("{}", PrettySelectionSet(fetch_selections.to_non_root_selection_set())),
+            format!("{}", PrettySelectionSet(fetch_selections.to_non_root_selection_set(&arena))),
             @r#"
               ... on Book @skip(if: $title) {
                 sku
@@ -635,7 +635,9 @@ mod tests {
 
     #[test]
     fn lifts_shared_condition_from_multiple_fragments() {
+        let mut arena = Arena::new();
         let fetch_selections = multi_type_from_top_level_inline_fragments(
+            &mut arena,
             r#"
             {
               ... on Book @include(if: $x) {
@@ -649,7 +651,7 @@ mod tests {
         );
 
         insta::assert_snapshot!(
-          format!("{}", PrettySelectionSet(fetch_selections.to_non_root_selection_set())),
+          format!("{}", PrettySelectionSet(fetch_selections.to_non_root_selection_set(&arena))),
             @r#"
               ... on Book @include(if: $x) {
                 ... on Book {
@@ -665,7 +667,9 @@ mod tests {
 
     #[test]
     fn does_not_lift_when_conditions_are_mixed() {
+        let mut arena = Arena::new();
         let fetch_selections = multi_type_from_top_level_inline_fragments(
+            &mut arena,
             r#"
             {
               ... on Book @include(if: $x) {
@@ -679,7 +683,7 @@ mod tests {
         );
 
         insta::assert_snapshot!(
-          format!("{}", PrettySelectionSet(fetch_selections.to_non_root_selection_set())),
+          format!("{}", PrettySelectionSet(fetch_selections.to_non_root_selection_set(&arena))),
             @r#"
               ... on Book {
                 ... on Book @include(if: $x) {
@@ -695,7 +699,9 @@ mod tests {
 
     #[test]
     fn does_not_lift_when_top_level_fragments_have_different_types() {
+        let mut arena = Arena::new();
         let fetch_selections = multi_type_from_top_level_inline_fragments(
+            &mut arena,
             r#"
             {
               ... on Book @include(if: $x) {
@@ -709,7 +715,7 @@ mod tests {
         );
 
         insta::assert_snapshot!(
-          format!("{}", PrettySelectionSet(fetch_selections.to_non_root_selection_set())),
+          format!("{}", PrettySelectionSet(fetch_selections.to_non_root_selection_set(&arena))),
             @r#"
               ... on Book @include(if: $x) {
                 title

@@ -166,23 +166,6 @@ impl ResponseKeys {
     }
 }
 
-/// Turns a representation read back into the fetch that writes it: `price: _internal_qp_alias_0`
-/// becomes `_internal_qp_alias_0: price`. For when an input moves into an output.
-pub fn read_as_written(selection_set: &mut SelectionSet) {
-    for item in selection_set.items.iter_mut() {
-        match item {
-            SelectionItem::Field(field) => {
-                if let Some(alias) = field.alias.take() {
-                    field.alias = Some(std::mem::replace(&mut field.name, alias));
-                }
-                read_as_written(&mut field.selections);
-            }
-            SelectionItem::InlineFragment(fragment) => read_as_written(&mut fragment.selections),
-            SelectionItem::FragmentSpread(_) => {}
-        }
-    }
-}
-
 /// The place `path` points at: its response keys.
 pub fn place_of(path: &MergePath) -> Vec<String> {
     path.inner
@@ -258,10 +241,12 @@ mod tests {
         let mut keys = keys(r#"{ me { price(currency: "GBP") } }"#);
         let me = ["me".to_string()];
         let written = keys.output(&me, &parse(r#"{ ... on Cat { price(currency: "EUR") } }"#));
-        let mut read = keys.input(&me, &parse(r#"{ ... on Cat { price(currency: "EUR") } }"#));
+        let read = keys.input(&me, &parse(r#"{ ... on Cat { price(currency: "EUR") } }"#));
 
-        super::read_as_written(&mut read);
-        assert_eq!(read.to_string(), written.to_string());
+        let mut arena = crate::query_planner::ast::flat::arena::Arena::new();
+        let list = arena.import(&read);
+        arena.read_as_written(list);
+        assert_eq!(arena.export(list).to_string(), written.to_string());
     }
 
     /// Below an aliased object, places follow the alias.

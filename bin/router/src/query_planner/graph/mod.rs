@@ -767,6 +767,7 @@ impl<'graph> Graph<'graph> {
                 .collect::<Vec<_>>();
             if !items.is_empty() {
                 selections.push(TypeAwareSelection {
+                    flat: Default::default(),
                     type_name: interface,
                     selection_set: SelectionSet { items },
                 });

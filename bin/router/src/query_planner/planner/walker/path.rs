@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use std::sync::Arc;
 use std::{cmp, fmt::Debug};
 
 use petgraph::{
@@ -10,23 +11,11 @@ use crate::query_planner::ast::merge_path::Condition;
 use crate::query_planner::graph::node::UnionMembersData;
 use crate::query_planner::planner::walker::pathfinder::NavigationTarget;
 use crate::query_planner::{
-    ast::arguments::ArgumentsMap,
     graph::{edge::Edge, edge::EdgeReference, Graph},
     planner::tree::query_tree_node::QueryTreeNode,
 };
 
-/// This structure contains attributes from the original selection set that was part of the incoming operation.
-#[derive(Debug, Clone, Default)]
-pub struct SelectionAttributes {
-    pub alias: Option<String>,
-    pub arguments: Option<ArgumentsMap>,
-}
-
-impl PartialEq for SelectionAttributes {
-    fn eq(&self, other: &Self) -> bool {
-        self.alias == other.alias && self.arguments == other.arguments
-    }
-}
+pub use crate::query_planner::ast::flat::selection_tree::SelectionAttributes;
 
 #[derive(Debug, Clone)]
 pub struct ContextRequirement {
@@ -51,7 +40,7 @@ pub struct PathSegment {
     pub requirement_tree: Option<Rc<QueryTreeNode>>,
     // `None` when empty, and cloning it is a refcount bump
     context_requirements: Option<Rc<[Rc<ContextRequirement>]>>,
-    pub selection_attributes: Option<SelectionAttributes>,
+    pub selection_attributes: Option<Arc<SelectionAttributes>>,
     pub condition: Option<Condition>,
 }
 
@@ -225,14 +214,11 @@ impl<'graph> OperationPath<'graph> {
             context_requirements: (!context_requirements.is_empty())
                 .then(|| context_requirements.into()),
             selection_attributes: match target {
-                NavigationTarget::Field { field, .. } => Some(SelectionAttributes {
-                    alias: field.alias.clone(),
-                    arguments: field.arguments.clone(),
-                }),
+                NavigationTarget::Field { field, .. } => field.attributes().cloned(),
                 NavigationTarget::ConcreteType(_, _) => None,
             },
             condition: match target {
-                NavigationTarget::Field { field, .. } => (*field).into(),
+                NavigationTarget::Field { field, .. } => field.condition().cloned(),
                 NavigationTarget::ConcreteType(_, condition) => condition.clone(),
             },
         };

@@ -1,9 +1,9 @@
 use tracing::instrument;
 
 use crate::query_planner::{
-    ast::{
-        selection_item::SelectionItem,
-        selection_set::{merge_selection_set, SelectionSet},
+    ast::flat::{
+        arena::{Arena, ListId},
+        Kind, NONE,
     },
     planner::fetch::{
         error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
@@ -21,9 +21,9 @@ impl FetchGraph<MultiTypeFetchStep> {
         let step_indices = self.step_indices().collect::<Vec<_>>();
 
         for index in step_indices {
-            let step = self.get_step_data_mut(index)?;
+            let (step, arena) = self.step_and_arena_mut(index)?;
             let normalizer = SelectionSetNormalizer { supergraph };
-            normalizer.normalize_step(step)?;
+            normalizer.normalize_step(arena, step)?;
         }
 
         Ok(())
@@ -37,58 +37,57 @@ struct SelectionSetNormalizer<'a> {
 impl SelectionSetNormalizer<'_> {
     fn normalize_step(
         &self,
+        arena: &mut Arena,
         step: &mut FetchStepData<MultiTypeFetchStep>,
     ) -> Result<(), FetchGraphError> {
-        for (definition_name, selection_set) in step.output.iter_selections_mut() {
-            self.normalize_selection_set(definition_name, selection_set)?;
+        for (definition_name, list) in step.output.iter_selections() {
+            self.normalize_selection_set(arena, definition_name, list)?;
         }
 
         Ok(())
     }
 
+    /// Puts the selections of `... on <current type>` without conditions into the set itself.
     fn normalize_selection_set(
         &self,
+        arena: &mut Arena,
         current_type_name: &str,
-        selection_set: &mut SelectionSet,
+        list: ListId,
     ) -> Result<(), FetchGraphError> {
-        let mut normalized_items = Vec::with_capacity(selection_set.items.len());
+        let items = arena.items(list).to_vec();
+        let normalized = arena.new_list();
 
-        for item in std::mem::take(&mut selection_set.items) {
-            match item {
-                SelectionItem::Field(mut field) => {
+        for item in items {
+            let node = *arena.node(item);
+            match node.kind {
+                Kind::Field => {
                     let child_type_name = self
                         .supergraph
-                        .field_return_type_name(current_type_name, field.name.as_str())
+                        .field_return_type_name(current_type_name, arena.str(node.name))
                         .ok_or_else(|| {
                             FetchGraphError::Internal(format!(
                                 "No field found for name '{}' in type '{}'",
-                                field.name, current_type_name
+                                arena.str(node.name),
+                                current_type_name
                             ))
                         })?;
-                    self.normalize_selection_set(child_type_name, &mut field.selections)?;
-                    normalized_items.push(SelectionItem::Field(field));
+                    self.normalize_selection_set(arena, child_type_name, node.children)?;
+                    arena.push(normalized, item);
                 }
-                SelectionItem::InlineFragment(mut fragment) => {
-                    self.normalize_selection_set(
-                        &fragment.type_condition,
-                        &mut fragment.selections,
-                    )?;
+                Kind::InlineFragment => {
+                    let type_condition = arena.str(node.name).to_string();
+                    self.normalize_selection_set(arena, &type_condition, node.children)?;
 
-                    if fragment.type_condition == current_type_name
-                        && fragment.skip_if.is_none()
-                        && fragment.include_if.is_none()
+                    if type_condition == current_type_name
+                        && node.skip_if == NONE
+                        && node.include_if == NONE
                     {
-                        // normalized_items.extend(fragment.selections.items);
-                        let mut merged = SelectionSet {
-                            items: std::mem::take(&mut normalized_items),
-                        };
-                        merge_selection_set(&mut merged, &fragment.selections, false)?;
-                        normalized_items = merged.items;
+                        arena.merge(normalized, node.children, false)?;
                     } else {
-                        normalized_items.push(SelectionItem::InlineFragment(fragment));
+                        arena.push(normalized, item);
                     }
                 }
-                SelectionItem::FragmentSpread(_) => {
+                Kind::FragmentSpread => {
                     return Err(FetchGraphError::Internal(
                         "fragment spreads should have been inlined before selection-set normalization"
                             .to_string(),
@@ -97,7 +96,8 @@ impl SelectionSetNormalizer<'_> {
             }
         }
 
-        selection_set.items = normalized_items;
+        let normalized = arena.items(normalized).to_vec();
+        arena.set_items(list, &normalized);
 
         Ok(())
     }
@@ -113,6 +113,7 @@ mod tests {
     };
 
     use super::SelectionSetNormalizer;
+    use crate::query_planner::ast::{flat::arena::Arena, selection_set::SelectionSet};
 
     #[test]
     fn ensure_deduplication() {
@@ -131,15 +132,17 @@ mod tests {
         };
 
         let op = parse_operation("{ id ... on User { id } }");
-        let mut selection_set = match op.definitions.first() {
+        let selection_set: SelectionSet = match op.definitions.first() {
             Some(Definition::Operation(OperationDefinition::SelectionSet(s))) => s.clone().into(),
             _ => panic!("expected top-level selection set"),
         };
+        let mut arena = Arena::new();
+        let list = arena.import(&selection_set);
 
         normalizer
-            .normalize_selection_set("User", &mut selection_set)
+            .normalize_selection_set(&mut arena, "User", list)
             .unwrap();
 
-        insta::assert_snapshot!(&selection_set.to_string(), @"{id}");
+        insta::assert_snapshot!(&arena.export(list).to_string(), @"{id}");
     }
 }

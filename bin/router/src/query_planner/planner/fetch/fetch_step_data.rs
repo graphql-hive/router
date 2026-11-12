@@ -6,6 +6,7 @@ use petgraph::graph::NodeIndex;
 
 use crate::query_planner::{
     ast::{
+        flat::arena::Arena,
         merge_path::{Condition, MergePath, Segment},
         operation::VariableDefinition,
     },
@@ -33,7 +34,7 @@ bitflags! {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FetchStepData<State> {
     pub id: FetchId,
     pub service_name: SubgraphName,
@@ -65,31 +66,38 @@ pub enum FetchStepKind {
     Root,
 }
 
-impl<State> Display for FetchStepData<State> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{}]: ", self.service_name)?;
+/// Prints a step, its selections from the arena they live in.
+pub struct DisplayStep<'a, State> {
+    step: &'a FetchStepData<State>,
+    arena: &'a Arena,
+}
 
-        for (def_name, selections) in self.input.iter() {
-            write!(f, "{}/{} ", def_name, selections)?;
+impl<State> Display for DisplayStep<'_, State> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (step, arena) = (self.step, self.arena);
+        write!(f, "[{}]: ", step.service_name)?;
+
+        for (def_name, selections) in step.input.iter() {
+            write!(f, "{}/{} ", def_name, arena.export(selections))?;
         }
 
         write!(f, "-> ")?;
 
-        for (def_name, selections) in self.output.iter() {
-            write!(f, "{}/{} ", def_name, selections)?;
+        for (def_name, selections) in step.output.iter() {
+            write!(f, "{}/{} ", def_name, arena.export(selections))?;
         }
 
-        write!(f, "at $.{}", self.response_path.join("."))?;
+        write!(f, "at $.{}", step.response_path.join("."))?;
 
-        if self.flags.contains(FetchStepFlags::USED_FOR_REQUIRES) {
+        if step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES) {
             write!(f, " [@requires]")?;
         }
 
-        if self.flags.contains(FetchStepFlags::USED_FOR_TYPE_CONDITION) {
+        if step.flags.contains(FetchStepFlags::USED_FOR_TYPE_CONDITION) {
             write!(f, " [no_pass_through]")?;
         }
 
-        if let Some(condition) = &self.condition {
+        if let Some(condition) = &step.condition {
             match condition {
                 Condition::Include(var_name) => write!(f, " [@include(if: ${})]", var_name)?,
                 Condition::Skip(var_name) => write!(f, " [@skip(if: ${})]", var_name)?,
@@ -104,12 +112,17 @@ impl<State> Display for FetchStepData<State> {
 }
 
 impl<State> FetchStepData<State> {
+    pub fn display<'a>(&'a self, arena: &'a Arena) -> DisplayStep<'a, State> {
+        DisplayStep { step: self, arena }
+    }
+
     pub fn pretty_write(
         &self,
         writer: &mut std::fmt::Formatter<'_>,
         index: NodeIndex,
+        arena: &Arena,
     ) -> Result<(), std::fmt::Error> {
-        write!(writer, "[{}] {}", index.index(), self)
+        write!(writer, "[{}] {}", index.index(), self.display(arena))
     }
 
     pub fn is_entity_call(&self) -> bool {
@@ -158,12 +171,43 @@ pub(crate) fn type_condition_types_from_response_path(
 }
 
 impl FetchStepData<MultiTypeFetchStep> {
+    /// A copy whose selections are its own lists.
+    pub fn copy(&self, arena: &mut Arena) -> Self {
+        let mut step = self.move_into_multi_type_same();
+        step.input = self.input.copy(arena);
+        step.output = self.output.copy(arena);
+        step
+    }
+
+    fn move_into_multi_type_same(&self) -> Self {
+        FetchStepData {
+            id: self.id,
+            service_name: self.service_name.clone(),
+            response_path: self.response_path.clone(),
+            input: FetchStepSelections::from_lists([]),
+            output: FetchStepSelections::from_lists([]),
+            kind: self.kind.clone(),
+            operation_kind: self.operation_kind.clone(),
+            flags: self.flags,
+            condition: self.condition.clone(),
+            gated_by: self.gated_by.clone(),
+            variable_usages: self.variable_usages.clone(),
+            variable_definitions: self.variable_definitions.clone(),
+            mutation_field_position: self.mutation_field_position,
+            input_rewrites: self.input_rewrites.clone(),
+            output_rewrites: self.output_rewrites.clone(),
+            context_rewrites: self.context_rewrites.clone(),
+            context_variable_definitions: self.context_variable_definitions.clone(),
+            context_producers: self.context_producers.clone(),
+        }
+    }
+
     // Moves a fetch-level condition down into this step's output selections.
     // A fetch-level condition means "the whole HTTP request can be skipped".
     // That is only correct while every output selection in the fetch has the same condition.
     // Before merging a conditional fetch with an unconditional or differently-conditional fetch,
     // the condition must be scoped to the affected output selections so it cannot leak to merged siblings.
-    fn scope_condition_to_output(&mut self, scope_by_response_path_types: bool) {
+    fn scope_condition_to_output(&mut self, arena: &mut Arena, scope_by_response_path_types: bool) {
         let Some(condition) = self.condition.take() else {
             return;
         };
@@ -177,13 +221,18 @@ impl FetchStepData<MultiTypeFetchStep> {
         // If concrete type names are known, scope the condition to those types only.
         // Otherwise apply it to every output type in this fetch.
         if let Some(types) = type_names {
-            self.output.wrap_with_condition_for_types(condition, &types);
+            self.output
+                .wrap_with_condition_for_types(arena, condition, &types);
         } else {
-            self.output.wrap_with_condition(condition);
+            self.output.wrap_with_condition(arena, condition);
         }
     }
 
-    pub(crate) fn scope_fetch_conditions_before_merge(&mut self, source: &mut Self) {
+    pub(crate) fn scope_fetch_conditions_before_merge(
+        &mut self,
+        arena: &mut Arena,
+        source: &mut Self,
+    ) {
         if !self.is_entity_call() {
             return;
         }
@@ -198,24 +247,24 @@ impl FetchStepData<MultiTypeFetchStep> {
         // For example, `products.@|[Book]` with `@include($showBook)` must not become an `Include` node
         // around a merged Book+Magazine fetch, or Magazine data would disappear when false.
         if condition_is_type_scoped {
-            self.scope_condition_to_output(true);
+            self.scope_condition_to_output(arena, true);
         }
 
         // If both sides still have the same condition, keep it at fetch level,
         // so the whole merged HTTP request can be skipped.
         if self.condition != source.condition {
-            self.scope_condition_to_output(can_scope_by_type);
-            source.scope_condition_to_output(can_scope_by_type);
+            self.scope_condition_to_output(arena, can_scope_by_type);
+            source.scope_condition_to_output(arena, can_scope_by_type);
         }
     }
 
-    pub(crate) fn lift_shared_output_condition_to_fetch(&mut self) {
+    pub(crate) fn lift_shared_output_condition_to_fetch(&mut self, arena: &mut Arena) {
         // After a safe merge, all output selections may again be guarded by the
         // same shared condition.
         // Both `name` and `isCheap` may have `@include($showDetails)`.
         // In that case we lift the condition back to fetch level so the router can skip the whole HTTP request.
         if self.condition.is_none() {
-            self.condition = self.output.take_shared_top_level_fragment_condition();
+            self.condition = self.output.take_shared_top_level_fragment_condition(arena);
         }
     }
 }
@@ -235,26 +284,27 @@ impl FetchStepData<SingleTypeFetchStep> {
             && self.condition.as_ref() == condition
     }
 
-    pub fn into_multi_type(self) -> FetchStepData<MultiTypeFetchStep> {
+    /// The step as a multi-type one, with the same lists. Only for when this one goes away.
+    pub(crate) fn move_into_multi_type(&self) -> FetchStepData<MultiTypeFetchStep> {
         FetchStepData::<MultiTypeFetchStep> {
             id: self.id,
-            service_name: self.service_name,
-            response_path: self.response_path,
-            input: self.input.into_multi_type(),
-            output: self.output.into_multi_type(),
-            kind: self.kind,
-            operation_kind: self.operation_kind,
+            service_name: self.service_name.clone(),
+            response_path: self.response_path.clone(),
+            input: self.input.move_into_multi_type(),
+            output: self.output.move_into_multi_type(),
+            kind: self.kind.clone(),
+            operation_kind: self.operation_kind.clone(),
             flags: self.flags,
-            condition: self.condition,
-            gated_by: self.gated_by,
-            variable_usages: self.variable_usages,
-            variable_definitions: self.variable_definitions,
+            condition: self.condition.clone(),
+            gated_by: self.gated_by.clone(),
+            variable_usages: self.variable_usages.clone(),
+            variable_definitions: self.variable_definitions.clone(),
             mutation_field_position: self.mutation_field_position,
-            input_rewrites: self.input_rewrites,
-            output_rewrites: self.output_rewrites,
-            context_rewrites: self.context_rewrites,
-            context_variable_definitions: self.context_variable_definitions,
-            context_producers: self.context_producers,
+            input_rewrites: self.input_rewrites.clone(),
+            output_rewrites: self.output_rewrites.clone(),
+            context_rewrites: self.context_rewrites.clone(),
+            context_variable_definitions: self.context_variable_definitions.clone(),
+            context_producers: self.context_producers.clone(),
         }
     }
 }

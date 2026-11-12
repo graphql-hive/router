@@ -11,14 +11,13 @@ use tracing::{instrument, trace};
 
 use crate::query_planner::{
     ast::{
+        flat::arena::Arena,
         merge_path::{MergePath, Segment},
-        selection_set::find_selection_set_by_path,
     },
     planner::fetch::{
         error::FetchGraphError,
         fetch_graph::FetchGraph,
         fetch_step_data::{FetchStepData, FetchStepFlags, FetchStepKind},
-        response_keys::read_as_written,
         state::MultiTypeFetchStep,
     },
 };
@@ -46,6 +45,7 @@ impl MergedSteps {
 /// When merging an entity fetch into a non-entity target, the condition must
 /// stay attached to the source branch data, not to the whole target step.
 fn merge_source_condition_into_non_entity_target(
+    arena: &mut Arena,
     target: &FetchStepData<MultiTypeFetchStep>,
     source: &mut FetchStepData<MultiTypeFetchStep>,
 ) -> Result<bool, FetchGraphError> {
@@ -72,13 +72,13 @@ fn merge_source_condition_into_non_entity_target(
     // different path/type rules and are handled in a separate branch.
     // The input is written the way a representation reads it (`id: _internal_qp_alias_0`),
     // so it goes in the way the fetch writes it (`_internal_qp_alias_0: id`).
-    let mut input = source.input.clone();
-    for (_, selection_set) in input.iter_selections_mut() {
-        read_as_written(selection_set);
+    let input = source.input.copy(arena);
+    for (_, list) in input.iter_selections() {
+        arena.read_as_written(list);
     }
     source
         .output
-        .migrate_from_another(&input, &MergePath::default())?;
+        .migrate_from_another(arena, &input, &MergePath::default())?;
 
     // Check if the condition is already enforced by the path
     let condition_redundant = matches!(
@@ -87,7 +87,7 @@ fn merge_source_condition_into_non_entity_target(
     );
 
     if !condition_redundant {
-        source.output.wrap_with_condition(condition);
+        source.output.wrap_with_condition(arena, condition);
     }
 
     Ok(true)
@@ -100,7 +100,7 @@ pub(crate) fn perform_fetch_step_merge(
     fetch_graph: &mut FetchGraph<MultiTypeFetchStep>,
     force_merge_inputs: bool,
 ) -> Result<(), FetchGraphError> {
-    let (target, source) = fetch_graph.get_pair_of_steps_mut(target_index, source_index)?;
+    let (target, source, arena) = fetch_graph.get_pair_of_steps_mut(target_index, source_index)?;
 
     trace!(
         "merging fetch steps [{}] + [{}]",
@@ -119,13 +119,14 @@ pub(crate) fn perform_fetch_step_merge(
     if target.is_entity_call()
         && source.is_entity_call()
         && merges_input
-        && target.merge_adds_input_condition(source)
+        && target.merge_adds_input_condition(arena, source)
     {
         target.flags.insert(FetchStepFlags::CONDITIONAL_INPUT);
     }
-    let source_condition_merged = merge_source_condition_into_non_entity_target(target, source)?;
+    let source_condition_merged =
+        merge_source_condition_into_non_entity_target(arena, target, source)?;
     if !source_condition_merged {
-        target.scope_fetch_conditions_before_merge(source);
+        target.scope_fetch_conditions_before_merge(arena, source);
     }
 
     let source_fetch_path = source.response_path.slice_from(target.response_path.len());
@@ -151,7 +152,7 @@ pub(crate) fn perform_fetch_step_merge(
     }
     target
         .output
-        .migrate_from_another(&source.output, &source_fetch_path)?;
+        .migrate_from_another(arena, &source.output, &source_fetch_path)?;
 
     if let Some(input_rewrites) = source.input_rewrites.take() {
         if !input_rewrites.is_empty() {
@@ -164,7 +165,7 @@ pub(crate) fn perform_fetch_step_merge(
     if force_merge_inputs {
         target
             .input
-            .migrate_from_another(&source.input, &MergePath::default())?;
+            .migrate_from_another(arena, &source.input, &MergePath::default())?;
     } else if target.input.selecting_same_types(&source.input) {
         // It's safe to not check if a condition was turned into an inline fragment,
         // because if a condition is present and "me" is a non-entity fetch step,
@@ -172,7 +173,7 @@ pub(crate) fn perform_fetch_step_merge(
         if target.response_path == source.response_path {
             target
                 .input
-                .migrate_from_another(&source.input, &MergePath::default())?;
+                .migrate_from_another(arena, &source.input, &MergePath::default())?;
         } else if !source.response_path.starts_with(&target.response_path) {
             return Err(FetchGraphError::MismatchedResponsePath);
         }
@@ -185,7 +186,7 @@ pub(crate) fn perform_fetch_step_merge(
     // If the merged fetch is still guarded by one shared condition, lift it back to
     // step level.
     if target.is_entity_call() {
-        target.lift_shared_output_condition_to_fetch();
+        target.lift_shared_output_condition_to_fetch(arena);
     }
 
     let mut children_indexes: Vec<NodeIndex> = vec![];
@@ -309,8 +310,8 @@ impl FetchGraph<MultiTypeFetchStep> {
                     // cheap checks first, the graph walk goes last
                     if target.service_name == source.service_name
                         && target.context_rewrites.is_none()
-                        && target.can_absorb_nested_entity_call(source)
-                        && !target.has_arguments_conflicts_with(source)
+                        && target.can_absorb_nested_entity_call(&self.arena, source)
+                        && !target.has_arguments_conflicts_with(&self.arena, source)
                         && self.is_descendant_of(source_index, target_index)
                     {
                         candidate = Some((target_index, source_index));
@@ -407,6 +408,7 @@ impl FetchStepData<MultiTypeFetchStep> {
         other: &Self,
         fetch_graph: &FetchGraph<MultiTypeFetchStep>,
     ) -> bool {
+        let arena = &fetch_graph.arena;
         if !self.can_merge_context(other) {
             return false;
         }
@@ -449,7 +451,7 @@ impl FetchStepData<MultiTypeFetchStep> {
         if self.is_entity_call() && other.is_entity_call() && self.condition != other.condition {
             let absorbs_conditional_child = self.condition.is_none()
                 && is_only_parent
-                && self.can_absorb_nested_entity_call(other);
+                && self.can_absorb_nested_entity_call(arena, other);
             let one_call_for_same_objects = self.response_path == other.response_path
                 && (self.condition.is_none() || other.condition.is_none());
             if !absorbs_conditional_child && !one_call_for_same_objects {
@@ -470,10 +472,10 @@ impl FetchStepData<MultiTypeFetchStep> {
                 if !self.output.selecting_same_types(&other.output) {
                     return false;
                 }
-                if !self.inputs_hold_when_merged(other) {
+                if !self.inputs_hold_when_merged(arena, other) {
                     return false;
                 }
-            } else if !(is_only_parent && self.can_absorb_nested_entity_call(other)) {
+            } else if !(is_only_parent && self.can_absorb_nested_entity_call(arena, other)) {
                 return false;
             }
         } else {
@@ -483,7 +485,7 @@ impl FetchStepData<MultiTypeFetchStep> {
             }
         }
 
-        if self.has_arguments_conflicts_with(other) {
+        if self.has_arguments_conflicts_with(arena, other) {
             return false;
         }
 
@@ -509,21 +511,21 @@ impl FetchStepData<MultiTypeFetchStep> {
     /// merged call runs without them, the object goes out with a field missing, turns into
     /// `null`, and breaks the other side's fields too. So each side's input has to be there
     /// every time the merged call runs.
-    pub(crate) fn inputs_hold_when_merged(&self, other: &Self) -> bool {
+    pub(crate) fn inputs_hold_when_merged(&self, arena: &Arena, other: &Self) -> bool {
         !self.conditions_differ(other)
-            || (self.input_present_when_merged_with(other)
-                && other.input_present_when_merged_with(self))
+            || (self.input_present_when_merged_with(arena, other)
+                && other.input_present_when_merged_with(arena, self))
     }
 
     /// Will the merged call have input that's only there sometimes?
-    fn merge_adds_input_condition(&self, other: &Self) -> bool {
+    fn merge_adds_input_condition(&self, arena: &Arena, other: &Self) -> bool {
         if !self.conditions_differ(other) {
             return false;
         }
         if !self.is_unconditional() && !other.is_unconditional() {
             return true;
         }
-        !self.inputs_hold_when_merged(other)
+        !self.inputs_hold_when_merged(arena, other)
     }
 
     /// The two calls don't run under the same `@include`/`@skip`, on the call, its path or its
@@ -549,7 +551,7 @@ impl FetchStepData<MultiTypeFetchStep> {
     /// `other` has to send each of our types too: at least our fields if it always runs, exactly
     /// our fields if it doesn't. A type only we send would go out even when we don't run, with
     /// fields missing.
-    fn input_present_when_merged_with(&self, other: &Self) -> bool {
+    fn input_present_when_merged_with(&self, arena: &Arena, other: &Self) -> bool {
         if self.is_unconditional() {
             return true;
         }
@@ -558,9 +560,9 @@ impl FetchStepData<MultiTypeFetchStep> {
                 return false;
             };
             if other.is_unconditional() {
-                theirs.contains(ours)
+                arena.is_subset(theirs, ours)
             } else {
-                theirs.contains(ours) && ours.contains(theirs)
+                arena.is_subset(theirs, ours) && arena.is_subset(ours, theirs)
             }
         })
     }
@@ -569,7 +571,7 @@ impl FetchStepData<MultiTypeFetchStep> {
     /// If something else feeds it, the keys it sends may come from there,
     /// and pointing its other parents at us could change the order of the graph,
     /// or add a cycle.
-    fn can_absorb_nested_entity_call(&self, other: &Self) -> bool {
+    fn can_absorb_nested_entity_call(&self, arena: &Arena, other: &Self) -> bool {
         if !other.response_path.starts_with(&self.response_path) {
             return false;
         }
@@ -591,21 +593,23 @@ impl FetchStepData<MultiTypeFetchStep> {
         let path = other.response_path.slice_from(self.response_path.len());
         self.output
             .selections_for_definition(output_type)
-            .and_then(|output| find_selection_set_by_path(output, &path))
-            .is_some_and(|at_path| at_path.contains(input_selections))
+            .and_then(|output| arena.find_by_path(output, &path))
+            .is_some_and(|at_path| arena.is_subset(at_path, input_selections))
     }
 
-    pub fn has_arguments_conflicts_with(&self, other: &Self) -> bool {
+    pub fn has_arguments_conflicts_with(&self, arena: &Arena, other: &Self) -> bool {
         // same-object outputs can use different context variables even when their
         // entity inputs match. keep those fetches apart so batching can put each
         // output under its own alias
         if self.response_path == other.response_path
-            && self.output.response_keys_conflict_with(&other.output)
+            && self
+                .output
+                .response_keys_conflict_with(arena, &other.output)
         {
             return true;
         }
 
-        self.input.response_keys_conflict_with(&other.input)
+        self.input.response_keys_conflict_with(arena, &other.input)
     }
 }
 
@@ -632,10 +636,15 @@ mod tests {
 
     use petgraph::graph::NodeIndex;
 
+    use crate::query_planner::ast::flat::arena::Arena;
+
     use super::{perform_fetch_step_merge, MergedSteps};
 
     /// Selections for one or more types, e.g. `&[("User", "{ id }"), ("Admin", "{ id }")]`.
-    fn selections(types: &[(&str, &str)]) -> FetchStepSelections<MultiTypeFetchStep> {
+    fn selections(
+        arena: &mut Arena,
+        types: &[(&str, &str)],
+    ) -> FetchStepSelections<MultiTypeFetchStep> {
         let parse = |query: &str| -> SelectionSet {
             match parse_operation(query).definitions.first() {
                 Some(Definition::Operation(OperationDefinition::SelectionSet(s))) => {
@@ -645,16 +654,11 @@ mod tests {
             }
         };
 
-        let mut result = FetchStepSelections::<SingleTypeFetchStep>::new_empty().into_multi_type();
-        for (type_name, query) in types {
-            let mut single = FetchStepSelections::<SingleTypeFetchStep>::new(type_name);
-            single.add(&parse(query)).unwrap();
-            result.declare_known_type(type_name);
-            result
-                .migrate_from_another(&single.into_multi_type(), &MergePath::default())
-                .unwrap();
-        }
-        result
+        FetchStepSelections::from_lists(
+            types
+                .iter()
+                .map(|(type_name, query)| (type_name.to_string(), arena.import(&parse(query)))),
+        )
     }
 
     fn path(fields: &[&str]) -> MergePath {
@@ -711,24 +715,24 @@ mod tests {
         let mut producer = entity_step(
             "a",
             path(&["user"]),
-            selections(&[("User", "{ id }")]),
-            selections(&[("User", "{ currency }")]),
+            selections(&mut graph.arena, &[("User", "{ id }")]),
+            selections(&mut graph.arena, &[("User", "{ currency }")]),
         );
         producer.id = FetchId(1);
         let producer = graph.add_step(producer);
         let mut parent = entity_step(
             "b",
             path(&["user"]),
-            selections(&[("User", "{ id }")]),
-            selections(&[("User", "{ tx { __typename id } }")]),
+            selections(&mut graph.arena, &[("User", "{ id }")]),
+            selections(&mut graph.arena, &[("User", "{ tx { __typename id } }")]),
         );
         parent.id = FetchId(2);
         let parent = graph.add_step(parent);
         let mut consumer = entity_step(
             "b",
             path(&["user", "tx"]),
-            selections(&[("Transaction", "{ __typename id }")]),
-            selections(&[("Transaction", "{ amount }")]),
+            selections(&mut graph.arena, &[("Transaction", "{ __typename id }")]),
+            selections(&mut graph.arena, &[("Transaction", "{ amount }")]),
         );
         consumer.id = FetchId(3);
         consumer.context_producers.insert(FetchId(1));
@@ -751,10 +755,10 @@ mod tests {
             .get_step_data(producer)
             .unwrap()
             .can_merge_context(&consumer));
-        let mut root = graph.get_step_data(parent).unwrap().clone();
+        let mut root = graph.graph[parent].copy(&mut graph.arena);
         root.kind = FetchStepKind::Root;
         assert!(!root.can_merge_context(&consumer));
-        let mut too_high = graph.get_step_data(parent).unwrap().clone();
+        let mut too_high = graph.graph[parent].copy(&mut graph.arena);
         too_high.response_path = MergePath::default();
         assert!(!too_high.can_merge_context(&consumer));
         let consumer = graph.add_step(consumer);
@@ -778,7 +782,7 @@ mod tests {
         );
         assert_eq!(merged.context_variable_definitions.len(), 1);
         assert_eq!(merged.context_producers, [FetchId(1)].into());
-        let mut target = graph.get_step_data(producer).unwrap().clone();
+        let mut target = graph.graph[producer].copy(&mut graph.arena);
         target.id = FetchId(4);
         let target = graph.add_step(target);
         perform_fetch_step_merge(target, producer, &mut graph, false).unwrap();
@@ -796,24 +800,36 @@ mod tests {
         let mut graph =
             FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
 
-        let parent = graph.add_step(entity_step(
-            "orders",
-            path(&["accounts", "@"]),
-            selections(&[
-                ("User", "{ __typename id }"),
-                ("Admin", "{ __typename id }"),
-            ]),
-            selections(&[
-                ("User", "{ orders { __typename id } }"),
-                ("Admin", "{ orders { __typename id } }"),
-            ]),
-        ));
-        let child = graph.add_step(entity_step(
-            "orders",
-            path(&["accounts", "@", "orders", "@"]),
-            selections(&[("Order", "{ __typename id }")]),
-            selections(&[("Order", "{ sku }")]),
-        ));
+        let parent = {
+            let step = entity_step(
+                "orders",
+                path(&["accounts", "@"]),
+                selections(
+                    &mut graph.arena,
+                    &[
+                        ("User", "{ __typename id }"),
+                        ("Admin", "{ __typename id }"),
+                    ],
+                ),
+                selections(
+                    &mut graph.arena,
+                    &[
+                        ("User", "{ orders { __typename id } }"),
+                        ("Admin", "{ orders { __typename id } }"),
+                    ],
+                ),
+            );
+            graph.add_step(step)
+        };
+        let child = {
+            let step = entity_step(
+                "orders",
+                path(&["accounts", "@", "orders", "@"]),
+                selections(&mut graph.arena, &[("Order", "{ __typename id }")]),
+                selections(&mut graph.arena, &[("Order", "{ sku }")]),
+            );
+            graph.add_step(step)
+        };
         graph.connect(parent, child);
 
         let parent_data = graph.get_step_data(parent).unwrap();
@@ -828,18 +844,24 @@ mod tests {
         let mut graph =
             FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
 
-        let a = graph.add_step(entity_step(
-            "catalog",
-            path(&["a", "@"]),
-            selections(&[("Order", "{ __typename id }")]),
-            selections(&[("Order", "{ name }")]),
-        ));
-        let b = graph.add_step(entity_step(
-            "catalog",
-            path(&["b", "@"]),
-            selections(&[("Order", "{ __typename id }")]),
-            selections(&[("Order", "{ name }")]),
-        ));
+        let a = {
+            let step = entity_step(
+                "catalog",
+                path(&["a", "@"]),
+                selections(&mut graph.arena, &[("Order", "{ __typename id }")]),
+                selections(&mut graph.arena, &[("Order", "{ name }")]),
+            );
+            graph.add_step(step)
+        };
+        let b = {
+            let step = entity_step(
+                "catalog",
+                path(&["b", "@"]),
+                selections(&mut graph.arena, &[("Order", "{ __typename id }")]),
+                selections(&mut graph.arena, &[("Order", "{ name }")]),
+            );
+            graph.add_step(step)
+        };
 
         let result = perform_fetch_step_merge(a, b, &mut graph, false);
         assert!(
@@ -870,21 +892,33 @@ mod tests {
         let mut graph =
             FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
 
-        let parent = graph.add_step(entity_step(
-            "accounts",
-            path(&["accounts", "@"]),
-            selections(&[("User", "{ __typename id }")]),
-            selections(&[("User", "{ id }")]),
-        ));
-        let child = graph.add_step(entity_step(
-            "accounts",
-            path(&["accounts", "@"]),
-            selections(&[
-                ("User", "{ __typename id }"),
-                ("Admin", "{ __typename id }"),
-            ]),
-            selections(&[("User", "{ id }"), ("Admin", "{ name }")]),
-        ));
+        let parent = {
+            let step = entity_step(
+                "accounts",
+                path(&["accounts", "@"]),
+                selections(&mut graph.arena, &[("User", "{ __typename id }")]),
+                selections(&mut graph.arena, &[("User", "{ id }")]),
+            );
+            graph.add_step(step)
+        };
+        let child = {
+            let step = entity_step(
+                "accounts",
+                path(&["accounts", "@"]),
+                selections(
+                    &mut graph.arena,
+                    &[
+                        ("User", "{ __typename id }"),
+                        ("Admin", "{ __typename id }"),
+                    ],
+                ),
+                selections(
+                    &mut graph.arena,
+                    &[("User", "{ id }"), ("Admin", "{ name }")],
+                ),
+            );
+            graph.add_step(step)
+        };
         graph.connect(parent, child);
 
         let parent_data = graph.get_step_data(parent).unwrap();

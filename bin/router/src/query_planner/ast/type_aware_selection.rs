@@ -1,11 +1,21 @@
-use std::{fmt::Display, hash::Hash};
+use std::{fmt::Display, hash::Hash, sync::OnceLock};
 
-use super::selection_set::SelectionSet;
+use super::{flat::selection_tree::SelectionTree, selection_set::SelectionSet};
 
 #[derive(Debug, Clone)]
 pub struct TypeAwareSelection<'a> {
     pub type_name: &'a str,
     pub selection_set: SelectionSet,
+    /// `selection_set` the way the walker reads it, made the first time it does.
+    /// Leave it empty, it's filled from `selection_set`.
+    pub flat: OnceLock<SelectionTree>,
+}
+
+impl TypeAwareSelection<'_> {
+    pub fn flat(&self) -> &SelectionTree {
+        self.flat
+            .get_or_init(|| SelectionTree::from_tree(&self.selection_set))
+    }
 }
 
 impl Hash for TypeAwareSelection<'_> {

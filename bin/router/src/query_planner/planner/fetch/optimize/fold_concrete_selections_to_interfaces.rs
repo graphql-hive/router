@@ -23,12 +23,13 @@
 ///     media { id title }
 ///   }
 ///
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tracing::instrument;
 
 use crate::query_planner::{
     ast::{
+        flat::arena::Arena,
         merge_path::{Condition, MergePath, Segment},
         selection_item::SelectionItem,
         selection_set::{merge_selection_set, InlineFragmentSelection, SelectionSet},
@@ -36,7 +37,7 @@ use crate::query_planner::{
     },
     planner::fetch::{
         error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
-        state::MultiTypeFetchStep,
+        selections::FetchStepSelections, state::MultiTypeFetchStep,
     },
     planner::QueryPlannerOptions,
     state::{
@@ -68,7 +69,7 @@ impl FetchGraph<MultiTypeFetchStep> {
         let step_indices = self.step_indices().collect::<Vec<_>>();
 
         for index in step_indices {
-            let step = self.get_step_data_mut(index)?;
+            let (step, arena) = self.step_and_arena_mut(index)?;
             let Ok(subgraph) = supergraph.subgraph_state(&step.service_name) else {
                 continue;
             };
@@ -79,7 +80,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                 subgraph,
                 options,
             }
-            .rewrite_step(step)?;
+            .rewrite_step(arena, step)?;
         }
 
         Ok(changed)
@@ -119,13 +120,28 @@ struct FoldCandidate<'a> {
 }
 
 impl<'a> StepConverter<'a> {
+    // ponytail: runs on the planner's tree, copied out of the arena and back. Port it to the
+    // arena if this pass shows up in a profile.
     fn rewrite_step(
         &self,
+        arena: &mut Arena,
         step: &mut FetchStepData<MultiTypeFetchStep>,
     ) -> Result<bool, FetchGraphError> {
+        let mut output: BTreeMap<String, SelectionSet> = step
+            .output
+            .iter()
+            .map(|(type_name, list)| (type_name.clone(), arena.export(list)))
+            .collect();
         let mut changed = false;
-        changed |= self.rewrite_root_output(step)?;
-        changed |= self.rewrite_nested_output(step)?;
+        changed |= self.rewrite_root_output(&step.response_path, &mut output)?;
+        changed |= self.rewrite_nested_output(&mut output)?;
+        if changed {
+            step.output = FetchStepSelections::from_lists(
+                output
+                    .into_iter()
+                    .map(|(type_name, set)| (type_name, arena.import(&set))),
+            );
+        }
         Ok(changed)
     }
 
@@ -140,20 +156,19 @@ impl<'a> StepConverter<'a> {
     ///   `{ Media: { id } }`
     fn rewrite_root_output(
         &self,
-        step: &mut FetchStepData<MultiTypeFetchStep>,
+        response_path: &MergePath,
+        output: &mut BTreeMap<String, SelectionSet>,
     ) -> Result<bool, FetchGraphError> {
         // Only rewrite if the step is at the root (no response path).
-        if !step.response_path.inner.is_empty() {
+        if !response_path.inner.is_empty() {
             return Ok(false);
         }
 
-        let interface_name = step
-            .response_path
-            .resolve_type_name(self.root_type_name, self.supergraph)?;
+        let interface_name =
+            response_path.resolve_type_name(self.root_type_name, self.supergraph)?;
 
-        let branches = step
-            .output
-            .iter_selections()
+        let branches = output
+            .iter()
             .map(|(type_name, selection_set)| ObjectTypeBranch {
                 type_name: type_name.as_str(),
                 selection_set,
@@ -166,8 +181,9 @@ impl<'a> StepConverter<'a> {
             return Ok(false);
         };
 
-        step.output.replace_definitions_with_abstract(
-            candidate.interface_name,
+        output.clear();
+        output.insert(
+            candidate.interface_name.to_string(),
             candidate.folded.selection_set,
         );
 
@@ -183,11 +199,11 @@ impl<'a> StepConverter<'a> {
     /// `{ media { id } }`
     fn rewrite_nested_output(
         &self,
-        step: &mut FetchStepData<MultiTypeFetchStep>,
+        output: &mut BTreeMap<String, SelectionSet>,
     ) -> Result<bool, FetchGraphError> {
         let mut changed = false;
 
-        for (definition_name, selection_set) in step.output.iter_selections_mut() {
+        for (definition_name, selection_set) in output.iter_mut() {
             changed |= self.rewrite_selection_set(definition_name, selection_set)?;
         }
 

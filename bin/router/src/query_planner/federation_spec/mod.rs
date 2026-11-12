@@ -133,6 +133,7 @@ impl<'a> CachedFederationRules<'a> {
 
         let selection_set = self.parse_selection(supergraph, subgraph_name, type_name, selection);
         let selection = Arc::new(TypeAwareSelection {
+            flat: Default::default(),
             type_name,
             selection_set: selection_set.as_ref().clone(),
         });
@@ -181,6 +182,7 @@ impl FederationRules {
         key: &str,
     ) -> TypeAwareSelection<'a> {
         TypeAwareSelection {
+            flat: Default::default(),
             type_name,
             selection_set: normalize_fields_argument_value_mut(
                 supergraph,
@@ -225,6 +227,7 @@ impl FederationRules {
             }
         });
         TypeAwareSelection {
+            flat: Default::default(),
             type_name,
             selection_set,
         }

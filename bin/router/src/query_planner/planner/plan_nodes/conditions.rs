@@ -4,7 +4,10 @@ use std::fmt::{Display, Formatter, Result as FmtResult};
 
 use serde::{Deserialize, Serialize};
 
-use crate::query_planner::ast::{selection_item::SelectionItem, selection_set::SelectionSet};
+use crate::query_planner::ast::flat::{
+    arena::{Arena, ListId},
+    Kind,
+};
 
 /// Variables that all have to say yes: every `include_if` is `true` and no `skip_if` is. An
 /// empty group always holds. `new` keeps the names sorted, and never one in both.
@@ -93,13 +96,14 @@ pub fn any_of(mut groups: Vec<ConditionGroup>) -> Option<Vec<ConditionGroup>> {
 
 /// When `around` holds and any field of `selection_sets` is asked for. `None` is always, like
 /// `any_of`.
-pub fn run_if<'a>(
+pub fn run_if(
     around: &ConditionGroup,
-    selection_sets: impl IntoIterator<Item = &'a SelectionSet>,
+    arena: &Arena,
+    selection_sets: impl IntoIterator<Item = ListId>,
 ) -> Option<Vec<ConditionGroup>> {
     let mut groups = Vec::new();
     for selection_set in selection_sets {
-        groups.extend(asked_for_when(selection_set));
+        groups.extend(asked_for_when(arena, selection_set));
     }
     any_of(
         groups
@@ -111,29 +115,25 @@ pub fn run_if<'a>(
 
 /// When any item is asked for, as groups. A field with no condition makes it always (an empty
 /// group), so most selection sets stop at their first field.
-fn asked_for_when(selection_set: &SelectionSet) -> Vec<ConditionGroup> {
+fn asked_for_when(arena: &Arena, selection_set: ListId) -> Vec<ConditionGroup> {
     let mut groups = Vec::new();
-    for item in &selection_set.items {
-        let (include_if, skip_if, inner) = match item {
-            SelectionItem::Field(field) => (&field.include_if, &field.skip_if, None),
-            SelectionItem::InlineFragment(fragment) => (
-                &fragment.include_if,
-                &fragment.skip_if,
-                Some(&fragment.selections),
-            ),
-            SelectionItem::FragmentSpread(_) => return vec![ConditionGroup::default()],
+    for &item in arena.items(selection_set) {
+        let node = arena.node(item);
+        let inner = match node.kind {
+            Kind::Field => None,
+            Kind::InlineFragment => Some(node.children),
+            Kind::FragmentSpread => return vec![ConditionGroup::default()],
         };
+        let variable = |sym| arena.opt_str(sym).map(str::to_string).into_iter().collect();
         // `@include(if: $a) @skip(if: $a)` is never asked for
-        let Some(own) = ConditionGroup::new(
-            include_if.iter().cloned().collect(),
-            skip_if.iter().cloned().collect(),
-        ) else {
+        let Some(own) = ConditionGroup::new(variable(node.include_if), variable(node.skip_if))
+        else {
             continue;
         };
         match inner {
             None => groups.push(own),
             Some(inner) => groups.extend(
-                asked_for_when(inner)
+                asked_for_when(arena, inner)
                     .iter()
                     .filter_map(|group| own.and(group)),
             ),
@@ -166,6 +166,7 @@ pub fn display_run_if(groups: &[ConditionGroup]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{any_of, run_if, ConditionGroup};
+    use crate::query_planner::ast::flat::arena::Arena;
     use crate::query_planner::ast::selection_set::SelectionSet;
     use crate::query_planner::utils::parsing::parse_operation;
 
@@ -201,39 +202,30 @@ mod tests {
 
     #[test]
     fn a_fetch_runs_when_any_of_its_fields_is_asked_for() {
-        let output = selection_set(
+        let mut arena = Arena::new();
+        let output = arena.import(&selection_set(
             "{ ... on T @include(if: $a) { x } ... on T @skip(if: $b) { ... on T @include(if: $c) { y } } }",
-        );
+        ));
         let none = ConditionGroup::default();
         assert_eq!(
-            run_if(&none, [&output]),
+            run_if(&none, &arena, [output]),
             Some(vec![group(&["a"], &[]), group(&["c"], &["b"])])
         );
         // under `@include(if: $a)` the first one runs whenever the fetch can
         assert_eq!(
-            run_if(&group(&["a"], &[]), [&output]),
+            run_if(&group(&["a"], &[]), &arena, [output]),
             Some(vec![group(&["a"], &[])])
         );
         // under `@skip(if: $a)` only the second one can
         assert_eq!(
-            run_if(&group(&[], &["a"]), [&output]),
+            run_if(&group(&[], &["a"]), &arena, [output]),
             Some(vec![group(&["c"], &["a", "b"])])
         );
         // a field with no condition always runs
-        assert_eq!(
-            run_if(
-                &none,
-                [&selection_set("{ x ... on T @include(if: $a) { y } }")]
-            ),
-            None
-        );
+        let always = arena.import(&selection_set("{ x ... on T @include(if: $a) { y } }"));
+        assert_eq!(run_if(&none, &arena, [always]), None);
         // `@include(if: $a) @skip(if: $a)` never does
-        assert_eq!(
-            run_if(
-                &none,
-                [&selection_set("{ x @include(if: $a) @skip(if: $a) }")]
-            ),
-            Some(Vec::new())
-        );
+        let never = arena.import(&selection_set("{ x @include(if: $a) @skip(if: $a) }"));
+        assert_eq!(run_if(&none, &arena, [never]), Some(Vec::new()));
     }
 }

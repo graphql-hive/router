@@ -1,3 +1,4 @@
+use crate::query_planner::ast::flat::arena::Arena;
 use crate::query_planner::ast::merge_path::{Condition, FieldPathSegment, MergePath, Segment};
 use crate::query_planner::ast::operation::{OperationDefinition, VariableDefinition};
 use crate::query_planner::ast::selection_item::SelectionItem;
@@ -58,7 +59,7 @@ pub(crate) struct ContextVariableKey {
     levels: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FetchGraph<State> {
     pub(crate) graph: StableDiGraph<FetchStepData<State>, ()>,
     pub root_index: Option<NodeIndex>,
@@ -85,13 +86,14 @@ pub struct FetchGraph<State> {
     /// The id the next step gets. Only goes up: the step count drops when a step is removed, and
     /// an id from it could be one a step still has.
     next_fetch_id: u32,
+    /// The steps' selections.
+    pub(crate) arena: Arena,
 }
 
 impl FetchGraph<SingleTypeFetchStep> {
     pub fn to_multi_type(self) -> FetchGraph<MultiTypeFetchStep> {
-        let new_graph = self
-            .graph
-            .map(|_, w| w.clone().into_multi_type(), |_, _| ());
+        // the old graph goes away, so its lists can move to the new one
+        let new_graph = self.graph.map(|_, w| w.move_into_multi_type(), |_, _| ());
 
         FetchGraph {
             graph: new_graph,
@@ -106,6 +108,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             operation_variables: HashSet::new(),
             children_by_entity_call: None,
             next_fetch_id: self.next_fetch_id,
+            arena: self.arena,
         }
     }
 
@@ -123,6 +126,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             operation_variables: HashSet::new(),
             children_by_entity_call: Some(HashMap::new()),
             next_fetch_id: 1,
+            arena: Arena::new(),
         }
     }
 
@@ -171,6 +175,7 @@ impl FetchGraph<SingleTypeFetchStep> {
         selection: &TypeAwareSelection<'selection>,
     ) -> TypeAwareSelection<'selection> {
         TypeAwareSelection {
+            flat: Default::default(),
             type_name: selection.type_name,
             selection_set: self
                 .response_keys
@@ -228,6 +233,20 @@ impl<State> FetchGraph<State> {
                 String::from("when getting mutable step data"),
             )
         })
+    }
+
+    /// A step to change, and the arena its selections live in.
+    pub fn step_and_arena_mut(
+        &mut self,
+        index: NodeIndex,
+    ) -> Result<(&mut FetchStepData<State>, &mut Arena), FetchGraphError> {
+        let step = self.graph.node_weight_mut(index).ok_or_else(|| {
+            FetchGraphError::MissingStep(
+                index.index(),
+                String::from("when getting mutable step data"),
+            )
+        })?;
+        Ok((step, &mut self.arena))
     }
 }
 
@@ -371,8 +390,8 @@ impl FetchGraph<MultiTypeFetchStep> {
         let nodes_idx = self.graph.node_indices().collect::<Vec<_>>();
 
         for node_idx in nodes_idx {
-            let step_data = self.get_step_data_mut(node_idx)?;
-            let usage = step_data.output.variable_usages();
+            let (step_data, arena) = self.step_and_arena_mut(node_idx)?;
+            let usage = step_data.output.variable_usages(arena);
 
             if !usage.is_empty() {
                 step_data.variable_usages = Some(usage);
@@ -382,6 +401,7 @@ impl FetchGraph<MultiTypeFetchStep> {
         Ok(())
     }
 
+    /// Two steps to change, and the arena their selections live in.
     pub fn get_pair_of_steps_mut(
         &mut self,
         index1: NodeIndex,
@@ -390,6 +410,7 @@ impl FetchGraph<MultiTypeFetchStep> {
         (
             &mut FetchStepData<MultiTypeFetchStep>,
             &mut FetchStepData<MultiTypeFetchStep>,
+            &mut Arena,
         ),
         FetchGraphError,
     > {
@@ -412,7 +433,8 @@ impl FetchGraph<MultiTypeFetchStep> {
             ));
         }
 
-        Ok(self.graph.index_twice_mut(index1, index2))
+        let (a, b) = self.graph.index_twice_mut(index1, index2);
+        Ok((a, b, &mut self.arena))
     }
 }
 
@@ -425,7 +447,7 @@ impl<State> Display for FetchGraph<State> {
                 continue;
             }
             if let Some(fetch_step) = self.graph.node_weight(node_index) {
-                fetch_step.pretty_write(f, node_index)?;
+                fetch_step.pretty_write(f, node_index, &self.arena)?;
                 writeln!(f)?;
             }
         }
@@ -545,12 +567,16 @@ fn create_fetch_step_for_entity_call(
     } else {
         FetchStepFlags::empty()
     };
-    let mut input = FetchStepSelections::new(input_type_name);
+    let mut input = FetchStepSelections::new(&mut fetch_graph.arena, input_type_name);
     input
-        .add(&SelectionSet {
-            items: vec![SelectionItem::Field(FieldSelection::new_typename())],
-        })
+        .add(
+            &mut fetch_graph.arena,
+            &SelectionSet {
+                items: vec![SelectionItem::Field(FieldSelection::new_typename())],
+            },
+        )
         .unwrap();
+    let output = FetchStepSelections::new(&mut fetch_graph.arena, output_type_name);
 
     let id = fetch_graph.create_fetch_id();
     let step_index = fetch_graph.add_step(FetchStepData {
@@ -558,7 +584,7 @@ fn create_fetch_step_for_entity_call(
         service_name: subgraph_name.clone(),
         response_path: response_path.clone(),
         input,
-        output: FetchStepSelections::new(output_type_name),
+        output,
         flags,
         condition: condition.cloned(),
         gated_by: conditions.from_root.to_vec(),
@@ -592,12 +618,14 @@ fn create_fetch_step_for_root_move(
 ) -> NodeIndex {
     let condition = conditions.current;
     let id = fetch_graph.create_fetch_id();
+    let input = FetchStepSelections::new(&mut fetch_graph.arena, type_name);
+    let output = FetchStepSelections::new(&mut fetch_graph.arena, type_name);
     let idx = fetch_graph.add_step(FetchStepData {
         id,
         service_name: subgraph_name.clone(),
         response_path: response_path.clone(),
-        input: FetchStepSelections::new(type_name),
-        output: FetchStepSelections::new(type_name),
+        input,
+        output,
         flags: FetchStepFlags::empty(),
         condition: condition.cloned(),
         gated_by: conditions.from_root.to_vec(),
@@ -679,7 +707,9 @@ fn ensure_fetch_step_for_subgraph(
                         // the requested key fields have to be part of the input
                         && key.is_none_or(|key| {
                             step.input.definition_name() == key.type_name
-                                && step.input.selection_set().contains(&key.selection_set)
+                                && fetch_graph
+                                    .arena
+                                    .contains_tree(step.input.selection_set(), &key.selection_set)
                         })
                         // steps with requirements aren't reused here, the optimizations
                         // try that later
@@ -717,8 +747,8 @@ fn ensure_fetch_step_for_subgraph(
                 created_from_requires || requires.is_some(),
             );
             if let Some(selection) = key {
-                let step = fetch_graph.get_step_data_mut(step_index)?;
-                step.input.add(&selection.selection_set)?
+                let (step, arena) = fetch_graph.step_and_arena_mut(step_index)?;
+                step.input.add(arena, &selection.selection_set)?
             }
 
             trace!(
@@ -758,9 +788,11 @@ fn ensure_fetch_step_for_requirement(
             fetch_graph.get_step_data(child_index).is_ok_and(|step| {
                 step.matches_entity_call(subgraph_name, type_name, response_path, condition)
                     && step.context_rewrites.is_none()
-                    && step
-                        .input
-                        .contains(requirement.type_name, &requirement.selection_set)
+                    && step.input.contains(
+                        &fetch_graph.arena,
+                        requirement.type_name,
+                        &requirement.selection_set,
+                    )
             })
         });
 
@@ -970,6 +1002,7 @@ fn process_entity_move_edge(
     let (requirement, is_interface) = match edge {
         Edge::EntityMove(em) => (
             TypeAwareSelection {
+                flat: Default::default(),
                 selection_set: em.requirements.selection_set.clone(),
                 type_name: em.requirements.type_name,
             },
@@ -1036,13 +1069,13 @@ fn process_entity_move_edge(
         .entry(fetch_step_index)
         .or_insert(head_node_index);
 
-    let fetch_step = fetch_graph.get_step_data_mut(fetch_step_index)?;
+    let (fetch_step, arena) = fetch_graph.step_and_arena_mut(fetch_step_index)?;
     trace!(
         "adding input requirement '{}' to fetch step [{}]",
         requirement,
         fetch_step_index.index()
     );
-    fetch_step.input.add(&requirement.selection_set)?;
+    fetch_step.input.add(arena, &requirement.selection_set)?;
 
     if is_interface && !narrowed {
         // We use `output_type_name` as there's no connection from `Interface` to `Object`,
@@ -1067,10 +1100,10 @@ fn process_entity_move_edge(
             .insert(FetchStepFlags::USED_FOR_TYPE_CONDITION);
     }
 
-    let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
+    let (parent_fetch_step, arena) = fetch_graph.step_and_arena_mut(parent_fetch_step_index)?;
     parent_fetch_step
         .output
-        .add_selection_typename(fetch_path)?;
+        .add_selection_typename(arena, fetch_path)?;
 
     // Make the fetch step a child of the parent fetch step
     trace!(
@@ -1133,6 +1166,7 @@ fn process_interface_object_type_move_edge(
     let edge = graph.edge(edge_index)?;
     let requirement = match edge {
         Edge::InterfaceObjectTypeMove(m) => TypeAwareSelection {
+            flat: Default::default(),
             selection_set: m.requirements.selection_set.clone(),
             type_name: m.requirements.type_name,
         },
@@ -1185,8 +1219,10 @@ fn process_interface_object_type_move_edge(
         false,
     )?;
     let key_to_reenter_subgraph = &fetch_graph.read_at(response_path, key_to_reenter_subgraph);
-    let step_for_children = fetch_graph.get_step_data_mut(step_for_children_index)?;
-    step_for_children.input.add(&requirement.selection_set)?;
+    let (step_for_children, arena) = fetch_graph.step_and_arena_mut(step_for_children_index)?;
+    step_for_children
+        .input
+        .add(arena, &requirement.selection_set)?;
     trace!(
         "adding key '{}' to fetch step [{}]",
         key_to_reenter_subgraph,
@@ -1194,7 +1230,7 @@ fn process_interface_object_type_move_edge(
     );
     step_for_children
         .input
-        .add(&key_to_reenter_subgraph.selection_set)?;
+        .add(arena, &key_to_reenter_subgraph.selection_set)?;
 
     trace!(
         "adding input rewrite '... on {} {{ __typename }}' to '{}' of [{}]",
@@ -1210,10 +1246,10 @@ fn process_interface_object_type_move_edge(
         set_value_to: interface_type_name.to_string(),
     }));
 
-    let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
+    let (parent_fetch_step, arena) = fetch_graph.step_and_arena_mut(parent_fetch_step_index)?;
     parent_fetch_step
         .output
-        .add_selection_typename(fetch_path)?;
+        .add_selection_typename(arena, fetch_path)?;
 
     // In all cases it's `__typename` that needs to be resolved by another subgraph.
     trace!("Creating a fetch step for requirement of @interfaceObject");
@@ -1227,7 +1263,8 @@ fn process_interface_object_type_move_edge(
         conditions,
         false,
     );
-    let step_for_requirements = fetch_graph.get_step_data_mut(step_for_requirements_index)?;
+    let (step_for_requirements, arena) =
+        fetch_graph.step_and_arena_mut(step_for_requirements_index)?;
     trace!(
         "Adding {} to fetch([{}]).input",
         key_to_reenter_subgraph,
@@ -1235,7 +1272,7 @@ fn process_interface_object_type_move_edge(
     );
     step_for_requirements
         .input
-        .add(&key_to_reenter_subgraph.selection_set)?;
+        .add(arena, &key_to_reenter_subgraph.selection_set)?;
 
     //
     // Given `f0 { ... on User { f1 } }` where f1 is a field contributed by @interfaceObject,
@@ -1380,8 +1417,9 @@ fn process_subgraph_reentry(
         &reentry_move.name,
         created_from_requires,
     );
-    let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
+    let (parent_fetch_step, arena) = fetch_graph.step_and_arena_mut(parent_fetch_step_index)?;
     parent_fetch_step.output.add_at_path(
+        arena,
         fetch_path,
         SelectionSet {
             items: vec![SelectionItem::Field(FieldSelection {
@@ -1461,13 +1499,14 @@ fn process_selfie_edge(
         fetch_graph.is_condition_on_step(parent_fetch_step_index, requiring_fetch_step_index, c)
     });
 
-    let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
+    let (parent_fetch_step, arena) = fetch_graph.step_and_arena_mut(parent_fetch_step_index)?;
     trace!(
         "starting an inline fragment for type '{}' to fetch step [{}]",
         parent_fetch_step_index.index(),
         target_type_name,
     );
     parent_fetch_step.output.add_at_path(
+        arena,
         fetch_path,
         SelectionSet {
             items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
@@ -1563,7 +1602,7 @@ fn process_abstract_edge(
         condition.filter(|_| child_has_other_condition),
     );
 
-    let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
+    let (parent_fetch_step, arena) = fetch_graph.step_and_arena_mut(parent_fetch_step_index)?;
     trace!(
         "adding output field '__typename' and starting an inline fragment for type '{}' to fetch step [{}]",
         parent_fetch_step_index.index(),
@@ -1571,6 +1610,7 @@ fn process_abstract_edge(
     );
 
     parent_fetch_step.output.add_at_path(
+        arena,
         fetch_path,
         SelectionSet {
             items: vec![
@@ -1662,7 +1702,7 @@ fn process_plain_field_edge(
         field_move.name,
         created_from_requires,
     );
-    let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
+    let (parent_fetch_step, arena) = fetch_graph.step_and_arena_mut(parent_fetch_step_index)?;
     trace!(
         "adding output field '{}' to fetch step [{}]",
         field_move.name,
@@ -1670,6 +1710,7 @@ fn process_plain_field_edge(
     );
 
     parent_fetch_step.output.add_at_path(
+        arena,
         fetch_path,
         SelectionSet {
             items: vec![SelectionItem::Field(FieldSelection {
@@ -1979,9 +2020,10 @@ fn process_requires_field_edge(
         .as_ref()
         .map(|arguments| arguments.hash_u64())
         .unwrap_or(0);
-    let step_for_children = fetch_graph.get_step_data_mut(step_for_children_index)?;
+    let (step_for_children, arena) = fetch_graph.step_and_arena_mut(step_for_children_index)?;
 
     step_for_children.output.add_at_path(
+        arena,
         &MergePath::default(),
         SelectionSet {
             items: vec![SelectionItem::Field(FieldSelection {
@@ -2018,16 +2060,21 @@ fn process_requires_field_edge(
             requires_input,
             step_for_children_index.index()
         );
-        step_for_children.input.add(&requires_input.selection_set)?;
+        step_for_children
+            .input
+            .add(arena, &requires_input.selection_set)?;
     }
     trace!(
         "Adding {} to fetch([{}]).input (key re-enter)",
         key_input,
         step_for_children_index.index()
     );
-    step_for_children.input.add(&key_input.selection_set)?;
+    step_for_children
+        .input
+        .add(arena, &key_input.selection_set)?;
 
-    let real_parent_fetch_step = fetch_graph.get_step_data_mut(real_parent_fetch_step_index)?;
+    let (real_parent_fetch_step, arena) =
+        fetch_graph.step_and_arena_mut(real_parent_fetch_step_index)?;
 
     let key_to_reenter_at = if real_parent_fetch_step.response_path.len() > response_path.len() {
         return Err(FetchGraphError::Internal(
@@ -2046,11 +2093,11 @@ fn process_requires_field_edge(
 
     real_parent_fetch_step
         .output
-        .add_at_path(&key_to_reenter_at, key_output)?;
+        .add_at_path(arena, &key_to_reenter_at, key_output)?;
 
     real_parent_fetch_step
         .output
-        .add_selection_typename(&key_to_reenter_at)?;
+        .add_selection_typename(arena, &key_to_reenter_at)?;
 
     // On a `@provides` path, some required fields only exist on that path. The subgraph can't
     // return them from `_entities`, so the fetch that went through the path gets them, and
@@ -2071,13 +2118,16 @@ fn process_requires_field_edge(
             conditions,
             true,
         );
-        let step_for_requirements = fetch_graph.get_step_data_mut(step_for_requirements_index)?;
+        let (step_for_requirements, arena) =
+            fetch_graph.step_and_arena_mut(step_for_requirements_index)?;
         trace!(
             "Adding {} to fetch([{}]).input",
             key_input,
             step_for_requirements_index.index()
         );
-        step_for_requirements.input.add(&key_input.selection_set)?;
+        step_for_requirements
+            .input
+            .add(arena, &key_input.selection_set)?;
         fetch_graph.connect(real_parent_fetch_step_index, step_for_requirements_index);
 
         if let Some(holder_node) = holder_node {
@@ -2137,14 +2187,14 @@ fn process_requires_field_edge(
             let output = fetch_graph
                 .response_keys
                 .output(&place_of(response_path), &key.selection_set);
-            fetch_graph
-                .get_step_data_mut(step_for_requirements_index)?
-                .input
-                .add(&input.selection_set)?;
-            fetch_graph
-                .get_step_data_mut(real_parent_fetch_step_index)?
-                .output
-                .add_at_path(&key_to_reenter_at, output)?;
+            {
+                let (step, arena) = fetch_graph.step_and_arena_mut(step_for_requirements_index)?;
+                step.input.add(arena, &input.selection_set)?;
+            }
+            {
+                let (step, arena) = fetch_graph.step_and_arena_mut(real_parent_fetch_step_index)?;
+                step.output.add_at_path(arena, &key_to_reenter_at, output)?;
+            }
         }
 
         (step_for_requirements_index, MergePath::default())
@@ -2353,10 +2403,10 @@ fn process_query_node(
 
         if matches!(edge, Edge::FieldMove(_) | Edge::ReentryMove(_)) {
             for requirement in query_node.context_requirements() {
-                fetch_graph
-                    .get_step_data_mut(parent_fetch_step_index)?
-                    .output
-                    .add_selection_typename(fetch_path)?;
+                {
+                    let (step, arena) = fetch_graph.step_and_arena_mut(parent_fetch_step_index)?;
+                    step.output.add_selection_typename(arena, fetch_path)?;
+                }
                 let producers = process_query_node(
                     graph,
                     fetch_graph,

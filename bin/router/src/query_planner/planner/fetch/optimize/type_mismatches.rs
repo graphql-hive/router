@@ -39,7 +39,8 @@ impl FetchGraph<MultiTypeFetchStep> {
             );
 
             let finder = SelectionMismatchFinder::new(supergraph);
-            let mismatches_paths = finder.find_mismatches_in_node(&node.service_name, &node.output);
+            let mismatches_paths =
+                finder.find_mismatches_in_node(&node.service_name, &node.output, &self.arena);
 
             if !mismatches_paths.is_empty() {
                 pending_patches.push((node_index, mismatches_paths));
@@ -49,7 +50,7 @@ impl FetchGraph<MultiTypeFetchStep> {
         let mut pending_output_rewrites = Vec::<(NodeIndex, FetchRewrite)>::new();
 
         for (node_index, mismatches_paths) in pending_patches {
-            let node = self.get_step_data_mut(node_index)?;
+            let (node, arena) = self.step_and_arena_mut(node_index)?;
 
             trace!(
                 "fixing {} mismatch conflicts in node [{}] by using aliases",
@@ -63,10 +64,14 @@ impl FetchGraph<MultiTypeFetchStep> {
                 {
                     // TODO: We can avoid this cut and slice thing, if we return "SelectionItem" instead of "SelectionSet" inside "find_selection_set_by_path_mut".
                     let lookup_path = &mismatch_path.without_last();
-                    let root_def_selections = node
+                    let root_def_list = node
                         .output
-                        .selections_for_definition_mut(&root_def_name)
+                        .selections_for_definition(&root_def_name)
                         .expect("missing definition in step");
+                    // ponytail: changed on the planner's tree, then put back in the arena. Only
+                    // runs when a step has a mismatch.
+                    let mut root_def_tree = arena.export(root_def_list);
+                    let root_def_selections = &mut root_def_tree;
 
                     let next_alias = free_alias(root_def_selections, lookup_path);
                     if let Some(selection_set) =
@@ -103,6 +108,9 @@ impl FetchGraph<MultiTypeFetchStep> {
                             field_to_alias.alias = Some(next_alias);
                         }
                     }
+                    let new_list = arena.import(&root_def_tree);
+                    node.output
+                        .set_selections_for_definition(&root_def_name, new_list);
                 }
             }
         }

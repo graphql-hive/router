@@ -1,3 +1,5 @@
+use crate::query_planner::ast::flat::arena::{Arena, ListId};
+use crate::query_planner::ast::flat::Kind;
 use crate::query_planner::ast::requires::RequiresSelectionSet;
 use crate::query_planner::{
     ast::{
@@ -514,22 +516,85 @@ fn collect_custom_scalar_path_state(
     }
 }
 
+/// `collect_custom_scalar_path_state` for a fetch step's selections in the arena.
+fn collect_custom_scalar_path_state_in_arena(
+    path_kinds: &mut CustomScalarPathState,
+    response_path: &mut Vec<String>,
+    parent_type_name: &str,
+    arena: &Arena,
+    list: ListId,
+    supergraph: &SupergraphState,
+) {
+    let Some(parent_def) = supergraph.definitions.get(parent_type_name) else {
+        return;
+    };
+
+    let parent_fields = parent_def.fields();
+
+    for &item in arena.items(list) {
+        let node = arena.node(item);
+        match node.kind {
+            Kind::Field => {
+                let Some(field_def) = parent_fields.get(arena.str(node.name)) else {
+                    continue;
+                };
+
+                let field_type_name = field_def.field_type.inner_type();
+
+                response_path.push(arena.response_key(item).to_string());
+
+                if supergraph.is_custom_scalar_type(field_type_name) {
+                    path_kinds.mark_custom_scalar(response_path.iter().map(String::as_str));
+                } else {
+                    path_kinds.mark_standard_scalar(response_path.iter().map(String::as_str));
+
+                    if !arena.is_empty(node.children) {
+                        collect_custom_scalar_path_state_in_arena(
+                            path_kinds,
+                            response_path,
+                            field_type_name,
+                            arena,
+                            node.children,
+                            supergraph,
+                        );
+                    }
+                }
+
+                response_path.pop();
+            }
+            Kind::InlineFragment => {
+                collect_custom_scalar_path_state_in_arena(
+                    path_kinds,
+                    response_path,
+                    arena.str(node.name),
+                    arena,
+                    node.children,
+                    supergraph,
+                );
+            }
+            Kind::FragmentSpread => {}
+        }
+    }
+}
+
 fn custom_scalar_paths_from_fetch_output(
     output: &FetchStepSelections<MultiTypeFetchStep>,
+    arena: &Arena,
     supergraph: &SupergraphState,
     entities_root_key: Option<&str>,
 ) -> Option<CustomScalarPaths> {
     let mut state = CustomScalarPathState::default();
 
-    for (type_name, selection_set) in output.iter_selections() {
+    for (type_name, list) in output.iter_selections() {
         let mut response_path = entities_root_key
             .map(|root| vec![root.to_string()])
             .unwrap_or_default();
-        collect_custom_scalar_path_state(
+        collect_custom_scalar_path_state_in_arena(
             &mut state,
             &mut response_path,
             type_name,
-            selection_set,
+            arena,
+            list,
             supergraph,
         );
     }
@@ -753,14 +818,16 @@ impl<S: PlanState> PlanNode<S> {
 
 fn create_input_selection_set(
     input_selections: &FetchStepSelections<MultiTypeFetchStep>,
+    arena: &Arena,
 ) -> SelectionSet {
-    let selection_set = input_selections.to_non_root_selection_set();
+    let selection_set = input_selections.to_non_root_selection_set(arena);
 
     selection_set.strip_for_plan_input()
 }
 
 fn create_output_operation(
     step: &FetchStepData<MultiTypeFetchStep>,
+    arena: &Arena,
     supergraph: &SupergraphState,
 ) -> PlanningFetchOperation {
     let mut variables = vec![VariableDefinition {
@@ -775,7 +842,7 @@ fn create_output_operation(
         variables.extend(additional_vars.clone());
     }
 
-    let mut selections = step.output.to_non_root_selection_set();
+    let mut selections = step.output.to_non_root_selection_set(arena);
     typename::add_typename_for_projection_to_entities(&mut selections, supergraph);
 
     let operation_def = OperationDefinition {
@@ -810,16 +877,18 @@ impl FetchNode<Planning> {
     /// `depends_on` is the fetches whose data it reads, see [`FetchNode::depends_on`].
     pub fn from_fetch_step(
         step: &FetchStepData<MultiTypeFetchStep>,
+        arena: &Arena,
         supergraph: &SupergraphState,
         options: &QueryPlannerOptions,
         depends_on: FetchIdList,
     ) -> Self {
         match step.is_entity_call() {
             true => {
-                let planner_requires = create_input_selection_set(&step.input);
-                let mut operation = create_output_operation(step, supergraph);
+                let planner_requires = create_input_selection_set(&step.input, arena);
+                let mut operation = create_output_operation(step, arena, supergraph);
                 let custom_scalar_paths = custom_scalar_paths_from_fetch_output(
                     &step.output,
+                    arena,
                     supergraph,
                     Some("_entities"),
                 );
@@ -871,7 +940,7 @@ impl FetchNode<Planning> {
             }
             false => {
                 let root_type_name = supergraph.expect_root_type_name(Some(&step.operation_kind));
-                let mut selection_set = step.output.to_root_selection_set(root_type_name);
+                let mut selection_set = step.output.to_root_selection_set(arena, root_type_name);
                 typename::add_typename_for_projection(
                     &mut selection_set,
                     root_type_name,
@@ -895,6 +964,7 @@ impl FetchNode<Planning> {
                     operation: PlanningFetchOperation::from_anonymous_operation(document),
                     custom_scalar_paths: custom_scalar_paths_from_fetch_output(
                         &step.output,
+                        arena,
                         supergraph,
                         None,
                     ),
@@ -922,11 +992,12 @@ impl PlanNode<Planning> {
     /// `depends_on` is the fetches whose data it reads, see [`FetchNode::depends_on`].
     pub fn from_fetch_step(
         step: &FetchStepData<MultiTypeFetchStep>,
+        arena: &Arena,
         supergraph: &SupergraphState,
         options: &QueryPlannerOptions,
         depends_on: FetchIdList,
     ) -> Option<Self> {
-        let mut fetch = FetchNode::from_fetch_step(step, supergraph, options, depends_on);
+        let mut fetch = FetchNode::from_fetch_step(step, arena, supergraph, options, depends_on);
 
         // A fetch runs when the `@include`/`@skip` around it hold and any of its fields is asked
         // for. The step has the innermost condition, its path has the ones around it, and the
@@ -950,9 +1021,8 @@ impl PlanNode<Planning> {
             )?;
             fetch.run_if = conditions::run_if(
                 &around,
-                step.output
-                    .iter_selections()
-                    .map(|(_, selections)| selections),
+                arena,
+                step.output.iter_selections().map(|(_, list)| list),
             );
             // no field can ever be asked for, it never runs
             if fetch.run_if.as_ref().is_some_and(Vec::is_empty) {
@@ -1153,7 +1223,8 @@ pub fn hash_minified_query(minified_query: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use crate::query_planner::{
-        planner::fetch::{selections::FetchStepSelections, state::SingleTypeFetchStep},
+        ast::flat::arena::Arena,
+        planner::fetch::{selections::FetchStepSelections, state::MultiTypeFetchStep},
         state::supergraph_state::SupergraphState,
         utils::parsing::parse_schema,
     };
@@ -1198,13 +1269,20 @@ mod tests {
         );
         let supergraph = SupergraphState::new(&schema);
 
-        let mut output = FetchStepSelections::<SingleTypeFetchStep>::new_empty().into_multi_type();
-        output.declare_known_type("TypeA");
-        output.declare_known_type("TypeB");
-        *output.selections_for_definition_mut("TypeA").unwrap() = selection_set_for_field("meta");
-        *output.selections_for_definition_mut("TypeB").unwrap() = selection_set_for_field("meta");
+        let mut arena = Arena::new();
+        let output = FetchStepSelections::<MultiTypeFetchStep>::from_lists([
+            (
+                "TypeA".to_string(),
+                arena.import(&selection_set_for_field("meta")),
+            ),
+            (
+                "TypeB".to_string(),
+                arena.import(&selection_set_for_field("meta")),
+            ),
+        ]);
 
-        let paths = custom_scalar_paths_from_fetch_output(&output, &supergraph, Some("_entities"));
+        let paths =
+            custom_scalar_paths_from_fetch_output(&output, &arena, &supergraph, Some("_entities"));
 
         assert!(
             paths.is_none(),

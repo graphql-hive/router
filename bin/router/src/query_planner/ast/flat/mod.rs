@@ -8,9 +8,11 @@
 //! So a subtree that ends up in many places (a fragment spread in ten spots, a fragment copied
 //! for every type it can be) is just its index, never copied.
 
+pub mod arena;
 pub mod convert;
 pub mod normalize;
 pub mod parse;
+pub mod selection_tree;
 pub mod tree;
 
 use ahash::HashMap;
@@ -44,7 +46,7 @@ impl Span {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct Interner {
     map: HashMap<Box<str>, Sym>,
     strings: Vec<Box<str>>,

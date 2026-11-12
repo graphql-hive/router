@@ -6,9 +6,11 @@ use tracing::{instrument, trace};
 
 use crate::query_planner::{
     ast::{
-        merge_path::{MergePath, Segment},
-        selection_item::SelectionItem,
-        selection_set::{FieldSelection, SelectionSet},
+        flat::{
+            arena::{Arena, ListId, NodeId},
+            Kind,
+        },
+        merge_path::{FieldPathSegment, MergePath, Segment},
     },
     planner::fetch::{selections::FetchStepSelections, state::MultiTypeFetchStep},
     state::{
@@ -34,6 +36,7 @@ impl<'a> SelectionMismatchFinder<'a> {
         &self,
         subgraph_name: &SubgraphName,
         selections: &FetchStepSelections<MultiTypeFetchStep>,
+        arena: &Arena,
     ) -> MismatchesFound {
         let mut mismtaches_found = MismatchesFound::new();
         let subgraph_state = self
@@ -42,16 +45,17 @@ impl<'a> SelectionMismatchFinder<'a> {
             .get(subgraph_name)
             .unwrap();
 
-        for (definition_name, selection_set) in selections.iter_selections() {
+        for (definition_name, list) in selections.iter_selections() {
             let entrypoint_type = subgraph_state.definitions.get(definition_name).unwrap();
             let start_path = MergePath::default();
 
             handle_selection_set(
+                arena,
                 definition_name,
                 self.supergraph_state,
                 subgraph_state,
                 entrypoint_type,
-                selection_set,
+                list,
                 start_path,
                 &mut mismtaches_found,
             );
@@ -66,16 +70,15 @@ impl<'a> SelectionMismatchFinder<'a> {
 /// Handles a selection set by traversing all selection in a specific level.
 /// In case of a field: checks for mismatches and collects information.
 /// In case of a fragment spread: "flattens" the selections and updates the path.
-#[instrument(level = "trace", skip_all, fields(
-  parent_def = parent_def.name(),
-  selection = format!("{}", selection_set)
-))]
+#[instrument(level = "trace", skip_all, fields(parent_def = parent_def.name()))]
+#[allow(clippy::too_many_arguments)]
 fn handle_selection_set<'field, 'schema>(
+    arena: &'field Arena,
     root_def_type_name: &str,
     supergraph_state: &'schema SupergraphState,
     subgraph_state: &'schema SubgraphState,
     parent_def: &'schema SubgraphDefinition,
-    selection_set: &'field SelectionSet,
+    selection_set: ListId,
     parent_path: MergePath,
     mismatches_found: &mut MismatchesFound,
 ) {
@@ -86,28 +89,32 @@ fn handle_selection_set<'field, 'schema>(
 
     // A queue for traversing the selection set. In case of an inline fragment, we "flatten" the selections and update the path.
     // Values are: (ParentType, Path, Selections)
-    let mut traversal_queue =
-        VecDeque::from([(parent_def, parent_path, selection_set.items.iter())]);
+    let mut traversal_queue = VecDeque::from([(parent_def, parent_path, selection_set)]);
 
     while let Some((type_def, path, selections_group)) = traversal_queue.pop_front() {
-        for selection_item in selections_group {
-            match selection_item {
-                SelectionItem::Field(field) => {
-                    if field.is_introspection_field() {
+        for &selection_item in arena.items(selections_group) {
+            let node = arena.node(selection_item);
+            match node.kind {
+                Kind::Field => {
+                    let field_name = arena.str(node.name);
+                    if field_name.starts_with("__") {
                         continue;
                     }
 
+                    let alias = (node.alias != crate::query_planner::ast::flat::NONE)
+                        .then(|| arena.str(node.alias).to_string());
                     let next_path = path.push(Segment::Field(
-                        Rc::new(field.into()),
-                        field.arguments_hash(),
-                        field.into(),
+                        Rc::new(FieldPathSegment::new(field_name.to_string(), alias)),
+                        arena.args_hash(node.args),
+                        arena.condition(selection_item),
                     ));
 
                     let next_parent_type_name = handle_field(
+                        arena,
                         root_def_type_name,
                         supergraph_state,
                         type_def,
-                        field,
+                        selection_item,
                         &next_path,
                         &mut encountered_field_to_type,
                         mismatches_found,
@@ -117,34 +124,29 @@ fn handle_selection_set<'field, 'schema>(
                         next_parent_type_name.and_then(|n| subgraph_state.definitions.get(n))
                     {
                         handle_selection_set(
+                            arena,
                             root_def_type_name,
                             supergraph_state,
                             subgraph_state,
                             next_parent_def,
-                            &field.selections,
+                            node.children,
                             next_path,
                             mismatches_found,
                         );
                     }
                 }
-                SelectionItem::FragmentSpread(_) => {
+                Kind::FragmentSpread => {
                     unreachable!("fragment spread is not expected at this stage")
                 }
-                SelectionItem::InlineFragment(fragment) => {
-                    let fragment_type = subgraph_state
-                        .definitions
-                        .get(&fragment.type_condition)
-                        .unwrap();
+                Kind::InlineFragment => {
+                    let type_condition = arena.str(node.name);
+                    let fragment_type = subgraph_state.definitions.get(type_condition).unwrap();
                     let fragment_enter_path = path.push(Segment::TypeCondition(
-                        Rc::new(BTreeSet::from([fragment.type_condition.clone()])),
-                        fragment.into(),
+                        Rc::new(BTreeSet::from([type_condition.to_string()])),
+                        arena.condition(selection_item),
                     ));
 
-                    traversal_queue.push_back((
-                        fragment_type,
-                        fragment_enter_path,
-                        fragment.selections.items.iter(),
-                    ));
+                    traversal_queue.push_back((fragment_type, fragment_enter_path, node.children));
                 }
             }
         }
@@ -156,18 +158,20 @@ fn handle_selection_set<'field, 'schema>(
 /// In case the field encountered, we check if the field is compatible or not (have a mismatch).
 ///
 /// Returns the return type of the selection, if the inner selection needs to be processed (in case nested selections are defined).
+#[allow(clippy::too_many_arguments)]
 fn handle_field<'field, 'schema>(
+    arena: &'field Arena,
     root_def_type_name: &str,
     state: &'schema SupergraphState,
     parent_def: &'schema SubgraphDefinition,
-    field: &'field FieldSelection,
+    field: NodeId,
     field_path: &MergePath,
     encountered_field_to_type: &mut HashMap<&'field str, &'schema TypeNode>,
     mismatches_found: &mut MismatchesFound,
 ) -> Option<&'schema str> {
     let parent_def_fields = parent_def.fields().unwrap();
-    let field_name = field.name.as_str();
-    let field_identifier = field.selection_identifier();
+    let field_name = arena.str(arena.node(field).name);
+    let field_identifier = arena.response_key(field);
     let field_type = parent_def_fields
         .iter()
         .find_map(|f| {
@@ -200,7 +204,7 @@ fn handle_field<'field, 'schema>(
         encountered_field_to_type.insert(field_identifier, field_type);
     }
 
-    if field.is_leaf() {
+    if arena.is_empty(arena.node(field).children) {
         None
     } else {
         Some(field_type.inner_type())
