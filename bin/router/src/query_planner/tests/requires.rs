@@ -1519,3 +1519,83 @@ fn requires_after_two_entity_hops() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+// `shippingEstimate` in `shipping` requires `weight` from `inventory`, so `shipping` gets called
+// again for it with its key `id sku`. The product came from `products`, which has no `sku`, it
+// only came in through `catalog` on the way to `shipping`. So the key comes from the call to
+// `shipping`, not from `products`, which can't resolve it.
+#[test]
+fn requires_reenters_with_a_key_its_source_lacks() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation("{ product { shippingEstimate } }");
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-reentry-key-from-elsewhere.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            product {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "product") {
+          Fetch(service: "catalog") {
+            {
+              ... on Product {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                __typename
+                sku
+                id
+              }
+            }
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "inventory") {
+            {
+              ... on Product {
+                __typename
+                sku
+              }
+            } =>
+            {
+              ... on Product {
+                weight
+              }
+            }
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "shipping") {
+            {
+              ... on Product {
+                __typename
+                weight
+                id
+                sku
+              }
+            } =>
+            {
+              ... on Product {
+                shippingEstimate
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}

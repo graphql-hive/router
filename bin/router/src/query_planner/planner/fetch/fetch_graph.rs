@@ -1841,6 +1841,27 @@ fn process_requires_field_edge(
             .get(&parent_fetch_step_index)
             .copied()
     };
+    // The objects go back into this subgraph with its key, read from where they came from. When
+    // that subgraph doesn't have every key field, like `sku` of `@key(fields: "id sku")` that
+    // only came in through another subgraph, the entity call we're in has them, it was made with
+    // them.
+    let (real_parent_fetch_step_index, holder_node) = match holder_node {
+        Some(holder) if real_parent_fetch_step_index != parent_fetch_step_index => {
+            if holder_resolves_key(
+                graph,
+                supergraph,
+                override_context,
+                holder,
+                head_node_index,
+                key_to_reenter_subgraph,
+            )? {
+                (real_parent_fetch_step_index, holder_node)
+            } else {
+                (parent_fetch_step_index, Some(head_node_index))
+            }
+        }
+        _ => (real_parent_fetch_step_index, holder_node),
+    };
 
     // When a field (foo) is annotated with `@requires(fields: "bar")`
     // We want to create new FetchStep (entity move) for that field (foo)
@@ -2314,6 +2335,43 @@ fn find_satisfiable_key<'a>(
     Err(FetchGraphError::Internal(String::from(
         "Failed to find Satisfiable Key",
     )))
+}
+
+/// Whether the subgraph type at `holder` resolves `key`, one of `node`'s keys, on its own.
+fn holder_resolves_key<'a>(
+    graph: &'a Graph<'a>,
+    supergraph: &'a SupergraphState,
+    override_context: &'a PlannerOverrideContext,
+    holder: NodeIndex,
+    node: NodeIndex,
+    key: &TypeAwareSelection<'_>,
+) -> Result<bool, FetchGraphError> {
+    let from_holder = OperationPath {
+        root_node: holder,
+        last_segment: None,
+        cost: 0,
+        union_context: None,
+    };
+    for edge_ref in graph.edges_from(node) {
+        let Edge::EntityMove(entity_move) = edge_ref.weight() else {
+            continue;
+        };
+        if !std::ptr::eq(&*entity_move.requirements, key) {
+            continue;
+        }
+        return Ok(can_satisfy_edge(
+            graph,
+            supergraph,
+            override_context,
+            &edge_ref,
+            &from_holder,
+            &Default::default(),
+            true,
+            &CancellationToken::new(),
+        )?
+        .is_some());
+    }
+    Ok(false)
 }
 
 // TODO: simplfy args
