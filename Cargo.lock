@@ -4769,9 +4769,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-h2"
-version = "4.4.0"
+version = "4.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12902181f70e907113d4a99dd1ddf0458b87be15130cc05afa8134dcb6b2f2c9"
+checksum = "7b2c6ba179a7593bc372e4a072ac3010a4fc188f9d9e606cb8f0054471d09bf9"
 dependencies = [
  "bitflags 2.13.2",
  "fastrand",
@@ -4847,9 +4847,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-macros"
-version = "4.2.0"
+version = "4.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6a3c3083595ac144e4a283b071a3daeae1c7bac1f9996dc77e4ee522fbe8bfd"
+checksum = "2b9025e1fbb2557e9d767c0dc89834b3450b556e90e0bf6938eb52ea05ef9ff8"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4962,9 +4962,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-service"
-version = "5.6.0"
+version = "5.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "300956c670e0797886f052aea2b22476868858ba21ca118810213a53e1c0442c"
+checksum = "0982ce2b326cdf022a7288f610b8288deee0741c8c8df946747fd64c527d61ef"
 dependencies = [
  "foldhash 0.2.0",
  "log",
@@ -4973,9 +4973,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-tls"
-version = "4.7.1"
+version = "4.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c6cf8b0a041920f388dacaeb04fdb81d64355f69a51b66980bd2a1b293a3d4b"
+checksum = "c9e265926128e8b64c56fb9e8614685f68ddb6eae9065453e08fc81d4f81e38e"
 dependencies = [
  "base64 0.23.1",
  "hex",
@@ -4990,7 +4990,6 @@ dependencies = [
  "rustls-webpki",
  "sha1 0.10.6",
  "sha2 0.10.9",
- "symcrypt",
  "thiserror 2.0.21",
  "windows-sys 0.61.2",
  "x509-parser",
@@ -4999,9 +4998,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-util"
-version = "4.6.0"
+version = "4.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2228bf7449fe09cb3d429d142e9f003b1cb9ecd27c800e817dff28822299038f"
+checksum = "6b65d6163a05e4aff8bb92306eec587edaf3163b0f18f409898806a0ecb267ac"
 dependencies = [
  "backoff",
  "bitflags 2.13.2",
@@ -7766,26 +7765,6 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
-
-[[package]]
-name = "symcrypt"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45f6e93e13900bae533f1f347c82d2fcf9d7ad7fffd7e58bc9fbd1b68575ca1c"
-dependencies = [
- "lazy_static",
- "libc",
- "symcrypt-sys",
-]
-
-[[package]]
-name = "symcrypt-sys"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0878df9feb068709a68ccdb5cc3201649201e79e823566863f6ca4db4b9201aa"
-dependencies = [
- "libc",
-]
 
 [[package]]
 name = "symlink"

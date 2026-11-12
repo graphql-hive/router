@@ -66,14 +66,14 @@ ntex-router = { version = "=2.1.0"}
 ntex-bytes = { version = "=1.14.0"}
 ntex-dispatcher = { version = "=4.4.0"}
 ntex-error = { version = "=3.1.0" }
-ntex-h2 = { version = "=4.4.0" }
+ntex-h2 = { version = "=4.4.1" }
 ntex-rt = { version = "=4.5.1" }
-ntex-macros = { version = "=4.2.0" }
+ntex-macros = { version = "=4.3.0" }
 ntex-httparse = { version = "=2.3.0" }
 ntex-server = { version = "=4.3.3" }
-ntex-service = { version = "=5.6.0" }
-ntex-tls = { version = "=4.7.1" }
-ntex-util = { version = "=4.6.0" }
+ntex-service = { version = "=5.7.1" }
+ntex-tls = { version = "=4.7.2" }
+ntex-util = { version = "=4.7.0" }
 tonic = { version = "0.14.6", features = ["tls-aws-lc"] }
 reqwest = { version = "0.12.23", default-features = false, features = ["http2", "rustls-tls"] }
 reqwest-retry = "0.8.0"
