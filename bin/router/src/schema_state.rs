@@ -897,7 +897,7 @@ impl BackgroundTask for SupergraphBackgroundLoaderTask {
                         trace!(target: targets::SUPERGRAPH, "background task cancelled");
                         break;
                     }
-                    _ = ntex::time::sleep(interval) => {}
+                    _ = tokio::time::sleep(interval) => {}
                 }
             } else {
                 debug!(target: targets::SUPERGRAPH, "poll interval not configured for supergraph changes, skipping");
@@ -1026,7 +1026,7 @@ impl BackgroundTask for CallbackHeartbeatEnforcerTask {
                     debug!(target: targets::HTTP_CALLBACK, "heartbeat enforcer cancelled, stopping");
                     return;
                 }
-                _ = ntex::time::sleep(self.heartbeat_interval) => {}
+                _ = tokio::time::sleep(self.heartbeat_interval) => {}
             }
 
             let mut timed_out = Vec::new();

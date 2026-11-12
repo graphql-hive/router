@@ -27,6 +27,18 @@ pub struct WebSocketConfig {
     /// Configuration for handling headers for WebSocket connections.
     #[serde(default)]
     pub headers: WebSocketHeadersConfig,
+
+    /// Accepts the `permessage-deflate` extension (RFC 7692) offered by WebSocket clients.
+    ///
+    /// When a client offers the extension, text and binary messages are compressed in both
+    /// directions. Clients that do not offer it are not affected.
+    ///
+    /// Compression trades CPU and memory for bandwidth. Each compressed connection allocates its
+    /// own compressor and decompressor, which use about 420KiB together.
+    ///
+    /// By default, the extension is not accepted.
+    #[serde(default)]
+    pub permessage_deflate: bool,
 }
 
 #[derive(Default, Deserialize, Serialize, JsonSchema, Debug)]

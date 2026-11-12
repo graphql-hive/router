@@ -126,7 +126,7 @@ impl BackgroundTask for StorageManifestReloadTask {
                 error!(target: targets::PERSISTED_DOCUMENTS, error = %err, "failed to reload persisted documents manifest from storage");
             }
 
-            ntex::time::sleep(self.poll_interval).await;
+            tokio::time::sleep(self.poll_interval).await;
         }
     }
 }

@@ -4,7 +4,7 @@ hive-router: minor
 
 # Upgrade to ntex 4
 
-The router runs on ntex 4.5.0 instead of ntex 3. Users of the prebuilt binary or the Docker image do not need to change anything: the configuration, the HTTP and websocket APIs and VRL expressions are unchanged.
+The router runs on ntex 4.8.0 instead of ntex 3. Users of the prebuilt binary or the Docker image do not need to change anything: the configuration, the HTTP and websocket APIs and VRL expressions are unchanged.
 
 Custom plugins and custom router binaries built on the `hive-router` crate need the migration steps below. Code that uses ntex APIs directly through `hive_router::ntex`, such as building responses, writing ntex services or using ntex test helpers, follows the upstream [ntex 3 to 4 migration guide](https://github.com/ntex-rs/ntex/blob/main/ntex/migration_3to4.md).
 
@@ -74,6 +74,20 @@ Tests that build a `RouterHttpRequest` by hand create the URL with the new type.
 
 -fn fingerprint(req: &WebRequest<DefaultError>) -> u64 {
 +fn fingerprint(req: &WebRequest<()>) -> u64 {
+```
+
+## BREAKING: ntex timers are not `Send`
+
+ntex timers such as `ntex::time::sleep` belong to the thread that created them, so their futures are not `Send`. A `BackgroundTask::run` future must be `Send`, so background tasks of plugins wait with tokio timers instead.
+
+```diff
+-use hive_router::ntex;
++use hive_router::tokio;
+
+ async fn run(&self, token: CancellationToken) {
+     loop {
+-        ntex::time::sleep(self.interval).await;
++        tokio::time::sleep(self.interval).await;
 ```
 
 ## `on_end` callbacks on websocket connections run when the socket closes

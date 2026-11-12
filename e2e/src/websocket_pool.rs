@@ -1097,4 +1097,179 @@ mod websocket_pool_e2e_tests {
             1
         );
     }
+
+    /// Returns whether each websocket upgrade to the reviews subgraph offered `permessage-deflate`.
+    fn reviews_deflate_offers(subgraphs: &TestSubgraphs<crate::testkit::Started>) -> Vec<bool> {
+        subgraphs
+            .get_requests_log("reviews/ws")
+            .unwrap_or_default()
+            .iter()
+            .map(|req| {
+                req.headers
+                    .get(http::header::SEC_WEBSOCKET_EXTENSIONS)
+                    .and_then(|value| value.to_str().ok())
+                    .is_some_and(|value| value.starts_with("permessage-deflate"))
+            })
+            .collect()
+    }
+
+    #[ntex::test]
+    async fn pooled_connection_offers_permessage_deflate_inherited_from_all() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    websocket:
+                        subgraphs:
+                            reviews:
+                                path: /reviews/ws
+                traffic_shaping:
+                    all:
+                        pool_idle_timeout: 5s
+                        websocket:
+                            execute_mode: reuse_existing
+                            permessage_deflate: true
+                    router:
+                        dedupe:
+                            headers: none
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let mut subscription = router
+            .send_graphql_request(LOOPING_SUBSCRIPTION, None, sse_headers())
+            .await;
+        subscription.next().await.unwrap().unwrap();
+
+        // the subgraph declines the extension, the pooled connection carries on uncompressed
+        // and queries still find it in the pool
+        let response = router
+            .send_graphql_request(REVIEWS_QUERY, None, None)
+            .await
+            .json_body()
+            .await;
+        assert!(response.get("data").is_some() && response.get("errors").is_none());
+        assert!(
+            subgraphs.get_requests_log("reviews").is_none(),
+            "the query should reuse the pooled websocket"
+        );
+        assert_eq!(reviews_deflate_offers(&subgraphs), [true]);
+    }
+
+    #[ntex::test]
+    async fn dedicated_connections_offer_permessage_deflate_inherited_from_all() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    websocket:
+                        subgraphs:
+                            reviews:
+                                path: /reviews/ws
+                traffic_shaping:
+                    all:
+                        websocket:
+                            reuse_connections: false
+                            execute_mode: websocket
+                            permessage_deflate: true
+                    subgraphs:
+                        products:
+                            websocket:
+                                execute_mode: http
+                    router:
+                        dedupe:
+                            headers: none
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = router
+            .send_graphql_request(REVIEWS_QUERY, None, None)
+            .await
+            .json_body()
+            .await;
+        assert!(query.get("data").is_some() && query.get("errors").is_none());
+
+        let subscription = router
+            .send_graphql_request(
+                "subscription { reviewAdded(step: 2, intervalInMs: 0) { id } }",
+                None,
+                sse_headers(),
+            )
+            .await
+            .string_body()
+            .await;
+        assert!(subscription.contains(r#""id":"1""#) && subscription.contains("event: complete"));
+
+        assert_eq!(reviews_deflate_offers(&subgraphs), [true, true]);
+    }
+
+    #[ntex::test]
+    async fn subgraph_permessage_deflate_overrides_all() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    websocket:
+                        subgraphs:
+                            reviews:
+                                path: /reviews/ws
+                traffic_shaping:
+                    all:
+                        pool_idle_timeout: 5s
+                        websocket:
+                            execute_mode: reuse_existing
+                            permessage_deflate: true
+                    subgraphs:
+                        reviews:
+                            websocket:
+                                permessage_deflate: false
+                    router:
+                        dedupe:
+                            headers: none
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let mut subscription = router
+            .send_graphql_request(LOOPING_SUBSCRIPTION, None, sse_headers())
+            .await;
+        subscription.next().await.unwrap().unwrap();
+
+        let response = router
+            .send_graphql_request(REVIEWS_QUERY, None, None)
+            .await
+            .json_body()
+            .await;
+        assert!(response.get("data").is_some() && response.get("errors").is_none());
+        assert!(
+            subgraphs.get_requests_log("reviews").is_none(),
+            "the query should reuse the pooled websocket"
+        );
+        assert_eq!(reviews_deflate_offers(&subgraphs), [false]);
+    }
 }

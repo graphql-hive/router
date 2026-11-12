@@ -43,7 +43,7 @@ use crate::executor::{
         http_callback::{CallbackSubscriptionsMap, HttpCallbackSubgraphExecutor},
         tls::{build_https_client_config, build_https_connector, get_merged_tls_config},
         websocket::WsSubgraphExecutor,
-        websocket_pool::{WebSocketConnectionId, WebSocketPool},
+        websocket_pool::{WebSocketConnectionId, WebSocketPool, WebSocketTarget},
     },
     hooks::on_subgraph_execute::{
         OnSubgraphExecuteEndHookPayload, OnSubgraphExecuteStartHookPayload,
@@ -58,6 +58,8 @@ type SubgraphName = String;
 type SubgraphEndpoint = String;
 type ExecutorsBySubgraphMap =
     DashMap<SubgraphName, DashMap<SubgraphEndpoint, SubgraphExecutorBoxedArc>>;
+type WebSocketTargetsBySubgraphMap =
+    DashMap<SubgraphName, DashMap<SubgraphEndpoint, Arc<WebSocketTarget>>>;
 // Arc, so resolving a static endpoint for every subgraph call doesn't copy the URL.
 type StaticEndpointsBySubgraphMap = DashMap<SubgraphName, Arc<str>>;
 type ExpressionEndpointsBySubgraphMap = HashMap<SubgraphName, VrlProgram>;
@@ -156,6 +158,9 @@ struct SubgraphExecutorConfig {
 pub struct SubgraphExecutorMap {
     http_executors_by_subgraph: ExecutorsBySubgraphMap,
     subscription_executors_by_subgraph: ExecutorsBySubgraphMap,
+    /// Targets of the WebSocket subscription executors, so queries in `reuse_existing` mode
+    /// can find pooled connections without resolving the subgraph's settings again.
+    websocket_targets_by_subgraph: WebSocketTargetsBySubgraphMap,
     /// Mapping from subgraph name to static endpoint for quick lookup
     /// based on subgraph SDL and static overrides from router's config.
     static_endpoints_by_subgraph: StaticEndpointsBySubgraphMap,
@@ -208,6 +213,7 @@ impl SubgraphExecutorMap {
         Ok(SubgraphExecutorMap {
             http_executors_by_subgraph: Default::default(),
             subscription_executors_by_subgraph: Default::default(),
+            websocket_targets_by_subgraph: Default::default(),
             static_endpoints_by_subgraph: Default::default(),
             expression_endpoints_by_subgraph: Default::default(),
             all_endpoint_expression: Default::default(),
@@ -416,18 +422,14 @@ impl SubgraphExecutorMap {
                             execution_request
                                 .connection_fingerprint
                                 .and_then(|fingerprint| {
-                                    self.subscription_executors_by_subgraph
-                                        .get(subgraph_name)
-                                        .and_then(|endpoints| {
-                                            endpoints.get(&*endpoint_str).and_then(|executor| {
-                                                let id = WebSocketConnectionId::new(
-                                                    subgraph_name,
-                                                    executor.endpoint().clone(),
-                                                    fingerprint,
-                                                );
-                                                self.websocket_pool.get_initialized(&id)
-                                            })
-                                        })
+                                    let target = self
+                                        .websocket_targets_by_subgraph
+                                        .get(subgraph_name)?
+                                        .get(&*endpoint_str)?
+                                        .clone();
+                                    self.websocket_pool.get_initialized(
+                                        &WebSocketConnectionId::new(target, fingerprint),
+                                    )
                                 });
                         self.telemetry_context
                             .metrics
@@ -898,10 +900,17 @@ impl SubgraphExecutorMap {
                     None => None,
                 };
 
-                let ws_executor = WsSubgraphExecutor::new(
-                    subgraph_name.to_string(),
+                let target = Arc::new(WebSocketTarget {
+                    subgraph_name: subgraph_name.into(),
                     // we use the new constructed ws_endpoint_uri here
-                    ws_endpoint_uri,
+                    endpoint: ws_endpoint_uri,
+                    permessage_deflate: self
+                        .config
+                        .traffic_shaping
+                        .websocket_permessage_deflate(subgraph_name),
+                });
+                let ws_executor = WsSubgraphExecutor::new(
+                    target.clone(),
                     ws_tls_config,
                     self.config.subscriptions.subgraph_buffer_capacity,
                     self.telemetry_context.clone(),
@@ -921,6 +930,10 @@ impl SubgraphExecutorMap {
                     .or_default()
                     // we store the original endpoint_str as the key for faster lookups
                     .insert(endpoint_str.to_string(), ws_executor.clone());
+                self.websocket_targets_by_subgraph
+                    .entry(subgraph_name.to_string())
+                    .or_default()
+                    .insert(endpoint_str.to_string(), target);
 
                 Ok(ws_executor)
             }

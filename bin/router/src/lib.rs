@@ -461,7 +461,7 @@ pub fn build_http_service_config(router_config: &HiveRouterConfig) -> HttpServic
     // limit is enforced in the pipeline (`graphql_request_handler`)
     let max_head_size = max_request_header_size.max(64 * 1024);
 
-    HttpServiceConfig::new()
+    let config = HttpServiceConfig::new()
         .set_keepalive(keep_alive)
         // time allowed to receive the complete request head, zero disables it. the interval and
         // the cumulative limit are both the timeout, so slow clients get no extension past it and
@@ -471,7 +471,13 @@ pub fn build_http_service_config(router_config: &HiveRouterConfig) -> HttpServic
         .set_max_buf_size(max_head_size)
         // ntex limits the request line to 16KiB by default, which rejects large graphql GET
         // queries with 414, so the line is bounded by the head limit alone
-        .set_max_start_line_size(max_head_size)
+        .set_max_start_line_size(max_head_size);
+
+    if router_config.websocket.enabled && router_config.websocket.permessage_deflate {
+        config.set_ws_deflate(ntex::ws::DeflateConfig::new())
+    } else {
+        config
+    }
 }
 
 pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), RouterInitError> {
