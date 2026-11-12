@@ -206,9 +206,10 @@ impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for ValuesOfCorrectTyp
                     }),
                 }
             }
-        } else {
+        } else if visitor_context.current_input_type_literal().is_some() {
             // an object literal outside an input object position is only valid for a custom scalar,
-            // which `validate_value` allows
+            // which `validate_value` allows. objects nested in it have no type, so they're skipped
+            // instead of copied again
             self.validate_value(
                 visitor_context,
                 user_context,

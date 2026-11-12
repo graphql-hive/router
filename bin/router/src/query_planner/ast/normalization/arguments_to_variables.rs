@@ -1,3 +1,6 @@
+use indexmap::map::Entry;
+use indexmap::IndexMap;
+
 use crate::query_planner::ast::operation::{OperationDefinition, VariableDefinition};
 use crate::query_planner::ast::selection_item::SelectionItem;
 use crate::query_planner::ast::selection_set::SelectionSet;
@@ -43,8 +46,7 @@ pub fn arguments_to_variables(
             .as_deref()
             .unwrap_or_default(),
         next_index: 0,
-        extracted: Vec::new(),
-        seen: Default::default(),
+        extracted: IndexMap::new(),
     };
     extractor.selection_set(&mut operation.selection_set, root_type);
     let extracted = extractor.extracted;
@@ -56,13 +58,17 @@ pub fn arguments_to_variables(
     let definitions = operation.variable_definitions.get_or_insert_with(Vec::new);
     extracted
         .into_iter()
-        .map(|(variable_type, extracted)| {
+        .map(|((variable_type, value), (name, argument))| {
             definitions.push(VariableDefinition {
-                name: extracted.name.clone(),
+                name: name.clone(),
                 variable_type,
                 default_value: None,
             });
-            extracted
+            ExtractedVariable {
+                name,
+                value,
+                argument,
+            }
         })
         .collect()
 }
@@ -71,8 +77,8 @@ struct Extractor<'a> {
     supergraph: &'a SupergraphState,
     client_variables: &'a [VariableDefinition],
     next_index: usize,
-    extracted: Vec<(TypeNode, ExtractedVariable)>,
-    seen: std::collections::HashMap<(TypeNode, Value), String>,
+    /// The name and argument of every extracted value, in the order they were found
+    extracted: IndexMap<(TypeNode, Value), (String, String)>,
 }
 
 impl Extractor<'_> {
@@ -122,27 +128,20 @@ impl Extractor<'_> {
         value: Value,
         argument: impl FnOnce() -> String,
     ) -> String {
-        let key = (variable_type.clone(), value);
-        if let Some(name) = self.seen.get(&key) {
-            return name.clone();
-        }
-        let name = loop {
-            let name = format!("_v{}", self.next_index);
-            self.next_index += 1;
-            if !self.client_variables.iter().any(|def| def.name == name) {
-                break name;
+        match self.extracted.entry((variable_type.clone(), value)) {
+            Entry::Occupied(entry) => entry.get().0.clone(),
+            Entry::Vacant(entry) => {
+                let name = loop {
+                    let name = format!("_v{}", self.next_index);
+                    self.next_index += 1;
+                    if !self.client_variables.iter().any(|def| def.name == name) {
+                        break name;
+                    }
+                };
+                entry.insert((name.clone(), argument()));
+                name
             }
-        };
-        self.extracted.push((
-            key.0.clone(),
-            ExtractedVariable {
-                name: name.clone(),
-                value: key.1.clone(),
-                argument: argument(),
-            },
-        ));
-        self.seen.insert(key, name.clone());
-        name
+        }
     }
 }
 
