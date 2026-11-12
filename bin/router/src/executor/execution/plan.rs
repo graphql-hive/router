@@ -40,6 +40,7 @@ use tracing::{debug, error, warn, Instrument};
 
 use crate::executor::execution::client_request_details::OperationDetails;
 use crate::executor::execution::demand_control::DemandControlExecutionContext;
+use crate::executor::execution::entity_reuse::{self, Copies, ReuseIndex};
 use crate::executor::execution::error_masking::ErrorMaskingRuntime;
 use crate::executor::execution::operation_name::OperationNameFactory;
 use crate::executor::executors::common::ConnectionFingerprint;
@@ -775,8 +776,14 @@ fn entity_index(
     entity: Option<EntityRef>,
     context_group_offsets: &[Option<usize>],
 ) -> Option<usize> {
-    let entity = entity?;
-    Some((*context_group_offsets.get(entity.context_group)?)? + entity.index)
+    let EntityRef::Fetched {
+        context_group,
+        index,
+    } = entity?
+    else {
+        return None;
+    };
+    Some((*context_group_offsets.get(context_group as usize)?)? + index as usize)
 }
 
 /// Offsets for a request that only carries `context_group`. All `None` when it's out of range.
@@ -903,7 +910,15 @@ impl<'exec> Executor<'exec> {
         loop {
             while let Some(index) = ready.pop() {
                 // `ctx.data` is only borrowed to prepare the jobs, they run without it
-                let jobs = self.prepare_job_future(fetches[index as usize], &ctx.data);
+                let mut copies = Vec::new();
+                let jobs = self.prepare_job_future(
+                    fetches[index as usize],
+                    &ctx.data,
+                    self.copy_into(ctx, &mut copies),
+                );
+                // in before anything waiting for this fetch is prepared, a fetch that copied
+                // everything has no jobs and lets them go right away
+                entity_reuse::merge_copies(&mut ctx.data, copies, self.schema_metadata);
                 if jobs.is_empty() {
                     release(schedule, index, &mut waits, &mut ready);
                     continue;
@@ -932,6 +947,17 @@ impl<'exec> Executor<'exec> {
                 "fetches still waiting after the plan finished",
             );
         }
+    }
+
+    /// Where copies of entities already in the response go, `None` when we can't copy. Once
+    /// anything failed, a value in the response might be a `null` from an error, so we stop
+    /// copying from it and ask the subgraphs.
+    fn copy_into<'c>(
+        &self,
+        ctx: &ExecutionContext<'exec>,
+        copies: &'c mut Vec<Copies<'exec, 'exec>>,
+    ) -> Option<&'c mut Vec<Copies<'exec, 'exec>>> {
+        (self.executors.entity_reuse_enabled() && ctx.errors.is_empty()).then_some(copies)
     }
 
     fn prepare_root_reentry_fetch_job<'wave>(
@@ -1070,7 +1096,7 @@ impl<'exec> Executor<'exec> {
         let mut groups = groups
             .into_iter()
             .enumerate()
-            .filter(|(_, group)| !group.hash_to_index.is_empty())
+            .filter(|(_, group)| group.count > 0)
             .peekable();
         while groups.peek().is_some() {
             let chunk: Vec<_> = groups.by_ref().take(groups_per_request).collect();
@@ -1099,7 +1125,7 @@ impl<'exec> Executor<'exec> {
             let mut counts = Vec::with_capacity(chunk.len());
             let mut offset = 0;
             for (group_index, group) in chunk {
-                let count = group.hash_to_index.len();
+                let count = group.count;
                 counts.push(count);
                 context_group_offsets[group_index] = Some(offset);
                 offset += count;
@@ -1152,6 +1178,7 @@ impl<'exec> Executor<'exec> {
         &'wave self,
         node: &'exec PlanNode,
         data: &Value<'exec>,
+        copy_into: Option<&mut Vec<Copies<'exec, 'exec>>>,
     ) -> Vec<BoxFuture<'wave, Result<ExecutionJob<'exec>, PlanExecutionError>>> {
         match node {
             PlanNode::Fetch(fetch_node) if !self.runs(fetch_node.run_if.as_deref()) => Vec::new(),
@@ -1177,6 +1204,7 @@ impl<'exec> Executor<'exec> {
                     self.schema_metadata
                         .entity_keys
                         .of_subgraph(&batch_fetch_node.service_name),
+                    copy_into,
                 );
 
                 if waves.is_empty() {
@@ -1244,18 +1272,39 @@ impl<'exec> Executor<'exec> {
                     return vec![self.prepare_root_reentry_fetch_job(flatten_node, fetch_node)];
                 };
 
+                let possible_types = &self.schema_metadata.possible_types;
+                let mut reuse = fetch_node
+                    .entity_reuse
+                    .as_deref()
+                    .filter(|_| copy_into.is_some())
+                    .map(|reuse| {
+                        ReuseIndex::build(
+                            reuse,
+                            data,
+                            requires_nodes.root_selections(),
+                            possible_types,
+                        )
+                    });
                 let (groups, mut path_entities) = collect_context_entities(
                     data,
                     [flatten_node.path.as_ref()],
                     requires_nodes,
                     fetch_node.input_rewrites.as_deref(),
                     &fetch_node.context,
-                    &self.schema_metadata.possible_types,
+                    possible_types,
                     self.schema_metadata
                         .entity_keys
                         .of_subgraph(&fetch_node.service_name),
+                    reuse.as_mut(),
                 );
                 let target_entities = path_entities.pop().unwrap_or_default();
+                let copies = reuse.map(ReuseIndex::into_copies).unwrap_or_default();
+                if let Some(copy_into) = copy_into.filter(|_| !copies.is_empty()) {
+                    copy_into.push(Copies {
+                        paths: vec![(flatten_node.path.as_ref(), Arc::clone(&target_entities))],
+                        copies,
+                    });
+                }
 
                 self.prepare_flatten_requests(fetch_node, groups)
                     .into_iter()
@@ -1726,7 +1775,9 @@ impl<'exec> Executor<'exec> {
         entity_batch: &'exec EntityBatch,
         data: &Value<'exec>,
         subgraph_keys: Option<&KeysByType>,
+        mut copy_into: Option<&mut Vec<Copies<'exec, 'exec>>>,
     ) -> Vec<BatchWave<'exec>> {
+        let possible_types = &self.schema_metadata.possible_types;
         let mut prepared: Vec<_> = entity_batch
             .aliases
             .iter()
@@ -1735,15 +1786,40 @@ impl<'exec> Executor<'exec> {
                 if !self.runs(alias_spec.run_if.as_deref()) {
                     return (Vec::new(), Vec::new());
                 }
-                collect_context_entities(
+                let mut reuse = alias_spec
+                    .entity_reuse
+                    .as_deref()
+                    .filter(|_| copy_into.is_some())
+                    .map(|reuse| {
+                        ReuseIndex::build(
+                            reuse,
+                            data,
+                            alias_spec.requires.root_selections(),
+                            possible_types,
+                        )
+                    });
+                let (groups, path_entities) = collect_context_entities(
                     data,
                     alias_spec.merge_paths.iter(),
                     &alias_spec.requires,
                     alias_spec.input_rewrites.as_deref(),
                     &alias_spec.context,
-                    &self.schema_metadata.possible_types,
+                    possible_types,
                     subgraph_keys,
-                )
+                    reuse.as_mut(),
+                );
+                let copies = reuse.map(ReuseIndex::into_copies).unwrap_or_default();
+                if let Some(copy_into) = copy_into.as_deref_mut().filter(|_| !copies.is_empty()) {
+                    copy_into.push(Copies {
+                        paths: alias_spec
+                            .merge_paths
+                            .iter()
+                            .zip(path_entities.iter().cloned())
+                            .collect(),
+                        copies,
+                    });
+                }
+                (groups, path_entities)
             })
             .collect();
 
@@ -1796,7 +1872,7 @@ impl<'exec> Executor<'exec> {
                 }
                 aliases.push(AliasBatchState {
                     alias_spec,
-                    entity_count: group.map_or(0, |group| group.hash_to_index.len()),
+                    entity_count: group.map_or(0, |group| group.count),
                     context_group_offsets: single_context_group_offsets(wave, groups.len()),
                     paths: alias_spec
                         .merge_paths
@@ -2229,6 +2305,7 @@ mod tests {
                     output_rewrites: None,
                     context: None,
                     run_if: None,
+                    entity_reuse: None,
                 },
                 EntityBatchAlias {
                     alias: "_e1".to_string(),
@@ -2239,11 +2316,12 @@ mod tests {
                     output_rewrites: None,
                     context: None,
                     run_if: None,
+                    entity_reuse: None,
                 },
             ],
         };
 
-        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None);
+        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None, None);
 
         assert_eq!(waves.len(), 1);
         let (raw_variable_values, aliases) = &waves[0];
@@ -2258,7 +2336,7 @@ mod tests {
                 Some(Vec::new()),
             );
         }
-        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None);
+        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None, None);
         assert_eq!(waves.len(), 1);
         assert!(waves[0].0.contains(&("__context_0", b"null".to_vec())));
         assert!(waves[0].0.contains(&("__context_1", b"null".to_vec())));
@@ -2295,7 +2373,7 @@ mod tests {
                     rename_key_to: "__context_1".into(),
                 }]),
             );
-        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None);
+        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None, None);
         assert_eq!(waves.len(), 2);
         for (wave, upc) in waves.iter().zip(["\"1\"", "\"2\""]) {
             assert!(wave.0.contains(&("__context_0", upc.as_bytes().to_vec())));
@@ -2426,6 +2504,7 @@ mod tests {
                         output_rewrites: None,
                         variable_usages: None,
                         operation_kind: None,
+                        entity_reuse: None,
                     })),
                     PlanNode::Fetch(Box::new(FetchNode {
                         id: FetchId(2),
@@ -2444,6 +2523,7 @@ mod tests {
                         output_rewrites: None,
                         variable_usages: None,
                         operation_kind: None,
+                        entity_reuse: None,
                     })),
                 ],
             })),

@@ -23,6 +23,7 @@ use super::{
     plan_nodes::planning::{ParallelNode, QueryPlan, SequenceNode},
 };
 
+mod entity_reuse;
 mod optimize;
 
 pub static QUERY_PLAN_KIND: &str = "QueryPlan";
@@ -67,9 +68,12 @@ pub fn build_query_plan_from_fetch_graph(
     // by step: the fetch ids a child waits for when it depends on that step, its own fetch, or,
     // for a step without a fetch (it never runs), what it waits for itself
     let mut provides: Vec<FetchIdList> = vec![FetchIdList::new(); steps];
+    // Steps from finished waves. An entity fetch may copy entities they already put in the response.
+    let mut earlier_steps: Vec<NodeIndex> = Vec::new();
 
     while !queue.is_empty() {
         let mut current_wave_nodes: Vec<PlanNode> = Vec::new();
+        let mut current_wave_steps: Vec<NodeIndex> = Vec::new();
         let wave_size = queue.len();
 
         for _ in 0..wave_size {
@@ -95,7 +99,18 @@ pub fn build_query_plan_from_fetch_graph(
                 Some(_) => smallvec![step_data.id],
                 None => depends_on,
             };
-            current_wave_nodes.extend(node);
+            if let Some(mut node) = node {
+                if let Some(reuse) = entity_reuse::find_entity_reuse(
+                    &fetch_graph,
+                    step_index,
+                    &earlier_steps,
+                    supergraph,
+                ) {
+                    entity_reuse::attach_entity_reuse(&mut node, reuse);
+                }
+                current_wave_nodes.push(node);
+                current_wave_steps.push(step_index);
+            }
             planned_nodes_count += 1;
 
             cancellation_token.bail_if_cancelled()?;
@@ -113,6 +128,8 @@ pub fn build_query_plan_from_fetch_graph(
                 }
             }
         }
+
+        earlier_steps.extend(current_wave_steps);
 
         // a wave can end up empty when none of its fetches would ever run
         if current_wave_nodes.len() > 1 {
