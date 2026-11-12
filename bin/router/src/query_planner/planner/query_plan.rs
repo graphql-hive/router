@@ -6,6 +6,7 @@ use petgraph::{graph::NodeIndex, visit::EdgeRef};
 use crate::query_planner::{
     planner::{
         fetch::state::MultiTypeFetchStep,
+        plan_nodes::dependencies::check_dependencies,
         plan_nodes::planning::PlanNode,
         query_plan::optimize::{optimize_root_node, optimize_top_level_sequence},
         QueryPlannerOptions,
@@ -111,6 +112,9 @@ pub fn build_query_plan_from_fetch_graph(
     }
 
     let mut overall_plan_sequence: Vec<PlanNode> = Vec::new();
+    // step → the fetch ids a child waits for when it depends on that step: its own fetch, or,
+    // for a step without a fetch (it never runs), what it waits for itself
+    let mut provides: HashMap<NodeIndex, Vec<i64>> = HashMap::new();
 
     while !queue.is_empty() {
         let mut current_wave_nodes: Vec<PlanNode> = Vec::new();
@@ -124,7 +128,25 @@ pub fn build_query_plan_from_fetch_graph(
                 )))?;
 
             let step_data = fetch_graph.get_step_data(step_index)?;
-            current_wave_nodes.extend(PlanNode::from_fetch_step(step_data, supergraph, options));
+            // the waves only keep the order, the fetch keeps what it really waits for
+            let mut depends_on: Vec<i64> = fetch_graph
+                .parents_of(step_index)
+                .filter(|edge| edge.source() != root_index)
+                .flat_map(|edge| provides.get(&edge.source()).into_iter().flatten().copied())
+                .collect();
+            depends_on.sort_unstable();
+            depends_on.dedup();
+            let node =
+                PlanNode::from_fetch_step(step_data, supergraph, options, depends_on.clone());
+            provides.insert(
+                step_index,
+                if node.is_some() {
+                    vec![step_data.id]
+                } else {
+                    depends_on
+                },
+            );
+            current_wave_nodes.extend(node);
             planned_nodes_count += 1;
             in_degrees.mark_as_processed(step_index);
 
@@ -186,8 +208,10 @@ pub fn build_query_plan_from_fetch_graph(
     // Then run full recursive optimization + batching rewrites.
     let root_node = optimize_root_node(root_node, supergraph, options)?;
 
-    Ok(QueryPlan {
+    let plan = QueryPlan {
         kind: QUERY_PLAN_KIND,
         node: Some(root_node),
-    })
+    };
+    debug_assert_eq!(check_dependencies(&plan), Ok(()), "{plan}");
+    Ok(plan)
 }

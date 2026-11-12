@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::vec;
 
 use crate::query_planner::ast::operation::{ContextAliasTemplate, SubgraphFetchOperation};
+use crate::query_planner::planner::plan_nodes::dependencies::plan_fetches;
 use crate::query_planner::planner::plan_nodes::{
     BatchFetchNode, ConditionGroup, CustomScalarPaths, FetchContext, FetchNode, FlattenNode,
     ResponsePathRef,
@@ -547,7 +548,7 @@ async fn execute_query_plan_with_data<'exec>(
     };
 
     if let Some(node) = &opts.query_plan.node {
-        executor.execute_plan_node(&mut exec_ctx, node).await;
+        executor.execute_plan(&mut exec_ctx, node).await;
     }
 
     let error_count = exec_ctx.errors.len(); // Added for usage reporting
@@ -897,39 +898,57 @@ struct PrepareExecutionJobOpts<'exec> {
     affected_path: Option<ResponsePathRef<'exec>>,
 }
 
+/// Where a fetch of the plan is at, see [`Executor::execute_plan`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FetchState {
+    /// Some of the fetches it waits for aren't done yet.
+    Waiting,
+    /// Started, with this many jobs still running.
+    Running(usize),
+    Done,
+}
+
 impl<'exec> Executor<'exec> {
-    async fn execute_plan_node(&self, ctx: &mut ExecutionContext<'exec>, node: &'exec PlanNode) {
-        match node {
-            PlanNode::Parallel(parallel_node) => {
-                let mut scope = FuturesUnordered::new();
-
-                for child in &parallel_node.nodes {
-                    // We borrow `ctx.data` only for sync preparation of the job future,
-                    // and the actual execution of the job future is done without the borrow of `ctx.data`
-                    for fut in self.prepare_job_future(child, &ctx.data) {
-                        scope.push(fut);
-                    }
+    /// Runs the fetches of the plan, each as soon as the fetches it waits for are done, not when
+    /// its whole wave can start (see [`plan_fetches`]). Results are merged as they come in, and a
+    /// merge can let more fetches start.
+    async fn execute_plan(&self, ctx: &mut ExecutionContext<'exec>, root: &'exec PlanNode) {
+        // ponytail: worked out on every request, cache it with the plan if it shows in a profile
+        let fetches = plan_fetches(root);
+        let mut states = vec![FetchState::Waiting; fetches.len()];
+        let mut running = FuturesUnordered::new();
+        loop {
+            // start every fetch whose inputs are in. A fetch only waits for earlier ones, so one
+            // pass in order also starts the ones a fetch with nothing to send lets go
+            for (index, fetch) in fetches.iter().enumerate() {
+                if states[index] != FetchState::Waiting
+                    || !fetch
+                        .waits_for
+                        .iter()
+                        .all(|dep| states[*dep] == FetchState::Done)
+                {
+                    continue;
                 }
-
-                while let Some(job) = scope.next().await {
-                    self.process_job_result(ctx, job);
-                }
+                // `ctx.data` is only borrowed to prepare the jobs, they run without it
+                let jobs = self.prepare_job_future(fetch.node, &ctx.data);
+                states[index] = match jobs.len() {
+                    0 => FetchState::Done,
+                    jobs => FetchState::Running(jobs),
+                };
+                running.extend(
+                    jobs.into_iter()
+                        .map(|job| job.map(move |result| (index, result))),
+                );
             }
-            PlanNode::Sequence(sequence_node) => {
-                for child in &sequence_node.nodes {
-                    // We use `Box.pin` here to avoid the compiler error about recursive future,
-                    // as `execute_plan_node` is calling itself recursively for sequence nodes
-                    Box::pin(self.execute_plan_node(ctx, child)).await;
-                }
-            }
-            node => {
-                let mut scope: FuturesUnordered<_> = self
-                    .prepare_job_future(node, &ctx.data)
-                    .into_iter()
-                    .collect();
-                while let Some(job) = scope.next().await {
-                    self.process_job_result(ctx, job);
-                }
+            let Some((index, result)) = running.next().await else {
+                break;
+            };
+            self.process_job_result(ctx, result);
+            if let FetchState::Running(left) = states[index] {
+                states[index] = match left - 1 {
+                    0 => FetchState::Done,
+                    left => FetchState::Running(left),
+                };
             }
         }
     }
@@ -2406,7 +2425,7 @@ mod tests {
             .create();
 
         executor
-            .execute_plan_node(
+            .execute_plan(
                 &mut exec_ctx,
                 &PlanNode::Parallel(ParallelNode {
                     nodes: vec![
@@ -2416,6 +2435,7 @@ mod tests {
                             service_name: "subgraph_a".to_string(),
                             context: None,
                             run_if: None,
+                            depends_on: None,
                             operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_a }"),
                             )
@@ -2433,6 +2453,7 @@ mod tests {
                             service_name: "subgraph_b".to_string(),
                             context: None,
                             run_if: None,
+                            depends_on: None,
                             operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_b }"),
                             )

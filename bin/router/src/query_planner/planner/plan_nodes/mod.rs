@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 
 mod state;
 pub use state::{Executable, PlanState, Planning};
+pub mod dependencies;
 mod prepare;
 
 pub mod planning {
@@ -157,6 +158,11 @@ pub struct FetchNode<S: PlanState = Executable> {
     /// nothing to ask for. Never empty, a fetch that can't ever run is left out of the plan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_if: Option<Vec<ConditionGroup>>,
+    /// Ids of the fetches whose data this fetch reads, from the planner's fetch graph. `None`
+    /// when the plan didn't come from the planner (a plugin built it, say), then only the plan's
+    /// order says what waits for what.
+    #[serde(skip)]
+    pub depends_on: Option<Box<[i64]>>,
 }
 
 /// What a fetch with `@fromContext` arguments needs at execution time.
@@ -224,6 +230,13 @@ pub struct BatchFetchNode<S: PlanState = Executable> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_scalar_paths: Option<CustomScalarPaths>,
     pub entity_batch: EntityBatch,
+    /// What the merged fetches waited for, without the merged fetches themselves.
+    #[serde(skip)]
+    pub depends_on: Option<Box<[i64]>>,
+    /// Ids of every fetch merged into this batch, `id` is only the first of them. A fetch that
+    /// depends on any of them depends on the batch.
+    #[serde(skip)]
+    pub completes: Box<[i64]>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -730,6 +743,7 @@ impl FetchNode<Planning> {
                     output_rewrites: step.output_rewrites.clone(),
                     context,
                     run_if: None,
+                    depends_on: None,
                 }
             }
             false => {
@@ -772,6 +786,7 @@ impl FetchNode<Planning> {
                         step.context_rewrites.clone(),
                     ),
                     run_if: None,
+                    depends_on: None,
                 }
             }
         }
@@ -779,12 +794,15 @@ impl FetchNode<Planning> {
 }
 
 impl PlanNode<Planning> {
+    /// `depends_on` is the fetches whose data it reads, see [`FetchNode::depends_on`].
     pub fn from_fetch_step(
         step: &FetchStepData<MultiTypeFetchStep>,
         supergraph: &SupergraphState,
         options: &QueryPlannerOptions,
+        depends_on: Vec<i64>,
     ) -> Option<Self> {
         let mut fetch = FetchNode::from_fetch_step(step, supergraph, options);
+        fetch.depends_on = Some(depends_on.into_boxed_slice());
 
         // A fetch runs when the `@include`/`@skip` around it hold and any of its fields is asked
         // for. The step has the innermost condition, its path has the ones around it, and the
@@ -1081,9 +1099,10 @@ mod stored_size_tests {
     fn stored_sizes_stay_small() {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 32),
-            // `run_if` is an `Option<Vec<_>>`
-            ("FetchNode", size_of::<FetchNode>(), 272),
-            ("BatchFetchNode", size_of::<BatchFetchNode>(), 176),
+            // `run_if` is an `Option<Vec<_>>`, `depends_on` an `Option<Box<[i64]>>`
+            ("FetchNode", size_of::<FetchNode>(), 288),
+            // and `completes` a `Box<[i64]>`
+            ("BatchFetchNode", size_of::<BatchFetchNode>(), 208),
             (
                 "SubgraphFetchOperation",
                 size_of::<crate::query_planner::ast::operation::SubgraphFetchOperation>(),

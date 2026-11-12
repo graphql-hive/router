@@ -329,6 +329,8 @@ impl<'a> BatchFetchBuilder<'a> {
             entity_batch: EntityBatch {
                 aliases: self.batched_aliases,
             },
+            depends_on: None,
+            completes: Box::default(),
         })
     }
 }
@@ -358,6 +360,7 @@ struct EntityFetch {
     output_rewrites: Option<Vec<FetchRewrite>>,
     context: Option<Box<FetchContext>>,
     run_if: Option<Vec<ConditionGroup>>,
+    depends_on: Option<Box<[i64]>>,
     shape_key: ShapeKey,
     non_representations_variable_definitions: Vec<VariableDefinition>,
 }
@@ -487,6 +490,7 @@ impl EntityFetch {
             output_rewrites,
             context,
             run_if: fetch_node.run_if.clone(),
+            depends_on: fetch_node.depends_on.clone(),
             shape_key,
             non_representations_variable_definitions,
         }))
@@ -923,7 +927,27 @@ fn build_batched_fetch_node(
         builder.add_shape_group(index, shape_group, supergraph)?;
     }
 
-    builder.finish(first_candidate, supergraph, max_aliases)
+    let mut batch = builder.finish(first_candidate, supergraph, max_aliases)?;
+    let candidates = || shape_groups.iter().flatten();
+    batch.completes = candidates()
+        .map(|candidate| candidate.fetch_node_id)
+        .collect();
+    // what any of them waited for, unknown when one of them doesn't say
+    batch.depends_on = candidates()
+        .map(|candidate| candidate.depends_on.as_deref())
+        .collect::<Option<Vec<_>>>()
+        .map(|lists| {
+            let mut depends_on: Vec<i64> = lists
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|id| !batch.completes.contains(id))
+                .collect();
+            depends_on.sort_unstable();
+            depends_on.dedup();
+            depends_on.into_boxed_slice()
+        });
+    Ok(batch)
 }
 
 fn optimize_plan_sequence(nodes: Vec<PlanNode>) -> Vec<PlanNode> {
@@ -1620,6 +1644,124 @@ mod tests {
 
     /// A batch with more aliases than `max_aliases_per_request` is split into several batches,
     /// and a leftover single fetch stays a plain fetch.
+    fn with_depends_on(mut node: PlanNode, depends_on: Option<Vec<i64>>) -> PlanNode {
+        if let PlanNode::Flatten(flatten) = &mut node {
+            if let PlanNode::Fetch(fetch) = flatten.node.as_mut() {
+                fetch.depends_on = depends_on.map(Vec::into_boxed_slice);
+            }
+        }
+        node
+    }
+
+    /// A batch depends on what any of its fetches depends on, and completes all of them
+    #[test]
+    fn optimize_parallel_node_batch_keeps_all_merged_fetch_ids_and_dependencies() {
+        let supergraph = test_supergraph_state();
+        let requires_query = "query { ... on Product { upc } }";
+        let entities_query = "
+          query($representations:[_Any!]!) {
+            _entities(representations: $representations) {
+              ... on Product { shippingEstimate }
+            }
+          }
+        ";
+        let batch = |depends_on_a: Option<Vec<i64>>, depends_on_b: Option<Vec<i64>>| {
+            let nodes = vec![
+                with_depends_on(
+                    flatten_entity_fetch_node(
+                        1,
+                        "inventory",
+                        "products",
+                        requires_query,
+                        entities_query,
+                    ),
+                    depends_on_a,
+                ),
+                with_depends_on(
+                    flatten_entity_fetch_node(
+                        2,
+                        "inventory",
+                        "products",
+                        requires_query,
+                        entities_query,
+                    ),
+                    depends_on_b,
+                ),
+            ];
+            match optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
+                .expect("optimize should work")
+            {
+                PlanNode::BatchFetch(batch) => batch,
+                other => panic!("expected a BatchFetch, got {other:?}"),
+            }
+        };
+
+        let both = batch(Some(vec![7]), Some(vec![8, 7]));
+        assert_eq!(both.id, 1);
+        assert_eq!(&*both.completes, [1, 2]);
+        assert_eq!(both.depends_on.as_deref(), Some(&[7, 8][..]));
+
+        // one of them doesn't say, so neither does the batch
+        assert_eq!(batch(Some(vec![7]), None).depends_on, None);
+    }
+
+    /// A batch split by `max_aliases_per_request` gives each part its own fetches
+    #[test]
+    fn optimize_parallel_node_split_batches_complete_their_own_fetches() {
+        let supergraph = test_supergraph_state();
+        let entities = |field: &str| {
+            format!(
+                "query($representations:[_Any!]!) {{ _entities(representations: $representations) {{ ... on Product {{ {field} }} }} }}"
+            )
+        };
+        let requires_upc = "query { ... on Product { upc } }";
+        let requires_name = "query { ... on Product { name } }";
+        let nodes = [
+            (1, requires_upc, "shippingEstimate"),
+            (2, requires_upc, "inStock"),
+            (3, requires_name, "shippingEstimate"),
+            (4, requires_name, "inStock"),
+        ]
+        .into_iter()
+        .map(|(id, requires, field)| {
+            with_depends_on(
+                flatten_entity_fetch_node(id, "inventory", "products", requires, &entities(field)),
+                Some(vec![id + 10]),
+            )
+        })
+        .collect();
+        let options = QueryPlannerOptions {
+            subgraph_max_aliases_per_request: [("inventory".to_string(), 2)].into(),
+            ..Default::default()
+        };
+        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph, &options)
+            .expect("optimize should work");
+
+        let batches: Vec<_> = optimized
+            .into_nodes()
+            .into_iter()
+            .map(|node| match node {
+                PlanNode::BatchFetch(batch) => batch,
+                other => panic!("expected a BatchFetch, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(batches.len(), 2);
+        let mut all: Vec<i64> = Vec::new();
+        for batch in &batches {
+            assert_eq!(batch.completes.len(), 2);
+            assert_eq!(batch.completes[0], batch.id);
+            let expected: Vec<i64> = batch.completes.iter().map(|id| id + 10).collect();
+            let mut depends_on = batch.depends_on.as_deref().unwrap().to_vec();
+            depends_on.sort_unstable();
+            let mut expected = expected;
+            expected.sort_unstable();
+            assert_eq!(depends_on, expected);
+            all.extend(batch.completes.iter());
+        }
+        all.sort_unstable();
+        assert_eq!(all, [1, 2, 3, 4]);
+    }
+
     #[test]
     fn optimize_parallel_node_splits_batches_over_max_aliases_per_request() {
         let supergraph = test_supergraph_state();
@@ -2788,6 +2930,7 @@ mod tests {
             output_rewrites: None,
             context: None,
             run_if: None,
+            depends_on: None,
         };
 
         let path = FlattenNodePath::from(&MergePath::new(vec![
@@ -2869,6 +3012,7 @@ mod tests {
             output_rewrites: None,
             context: None,
             run_if: None,
+            depends_on: None,
         }
     }
 

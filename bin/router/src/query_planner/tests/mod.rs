@@ -1,6 +1,7 @@
 mod alias;
 mod arguments;
 mod context;
+mod dependencies;
 mod fragments;
 mod generated;
 mod include_skip;
