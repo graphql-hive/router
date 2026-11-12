@@ -206,6 +206,14 @@ impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for ValuesOfCorrectTyp
                     }),
                 }
             }
+        } else {
+            // an object literal outside an input object position is only valid for a custom scalar,
+            // which `validate_value` allows
+            self.validate_value(
+                visitor_context,
+                user_context,
+                &Value::Object(object_value.to_vec()),
+            );
         }
     }
 
@@ -2096,6 +2104,38 @@ fn list_literal_for_custom_scalar() {
     );
     let messages = get_messages(&errors);
     assert_eq!(messages.len(), 0);
+}
+
+#[test]
+fn object_literal_in_non_input_object_position() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(ValuesOfCorrectType::new()));
+    let errors = test_operation_with_schema(
+        "{
+          a: stringArg(arg: { a: 1 })
+          b: listArg(arg: { a: 1 })
+          c: enumArg(arg: { a: 1 })
+          d: someScalarArg(arg: { a: 1 })
+        }",
+        "scalar SomeScalar
+        enum Color { RED }
+        type Query {
+          stringArg(arg: String): String
+          listArg(arg: [String]): String
+          enumArg(arg: Color): String
+          someScalarArg(arg: SomeScalar): String
+        }",
+        &mut plan,
+    );
+    assert_eq!(
+        get_messages(&errors),
+        vec![
+            "Expected value of type \"String\", found {a: 1}.",
+            "Expected value of type \"String\", found {a: 1}.",
+            "Enum \"Color\" cannot represent non-enum value: {a: 1}",
+        ]
+    );
 }
 
 #[cfg(test)]
