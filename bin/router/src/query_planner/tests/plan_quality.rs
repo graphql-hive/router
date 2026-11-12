@@ -1,13 +1,3 @@
-//! Supergraphs where an easy-to-make plan isn't the best one. Each test asserts the best plan's
-//! fetches and waves, and says what used to miss it. A case we miss again goes `#[ignore]` with
-//! the reason, `cargo nextest run --run-ignored all plan_quality` shows where we stand.
-//!
-//! Two parts of the planner can miss a plan:
-//! - The walker keeps a leaf's paths that cost less than one more subgraph hop than its
-//!   cheapest, worked out for that leaf alone. What it drops, nothing after it can pick.
-//! - The search (`find_best_combination`) picks among those paths, greedy a leaf at a time,
-//!   plus a second pick that splits each hop's cost between the leaves that could share it.
-
 use std::error::Error;
 
 use crate::query_planner::{
