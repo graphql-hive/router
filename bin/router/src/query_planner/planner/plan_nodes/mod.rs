@@ -262,9 +262,10 @@ pub struct FetchNode<S: PlanState = Executable> {
     /// that reads nothing another fetch brings, a root fetch.
     #[serde(skip)]
     pub depends_on: S::FetchIds,
-    /// Where entities this fetch asks for might already be in the response.
+    /// Where entities this fetch asks for might already be in the response. Fetches that ask for
+    /// the same thing in one wave share it.
     #[serde(skip)]
-    pub entity_reuse: Option<Box<EntityReuse>>,
+    pub entity_reuse: Option<std::sync::Arc<EntityReuse>>,
 }
 
 /// What a fetch with `@fromContext` arguments needs at execution time.
@@ -589,7 +590,7 @@ pub struct EntityBatchAlias {
     pub run_if: Option<Vec<ConditionGroup>>,
     /// Where entities this alias asks for might already be in the response.
     #[serde(skip)]
-    pub entity_reuse: Option<Box<EntityReuse>>,
+    pub entity_reuse: Option<std::sync::Arc<EntityReuse>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
