@@ -3,22 +3,24 @@ use super::*;
 impl QueryPlan<Planning> {
     /// Drops the parsed documents the planner used,
     /// and keeps the operation text that execution sends.
-    pub fn into_executable(self) -> QueryPlan {
+    pub fn into_executable(self, supergraph: &SupergraphState) -> QueryPlan {
         QueryPlan {
             kind: self.kind,
-            node: self.node.map(PlanNode::into_executable),
+            node: self.node.map(|node| node.into_executable(supergraph)),
         }
     }
 }
 
 impl FetchNode<Planning> {
-    fn into_executable(self) -> FetchNode {
+    fn into_executable(self, supergraph: &SupergraphState) -> FetchNode {
         FetchNode {
             id: self.id,
             service_name: self.service_name,
             variable_usages: self.variable_usages,
             operation_kind: self.operation_kind,
-            operation: self.operation.operation,
+            operation: self
+                .operation
+                .into_executable(supergraph, self.custom_scalar_paths.as_ref()),
             custom_scalar_paths: self.custom_scalar_paths,
             requires: self.requires,
             planner_requires: (),
@@ -31,18 +33,18 @@ impl FetchNode<Planning> {
 }
 
 impl PlanNode<Planning> {
-    fn into_executable(self) -> PlanNode {
-        fn boxed(node: PlanNode<Planning>) -> Box<PlanNode> {
-            Box::new(node.into_executable())
-        }
+    fn into_executable(self, supergraph: &SupergraphState) -> PlanNode {
+        let boxed = |node: PlanNode<Planning>| Box::new(node.into_executable(supergraph));
         match self {
-            Self::Fetch(fetch) => PlanNode::Fetch(Box::new(fetch.into_executable())),
+            Self::Fetch(fetch) => PlanNode::Fetch(Box::new(fetch.into_executable(supergraph))),
             Self::BatchFetch(batch) => PlanNode::BatchFetch(Box::new(BatchFetchNode {
                 id: batch.id,
                 service_name: batch.service_name,
                 variable_usages: batch.variable_usages,
                 operation_kind: batch.operation_kind,
-                operation: batch.operation.operation,
+                operation: batch
+                    .operation
+                    .into_executable(supergraph, batch.custom_scalar_paths.as_ref()),
                 custom_scalar_paths: batch.custom_scalar_paths,
                 entity_batch: batch.entity_batch,
             })),
@@ -54,19 +56,19 @@ impl PlanNode<Planning> {
                 nodes: sequence
                     .nodes
                     .into_iter()
-                    .map(Self::into_executable)
+                    .map(|node| node.into_executable(supergraph))
                     .collect(),
             }),
             Self::Parallel(parallel) => PlanNode::Parallel(ParallelNode {
                 nodes: parallel
                     .nodes
                     .into_iter()
-                    .map(Self::into_executable)
+                    .map(|node| node.into_executable(supergraph))
                     .collect(),
             }),
             Self::Subscription(subscription) => {
                 PlanNode::Subscription(Box::new(SubscriptionNode {
-                    primary: subscription.primary.into_executable(),
+                    primary: subscription.primary.into_executable(supergraph),
                 }))
             }
             Self::Defer(defer) => PlanNode::Defer(Box::new(DeferNode {

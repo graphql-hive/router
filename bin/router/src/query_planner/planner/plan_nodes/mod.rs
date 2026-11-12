@@ -1082,12 +1082,12 @@ mod stored_size_tests {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 32),
             // `run_if` is an `Option<Vec<_>>`
-            ("FetchNode", size_of::<FetchNode>(), 264),
-            ("BatchFetchNode", size_of::<BatchFetchNode>(), 168),
+            ("FetchNode", size_of::<FetchNode>(), 272),
+            ("BatchFetchNode", size_of::<BatchFetchNode>(), 176),
             (
                 "SubgraphFetchOperation",
                 size_of::<crate::query_planner::ast::operation::SubgraphFetchOperation>(),
-                40,
+                48,
             ),
         ] {
             assert_eq!(

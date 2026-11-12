@@ -526,8 +526,8 @@ fn type_expand_interface_field() -> Result<(), Box<dyn Error>> {
         Fetch(service: "products") {
           {
             products {
-              id
               __typename
+              id
             }
           }
         },
@@ -611,8 +611,8 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
             }
           }
           fragment a on Product {
-            id
             __typename
+            id
             sku
             dimensions {
               weight
@@ -710,8 +710,8 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
         Fetch(service: "products") {
           {
             products {
-              id
               __typename
+              id
             }
           }
         },
@@ -741,8 +741,8 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
             }
             fragment a on Review {
               product {
-                id
                 __typename
+                id
               }
             }
           },
@@ -824,8 +824,8 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
         Fetch(service: "products") {
           {
             products {
-              id
               __typename
+              id
             }
           }
         },
@@ -855,8 +855,8 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
             }
             fragment a on Review {
               product {
-                id
                 __typename
+                id
               }
             }
           },
@@ -968,8 +968,8 @@ fn nested_interface_field_with_redundant_inline_fragments_other_type_order(
         Fetch(service: "products") {
           {
             products {
-              id
               __typename
+              id
             }
           }
         },
@@ -999,8 +999,8 @@ fn nested_interface_field_with_redundant_inline_fragments_other_type_order(
             }
             fragment a on Review {
               product {
-                id
                 __typename
+                id
               }
             }
           },

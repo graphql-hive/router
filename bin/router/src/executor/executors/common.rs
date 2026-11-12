@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
+use crate::executor::response::shaped::ResponseShape;
 use crate::query_planner::planner::plan_nodes::CustomScalarPaths;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -97,6 +98,8 @@ pub struct SubgraphExecutionRequest<'a> {
     pub raw_variable_values: Option<Vec<(&'a str, Vec<u8>)>>,
     pub extensions: Option<SubgraphRequestExtensions>,
     pub custom_scalar_paths: Option<&'a CustomScalarPaths>,
+    /// The fields the response has, to read it faster
+    pub response_shape: Option<&'a ResponseShape>,
     /// Identifies an existing pooled connection that may execute this request.
     ///
     /// `None` disables pooled lookup and preserves the request's normal transport behavior.
