@@ -83,6 +83,12 @@ pub struct CoprocessorStagesConfig {
 pub struct CoprocessorRouterStageConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Configuration for `router.request` hook.
+    ///
+    /// For WebSocket connections, this hook runs once on the HTTP upgrade request.
+    /// The request context is shared by all operations on that connection, so context
+    /// entries set by this hook on the upgrade request are visible to the per-operation
+    /// stages (`graphql.request`, `graphql.analysis` and `graphql.response`) of every
+    /// operation on the connection.
     pub request: Option<CoprocessorHookConfig<CoprocessorRouterRequestIncludeConfig>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Configuration for `router.response` hook.

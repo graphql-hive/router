@@ -6,7 +6,7 @@ mod websocket_e2e_tests {
 
     use crate::testkit::{TestRouter, TestSubgraphs};
     use hive_router::executor::executors::{
-        graphql_transport_ws::{ConnectionInitPayload, SubscribePayload},
+        graphql_transport_ws::{ConnectionInitPayload, SubscribePayload, WS_SUBPROTOCOL},
         websocket_client::WsClient,
     };
     use hive_router::{
@@ -801,5 +801,117 @@ mod websocket_e2e_tests {
         hive_router::executor::executors::websocket_client::connect(&ws_uri, None)
             .await
             .expect("websocket connection should be accepted after a slot was freed");
+    }
+
+    #[ntex::test]
+    async fn upgrade_headers_take_precedence_over_client_sent_headers() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                headers:
+                    all:
+                        request:
+                            - propagate:
+                                named: x-real-ip
+                websocket:
+                    enabled: true
+                    headers:
+                        source: both
+                        upgrade:
+                            - x-real-ip
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let ws_url = router
+            .serv()
+            .url("/graphql")
+            .as_str()
+            .replace("http://", "ws://");
+        let cfg = hive_router::ntex::ws::WsClientConfig::new()
+            .set_protocols([WS_SUBPROTOCOL])
+            .expect("failed to set protocols")
+            .set_header("x-real-ip", "1.2.3.4")
+            .expect("failed to set header");
+        let wsconn = hive_router::ntex::ws::WsClient::new(ws_url.as_str(), cfg)
+            .connect()
+            .await
+            .expect("failed to connect to websocket")
+            .seal();
+
+        let mut client = WsClient::new(wsconn)
+            .init(Some(ConnectionInitPayload::new(HashMap::from([(
+                "x-real-ip".to_string(),
+                json!("6.6.6.6"),
+            )]))))
+            .await
+            .expect("Failed to init WsClient");
+
+        let mut stream = client
+            .subscribe(
+                SubscribePayload {
+                    query: "{ topProducts { name } }".into(),
+                    extensions: Some(HashMap::from([(
+                        "headers".to_string(),
+                        json!({"x-real-ip": "7.7.7.7"}),
+                    )])),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .expect("Failed to subscribe")
+            .map(|response| response.expect("WebSocket response failed"));
+        stream.next().await.expect("Expected a response");
+
+        let products_requests = subgraphs
+            .get_requests_log("products")
+            .expect("expected requests sent to products subgraph");
+        let last_products_request = products_requests
+            .last()
+            .expect("expected at least one request to products subgraph");
+        assert_eq!(
+            last_products_request
+                .headers
+                .get("x-real-ip")
+                .expect("expected x-real-ip header to be present"),
+            "1.2.3.4",
+        );
+
+        // an upgrade without the header must not let the client sent value through
+        let mut client = WsClient::new(router.ws().await)
+            .init(Some(ConnectionInitPayload::new(HashMap::from([(
+                "x-real-ip".to_string(),
+                json!("6.6.6.6"),
+            )]))))
+            .await
+            .expect("Failed to init WsClient");
+        let mut stream = client
+            .subscribe(
+                SubscribePayload {
+                    query: "{ topProducts { name } }".into(),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .expect("Failed to subscribe")
+            .map(|response| response.expect("WebSocket response failed"));
+        stream.next().await.expect("Expected a response");
+
+        let products_requests = subgraphs
+            .get_requests_log("products")
+            .expect("expected requests sent to products subgraph");
+        let last_products_request = products_requests
+            .last()
+            .expect("expected at least one request to products subgraph");
+        assert!(last_products_request.headers.get("x-real-ip").is_none());
     }
 }

@@ -120,6 +120,8 @@ struct WsConnectionService {
     request_context: SharedRequestContext,
     ws_uri: Url,
     ws_path: Path<Url>,
+    /// Headers listed in `websocket.headers.upgrade`, taken from the upgrade request.
+    upgrade_headers: HeaderMap,
     /// Stop receivers for the heartbeat and handshake timeout tasks, taken when the tasks start.
     pending_tasks: RefCell<Option<(oneshot::Receiver<()>, oneshot::Receiver<()>)>>,
     heartbeat_tx: RefCell<Option<oneshot::Sender<()>>>,
@@ -155,6 +157,14 @@ impl WsConnectionService {
             .unwrap_or_else(|_| Url::from_static("/graphql"));
         let ws_path = Path::new(ws_uri.clone());
 
+        let mut upgrade_headers = HeaderMap::new();
+        for name in &shared_state.router_config.websocket.headers.upgrade {
+            let name = name.get_header_ref();
+            for value in req.headers().get_all(name) {
+                upgrade_headers.append(name.clone(), value.clone());
+            }
+        }
+
         let (heartbeat_tx, heartbeat_rx) = oneshot::channel();
         let (acknowledged_tx, acknowledged_rx) = oneshot::channel();
 
@@ -168,6 +178,7 @@ impl WsConnectionService {
             request_context,
             ws_uri,
             ws_path,
+            upgrade_headers,
             pending_tasks: RefCell::new(Some((heartbeat_rx, acknowledged_rx))),
             heartbeat_tx: RefCell::new(Some(heartbeat_tx)),
             conn_guard: RefCell::new(conn_guard),
@@ -223,6 +234,7 @@ impl Service<ws::WsSink, ws::Frame> for WsConnectionService {
                 &self.request_context,
                 &self.ws_uri,
                 &self.ws_path,
+                &self.upgrade_headers,
             )
             .await),
             Err(FrameNotParsedToText::Message(msg)) => Ok(Some(msg)),
@@ -280,6 +292,7 @@ async fn handle_text_frame(
     request_context: &SharedRequestContext,
     ws_uri: &Url,
     ws_path: &Path<Url>,
+    upgrade_headers: &HeaderMap,
 ) -> Option<ws::Message> {
     // IMPORTANT: we intentionally check if a supergraph is selected this "late" because
     // browsers cannot interpret a rejected HTTP Upgrade request and will show a cryptic
@@ -374,16 +387,6 @@ async fn handle_text_frame(
                     headers.insert(key.clone(), value.clone());
                 }
 
-                let parent_ctx = shared_state
-                    .telemetry_context
-                    .extract_context(&HeaderExtractor(&headers));
-                let request_identifiers =
-                  Arc::new(shared_state
-                        .telemetry_context
-                        .logging_correlation_extractor
-                        .extract(&headers, &parent_ctx));
-                let headers = Arc::new(headers);
-
                 // store the merged headers back to init_payload if configured to do so
                 if config.headers.persist {
                     if let Some(ref mut init_payload) = state.borrow_mut().init_payload {
@@ -396,6 +399,24 @@ async fn handle_text_frame(
                         }
                     }
                 }
+
+                // done after persisting so that init_payload only ever holds what the client sent
+                for name in &config.headers.upgrade {
+                    headers.remove(name.get_header_ref());
+                }
+                for (name, value) in upgrade_headers.iter() {
+                    headers.append(name.clone(), value.clone());
+                }
+
+                let parent_ctx = shared_state
+                    .telemetry_context
+                    .extract_context(&HeaderExtractor(&headers));
+                let request_identifiers =
+                  Arc::new(shared_state
+                        .telemetry_context
+                        .logging_correlation_extractor
+                        .extract(&headers, &parent_ctx));
+                let headers = Arc::new(headers);
 
                 let inner_res = async {
                   let _summary = summary::SummaryOnDrop::new(started_at);

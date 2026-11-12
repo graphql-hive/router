@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::config::primitives::absolute_path::AbsolutePath;
+use crate::config::primitives::{absolute_path::AbsolutePath, http_header::HttpHeaderName};
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
@@ -33,7 +33,10 @@ pub struct WebSocketConfig {
 #[serde(rename_all = "lowercase")]
 #[non_exhaustive]
 pub enum WebSocketHeadersSource {
-    /// Do not accept headers from any source inside WebSocket connections.
+    /// Do not accept headers sent by the client, neither from the connection init payload
+    /// nor from the operation extensions.
+    ///
+    /// Headers listed in `upgrade` are still taken from the upgrade request.
     None,
     /// Accept headers from the connection init payload. This is the default.
     ///
@@ -86,6 +89,8 @@ pub enum WebSocketHeadersSource {
 #[non_exhaustive]
 pub struct WebSocketHeadersConfig {
     /// The source(s) from which to accept headers for WebSocket connections.
+    // defaulted so configs setting only `upgrade` or `persist` still load with `connection`
+    #[serde(default)]
     pub source: WebSocketHeadersSource,
     /// Whether to persist merged headers for the duration of the WebSocket connection
     /// when using the `both` source (headers are accepted from multiple sources).
@@ -103,6 +108,31 @@ pub struct WebSocketHeadersConfig {
     /// 3. If `persist` is enabled, the updated Authorization header will be stored and used for subsequent operations.
     #[serde(default)]
     pub persist: bool,
+    /// Names of headers taken from the HTTP upgrade request that opened the WebSocket
+    /// connection and added to the headers of every operation on that connection.
+    ///
+    /// The upgrade request is a regular HTTP request, so its headers can be set by trusted
+    /// infrastructure, like the `X-Real-IP` header set by a reverse proxy. The listed headers are
+    /// taken only from the upgrade request: values with the same name sent by the client in the
+    /// connection init payload or in the operation extensions are discarded, regardless of the
+    /// `source` setting. A listed header that is missing from the upgrade request is therefore
+    /// missing from the operation too.
+    ///
+    /// The headers are visible to the per-operation stages (plugins, coprocessor stages, JWT
+    /// authentication, expressions) and respect the header propagation rules, just like the
+    /// headers of a regular HTTP request.
+    ///
+    /// For example:
+    ///
+    /// ```yaml
+    /// websocket:
+    ///   enabled: true
+    ///   headers:
+    ///     upgrade:
+    ///       - x-real-ip
+    /// ```
+    #[serde(default)]
+    pub upgrade: Vec<HttpHeaderName>,
 }
 
 impl WebSocketHeadersConfig {
