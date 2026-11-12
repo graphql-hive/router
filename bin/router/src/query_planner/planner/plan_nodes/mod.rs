@@ -23,6 +23,8 @@ use serde::{Deserialize, Serialize};
 mod state;
 pub use state::{Executable, PlanState, Planning};
 pub mod dependencies;
+use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
+use dependencies::PlanSchedule;
 mod prepare;
 
 pub mod planning {
@@ -62,6 +64,39 @@ pub struct QueryPlan<S: PlanState = Executable> {
     pub kind: &'static str, // "QueryPlan"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node: Option<PlanNode<S>>,
+    /// What each fetch of `node` waits for, worked out once with the plan. Private, so a plan is
+    /// only made with [`QueryPlan::new`] and its schedule always matches its nodes.
+    #[serde(skip)]
+    schedule: PlanSchedule,
+}
+
+impl<S: PlanState> QueryPlan<S> {
+    /// A plan with `node`, and the schedule its fetches run on. Fails when a fetch depends on one
+    /// that isn't before it in the plan.
+    pub fn new(node: Option<PlanNode<S>>) -> Result<Self, String> {
+        let schedule = PlanSchedule::new(node.as_ref())?;
+        Ok(Self::with_schedule(node, schedule))
+    }
+
+    /// A plan with nothing to fetch.
+    pub fn empty() -> Self {
+        Self::with_schedule(None, PlanSchedule::default())
+    }
+
+    /// A plan with a schedule that's already worked out for `node`.
+    pub(crate) fn with_schedule(node: Option<PlanNode<S>>, schedule: PlanSchedule) -> Self {
+        Self {
+            kind: QUERY_PLAN_KIND,
+            node,
+            schedule,
+        }
+    }
+
+    /// What each fetch of the plan waits for, the fetches counted like
+    /// [`dependencies::plan_fetches`] lists them.
+    pub fn schedule(&self) -> &PlanSchedule {
+        &self.schedule
+    }
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -134,7 +169,7 @@ impl<S: PlanState> PlanNode<S> {
 #[serde(bound = "")]
 pub struct FetchNode<S: PlanState = Executable> {
     #[serde(skip_serializing)]
-    pub id: i64,
+    pub id: u32,
     pub service_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub variable_usages: Option<BTreeSet<String>>,
@@ -158,11 +193,10 @@ pub struct FetchNode<S: PlanState = Executable> {
     /// nothing to ask for. Never empty, a fetch that can't ever run is left out of the plan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_if: Option<Vec<ConditionGroup>>,
-    /// Ids of the fetches whose data this fetch reads, from the planner's fetch graph. `None`
-    /// when the plan didn't come from the planner (a plugin built it, say), then only the plan's
-    /// order says what waits for what.
+    /// Ids of the fetches whose data this fetch reads, from the planner's fetch graph. Empty for
+    /// a fetch that reads nothing another fetch brings, a root fetch.
     #[serde(skip)]
-    pub depends_on: Option<Box<[i64]>>,
+    pub depends_on: Box<[u32]>,
 }
 
 /// What a fetch with `@fromContext` arguments needs at execution time.
@@ -220,7 +254,7 @@ impl FetchContext {
 #[serde(bound = "")]
 pub struct BatchFetchNode<S: PlanState = Executable> {
     #[serde(skip_serializing)]
-    pub id: i64,
+    pub id: u32,
     pub service_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub variable_usages: Option<BTreeSet<String>>,
@@ -232,11 +266,11 @@ pub struct BatchFetchNode<S: PlanState = Executable> {
     pub entity_batch: EntityBatch,
     /// What the merged fetches waited for, without the merged fetches themselves.
     #[serde(skip)]
-    pub depends_on: Option<Box<[i64]>>,
+    pub depends_on: Box<[u32]>,
     /// Ids of every fetch merged into this batch, `id` is only the first of them. A fetch that
     /// depends on any of them depends on the batch.
     #[serde(skip)]
-    pub completes: Box<[i64]>,
+    pub completes: Box<[u32]>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -688,10 +722,12 @@ fn create_output_operation(
 }
 
 impl FetchNode<Planning> {
+    /// `depends_on` is the fetches whose data it reads, see [`FetchNode::depends_on`].
     pub fn from_fetch_step(
         step: &FetchStepData<MultiTypeFetchStep>,
         supergraph: &SupergraphState,
         options: &QueryPlannerOptions,
+        depends_on: Vec<u32>,
     ) -> Self {
         match step.is_entity_call() {
             true => {
@@ -743,7 +779,7 @@ impl FetchNode<Planning> {
                     output_rewrites: step.output_rewrites.clone(),
                     context,
                     run_if: None,
-                    depends_on: None,
+                    depends_on: depends_on.clone().into_boxed_slice(),
                 }
             }
             false => {
@@ -786,7 +822,7 @@ impl FetchNode<Planning> {
                         step.context_rewrites.clone(),
                     ),
                     run_if: None,
-                    depends_on: None,
+                    depends_on: depends_on.clone().into_boxed_slice(),
                 }
             }
         }
@@ -799,10 +835,9 @@ impl PlanNode<Planning> {
         step: &FetchStepData<MultiTypeFetchStep>,
         supergraph: &SupergraphState,
         options: &QueryPlannerOptions,
-        depends_on: Vec<i64>,
+        depends_on: Vec<u32>,
     ) -> Option<Self> {
-        let mut fetch = FetchNode::from_fetch_step(step, supergraph, options);
-        fetch.depends_on = Some(depends_on.into_boxed_slice());
+        let mut fetch = FetchNode::from_fetch_step(step, supergraph, options, depends_on);
 
         // A fetch runs when the `@include`/`@skip` around it hold and any of its fields is asked
         // for. The step has the innermost condition, its path has the ones around it, and the
@@ -1099,9 +1134,9 @@ mod stored_size_tests {
     fn stored_sizes_stay_small() {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 32),
-            // `run_if` is an `Option<Vec<_>>`, `depends_on` an `Option<Box<[i64]>>`
+            // `run_if` is an `Option<Vec<_>>`, `depends_on` a `Box<[u32]>`
             ("FetchNode", size_of::<FetchNode>(), 288),
-            // and `completes` a `Box<[i64]>`
+            // and `completes` a `Box<[u32]>`
             ("BatchFetchNode", size_of::<BatchFetchNode>(), 208),
             (
                 "SubgraphFetchOperation",

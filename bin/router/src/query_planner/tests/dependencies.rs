@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use crate::query_planner::{
-    planner::plan_nodes::{dependencies::plan_fetches, planning::PlanNode},
+    planner::plan_nodes::{dependencies::plan_fetches, planning::PlanNode, QueryPlan},
     tests::testkit::{build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
@@ -26,13 +26,14 @@ fn waits(fixture: &str, query: &str) -> Result<Waits, Box<dyn Error>> {
     };
     Ok(fetches
         .iter()
-        .map(|fetch| {
+        .enumerate()
+        .map(|(index, node)| {
             (
-                name(fetch.node),
-                fetch
-                    .waits_for
+                name(node),
+                plan.schedule()
+                    .waits_for(index)
                     .iter()
-                    .map(|dep| name(fetches[*dep].node))
+                    .map(|dep| name(fetches[*dep]))
                     .collect(),
             )
         })
@@ -83,30 +84,56 @@ fn mutation_fields_depend_on_the_one_before() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// A fetch that doesn't say what it depends on, like one a plugin built, waits for everything the
-/// plan's order puts before it.
+/// A fetch that depends on one the plan's order doesn't put before it can't be scheduled, so
+/// the plan isn't made.
 #[test]
-fn a_fetch_without_dependencies_waits_for_the_plan_order() -> Result<(), Box<dyn Error>> {
-    fn forget(node: &mut PlanNode, service: &str) {
+fn a_plan_with_a_dependency_that_is_not_before_it_is_refused() -> Result<(), Box<dyn Error>> {
+    fn depend_on(node: &mut PlanNode, service: &str, id: u32) {
         match node {
-            PlanNode::Sequence(sequence) => {
-                sequence.nodes.iter_mut().for_each(|n| forget(n, service))
+            PlanNode::Sequence(sequence) => sequence
+                .nodes
+                .iter_mut()
+                .for_each(|node| depend_on(node, service, id)),
+            PlanNode::Parallel(parallel) => parallel
+                .nodes
+                .iter_mut()
+                .for_each(|node| depend_on(node, service, id)),
+            PlanNode::Flatten(flatten) => depend_on(&mut flatten.node, service, id),
+            PlanNode::Fetch(fetch) if fetch.service_name == service => {
+                fetch.depends_on = vec![id].into_boxed_slice()
             }
-            PlanNode::Parallel(parallel) => {
-                parallel.nodes.iter_mut().for_each(|n| forget(n, service))
-            }
-            PlanNode::Flatten(flatten) => forget(&mut flatten.node, service),
-            PlanNode::Fetch(fetch) if fetch.service_name == service => fetch.depends_on = None,
             _ => {}
         }
     }
     init_logger();
-    let mut plan = build_query_plan_with_defaults(
+    let plan = build_query_plan_with_defaults(
         "fixture/products-example.supergraph.graphql",
         parse_operation("{ topProducts { upc inStock reviews { author { name } } } }"),
     )?;
-    forget(plan.node.as_mut().ok_or("an empty plan")?, "accounts");
-    let fetches = plan_fetches(plan.node.as_ref().ok_or("an empty plan")?);
-    assert_eq!(fetches[3].waits_for, [0, 1, 2]);
+    let mut node = plan.node.ok_or("an empty plan")?;
+    // `inventory` and `reviews` run side by side, one can't wait for the other
+    let reviews_id = match &node {
+        PlanNode::Sequence(sequence) => match &sequence.nodes[1] {
+            PlanNode::Parallel(parallel) => parallel
+                .nodes
+                .iter()
+                .find_map(|node| match node {
+                    PlanNode::Flatten(flatten) => match flatten.node.as_ref() {
+                        PlanNode::Fetch(fetch) if fetch.service_name == "reviews" => Some(fetch.id),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .ok_or("a reviews fetch")?,
+            _ => return Err("a parallel wave".into()),
+        },
+        _ => return Err("a sequence".into()),
+    };
+    depend_on(&mut node, "inventory", reviews_id);
+    let error = QueryPlan::new(Some(node)).expect_err("a plan that can't be scheduled");
+    assert!(
+        error.contains(&format!("depends on {reviews_id}")),
+        "{error}"
+    );
     Ok(())
 }

@@ -99,7 +99,7 @@ impl OperationNameFactory {
         }
     }
 
-    pub fn generate(&self, subgraph_name: &str, fetch_step_id: i64) -> Option<String> {
+    pub fn generate(&self, subgraph_name: &str, fetch_step_id: u32) -> Option<String> {
         if !self.config.should_forward(subgraph_name) {
             return None;
         }

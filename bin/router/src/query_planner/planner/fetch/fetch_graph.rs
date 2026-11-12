@@ -202,8 +202,9 @@ impl<State> FetchGraph<State> {
         self.graph.node_references()
     }
 
-    pub fn create_fetch_id(&self) -> i64 {
-        (self.graph.node_count() + 1) as i64
+    pub fn create_fetch_id(&self) -> u32 {
+        // a plan with more fetches than that doesn't get past the request limits
+        u32::try_from(self.graph.node_count() + 1).expect("fewer than 2^32 fetches")
     }
 
     pub fn get_step_data_mut(

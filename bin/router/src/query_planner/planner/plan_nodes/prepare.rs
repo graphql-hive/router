@@ -4,10 +4,12 @@ impl QueryPlan<Planning> {
     /// Drops the parsed documents the planner used,
     /// and keeps the operation text that execution sends.
     pub fn into_executable(self, supergraph: &SupergraphState) -> QueryPlan {
-        QueryPlan {
-            kind: self.kind,
-            node: self.node.map(|node| node.into_executable(supergraph)),
-        }
+        // the nodes keep their shape, so the schedule stays right
+        let schedule = self.schedule().clone();
+        QueryPlan::with_schedule(
+            self.node.map(|node| node.into_executable(supergraph)),
+            schedule,
+        )
     }
 }
 

@@ -12,7 +12,6 @@ use crate::query_planner::planner::plan_nodes::{
     BatchFetchNode, ConditionGroup, CustomScalarPaths, FetchContext, FetchNode, FlattenNode,
     ResponsePathRef,
 };
-use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use crate::query_planner::{
     ast::operation::OperationDefinition,
     planner::plan_nodes::{
@@ -273,16 +272,18 @@ pub async fn execute_query_plan<'exec>(
 
         // we assemble a synthetic query plan for entity resolution from remaining nodes
         // because we might need entity resolution after receiving each subscription event
-        let query_plan: Arc<QueryPlan> = Arc::new(QueryPlan {
-            kind: QUERY_PLAN_KIND,
-            node: remaining_nodes.map(|nodes| {
+        // the same fetches minus the subscription one, which comes first, so the plan's schedule
+        // holds without it
+        let query_plan: Arc<QueryPlan> = Arc::new(QueryPlan::with_schedule(
+            remaining_nodes.map(|nodes| {
                 if nodes.len() == 1 {
                     nodes.into_iter().next().unwrap()
                 } else {
                     PlanNode::Sequence(SequenceNode { nodes })
                 }
             }),
-        });
+            opts.query_plan.schedule().without_first(),
+        ));
 
         // we perform a regular subgraph request to the subscription subgraph
         // the only difference is that we get back a stream of results
@@ -547,9 +548,7 @@ async fn execute_query_plan_with_data<'exec>(
         aliased_requests: &aliased_requests,
     };
 
-    if let Some(node) = &opts.query_plan.node {
-        executor.execute_plan(&mut exec_ctx, node).await;
-    }
+    executor.execute_plan(&mut exec_ctx, opts.query_plan).await;
 
     let error_count = exec_ctx.errors.len(); // Added for usage reporting
 
@@ -910,27 +909,35 @@ enum FetchState {
 
 impl<'exec> Executor<'exec> {
     /// Runs the fetches of the plan, each as soon as the fetches it waits for are done, not when
-    /// its whole wave can start (see [`plan_fetches`]). Results are merged as they come in, and a
-    /// merge can let more fetches start.
-    async fn execute_plan(&self, ctx: &mut ExecutionContext<'exec>, root: &'exec PlanNode) {
-        // ponytail: worked out on every request, cache it with the plan if it shows in a profile
+    /// its whole wave can start. What each one waits for is in the plan's schedule, worked out
+    /// with the plan. Results are merged as they come in, and a merge can let more fetches start.
+    async fn execute_plan(&self, ctx: &mut ExecutionContext<'exec>, plan: &'exec QueryPlan) {
+        let Some(root) = &plan.node else {
+            return;
+        };
         let fetches = plan_fetches(root);
+        let schedule = plan.schedule();
+        debug_assert_eq!(
+            fetches.len(),
+            schedule.len(),
+            "the schedule is for these nodes"
+        );
         let mut states = vec![FetchState::Waiting; fetches.len()];
         let mut running = FuturesUnordered::new();
         loop {
             // start every fetch whose inputs are in. A fetch only waits for earlier ones, so one
             // pass in order also starts the ones a fetch with nothing to send lets go
-            for (index, fetch) in fetches.iter().enumerate() {
+            for (index, node) in fetches.iter().copied().enumerate() {
                 if states[index] != FetchState::Waiting
-                    || !fetch
-                        .waits_for
+                    || !schedule
+                        .waits_for(index)
                         .iter()
                         .all(|dep| states[*dep] == FetchState::Done)
                 {
                     continue;
                 }
                 // `ctx.data` is only borrowed to prepare the jobs, they run without it
-                let jobs = self.prepare_job_future(fetch.node, &ctx.data);
+                let jobs = self.prepare_job_future(node, &ctx.data);
                 states[index] = match jobs.len() {
                     0 => FetchState::Done,
                     jobs => FetchState::Running(jobs),
@@ -2424,51 +2431,51 @@ mod tests {
             })
             .create();
 
-        executor
-            .execute_plan(
-                &mut exec_ctx,
-                &PlanNode::Parallel(ParallelNode {
-                    nodes: vec![
-                        PlanNode::Fetch(Box::new(FetchNode {
-                            id: 1,
-                            planner_requires: (),
-                            service_name: "subgraph_a".to_string(),
-                            context: None,
-                            run_if: None,
-                            depends_on: None,
-                            operation: PlanningFetchOperation::from_anonymous_operation(
-                                parse_document("{ from_a }"),
-                            )
-                            .operation,
-                            custom_scalar_paths: None,
-                            requires: None,
-                            input_rewrites: None,
-                            output_rewrites: None,
-                            variable_usages: None,
-                            operation_kind: None,
-                        })),
-                        PlanNode::Fetch(Box::new(FetchNode {
-                            id: 2,
-                            planner_requires: (),
-                            service_name: "subgraph_b".to_string(),
-                            context: None,
-                            run_if: None,
-                            depends_on: None,
-                            operation: PlanningFetchOperation::from_anonymous_operation(
-                                parse_document("{ from_b }"),
-                            )
-                            .operation,
-                            custom_scalar_paths: None,
-                            requires: None,
-                            input_rewrites: None,
-                            output_rewrites: None,
-                            variable_usages: None,
-                            operation_kind: None,
-                        })),
-                    ],
-                }),
-            )
-            .await;
+        // two root fetches, neither waits for the other
+        let plan = crate::query_planner::planner::plan_nodes::QueryPlan::new(Some(
+            PlanNode::Parallel(ParallelNode {
+                nodes: vec![
+                    PlanNode::Fetch(Box::new(FetchNode {
+                        id: 1,
+                        planner_requires: (),
+                        service_name: "subgraph_a".to_string(),
+                        context: None,
+                        run_if: None,
+                        depends_on: Box::default(),
+                        operation: PlanningFetchOperation::from_anonymous_operation(
+                            parse_document("{ from_a }"),
+                        )
+                        .operation,
+                        custom_scalar_paths: None,
+                        requires: None,
+                        input_rewrites: None,
+                        output_rewrites: None,
+                        variable_usages: None,
+                        operation_kind: None,
+                    })),
+                    PlanNode::Fetch(Box::new(FetchNode {
+                        id: 2,
+                        planner_requires: (),
+                        service_name: "subgraph_b".to_string(),
+                        context: None,
+                        run_if: None,
+                        depends_on: Box::default(),
+                        operation: PlanningFetchOperation::from_anonymous_operation(
+                            parse_document("{ from_b }"),
+                        )
+                        .operation,
+                        custom_scalar_paths: None,
+                        requires: None,
+                        input_rewrites: None,
+                        output_rewrites: None,
+                        variable_usages: None,
+                        operation_kind: None,
+                    })),
+                ],
+            }),
+        ))
+        .expect("a valid plan");
+        executor.execute_plan(&mut exec_ctx, &plan).await;
         mock_a.assert();
         mock_b.assert();
 

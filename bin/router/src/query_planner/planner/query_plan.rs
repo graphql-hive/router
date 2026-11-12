@@ -6,7 +6,6 @@ use petgraph::{graph::NodeIndex, visit::EdgeRef};
 use crate::query_planner::{
     planner::{
         fetch::state::MultiTypeFetchStep,
-        plan_nodes::dependencies::check_dependencies,
         plan_nodes::planning::PlanNode,
         query_plan::optimize::{optimize_root_node, optimize_top_level_sequence},
         QueryPlannerOptions,
@@ -114,7 +113,7 @@ pub fn build_query_plan_from_fetch_graph(
     let mut overall_plan_sequence: Vec<PlanNode> = Vec::new();
     // step → the fetch ids a child waits for when it depends on that step: its own fetch, or,
     // for a step without a fetch (it never runs), what it waits for itself
-    let mut provides: HashMap<NodeIndex, Vec<i64>> = HashMap::new();
+    let mut provides: HashMap<NodeIndex, Vec<u32>> = HashMap::new();
 
     while !queue.is_empty() {
         let mut current_wave_nodes: Vec<PlanNode> = Vec::new();
@@ -129,7 +128,7 @@ pub fn build_query_plan_from_fetch_graph(
 
             let step_data = fetch_graph.get_step_data(step_index)?;
             // the waves only keep the order, the fetch keeps what it really waits for
-            let mut depends_on: Vec<i64> = fetch_graph
+            let mut depends_on: Vec<u32> = fetch_graph
                 .parents_of(step_index)
                 .filter(|edge| edge.source() != root_index)
                 .flat_map(|edge| provides.get(&edge.source()).into_iter().flatten().copied())
@@ -189,10 +188,7 @@ pub fn build_query_plan_from_fetch_graph(
             return Err(QueryPlanError::EmptyPlan);
         }
         // none of the fetches would ever run, so there's nothing to send
-        return Ok(QueryPlan {
-            kind: QUERY_PLAN_KIND,
-            node: None,
-        });
+        return Ok(QueryPlan::empty());
     }
 
     // First do light top-level normalization (e.g. flatten nested Sequence wrappers).
@@ -208,10 +204,5 @@ pub fn build_query_plan_from_fetch_graph(
     // Then run full recursive optimization + batching rewrites.
     let root_node = optimize_root_node(root_node, supergraph, options)?;
 
-    let plan = QueryPlan {
-        kind: QUERY_PLAN_KIND,
-        node: Some(root_node),
-    };
-    debug_assert_eq!(check_dependencies(&plan), Ok(()), "{plan}");
-    Ok(plan)
+    QueryPlan::new(Some(root_node)).map_err(QueryPlanError::Internal)
 }

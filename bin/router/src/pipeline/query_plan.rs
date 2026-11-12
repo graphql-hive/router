@@ -15,7 +15,6 @@ use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
 use crate::query_planner::ast::hash::Blake3Hasher;
 use crate::query_planner::planner::plan_nodes::{Planning, QueryPlan};
-use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use crate::query_planner::state::supergraph_state::OperationKind;
 use crate::query_planner::utils::cancellation::CancellationToken;
 use crate::schema_state::{SchemaState, SelectedSupergraph};
@@ -34,18 +33,10 @@ pub struct PlannedQuery {
 }
 
 fn empty_planning_plan() -> QueryPlan<Planning> {
-    QueryPlan {
-        kind: QUERY_PLAN_KIND,
-        node: None,
-    }
+    QueryPlan::empty()
 }
 
-static EMPTY_QUERY_PLAN: LazyLock<Arc<QueryPlan>> = LazyLock::new(|| {
-    Arc::new(QueryPlan {
-        kind: QUERY_PLAN_KIND,
-        node: None,
-    })
-});
+static EMPTY_QUERY_PLAN: LazyLock<Arc<QueryPlan>> = LazyLock::new(|| Arc::new(QueryPlan::empty()));
 
 #[inline]
 pub async fn plan_operation_with_cache(

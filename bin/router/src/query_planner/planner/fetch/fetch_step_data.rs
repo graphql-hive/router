@@ -34,7 +34,7 @@ bitflags! {
 
 #[derive(Debug, Clone)]
 pub struct FetchStepData<State> {
-    pub id: i64,
+    pub id: u32,
     pub service_name: SubgraphName,
     pub response_path: MergePath,
     pub input: FetchStepSelections<State>,
@@ -55,7 +55,7 @@ pub struct FetchStepData<State> {
     pub output_rewrites: Option<Vec<FetchRewrite>>,
     pub context_rewrites: Option<Vec<KeyRenamer>>,
     pub context_variable_definitions: Vec<VariableDefinition>,
-    pub context_producers: BTreeSet<i64>,
+    pub context_producers: BTreeSet<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
