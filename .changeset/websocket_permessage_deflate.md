@@ -28,3 +28,5 @@ traffic_shaping:
       websocket:
         permessage_deflate: false
 ```
+
+Closes #1864
