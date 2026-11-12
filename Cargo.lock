@@ -2569,7 +2569,7 @@ dependencies = [
 
 [[package]]
 name = "graphql-tools"
-version = "0.5.12"
+version = "0.5.13"
 dependencies = [
  "combine",
  "criterion",
@@ -2790,7 +2790,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router"
-version = "0.3.12"
+version = "0.3.13"
 dependencies = [
  "ahash",
  "anyhow",
