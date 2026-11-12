@@ -1162,6 +1162,7 @@ impl<'a> Parser<'a, '_> {
             }
             float = true;
         }
+        let digits = start..self.pos;
         if let Some(b'e' | b'E') = self.peek() {
             self.pos += 1;
             if let Some(b'+' | b'-') = self.peek() {
@@ -1190,13 +1191,24 @@ impl<'a> Parser<'a, '_> {
             }
         }
         // core and sonic both round correctly, so the bits are the same. Two differences: sonic
-        // reads -0 as 0, and it rejects a number that does not fit in an f64.
+        // reads a number with only zero digits (-0, -0.0, -0e5) as 0, and it rejects a number
+        // that does not fit in an f64. A negative number too small for an f64, like -1e-324,
+        // still comes out as -0 in both.
         // SAFETY: we read only ASCII digits, signs, a dot and an exponent
         let text = unsafe { std::str::from_utf8_unchecked(&self.input[start..self.pos]) };
         let float: f64 = text.parse().ok()?;
+        let only_zeros = || {
+            self.input[digits]
+                .iter()
+                .all(|b| matches!(b, b'-' | b'0' | b'.'))
+        };
         float
             .is_finite()
-            .then_some(Value::F64(if float == 0.0 { 0.0 } else { float }))
+            .then_some(Value::F64(if float == 0.0 && only_zeros() {
+                0.0
+            } else {
+                float
+            }))
     }
 }
 
@@ -1567,5 +1579,14 @@ mod tests {
             fragments: Vec::new(),
         };
         assert!(ResponseShape::new(&document, |_| None, None).is_none());
+    }
+
+    #[test]
+    fn negative_underflow_matches_sonic() {
+        same_as_sonic(br#"{"data":{"a":-1e-324}}"#, None);
+        same_as_sonic(
+            br#"{"data":{"a":[-0,-0.0,-0e5,-0.000e9,-0.00,-0.0001e-400,1e-400,-1.5e-330,0e-5]}}"#,
+            None,
+        );
     }
 }
