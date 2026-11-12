@@ -36,7 +36,20 @@ fn bench_parser(c: &mut Criterion) {
                 parse_query::<&str>(black_box(content.as_str())).expect("failed to parse query")
             });
         });
+        group.bench_function(format!("{}/flat", name), |b| {
+            b.iter(|| {
+                graphql_tools::flat::parse(black_box(content.as_str()))
+                    .expect("failed to parse query")
+            });
+        });
     }
+    let bench = std::fs::read_to_string("../../bench/operation.graphql").unwrap();
+    group.bench_function("bench_operation/String", |b| {
+        b.iter(|| parse_query::<String>(black_box(bench.as_str())).expect("failed to parse query"))
+    });
+    group.bench_function("bench_operation/flat", |b| {
+        b.iter(|| graphql_tools::flat::parse(black_box(bench.as_str())).expect("failed to parse"))
+    });
 
     group.finish();
 }
@@ -55,6 +68,11 @@ fn bench_minifiers(c: &mut Criterion) {
 
     group.bench_function("minify_document", |b| {
         b.iter(|| minify_query_document(black_box(&parsed)))
+    });
+
+    let flat = graphql_tools::flat::parse(&source).expect("failed to parse query");
+    group.bench_function("minify_flat", |b| {
+        b.iter(|| graphql_tools::flat::minify(black_box(&flat)))
     });
 
     group.finish();

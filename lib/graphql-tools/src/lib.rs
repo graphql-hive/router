@@ -6,6 +6,7 @@
 //!
 
 pub mod ast;
+pub mod flat;
 
 pub mod static_graphql {
     macro_rules! static_graphql {
