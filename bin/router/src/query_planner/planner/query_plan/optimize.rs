@@ -374,7 +374,7 @@ struct EntityFetch {
     depends_on: FetchIdList,
     shape_key: ShapeKey,
     non_representations_variable_definitions: Vec<VariableDefinition>,
-    entity_reuse: Option<Box<EntityReuse>>,
+    entity_reuse: Option<std::sync::Arc<EntityReuse>>,
 }
 
 impl EntityFetch {
@@ -2044,7 +2044,7 @@ mod tests {
             );
             if let PlanNode::Flatten(flatten) = &mut node {
                 if let PlanNode::Fetch(fetch) = flatten.node.as_mut() {
-                    fetch.entity_reuse = Some(Box::new(EntityReuse {
+                    fetch.entity_reuse = Some(std::sync::Arc::new(EntityReuse {
                         sources: vec![FlattenNodePath::from(vec![
                             PathSegment::Field("topProducts".into()),
                             PathSegment::List,
