@@ -58,6 +58,7 @@ fn authorization_benchmark(c: &mut Criterion) {
         let hashes = hash_normalized_operation(
             &partitioned_operation.downstream_operation,
             partitioned_operation.introspection_operation.as_ref(),
+            &[],
         );
 
         GraphQLNormalizationPayload {
@@ -76,6 +77,7 @@ fn authorization_benchmark(c: &mut Criterion) {
             operation_for_plan_hash: hashes.operation_for_plan_hash,
             operation_for_introspection_hash: hashes.operation_for_introspection_hash,
             normalized_operation_hash: hashes.combined_operation_hash,
+            extracted_variables: Default::default(),
         }
     }
 

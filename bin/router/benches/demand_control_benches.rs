@@ -73,6 +73,7 @@ fn demand_control_benchmarks(c: &mut Criterion) {
                 black_box(&nested_compiled_plan),
                 black_box(&nested_response),
                 black_box(&nested_variable_values),
+                black_box(&nested_supergraph_state),
             ))
         });
     });
@@ -117,6 +118,7 @@ fn demand_control_benchmarks(c: &mut Criterion) {
                 black_box(&entities_compiled_plan),
                 black_box(&entities_response),
                 black_box(&None::<std::collections::HashMap<String, sonic_rs::Value>>),
+                black_box(&entities_supergraph_state),
             ))
         });
     });
@@ -177,6 +179,7 @@ fn demand_control_benchmarks(c: &mut Criterion) {
                 black_box(&batch_compiled_plan),
                 black_box(&batch_response),
                 black_box(&None::<std::collections::HashMap<String, sonic_rs::Value>>),
+                black_box(&batch_supergraph_state),
             ))
         });
     });

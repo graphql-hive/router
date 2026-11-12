@@ -610,4 +610,61 @@ mod variables_coercion_e2e_tests {
             );
         }
     }
+
+    /// Validation rejects an invalid inline value before it's turned into a variable.
+    #[ntex::test]
+    async fn invalid_inline_value_is_rejected_by_validation() {
+        let (subgraphs, router) = start("").await;
+
+        let response = router
+            .send_graphql_request(
+                "{ fieldWithNullableStringInput(input: { a: 1 }) }",
+                None,
+                None,
+            )
+            .await;
+
+        insta::assert_snapshot!(response.json_body_string_pretty_stable().await, @r#"
+        {
+          "errors": [
+            {
+              "extensions": {
+                "code": "ValuesOfCorrectType"
+              },
+              "message": "Expected value of type \"String\", found {a: 1}."
+            }
+          ]
+        }
+        "#);
+        assert_no_subgraph_request(&subgraphs);
+    }
+
+    /// With `arguments_to_variables` off, the same invalid inline value is rejected the same way,
+    /// so the flag doesn't change which operations are valid.
+    #[ntex::test]
+    async fn invalid_inline_value_without_arguments_to_variables() {
+        let (subgraphs, router) = start("query_planner:\n  arguments_to_variables: false\n").await;
+
+        let response = router
+            .send_graphql_request(
+                "{ fieldWithNullableStringInput(input: { a: 1 }) }",
+                None,
+                None,
+            )
+            .await;
+
+        insta::assert_snapshot!(response.json_body_string_pretty_stable().await, @r#"
+        {
+          "errors": [
+            {
+              "extensions": {
+                "code": "ValuesOfCorrectType"
+              },
+              "message": "Expected value of type \"String\", found {a: 1}."
+            }
+          ]
+        }
+        "#);
+        insta::assert_snapshot!(serde_json::to_string(&subgraph_requests(&subgraphs)).unwrap(), @"[]");
+    }
 }

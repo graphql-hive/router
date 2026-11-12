@@ -152,8 +152,11 @@ impl SupergraphTestData {
         let operation_for_introspection =
             partitioned_operation.introspection_operation.map(Arc::new);
 
-        let hashes =
-            hash_normalized_operation(&operation_for_plan, operation_for_introspection.as_deref());
+        let hashes = hash_normalized_operation(
+            &operation_for_plan,
+            operation_for_introspection.as_deref(),
+            &[],
+        );
 
         GraphQLNormalizationPayload {
             root_type_name,
@@ -169,6 +172,7 @@ impl SupergraphTestData {
                 operation_type: OperationKind::Query,
                 client_document_hash: "".to_string(),
             },
+            extracted_variables: Default::default(),
         }
     }
 }

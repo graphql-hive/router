@@ -28,9 +28,12 @@ pub mod query_plan;
 pub mod tree;
 pub mod walker;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct QueryPlannerOptions {
     pub experimental_abstract_type_folding: bool,
+    /// Whether to turn hard-coded argument values into variables.
+    /// It's done during normalization, not by the planner.
+    pub arguments_to_variables: bool,
     /// The most aliased `_entities` fields one entity request to a subgraph may carry.
     /// `None` means no limit: batches are never split, and all groups of contextual argument
     /// values go in one request.
@@ -39,6 +42,17 @@ pub struct QueryPlannerOptions {
     pub max_aliases_per_request: Option<usize>,
     /// Per-subgraph overrides of `max_aliases_per_request`, keyed by subgraph name.
     pub subgraph_max_aliases_per_request: HashMap<String, usize>,
+}
+
+impl Default for QueryPlannerOptions {
+    fn default() -> Self {
+        Self {
+            experimental_abstract_type_folding: false,
+            arguments_to_variables: true,
+            max_aliases_per_request: None,
+            subgraph_max_aliases_per_request: HashMap::new(),
+        }
+    }
 }
 
 impl QueryPlannerOptions {

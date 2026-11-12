@@ -58,4 +58,44 @@ mod query_plan_cache_e2e_tests {
             "the second operation must not execute the plan cached for the first"
         );
     }
+
+    /// `user(id: "1")` and `user(id: "2")` share one plan, so each
+    /// request has to bring its own value along to the subgraph.
+    #[ntex::test]
+    async fn extracted_literals_keep_their_own_values() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                  source: file
+                  path: supergraph.graphql
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        for id in ["1", "2"] {
+            let query = format!(r#"{{ user(id: "{id}") {{ id }} }}"#);
+            let response = router
+                .send_graphql_request(&query, None, None)
+                .await
+                .json_body()
+                .await;
+            assert_eq!(response, json!({ "data": { "user": { "id": id } } }));
+        }
+
+        let bodies: Vec<String> = subgraphs
+            .get_requests_log("accounts")
+            .expect("expected requests sent to accounts subgraph")
+            .iter()
+            .map(|request| String::from_utf8_lossy(request.body.as_ref().unwrap()).to_string())
+            .collect();
+        insta::assert_snapshot!(bodies.join("\n"), @r#"
+        {"query":"query($_v0:ID!){user(id: $_v0){id}}","variables":{"_v0":"1"}}
+        {"query":"query($_v0:ID!){user(id: $_v0){id}}","variables":{"_v0":"2"}}
+        "#);
+    }
 }
