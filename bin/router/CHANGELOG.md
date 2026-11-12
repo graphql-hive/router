@@ -116,6 +116,213 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.3.13 (2026-11-12)
+
+### Features
+
+#### Upgrade to ntex 4
+
+The router runs on ntex 4.8.0 instead of ntex 3. Users of the prebuilt binary or the Docker image do not need to change anything: the configuration, the HTTP and websocket APIs and VRL expressions are unchanged.
+
+Custom plugins and custom router binaries built on the `hive-router` crate need the migration steps below. Code that uses ntex APIs directly through `hive_router::ntex`, such as building responses, writing ntex services or using ntex test helpers, follows the upstream [ntex 3 to 4 migration guide](https://github.com/ntex-rs/ntex/blob/main/ntex/migration_3to4.md).
+
+### BREAKING: Request URLs use `ntex::url::Url`
+
+ntex 4 represents request URLs with `ntex::url::Url` instead of `http::Uri`, and `ntex::http::Uri` no longer exists. The following APIs expose the new type:
+
+- `RouterHttpRequest::uri` and `RouterHttpRequest::match_info` (`Path<ntex::url::Url>`)
+- `ClientRequestDetails::url`, `MutableClientRequestDetails::url` and `ClientRequestDetailsView::url()`
+- the coprocessor `MutableRequestState::uri`
+- the `url` argument of `execute_planned_request`
+- `HttpServerSpanRequest::uri()`
+- `OnHttpRequestHookPayload::router_http_request.uri()`
+
+`Url::path()` and `Url::query()` return wrapper types that do not deref to `str`, so string methods need `.as_str()`. Comparing them with a string literal and formatting them with `Display` work without changes.
+
+```diff
+-use hive_router::http::Uri;
++use hive_router::ntex::url::Url;
+
+-if payload.router_http_request.uri.path().starts_with("/admin") {
++if payload.router_http_request.uri.path().as_str().starts_with("/admin") {
+
+-let query: Option<&str> = payload.router_http_request.uri.query();
++let query: Option<&str> = payload.router_http_request.uri.query().map(|q| q.as_str());
+```
+
+`RouterHttpRequest::path` and `RouterHttpRequest::query_string` are still plain `&str` and avoid the new type entirely.
+
+```diff
+-let path = payload.router_http_request.uri.path();
+-let query = payload.router_http_request.uri.query().unwrap_or("");
++let path = payload.router_http_request.path;
++let query = payload.router_http_request.query_string;
+```
+
+`host()`, `port_u16()` and `scheme_str()` keep their signatures. `port()` returns a different `Port` type, so use `port_u16()` when only the number is needed.
+
+```diff
+-let port = details.url().port().map(|p| p.as_u16());
++let port = details.url().port_u16();
+```
+
+APIs that still take an `http::Uri`, such as `reqwest` or `hyper`, need an explicit conversion. It can fail and it drops the fragment.
+
+```diff
+-let uri: http::Uri = details.url().clone();
++let uri = http::Uri::try_from(details.url()).unwrap_or_default();
+```
+
+Tests that build a `RouterHttpRequest` by hand create the URL with the new type.
+
+```diff
+-let uri: http::Uri = "http://example.com/graphql".parse().unwrap();
+-let path: Path<http::Uri> = Path::new(uri.clone());
++let uri: ntex::url::Url = "http://example.com/graphql".parse().unwrap();
++let path: Path<ntex::url::Url> = Path::new(uri.clone());
+```
+
+### BREAKING: `on_http_request` payload type
+
+`OnHttpRequestHookPayload::router_http_request` is a `WebRequest<()>` instead of a `WebRequest<DefaultError>`. Plugins that name the type in their own functions have to update it.
+
+```diff
+-use hive_router::ntex::web::{DefaultError, WebRequest};
++use hive_router::ntex::web::WebRequest;
+
+-fn fingerprint(req: &WebRequest<DefaultError>) -> u64 {
++fn fingerprint(req: &WebRequest<()>) -> u64 {
+```
+
+### BREAKING: ntex timers are not `Send`
+
+ntex timers such as `ntex::time::sleep` belong to the thread that created them, so their futures are not `Send`. A `BackgroundTask::run` future must be `Send`, so background tasks of plugins wait with tokio timers instead.
+
+```diff
+-use hive_router::ntex;
++use hive_router::tokio;
+
+ async fn run(&self, token: CancellationToken) {
+     loop {
+-        ntex::time::sleep(self.interval).await;
++        tokio::time::sleep(self.interval).await;
+```
+
+### `on_end` callbacks on websocket connections run when the socket closes
+
+The websocket handler serves the whole connection inside the request, so a websocket upgrade request finishes only when the socket closes. For such a request, the `on_end` callback returned from `on_http_request` runs after the connection closes, and changes it makes to the response are never sent, because the handshake was already answered.
+
+Plugins that measure request durations, keep in-flight counters or set response headers on the websocket path see different results. Logic that has to run at the handshake belongs in `on_http_request` itself.
+
+### Timers never fire early
+
+ntex 4 timers fire at or after their deadline, up to one 16ms tick late, while ntex 3 timers could fire early. Periodic work such as supergraph polling runs at the configured interval or slightly later, never sooner.
+
+#### WebSocket `permessage-deflate`
+
+The router supports the `permessage-deflate` extension (RFC 7692) on WebSocket connections from clients and to subgraphs. When both sides agree on the extension, messages are compressed in both directions. A side that does not support it declines the extension and the connection continues uncompressed.
+
+It is disabled by default. Compression trades CPU and memory for bandwidth, each compressed connection uses about 420KiB for its compressor and decompressor.
+
+The router accepts the extension from clients with `websocket.permessage_deflate`:
+
+```yaml
+websocket:
+  enabled: true
+  permessage_deflate: true
+```
+
+The router offers the extension to WebSocket-enabled subgraphs with `traffic_shaping.all.websocket.permessage_deflate`, and it can be overridden per subgraph:
+
+```yaml
+traffic_shaping:
+  all:
+    websocket:
+      permessage_deflate: true
+  subgraphs:
+    payments:
+      websocket:
+        permessage_deflate: false
+```
+
+Closes #1864
+
+#### WebSocket operations can use headers from the upgrade request
+
+Headers of a WebSocket operation come from the client, either from the `connection_init` payload or from the operation extensions. Headers set by trusted infrastructure on the HTTP upgrade request, like the `X-Real-IP` header set by a reverse proxy, never reached the per-operation stages.
+
+The new `websocket.headers.upgrade` option lists the headers taken from the upgrade request and added to every operation on the connection:
+
+```yaml
+websocket:
+  enabled: true
+  headers:
+    upgrade:
+      - x-real-ip
+```
+
+The listed headers are taken only from the upgrade request. Values with the same name sent by the client in the `connection_init` payload or in the operation extensions are discarded, so the client cannot spoof them. The headers are visible to plugins, coprocessor stages, JWT authentication and expressions, and respect the header propagation rules.
+
+Additionally, the `coprocessor.stages.router.request` documentation now states that for WebSocket connections the hook runs once on the upgrade request, and that the context entries it sets are visible to the per-operation stages of every operation on the connection.
+
+Closes #1679
+
+### Fixes
+
+#### Conditional `@requires` inputs stay with their condition
+
+A `@requires` field under `@skip`/`@include` next to an unconditional field of the same entity, like `permissions @skip(if: $skip)` next to `basicPermissions`, no longer turns the unconditional field into `null` when the condition is off. Entity calls only merge when each side's input is there whenever the merged call runs.
+
+#### Fields missing from the response under `@include`/`@skip`
+
+- An abstract field selected again under `@include`/`@skip` keeps its fields with the condition off. The subgraph is now asked for the `__typename` the response needs to tell the types apart, not only under the condition.
+- A field under a fragment on every type its parent can be, like `... on Query @include(if: $a) { feed { id } }` next to `feed { id }`, no longer goes missing from the response.
+
+#### Interface entity calls only send the types they ask for
+
+An entity call through an interface key, like `Animal @key(fields: "id")`, sent every implementation, even when everything it asked for was under `... on Dog` and `... on Cat`. Birds went to the subgraph with nothing to resolve.
+
+- Such calls now only send the types the selection asks for, each with its own `__typename` (`"Dog"`, not `"Animal"`). Data from an `@interfaceObject` is sent as before.
+- An entity is no longer sent as `__typename` alone, which no subgraph can resolve, unless one of its keys is `__typename` alone.
+
+#### Keep `@include`/`@skip` conditions on entity calls
+
+The query planner could lose a condition on its way down to an entity call, so the call ran with the condition off and the subgraph resolved entities nobody asked for. This happened with a fragment condition when a child has a condition of its own, and with batched calls under a type condition, for the types the path doesn't name.
+
+A same-type fragment's condition now also moves to its inner fragments, so those entities are looked up once instead of twice.
+
+A conditional same-type fragment under an interface that's an `@interfaceObject` elsewhere no longer fails planning with `NoPathsFound`.
+
+#### Persisted documents file watching follows symlinks
+
+The persisted documents file watcher reloads the manifest when its path goes through a symlinked directory, such as the temp directory on macOS. File system events on macOS report resolved paths, so the watcher matches events against both the configured and the canonicalized manifest path.
+
+#### Entity calls keep the conditions they were planned under
+
+An entity call under nested `@include`/`@skip`, like `orders @include(if: $a) { ... on Order @include(if: $b) { name } }`, only kept the innermost condition and relied on the call above it for the rest. When another branch fetched the same objects, or the call merged with an unconditional sibling, it ran with the outer condition off. Every call now keeps all the conditions it was planned under.
+
+#### Send the key of the right subgraph to a `@requires` field
+
+The entity call for a `@requires` field sent the key of whichever subgraph came first, not one of the subgraph that has the field. With `Item @key(fields: "group { id }")` in one subgraph and `Item @key(fields: "group { tag }")` in the one with the field, the call sent `group { id }`, so the subgraph couldn't find the item. It now sends that subgraph's own key.
+
+#### Keep `null` list items in `@requires` representations
+
+A list a `@requires` reads, like `similar: [Book]` in `@requires(fields: "similar { id }")`, lost its `null` items on the way to the subgraph. `[null, {id: "2"}, null, {id: "3"}]` arrived as `[{id: "2"}, {id: "3"}]`, so a resolver that counts the items or reads their positions got the wrong answer. Every item now keeps its place, and one with nothing to send is sent as `null`.
+
+#### Faster reading of subgraph responses
+
+The router now reads each subgraph response with the shape of the query it sent. It knows which fields to expect and in what order, so it skips most of the work a general JSON parser does. Responses it isn't sure about are read the old way, so the results and errors stay the same. In our benchmark the router uses about 7% less CPU per request.
+
+#### Query planner, projection and demand control fixes
+
+- Entities inside lists of lists (`[[Product]]`, `[[[Product]]]`) are resolved. They used to come back as `null` without an error.
+- An object inside a representation that misses a selected field is sent as `null` instead of without that field.
+- A conditional fragment on a union field's own union type, like `... on Component @skip(if: $v)`, no longer fails with `NoPathsFound`.
+- The same `@fromContext` field selected twice in one entity call shares one context variable, instead of sending one response key with two different arguments, which the subgraph rejects.
+- Demand control applies `@include`/`@skip` on inline fragments when estimating cost.
+- Demand control counts the fields of a conditional fragment on an interface or union, like `... on Product @include(if: $v)`, in the actual cost. They were left out.
+- Demand control counts every object of a list of lists, like `[[Product]]`, and its fields in the actual cost, instead of one per inner list.
+
 ## 0.3.12 (2026-11-03)
 
 ### Fixes

@@ -1,3 +1,15 @@
+## 0.5.13 (2026-11-12)
+
+### Fixes
+
+#### Lists of different lengths are different values
+
+`OverlappingFieldsCanBeMerged` treated a list argument and any prefix of it (`[]` included) as the same value, so `f(input: ["a"])` and `f(input: [])` could share a response key.
+
+#### Object literals are checked outside input object positions
+
+`ValuesOfCorrectType` only checked an object literal where an input object was expected, so `{ field(arg: { a: 1 }) }` passed validation even when `arg` is a `String`. An object literal anywhere else is now checked like any other value. Custom scalars still accept them.
+
 ## 0.5.12 (2026-11-02)
 
 ### Features

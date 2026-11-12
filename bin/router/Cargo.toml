@@ -1,6 +1,6 @@
 [package]
 name = "hive-router"
-version = "0.3.12"
+version = "0.3.13"
 edition = "2021"
 description = "GraphQL router for Federation, part of the Hive platform"
 license = "MIT"
@@ -65,7 +65,7 @@ harness = false
 
 [dependencies]
 hive-console-sdk = { path = "../../lib/hive-console-sdk", version = "0.3.24" }
-graphql-tools =  { path = "../../lib/graphql-tools", version = "0.5.12" }
+graphql-tools =  { path = "../../lib/graphql-tools", version = "0.5.13" }
 
 tokio = { workspace = true }
 futures = { workspace = true }
