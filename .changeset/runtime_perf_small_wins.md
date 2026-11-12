@@ -1,5 +1,5 @@
 ---
-"hive-router": patch
+hive-router: patch
 ---
 
 - Reduce synchronization overhead when cloning supergraph snapshots and generating request IDs.
