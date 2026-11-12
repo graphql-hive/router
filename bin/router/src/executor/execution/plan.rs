@@ -1,6 +1,6 @@
 use super::context::{
-    collect_context_entities, unalias_response, AliasedRequests, ContextGroup, EntityRef,
-    TargetEntities,
+    collect_context_entities, unalias_response, AliasedRequests, Collected, ContextGroup,
+    EntityRef, TargetEntities,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -40,7 +40,7 @@ use tracing::{debug, error, warn, Instrument};
 
 use crate::executor::execution::client_request_details::OperationDetails;
 use crate::executor::execution::demand_control::DemandControlExecutionContext;
-use crate::executor::execution::entity_reuse::{self, Copies, ReuseIndex};
+use crate::executor::execution::entity_reuse::{self, Copies};
 use crate::executor::execution::error_masking::ErrorMaskingRuntime;
 use crate::executor::execution::operation_name::OperationNameFactory;
 use crate::executor::executors::common::ConnectionFingerprint;
@@ -1272,33 +1272,26 @@ impl<'exec> Executor<'exec> {
                     return vec![self.prepare_root_reentry_fetch_job(flatten_node, fetch_node)];
                 };
 
-                let possible_types = &self.schema_metadata.possible_types;
-                let mut reuse = fetch_node
-                    .entity_reuse
-                    .as_deref()
-                    .filter(|_| copy_into.is_some())
-                    .map(|reuse| {
-                        ReuseIndex::build(
-                            reuse,
-                            data,
-                            requires_nodes.root_selections(),
-                            possible_types,
-                        )
-                    });
-                let (groups, mut path_entities) = collect_context_entities(
+                let Collected {
+                    groups,
+                    mut targets,
+                    copies,
+                } = collect_context_entities(
                     data,
                     [flatten_node.path.as_ref()],
                     requires_nodes,
                     fetch_node.input_rewrites.as_deref(),
                     &fetch_node.context,
-                    possible_types,
+                    &self.schema_metadata.possible_types,
                     self.schema_metadata
                         .entity_keys
                         .of_subgraph(&fetch_node.service_name),
-                    reuse.as_mut(),
+                    fetch_node
+                        .entity_reuse
+                        .as_deref()
+                        .filter(|_| copy_into.is_some()),
                 );
-                let target_entities = path_entities.pop().unwrap_or_default();
-                let copies = reuse.map(ReuseIndex::into_copies).unwrap_or_default();
+                let target_entities = targets.pop().unwrap_or_default();
                 if let Some(copy_into) = copy_into.filter(|_| !copies.is_empty()) {
                     copy_into.push(Copies {
                         paths: vec![(flatten_node.path.as_ref(), Arc::clone(&target_entities))],
@@ -1777,7 +1770,6 @@ impl<'exec> Executor<'exec> {
         subgraph_keys: Option<&KeysByType>,
         mut copy_into: Option<&mut Vec<Copies<'exec, 'exec>>>,
     ) -> Vec<BatchWave<'exec>> {
-        let possible_types = &self.schema_metadata.possible_types;
         let mut prepared: Vec<_> = entity_batch
             .aliases
             .iter()
@@ -1786,40 +1778,34 @@ impl<'exec> Executor<'exec> {
                 if !self.runs(alias_spec.run_if.as_deref()) {
                     return (Vec::new(), Vec::new());
                 }
-                let mut reuse = alias_spec
-                    .entity_reuse
-                    .as_deref()
-                    .filter(|_| copy_into.is_some())
-                    .map(|reuse| {
-                        ReuseIndex::build(
-                            reuse,
-                            data,
-                            alias_spec.requires.root_selections(),
-                            possible_types,
-                        )
-                    });
-                let (groups, path_entities) = collect_context_entities(
+                let Collected {
+                    groups,
+                    targets,
+                    copies,
+                } = collect_context_entities(
                     data,
                     alias_spec.merge_paths.iter(),
                     &alias_spec.requires,
                     alias_spec.input_rewrites.as_deref(),
                     &alias_spec.context,
-                    possible_types,
+                    &self.schema_metadata.possible_types,
                     subgraph_keys,
-                    reuse.as_mut(),
+                    alias_spec
+                        .entity_reuse
+                        .as_deref()
+                        .filter(|_| copy_into.is_some()),
                 );
-                let copies = reuse.map(ReuseIndex::into_copies).unwrap_or_default();
                 if let Some(copy_into) = copy_into.as_deref_mut().filter(|_| !copies.is_empty()) {
                     copy_into.push(Copies {
                         paths: alias_spec
                             .merge_paths
                             .iter()
-                            .zip(path_entities.iter().cloned())
+                            .zip(targets.iter().cloned())
                             .collect(),
                         copies,
                     });
                 }
-                (groups, path_entities)
+                (groups, targets)
             })
             .collect();
 

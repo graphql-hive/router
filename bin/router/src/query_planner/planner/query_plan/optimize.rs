@@ -189,6 +189,16 @@ impl<'a> BatchFetchBuilder<'a> {
                 .insert(alias.clone(), alias_paths);
         }
 
+        // Aliases that send the same list share one variable, and only the first one's list
+        // goes out. Copying could leave different entities out of each, so none of them copy.
+        let mut entity_reuse = representative.entity_reuse.clone();
+        for earlier in self.batched_aliases.iter_mut().filter(|earlier| {
+            earlier.representations_variable_name == representations_variable_name
+        }) {
+            earlier.entity_reuse = None;
+            entity_reuse = None;
+        }
+
         self.batched_aliases.push(EntityBatchAlias {
             alias,
             representations_variable_name,
@@ -198,7 +208,7 @@ impl<'a> BatchFetchBuilder<'a> {
             output_rewrites: representative.output_rewrites.clone(),
             context: representative.context.clone(),
             run_if: representative.run_if.clone(),
-            entity_reuse: representative.entity_reuse.clone(),
+            entity_reuse,
         });
 
         Ok(())
@@ -274,27 +284,6 @@ impl<'a> BatchFetchBuilder<'a> {
     ) -> Result<BatchFetchNode, QueryPlanError> {
         self.operation_variable_definitions
             .extend(self.merged_non_representation_variables.iter().cloned());
-
-        // Aliases that send the same list share one variable, and only the first one's list
-        // goes out. Copying could leave different entities out of each, so they don't copy.
-        let shares_variable: Vec<bool> = self
-            .batched_aliases
-            .iter()
-            .map(|alias| {
-                self.batched_aliases
-                    .iter()
-                    .filter(|other| {
-                        other.representations_variable_name == alias.representations_variable_name
-                    })
-                    .count()
-                    > 1
-            })
-            .collect();
-        for (alias, shares_variable) in self.batched_aliases.iter_mut().zip(shares_variable) {
-            if shares_variable {
-                alias.entity_reuse = None;
-            }
-        }
 
         let operation_definition = OperationDefinition {
             name: None,

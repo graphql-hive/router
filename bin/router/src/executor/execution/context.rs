@@ -9,7 +9,7 @@ use xxhash_rust::xxh3::Xxh3;
 
 use crate::{
     executor::{
-        execution::{entity_reuse::ReuseIndex, rewrites::FetchRewriteExt},
+        execution::{entity_reuse, rewrites::FetchRewriteExt},
         introspection::schema::PossibleTypes,
         projection::request::project_requires,
         response::{
@@ -23,7 +23,9 @@ use crate::{
             operation::{ContextAliasTemplate, SubgraphFetchOperation},
             requires::RequiresSelectionSet,
         },
-        planner::plan_nodes::{FetchContext, FetchNodePathSegment, FetchRewrite, ResponsePathRef},
+        planner::plan_nodes::{
+            EntityReuse, FetchContext, FetchNodePathSegment, FetchRewrite, ResponsePathRef,
+        },
         state::entity_keys::KeysByType,
     },
 };
@@ -47,6 +49,7 @@ pub(super) struct ContextGroup<'a> {
 }
 
 /// What one fetch knows about an entity, by the hash of its representation.
+#[derive(Clone, Copy)]
 pub(super) enum Known<'d, 'v> {
     InResponse(&'d Value<'v>),
     Target(EntityRef),
@@ -237,11 +240,19 @@ impl<'a, 'd, 'v> ContextGroups<'a, 'd, 'v> {
     }
 }
 
+/// What [`collect_context_entities`] found: the representations to send per context group, the
+/// entity of each target per path, and the copies of entities already in the response.
+pub(super) struct Collected<'a, 'v> {
+    pub groups: Vec<ContextGroup<'a>>,
+    pub targets: Vec<TargetEntities>,
+    pub copies: Vec<Value<'v>>,
+}
+
 /// Walks every flatten path, deduplicates the entities by hash and projects their
 /// representations. Entities are grouped by the tuple of their context values (one request per
 /// group), without context variables there is at most one group. With `reuse`, entities already
 /// in the response are copied instead of sent.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 pub(super) fn collect_context_entities<'a, 'd, 'v>(
     data: &'d Value<'v>,
     paths: impl IntoIterator<Item = ResponsePathRef<'a>>,
@@ -250,17 +261,21 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
     context: &'a Option<Box<FetchContext>>,
     possible_types: &PossibleTypes,
     subgraph_keys: Option<&KeysByType>,
-    reuse: Option<&mut ReuseIndex<'d, 'v>>,
-) -> (Vec<ContextGroup<'a>>, Vec<TargetEntities>) {
+    reuse: Option<&EntityReuse>,
+) -> Collected<'a, 'v> {
     let mut contexts = ContextGroups::new(context);
-    let mut reuse = reuse.filter(|_| contexts.names.is_empty());
-    // every entity we know of, by its hash: the ones `reuse` could copy, and every one with a
-    // target. the hash covers the context group, so one map serves all of them
-    let mut seen: PrehashedMap<Known> = reuse
-        .as_mut()
-        .map(|reuse| std::mem::take(&mut reuse.seen))
-        .unwrap_or_default();
+    // the planner keeps fetches with context from copying. the hashes below mix in the group
+    // there, so nothing would match anyway
+    debug_assert!(reuse.is_none() || contexts.names.is_empty());
     let required_selections = requires.root_selections();
+    // every entity we know of, by its hash: the ones we could copy, and every one with a target.
+    // the hash covers the context group, so one map serves all of them
+    let mut seen: PrehashedMap<Known> = PrehashedMap::default();
+    if let Some(reuse) = reuse {
+        entity_reuse::index_sources(reuse, data, required_selections, possible_types, &mut seen);
+    }
+    let copy = reuse.map(|reuse| reuse.copy.root_selections());
+    let mut copies = Vec::new();
     let mut path_entities: Vec<TargetEntities> = Vec::new();
     for path in paths {
         let mut entities = Vec::new();
@@ -283,20 +298,26 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
                 hasher.finish()
             };
             let known = seen.entry(hash);
-            let in_response = match &known {
-                Entry::Occupied(known) => match known.get() {
-                    Known::Target(entity) => {
-                        entities.push(Some(*entity));
+            // only `index_sources` puts `InResponse` in, so `copy` is there whenever it matches
+            let source = match &known {
+                Entry::Occupied(known) => match *known.get() {
+                    Known::Target(target) => {
+                        entities.push(Some(target));
                         return;
                     }
-                    Known::InResponse(source) => Some(*source),
+                    Known::InResponse(source) => Some(source),
                 },
                 Entry::Vacant(_) => None,
             };
-            let copied = in_response
-                .zip(reuse.as_mut())
-                .and_then(|(source, reuse)| reuse.copy(source))
-                .map(|index| EntityRef::Copied { index });
+            let copied = source
+                .zip(copy)
+                .and_then(|(source, copy)| entity_reuse::copy_object(source, copy))
+                .map(|value| {
+                    copies.push(value);
+                    EntityRef::Copied {
+                        index: copies.len() as u32 - 1,
+                    }
+                });
             let target = copied.or_else(|| {
                 let group = &mut contexts.groups[group_index];
                 let mut rewritten;
@@ -338,7 +359,11 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
     for group in &mut contexts.groups {
         group.representations.push(b']');
     }
-    (contexts.groups, path_entities)
+    Collected {
+        groups: contexts.groups,
+        targets: path_entities,
+        copies,
+    }
 }
 
 /// One request that carries several groups of contextual argument values, written out from a
@@ -529,7 +554,9 @@ mod tests {
             },
         ];
         let context = FetchContext::new(vec!["__context_0".into()], Some(rewrites.to_vec()));
-        let (groups, targets) = collect_context_entities(
+        let Collected {
+            groups, targets, ..
+        } = collect_context_entities(
             &data,
             [path.as_ref()],
             &requires,
@@ -585,11 +612,11 @@ mod tests {
             copy: selection("{ __typename name }"),
         };
         let possible_types = PossibleTypes::default();
-        let mut index =
-            ReuseIndex::build(&reuse, &data, requires.root_selections(), &possible_types);
         let path: FlattenNodePath =
             vec![PathSegment::Field("again".into()), PathSegment::List].into();
-        let (_, targets) = collect_context_entities(
+        let Collected {
+            targets, copies, ..
+        } = collect_context_entities(
             &data,
             [path.as_ref()],
             &requires,
@@ -597,7 +624,7 @@ mod tests {
             &None,
             &possible_types,
             None,
-            Some(&mut index),
+            Some(&reuse),
         );
         assert_eq!(
             targets[0].as_slice(),
@@ -606,7 +633,7 @@ mod tests {
                 index: 0
             })]
         );
-        assert!(index.into_copies().is_empty());
+        assert!(copies.is_empty());
     }
 
     #[test]
@@ -654,7 +681,9 @@ mod tests {
             Some(rewrites.to_vec()),
         );
         let possible_types = PossibleTypes::default();
-        let (groups, targets) = collect_context_entities(
+        let Collected {
+            groups, targets, ..
+        } = collect_context_entities(
             &data,
             [path.as_ref()],
             &requires,
@@ -757,7 +786,9 @@ mod tests {
             vec!["__context_0".into(), "__context_1".into()],
             Some(rewrites.to_vec()),
         );
-        let (groups, targets) = collect_context_entities(
+        let Collected {
+            groups, targets, ..
+        } = collect_context_entities(
             &data,
             [posts.as_ref(), drafts.as_ref()],
             &requires,
@@ -810,7 +841,7 @@ mod tests {
             .into_iter()
             .collect();
         let context = FetchContext::new(vec!["__context_0".into()], Some(Vec::new()));
-        let (groups, _) = collect_context_entities(
+        let Collected { groups, .. } = collect_context_entities(
             &data,
             [path.as_ref()],
             &requires,
@@ -848,7 +879,9 @@ mod tests {
             rename_key_to: "__context_0".into(),
         }];
         let context = FetchContext::new(vec!["__context_0".into()], Some(rewrites.to_vec()));
-        let (groups, targets) = collect_context_entities(
+        let Collected {
+            groups, targets, ..
+        } = collect_context_entities(
             &data,
             [path.as_ref()],
             &requires,

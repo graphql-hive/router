@@ -28,13 +28,30 @@ use crate::query_planner::{
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
 };
 
-pub(super) fn find_entity_reuse(
+/// Tells the entity fetch in `node` where earlier fetches already put what it asks for.
+pub(super) fn attach_entity_reuse(
+    node: &mut PlanNode,
+    step: &FetchStepData<MultiTypeFetchStep>,
     fetch_graph: &FetchGraph<MultiTypeFetchStep>,
-    step_index: NodeIndex,
+    earlier_steps: &[NodeIndex],
+    supergraph: &SupergraphState,
+) {
+    let PlanNode::Flatten(flatten) = node else {
+        return;
+    };
+    let PlanNode::Fetch(fetch) = flatten.node.as_mut() else {
+        return;
+    };
+    fetch.entity_reuse =
+        find_entity_reuse(step, fetch_graph, earlier_steps, supergraph).map(Box::new);
+}
+
+fn find_entity_reuse(
+    step: &FetchStepData<MultiTypeFetchStep>,
+    fetch_graph: &FetchGraph<MultiTypeFetchStep>,
     earlier_steps: &[NodeIndex],
     supergraph: &SupergraphState,
 ) -> Option<EntityReuse> {
-    let step = fetch_graph.get_step_data(step_index).ok()?;
     if !step.is_entity_call()
         || fetch_graph.operation_kind != OperationKind::Query
         || step.input_rewrites.is_some()
@@ -52,10 +69,15 @@ pub(super) fn find_entity_reuse(
     if !is_plain(needed) {
         return None;
     }
-    let representation = step.input.selections_for_definition(type_name)?;
-
-    let mut sources: Vec<FlattenNodePath> = Vec::new();
-    let mut conflicts: Vec<FlattenNodePath> = Vec::new();
+    let mut positions = Positions {
+        supergraph,
+        type_name,
+        needed,
+        representation: step.input.selections_for_definition(type_name)?,
+        path: Vec::new(),
+        sources: Vec::new(),
+        conflicts: Vec::new(),
+    };
     for earlier_index in earlier_steps {
         let Ok(earlier) = fetch_graph.get_step_data(*earlier_index) else {
             continue;
@@ -63,21 +85,18 @@ pub(super) fn find_entity_reuse(
         if has_context(earlier) {
             continue;
         }
-        let start = FlattenNodePath::from(earlier.response_path.clone());
+        let start = FlattenNodePath::from(&earlier.response_path);
         for (definition_name, selections) in earlier.output.iter_selections() {
-            collect_positions(
-                supergraph,
-                selections,
-                definition_name,
-                start.as_slice().to_vec(),
-                type_name,
-                needed,
-                representation,
-                &mut sources,
-                &mut conflicts,
-            );
+            positions.path.clear();
+            positions.path.extend_from_slice(start.as_slice());
+            positions.walk(selections, definition_name);
         }
     }
+    let Positions {
+        mut sources,
+        conflicts,
+        ..
+    } = positions;
     // the executor matches entities by their representation, read from these positions. a user
     // alias like `id: username` would match the wrong entity there.
     sources.retain(|source| !conflicts.contains(source));
@@ -101,90 +120,70 @@ pub(super) fn find_entity_reuse(
     })
 }
 
-pub(super) fn attach_entity_reuse(node: &mut PlanNode, reuse: EntityReuse) {
-    if let PlanNode::Flatten(flatten) = node {
-        if let PlanNode::Fetch(fetch) = flatten.node.as_mut() {
-            fetch.entity_reuse = Some(Box::new(reuse));
+/// Walks an earlier fetch's selections, collecting the positions that hold `type_name`.
+struct Positions<'a> {
+    supergraph: &'a SupergraphState,
+    type_name: &'a str,
+    needed: &'a SelectionSet,
+    representation: &'a SelectionSet,
+    /// where the walk is, pushed and popped on the way down and up
+    path: Vec<PathSegment>,
+    /// positions with every field the fetch needs
+    sources: Vec<FlattenNodePath>,
+    /// positions that put another field under a response key of the representation
+    conflicts: Vec<FlattenNodePath>,
+}
+
+impl Positions<'_> {
+    fn walk(&mut self, selections: &SelectionSet, current_type: &str) {
+        if current_type == self.type_name {
+            if covers(selections, self.needed) {
+                push_unique(&mut self.sources, &self.path);
+            }
+            if conflicts_with(selections, self.representation) {
+                push_unique(&mut self.conflicts, &self.path);
+            }
+        }
+
+        for item in &selections.items {
+            let depth = self.path.len();
+            match item {
+                SelectionItem::Field(field) if !field.selections.is_empty() => {
+                    let Some(field_type) = self
+                        .supergraph
+                        .definitions
+                        .get(current_type)
+                        .and_then(|definition| definition.fields().get(&field.name))
+                        .map(|field| &field.field_type)
+                    else {
+                        continue;
+                    };
+                    self.path.push(PathSegment::Field(
+                        field.alias.as_deref().unwrap_or(&field.name).into(),
+                    ));
+                    for _ in 0..list_depth(field_type) {
+                        self.path.push(PathSegment::List);
+                    }
+                    self.walk(&field.selections, field_type.inner_type());
+                }
+                SelectionItem::InlineFragment(fragment) => {
+                    if fragment.type_condition != current_type {
+                        self.path.push(PathSegment::TypeCondition(Box::new(
+                            TypeCondition::from_names([fragment.type_condition.as_str()]),
+                        )));
+                    }
+                    self.walk(&fragment.selections, &fragment.type_condition);
+                }
+                _ => {}
+            }
+            self.path.truncate(depth);
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn collect_positions(
-    supergraph: &SupergraphState,
-    selections: &SelectionSet,
-    current_type: &str,
-    path: Vec<PathSegment>,
-    type_name: &str,
-    needed: &SelectionSet,
-    representation: &SelectionSet,
-    sources: &mut Vec<FlattenNodePath>,
-    conflicts: &mut Vec<FlattenNodePath>,
-) {
-    if current_type == type_name {
-        let positions = [
-            (covers(selections, needed), &mut *sources),
-            (conflicts_with(selections, representation), &mut *conflicts),
-        ];
-        for (found, list) in positions {
-            let path = FlattenNodePath::from(path.clone());
-            if found && !list.contains(&path) {
-                list.push(path);
-            }
-        }
-    }
-
-    for item in &selections.items {
-        match item {
-            SelectionItem::Field(field) if !field.selections.is_empty() => {
-                let Some(field_type) = supergraph
-                    .definitions
-                    .get(current_type)
-                    .and_then(|definition| definition.fields().get(&field.name))
-                    .map(|field| &field.field_type)
-                else {
-                    continue;
-                };
-                let mut child_path = path.clone();
-                child_path.push(PathSegment::Field(
-                    field.alias.as_deref().unwrap_or(&field.name).into(),
-                ));
-                for _ in 0..list_depth(field_type) {
-                    child_path.push(PathSegment::List);
-                }
-                collect_positions(
-                    supergraph,
-                    &field.selections,
-                    field_type.inner_type(),
-                    child_path,
-                    type_name,
-                    needed,
-                    representation,
-                    sources,
-                    conflicts,
-                );
-            }
-            SelectionItem::InlineFragment(fragment) => {
-                let mut child_path = path.clone();
-                if fragment.type_condition != current_type {
-                    child_path.push(PathSegment::TypeCondition(Box::new(
-                        TypeCondition::from_names([fragment.type_condition.as_str()]),
-                    )));
-                }
-                collect_positions(
-                    supergraph,
-                    &fragment.selections,
-                    &fragment.type_condition,
-                    child_path,
-                    type_name,
-                    needed,
-                    representation,
-                    sources,
-                    conflicts,
-                );
-            }
-            _ => {}
-        }
+fn push_unique(list: &mut Vec<FlattenNodePath>, path: &[PathSegment]) {
+    if !list.iter().any(|known| known.as_slice() == path) {
+        list.push(FlattenNodePath::from(path.to_vec()));
     }
 }
 

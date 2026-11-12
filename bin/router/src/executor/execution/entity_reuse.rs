@@ -18,44 +18,22 @@ use crate::{
     },
 };
 
-/// What one fetch could copy instead of sending. `collect_context_entities` takes `seen` over as
-/// its table of every entity it knows.
-pub struct ReuseIndex<'d, 'v> {
-    pub(super) seen: PrehashedMap<Known<'d, 'v>>,
-    copy: RequiresSelectionSetRef<'d>,
-    copies: Vec<Value<'v>>,
-}
-
-impl<'d, 'v> ReuseIndex<'d, 'v> {
-    pub fn build(
-        reuse: &'d EntityReuse,
-        data: &'d Value<'v>,
-        required_selections: RequiresSelectionSetRef<'_>,
-        possible_types: &PossibleTypes,
-    ) -> Self {
-        let mut seen = PrehashedMap::default();
-        for source in &reuse.sources {
-            traverse_and_callback(data, source.as_slice(), possible_types, &mut |object, _| {
-                if object.is_object() && holds_every_field(object, required_selections) {
-                    seen.entry(object.to_hash(required_selections, possible_types))
-                        .or_insert(Known::InResponse(object));
-                }
-            });
-        }
-        Self {
-            seen,
-            copy: reuse.copy.root_selections(),
-            copies: Vec::new(),
-        }
-    }
-
-    pub(super) fn copy(&mut self, source: &Value<'v>) -> Option<u32> {
-        self.copies.push(copy_object(source, self.copy)?);
-        Some(self.copies.len() as u32 - 1)
-    }
-
-    pub fn into_copies(self) -> Vec<Value<'v>> {
-        self.copies
+/// Puts every object at the planner's sources that has all the fields of a representation into
+/// `seen`, by the same hash a representation of it would get.
+pub(super) fn index_sources<'d, 'v>(
+    reuse: &EntityReuse,
+    data: &'d Value<'v>,
+    required_selections: RequiresSelectionSetRef<'_>,
+    possible_types: &PossibleTypes,
+    seen: &mut PrehashedMap<Known<'d, 'v>>,
+) {
+    for source in &reuse.sources {
+        traverse_and_callback(data, source.as_slice(), possible_types, &mut |object, _| {
+            if object.is_object() && holds_every_field(object, required_selections) {
+                seen.entry(object.to_hash(required_selections, possible_types))
+                    .or_insert(Known::InResponse(object));
+            }
+        });
     }
 }
 
@@ -124,7 +102,7 @@ fn holds_every_field(value: &Value, selections: RequiresSelectionSetRef<'_>) -> 
 }
 
 /// Copies the selected fields of `source`. None if any is missing, then the subgraph answers.
-fn copy_object<'a>(
+pub(super) fn copy_object<'a>(
     source: &Value<'a>,
     selections: RequiresSelectionSetRef<'_>,
 ) -> Option<Value<'a>> {
