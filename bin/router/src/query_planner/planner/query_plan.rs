@@ -100,14 +100,13 @@ pub fn build_query_plan_from_fetch_graph(
                 None => depends_on,
             };
             if let Some(mut node) = node {
-                if let Some(reuse) = entity_reuse::find_entity_reuse(
+                entity_reuse::attach_entity_reuse(
+                    &mut node,
+                    step_data,
                     &fetch_graph,
-                    step_index,
                     &earlier_steps,
                     supergraph,
-                ) {
-                    entity_reuse::attach_entity_reuse(&mut node, reuse);
-                }
+                );
                 current_wave_nodes.push(node);
                 current_wave_steps.push(step_index);
             }
