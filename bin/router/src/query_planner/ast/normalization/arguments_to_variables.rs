@@ -44,6 +44,7 @@ pub fn arguments_to_variables(
             .unwrap_or_default(),
         next_index: 0,
         extracted: Vec::new(),
+        seen: Default::default(),
     };
     extractor.selection_set(&mut operation.selection_set, root_type);
     let extracted = extractor.extracted;
@@ -71,6 +72,7 @@ struct Extractor<'a> {
     client_variables: &'a [VariableDefinition],
     next_index: usize,
     extracted: Vec<(TypeNode, ExtractedVariable)>,
+    seen: std::collections::HashMap<(TypeNode, Value), String>,
 }
 
 impl Extractor<'_> {
@@ -120,12 +122,9 @@ impl Extractor<'_> {
         value: Value,
         argument: impl FnOnce() -> String,
     ) -> String {
-        if let Some((_, extracted)) = self
-            .extracted
-            .iter()
-            .find(|(t, extracted)| t == variable_type && extracted.value == value)
-        {
-            return extracted.name.clone();
+        let key = (variable_type.clone(), value);
+        if let Some(name) = self.seen.get(&key) {
+            return name.clone();
         }
         let name = loop {
             let name = format!("_v{}", self.next_index);
@@ -135,13 +134,14 @@ impl Extractor<'_> {
             }
         };
         self.extracted.push((
-            variable_type.clone(),
+            key.0.clone(),
             ExtractedVariable {
                 name: name.clone(),
-                value,
+                value: key.1.clone(),
                 argument: argument(),
             },
         ));
+        self.seen.insert(key, name.clone());
         name
     }
 }
