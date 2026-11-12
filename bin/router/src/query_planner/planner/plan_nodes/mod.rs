@@ -1,3 +1,4 @@
+use crate::executor::utils::traverse::PathTrie;
 use crate::query_planner::ast::requires::RequiresSelectionSet;
 use crate::query_planner::{
     ast::{
@@ -325,7 +326,17 @@ impl FetchContext {
 pub struct EntityReuse {
     pub sources: Vec<FlattenNodePath>,
     pub copy: RequiresSelectionSet,
+    /// `sources` as a trie. Built once, even when fetches share this.
+    pub trie: std::sync::OnceLock<PathTrie>,
 }
+
+impl EntityReuse {
+    pub fn trie(&self) -> &PathTrie {
+        self.trie.get().expect(TRIE_BUILT)
+    }
+}
+
+const TRIE_BUILT: &str = "path tries are built when the plan is made executable";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -569,6 +580,15 @@ pub fn custom_scalar_paths_for_entities_selection(
 #[serde(rename_all = "camelCase")]
 pub struct EntityBatch {
     pub aliases: Vec<EntityBatchAlias>,
+    /// The merge paths of every alias as one trie
+    #[serde(skip)]
+    pub trie: Option<Box<PathTrie>>,
+}
+
+impl EntityBatch {
+    pub fn trie(&self) -> &PathTrie {
+        self.trie.as_deref().expect(TRIE_BUILT)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -599,6 +619,15 @@ pub struct EntityBatchAlias {
 pub struct FlattenNode<S: PlanState = Executable> {
     pub path: FlattenNodePath,
     pub node: Box<PlanNode<S>>,
+    /// `path` as a trie
+    #[serde(skip)]
+    pub trie: Option<Box<PathTrie>>,
+}
+
+impl<S: PlanState> FlattenNode<S> {
+    pub fn trie(&self) -> &PathTrie {
+        self.trie.as_deref().expect(TRIE_BUILT)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -958,6 +987,7 @@ impl PlanNode<Planning> {
             PlanNode::Flatten(FlattenNode {
                 path: step.response_path.clone().into(),
                 node: Box::new(PlanNode::Fetch(Box::new(fetch))),
+                trie: Default::default(),
             })
         } else if matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {
             PlanNode::Subscription(Box::new(SubscriptionNode { primary: fetch }))
@@ -1216,11 +1246,12 @@ mod stored_size_tests {
     #[test]
     fn stored_sizes_stay_small() {
         for (name, actual, expected) in [
-            ("PlanNode", size_of::<PlanNode>(), 32),
-            // `run_if` is an `Option<Vec<_>>`, `entity_reuse` an `Option<Box<_>>`. Executable nodes
+            // `FlattenNode` keeps its trie inline
+            ("PlanNode", size_of::<PlanNode>(), 40),
+            // `run_if` is an `Option<Vec<_>>`, `entity_reuse` an `Option<Arc<_>>`. Executable nodes
             // keep no dependency ids, the plan's schedule has them by position
             ("FetchNode", size_of::<FetchNode>(), 272),
-            ("BatchFetchNode", size_of::<BatchFetchNode>(), 168),
+            ("BatchFetchNode", size_of::<BatchFetchNode>(), 176),
             (
                 "SubgraphFetchOperation",
                 size_of::<crate::query_planner::ast::operation::SubgraphFetchOperation>(),
