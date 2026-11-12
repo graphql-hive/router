@@ -250,6 +250,9 @@ impl<'graph> Candidate<'graph> {
     /// The trips to other subgraphs on this path, the segments that cost a crossing: going into a
     /// subgraph, or an entity call for a requirement, each keyed by `key`. Conditions on the way
     /// aren't in either key, it's only for pricing, the plan is still costed on the tree.
+    ///
+    /// By `HopKey::Fetch`, the entity calls inside a key's or a @requires' requirement count too.
+    /// They go into the same fetches as everything else at their spot, so a leaf can share them.
     fn hops(&self, graph: &Graph<'_>, key: HopKey) -> Result<Vec<u64>, GraphError> {
         let hash = |value: &dyn Fn(&mut FxHasher)| {
             let mut hasher = FxHasher::default();
@@ -262,6 +265,10 @@ impl<'graph> Candidate<'graph> {
         let mut prefix = 0;
         for segment in self.path.get_segments() {
             let edge = graph.edge(segment.edge_index)?;
+            // a requirement is read on the object the segment starts from
+            if let (HopKey::Fetch, Some(requirement)) = (key, &segment.requirement_tree) {
+                requirement_hops(graph, requirement, prefix, position, &mut hops)?;
+            }
             match (key, edge) {
                 (HopKey::Edges, _) => {
                     let edge = segment.edge_index.index();
@@ -329,6 +336,42 @@ impl<'graph> Candidate<'graph> {
             self.mutation_field_position,
         )
     }
+}
+
+/// The entity calls in a requirement tree, keyed like `HopKey::Fetch` keys a path's: the response
+/// path from `prefix`, the subgraph the call goes to. Fields move the response path along, calls
+/// and their own keys stay on the object they start from.
+fn requirement_hops(
+    graph: &Graph<'_>,
+    node: &QueryTreeNode,
+    prefix: u64,
+    position: MutationFieldPosition,
+    hops: &mut Vec<u64>,
+) -> Result<(), GraphError> {
+    for requirement in &node.requirements {
+        requirement_hops(graph, requirement, prefix, position, hops)?;
+    }
+    for child in &node.children {
+        let mut child_prefix = prefix;
+        if let Some(edge_index) = child.edge_from_parent {
+            match graph.edge(edge_index)? {
+                Edge::FieldMove(field) => {
+                    let mut hasher = FxHasher::default();
+                    (prefix, field.name).hash(&mut hasher);
+                    child_prefix = hasher.finish();
+                }
+                Edge::EntityMove(_) | Edge::InterfaceObjectTypeMove(_) => {
+                    let subgraph = graph.node(child.node_index)?.subgraph_index();
+                    let mut hasher = FxHasher::default();
+                    (prefix, subgraph, false, position).hash(&mut hasher);
+                    hops.push(hasher.finish());
+                }
+                _ => {}
+            }
+        }
+        requirement_hops(graph, child, child_prefix, position, hops)?;
+    }
+    Ok(())
 }
 
 /// Picks one candidate per group.
@@ -527,7 +570,16 @@ struct FetchWalk<'a> {
 }
 
 impl FetchWalk<'_> {
-    fn node(&mut self, node: &QueryTreeNode, depth: u32, position: MutationFieldPosition) {
+    /// `object_depth` is where the calls for a @requires on this node's object go: next to the
+    /// entity call that brought the object in, as the requirement is read from where it came from,
+    /// or after the fetch it came in with.
+    fn node(
+        &mut self,
+        node: &QueryTreeNode,
+        depth: u32,
+        object_depth: u32,
+        position: MutationFieldPosition,
+    ) {
         self.nodes += 1;
         if !node.resolved_context_requirements().is_empty() {
             self.crossings += 1;
@@ -544,16 +596,23 @@ impl FetchWalk<'_> {
         if entrypoint {
             self.fetches.insert((false, subgraph, 0, position));
         }
+        let is_requires = node
+            .edge_from_parent
+            .is_some_and(|edge| matches!(self.graph.edge(edge), Ok(Edge::FieldMove(_))));
+        let requirement_depth = if is_requires { object_depth } else { depth };
         for requirement in &node.requirements {
             self.fetches.insert((true, subgraph, depth, position));
-            self.node(requirement, depth, position);
+            self.node(requirement, requirement_depth, requirement_depth, position);
         }
         for context in node.context_requirements() {
-            self.node(context, depth, position);
+            self.node(context, depth, object_depth, position);
         }
-        let depth = depth + u32::from(!node.requirements.is_empty());
+        let child_depth = depth + u32::from(!node.requirements.is_empty());
+        // an entity call's fields are on the object it brought in, the rest are after this fetch
+        let entered = !node.requirements.is_empty() && !is_requires;
+        let child_object_depth = if entered { depth } else { child_depth };
         for child in &node.children {
-            self.node(child, depth, position);
+            self.node(child, child_depth, child_object_depth, position);
         }
     }
 }
@@ -597,7 +656,7 @@ impl Costs<'_> {
             crossings: 0,
             fetches: HashSet::new(),
         };
-        walk.node(root, 0, None);
+        walk.node(root, 0, 0, None);
         walk.nodes * FIELD_COST + (walk.fetches.len() as u64 + walk.crossings) * SUBGRAPH_HOP_COST
     }
 
