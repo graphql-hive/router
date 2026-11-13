@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ahash::HashMap as AHashMap;
 
-use crate::query_planner::planner::plan_nodes::{PathSegment, TypeCondition};
+use crate::query_planner::planner::plan_nodes::{PathSegment, SharedSteps, TypeCondition};
 
 use crate::executor::{
     introspection::schema::PossibleTypes,
@@ -122,13 +122,51 @@ fn range<T>(items: &[T], (start, len): (u32, u32)) -> &[T] {
     &items[start as usize..][..len as usize]
 }
 
-/// A node while the trie is built, with lists of its own
-#[derive(Default)]
+/// A node while the trie is built. Its steps are linked lists in lists the whole build shares,
+/// so a build allocates per trie, not per node.
+#[derive(Clone, Copy)]
 struct BuildNode {
-    paths: Vec<u32>,
-    fields: Vec<FieldStep>,
-    list: Option<u32>,
-    type_conditions: Vec<(Arc<TypeCondition>, u32)>,
+    /// The first and the last of the node's field steps
+    fields: (u32, u32),
+    field_count: u32,
+    list: u32,
+    conditions: (u32, u32),
+    condition_count: u32,
+}
+
+impl Default for BuildNode {
+    fn default() -> Self {
+        Self {
+            fields: (NONE, NONE),
+            field_count: 0,
+            list: NONE,
+            conditions: (NONE, NONE),
+            condition_count: 0,
+        }
+    }
+}
+
+struct Linked<T> {
+    item: T,
+    next: u32,
+}
+
+/// Adds `item` after the last one of the list that `first_last` points at
+fn push_linked<T>(items: &mut Vec<Linked<T>>, first_last: &mut (u32, u32), item: T) {
+    let index = items.len() as u32;
+    items.push(Linked { item, next: NONE });
+    match first_last.1 {
+        NONE => first_last.0 = index,
+        last => items[last as usize].next = index,
+    }
+    first_last.1 = index;
+}
+
+fn linked<T>(items: &[Linked<T>], first: u32) -> impl Iterator<Item = &T> {
+    std::iter::successors(items.get(first as usize), |item| {
+        items.get(item.next as usize)
+    })
+    .map(|item| &item.item)
 }
 
 fn satisfies_type_condition(
@@ -144,103 +182,146 @@ fn satisfies_type_condition(
 impl PathTrie {
     /// Identical paths end at the same node.
     pub fn new<'p>(paths: impl IntoIterator<Item = &'p [PathSegment]>) -> Self {
+        Self::build(paths, None)
+    }
+
+    /// Like [`Self::new`], but the trie keeps the names and type conditions of `shared`, for
+    /// paths that don't share theirs and are dropped once the trie is built.
+    pub(crate) fn sharing<'p>(
+        paths: impl IntoIterator<Item = &'p [PathSegment]>,
+        shared: &mut SharedSteps,
+    ) -> Self {
+        Self::build(paths, Some(shared))
+    }
+
+    fn build<'p>(
+        paths: impl IntoIterator<Item = &'p [PathSegment]>,
+        mut shared: Option<&mut SharedSteps>,
+    ) -> Self {
         let mut nodes = vec![BuildNode::default()];
+        let mut steps: Vec<Linked<FieldStep>> = Vec::new();
+        let mut type_conditions: Vec<Linked<(Arc<TypeCondition>, u32)>> = Vec::new();
         let mut names: Vec<Arc<str>> = Vec::new();
         let mut ends = Vec::new();
         for path in paths {
             let mut node = 0;
             for segment in path {
                 let existing = match segment {
-                    PathSegment::Field(name) => nodes[node]
-                        .fields
-                        .iter()
+                    PathSegment::Field(name) => linked(&steps, nodes[node].fields.0)
                         .find(|step| names[step.name as usize] == *name)
-                        .map(|step| step.child)
-                        .ok_or(()),
-                    PathSegment::List => nodes[node].list.ok_or(()),
-                    PathSegment::TypeCondition(condition) => nodes[node]
-                        .type_conditions
-                        .iter()
-                        .find(|(existing, _)| existing == condition)
-                        .map(|(_, child)| *child)
-                        .ok_or(()),
-                };
-                node = match existing {
-                    Ok(child) => child as usize,
-                    Err(()) => {
-                        let child = nodes.len() as u32;
-                        nodes.push(BuildNode::default());
-                        let parent = &mut nodes[node];
-                        match segment {
-                            PathSegment::Field(name) => {
-                                // names a plan shares are found by pointer, any other one is
-                                // only kept twice
-                                let id =
-                                    match names.iter().position(|known| Arc::ptr_eq(known, name)) {
-                                        Some(id) => id,
-                                        None => {
-                                            names.push(Arc::clone(name));
-                                            names.len() - 1
-                                        }
-                                    };
-                                parent.fields.push(FieldStep {
-                                    name: id as u32,
-                                    child,
-                                })
-                            }
-                            PathSegment::TypeCondition(condition) => {
-                                parent.type_conditions.push((Arc::clone(condition), child))
-                            }
-                            PathSegment::List => parent.list = Some(child),
-                        }
-                        child as usize
+                        .map(|step| step.child),
+                    PathSegment::List => Some(nodes[node].list).filter(|&list| list != NONE),
+                    PathSegment::TypeCondition(condition) => {
+                        linked(&type_conditions, nodes[node].conditions.0)
+                            .find(|(existing, _)| existing == condition)
+                            .map(|(_, child)| *child)
                     }
                 };
+                if let Some(child) = existing {
+                    node = child as usize;
+                    continue;
+                }
+                let child = nodes.len() as u32;
+                nodes.push(BuildNode::default());
+                let parent = &mut nodes[node];
+                match segment {
+                    PathSegment::Field(name) => {
+                        let name = &match shared.as_deref_mut() {
+                            Some(shared) => shared.name(name),
+                            None => Arc::clone(name),
+                        };
+                        // names a plan shares are found by pointer, any other one is only kept
+                        // twice
+                        let id = match names.iter().position(|known| Arc::ptr_eq(known, name)) {
+                            Some(id) => id,
+                            None => {
+                                names.push(Arc::clone(name));
+                                names.len() - 1
+                            }
+                        };
+                        let step = FieldStep {
+                            name: id as u32,
+                            child,
+                        };
+                        push_linked(&mut steps, &mut parent.fields, step);
+                        parent.field_count += 1;
+                    }
+                    PathSegment::TypeCondition(condition) => {
+                        let condition = match shared.as_deref_mut() {
+                            Some(shared) => shared.condition(condition),
+                            None => Arc::clone(condition),
+                        };
+                        push_linked(
+                            &mut type_conditions,
+                            &mut parent.conditions,
+                            (condition, child),
+                        );
+                        parent.condition_count += 1;
+                    }
+                    PathSegment::List => parent.list = child,
+                }
+                node = child as usize;
             }
-            nodes[node].paths.push(ends.len() as u32);
             ends.push(node as u32);
         }
 
-        let mut fields = Vec::with_capacity(nodes.len() - 1);
-        // the paths of every node go after the ends
-        let mut paths = Vec::with_capacity(2 * ends.len());
-        paths.extend_from_slice(&ends);
+        // the paths of every node go after the ends, in the order we got them
+        let path_count = ends.len();
+        let mut path_starts = vec![0u32; nodes.len()];
+        for &end in &ends {
+            path_starts[end as usize] += 1;
+        }
+        let mut start = path_count as u32;
+        for count in &mut path_starts {
+            (*count, start) = (start, start + *count);
+        }
+        let mut path_ends = path_starts.clone();
+        let mut ends_and_paths = vec![0u32; 2 * path_count];
+        ends_and_paths[..path_count].copy_from_slice(&ends);
+        for (path, &end) in ends.iter().enumerate() {
+            let slot = &mut path_ends[end as usize];
+            ends_and_paths[*slot as usize] = path as u32;
+            *slot += 1;
+        }
+
+        let mut fields = Vec::with_capacity(steps.len());
         let mut rare = Vec::new();
         let mut conditions = Vec::new();
         let mut fields_by_name = Vec::new();
-        let span = |list_len: usize, added: usize| ((list_len - added) as u32, added as u32);
         let nodes = nodes
-            .into_iter()
-            .map(|node| {
-                let by_name = if node.fields.len() >= FIELDS_BY_NAME_FROM {
+            .iter()
+            .enumerate()
+            .map(|(index, node)| {
+                let field_start = fields.len();
+                fields.extend(linked(&steps, node.fields.0).copied());
+                let by_name = if node.field_count as usize >= FIELDS_BY_NAME_FROM {
                     fields_by_name.push(
-                        node.fields
+                        fields[field_start..]
                             .iter()
-                            .map(|step| (Arc::clone(&names[step.name as usize]), step.child))
+                            .map(|step: &FieldStep| {
+                                (Arc::clone(&names[step.name as usize]), step.child)
+                            })
                             .collect(),
                     );
                     fields_by_name.len() as u32 - 1
                 } else {
                     NONE
                 };
-                let rare_index = if by_name != NONE || !node.type_conditions.is_empty() {
-                    let condition_count = node.type_conditions.len();
-                    conditions.extend(node.type_conditions);
+                let rare_index = if by_name != NONE || node.condition_count > 0 {
+                    let condition_start = conditions.len() as u32;
+                    conditions.extend(linked(&type_conditions, node.conditions.0).cloned());
                     rare.push(Rare {
-                        conditions: span(conditions.len(), condition_count),
+                        conditions: (condition_start, node.condition_count),
                         fields_by_name: by_name,
                     });
                     rare.len() as u32 - 1
                 } else {
                     NONE
                 };
-                let (field_count, path_count) = (node.fields.len(), node.paths.len());
-                fields.extend(node.fields);
-                paths.extend(node.paths);
                 TrieNode {
-                    fields: span(fields.len(), field_count),
-                    paths: span(paths.len(), path_count),
-                    list: node.list.unwrap_or(NONE),
+                    fields: (field_start as u32, node.field_count),
+                    paths: (path_starts[index], path_ends[index] - path_starts[index]),
+                    list: node.list,
                     rare: rare_index,
                 }
             })
@@ -249,7 +330,7 @@ impl PathTrie {
             nodes,
             fields: fields.into(),
             names: names.into(),
-            ends_and_paths: paths.into(),
+            ends_and_paths: ends_and_paths.into(),
             rare: (!rare.is_empty()).then(|| {
                 Box::new(RareParts {
                     nodes: rare.into(),
