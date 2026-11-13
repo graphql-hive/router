@@ -67,6 +67,15 @@ struct TrieNode {
     type_conditions: Vec<(Arc<TypeCondition>, usize)>,
 }
 
+/// Most lists in a trie hold one item, and a `Vec` makes room for four on the first push. Tries
+/// stay around as long as their plan is cached, so the room left over adds up.
+fn push_exact<T>(list: &mut Vec<T>, item: T) {
+    if list.capacity() == 0 {
+        list.reserve_exact(1);
+    }
+    list.push(item);
+}
+
 impl TrieNode {
     fn has_children(&self) -> bool {
         !self.fields.is_empty() || self.list.is_some() || !self.type_conditions.is_empty()
@@ -112,25 +121,35 @@ impl PathTrie {
                         let parent = &mut nodes[node];
                         match segment {
                             PathSegment::Field(name) => {
-                                parent.fields.push((Arc::clone(name), child))
+                                push_exact(&mut parent.fields, (Arc::clone(name), child))
                             }
                             PathSegment::List => parent.list = Some(child),
-                            PathSegment::TypeCondition(condition) => {
-                                parent.type_conditions.push((Arc::clone(condition), child))
-                            }
+                            PathSegment::TypeCondition(condition) => push_exact(
+                                &mut parent.type_conditions,
+                                (Arc::clone(condition), child),
+                            ),
                         }
                         child
                     }
                 };
             }
-            nodes[node].paths.push(ends.len());
+            push_exact(&mut nodes[node].paths, ends.len());
             ends.push(node);
         }
         for node in &mut nodes {
             if node.fields.len() >= FIELDS_BY_NAME_FROM {
                 node.fields_by_name = Some(node.fields.iter().cloned().collect());
             }
+            // only lists that grew past one item have room left over
+            if node.fields.capacity() > node.fields.len() {
+                node.fields.shrink_to_fit();
+            }
+            if node.paths.capacity() > node.paths.len() {
+                node.paths.shrink_to_fit();
+            }
         }
+        nodes.shrink_to_fit();
+        ends.shrink_to_fit();
         Self { nodes, ends }
     }
 
