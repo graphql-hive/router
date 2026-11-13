@@ -1,4 +1,3 @@
-use super::path::SharedSteps;
 use super::*;
 use crate::executor::utils::traverse::PathTrie;
 use std::sync::Arc;
@@ -37,14 +36,11 @@ impl Prepare<'_> {
     fn reuse(&mut self, reuse: Option<Arc<EntityReuse>>) -> Option<Arc<EntityReuse>> {
         let reuse = reuse?;
         let (_, executable) = self.reuses.entry(Arc::as_ptr(&reuse)).or_insert_with(|| {
-            let mut sources = reuse.sources.clone();
-            for source in &mut sources {
-                source.share_steps(&mut self.steps);
-            }
+            let sources = reuse.sources.iter().map(FlattenNodePath::as_slice);
             let executable = EntityReuse {
                 sources: Vec::new(),
                 copy: reuse.copy.clone(),
-                trie: PathTrie::new(sources.iter().map(FlattenNodePath::as_slice)).into(),
+                trie: PathTrie::sharing(sources, &mut self.steps).into(),
             };
             (reuse, Arc::new(executable))
         });

@@ -84,6 +84,20 @@ pub(crate) struct SharedSteps {
     conditions: ahash::HashSet<Arc<TypeCondition>>,
 }
 
+impl SharedSteps {
+    pub(crate) fn name(&mut self, name: &Arc<str>) -> Arc<str> {
+        let mut name = Arc::clone(name);
+        share(&mut self.names, &mut name);
+        name
+    }
+
+    pub(crate) fn condition(&mut self, condition: &Arc<TypeCondition>) -> Arc<TypeCondition> {
+        let mut condition = Arc::clone(condition);
+        share(&mut self.conditions, &mut condition);
+        condition
+    }
+}
+
 fn share<T: Eq + std::hash::Hash + ?Sized>(shared: &mut ahash::HashSet<Arc<T>>, item: &mut Arc<T>) {
     match shared.get(item) {
         Some(existing) => *item = Arc::clone(existing),

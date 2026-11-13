@@ -66,6 +66,7 @@ pub mod planning {
 }
 
 mod path;
+pub(crate) use path::SharedSteps;
 pub use path::{FlattenNodePath, MergePaths, PathSegment, ResponsePathRef, TypeCondition};
 mod conditions;
 mod typename;
