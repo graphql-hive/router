@@ -10,7 +10,7 @@ use crate::query_planner::ast::operation::{ContextAliasTemplate, SubgraphFetchOp
 use crate::query_planner::planner::plan_nodes::dependencies::{plan_fetches, PlanSchedule};
 use crate::query_planner::planner::plan_nodes::{
     BatchFetchNode, ConditionGroup, CustomScalarPaths, FetchContext, FetchNode, FlattenNode,
-    ResponsePathRef,
+    TriePath,
 };
 use crate::query_planner::{
     ast::operation::OperationDefinition,
@@ -854,10 +854,10 @@ impl<'exec> ExecutionJob<'exec> {
         }
     }
 
-    fn affected_path(&self) -> Option<ResponsePathRef<'exec>> {
+    fn affected_path(&self) -> Option<&'exec TriePath> {
         match self {
-            ExecutionJob::Fetch { flatten_node, .. } => flatten_node.map(|node| node.path.as_ref()),
-            ExecutionJob::FlattenFetch { flatten_node, .. } => Some(flatten_node.path.as_ref()),
+            ExecutionJob::Fetch { flatten_node, .. } => flatten_node.map(|node| &node.path),
+            ExecutionJob::FlattenFetch { flatten_node, .. } => Some(&flatten_node.path),
             ExecutionJob::BatchFetch { .. } => None,
         }
     }
@@ -1583,8 +1583,11 @@ impl<'exec> Executor<'exec> {
                                 errors.by_alias_index.remove(&AliasIndex(alias_index));
 
                             let merge_paths = &alias_state.alias_spec.merge_paths;
-                            let affected_path =
-                                merge_paths.iter().next().filter(|_| merge_paths.len() == 1);
+                            // told again from the trie, so only when there are errors to tell
+                            let affected_path = alias_errors
+                                .as_ref()
+                                .filter(|_| merge_paths.len() == 1)
+                                .map(|_| merge_paths.path(0));
 
                             // Attach alias errors
                             ctx.handle_errors(
@@ -1597,7 +1600,12 @@ impl<'exec> Executor<'exec> {
 
                         // Attach errors that do not point to any known alias.
                         if !errors.unmatched.is_empty() {
-                            ctx.handle_errors(subgraph_name, None, Some(errors.unmatched), None);
+                            ctx.handle_errors(
+                                subgraph_name,
+                                None::<&str>,
+                                Some(errors.unmatched),
+                                None,
+                            );
                         }
 
                         tracing::trace!(
@@ -1763,8 +1771,10 @@ impl<'exec> Executor<'exec> {
                 .then(|| {
                     let longest = aliases
                         .iter()
-                        .flat_map(|alias_state| alias_state.alias_spec.merge_paths.iter())
-                        .map(|merge_path| merge_path.len())
+                        .flat_map(|alias_state| {
+                            let merge_paths = &alias_state.alias_spec.merge_paths;
+                            (0..merge_paths.len()).map(|path| merge_paths.path_len(path))
+                        })
                         .max()
                         .unwrap_or_default();
                     // Small extra capacity for path segments that will be appended later.
@@ -2215,7 +2225,7 @@ mod tests {
         }];
         ctx.handle_errors(
             "subgraph_a",
-            None,
+            None::<&str>,
             Some(response_errors),
             Some(entity_index_error_map),
         );
@@ -2329,7 +2339,7 @@ mod tests {
         let requires_selection = document_into_selection(requires_query);
 
         let shared_var = "__batch_reps_0".to_string();
-        let products_path = || -> crate::query_planner::planner::plan_nodes::MergePaths {
+        let products_path = || -> crate::query_planner::planner::plan_nodes::TriePaths {
             vec![FlattenNodePath::from(vec![
                 PathSegment::Field("products".into()),
                 PathSegment::List,
@@ -2361,7 +2371,6 @@ mod tests {
                     entity_reuse: None,
                 },
             ],
-            trie: Default::default(),
         };
         entity_batch.build_tries();
 

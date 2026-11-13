@@ -64,9 +64,10 @@ pub struct PathTrie {
     /// The field names of the trie. A plan's paths share their names, so most come once.
     names: Box<[Arc<str>]>,
     /// First the node each path ends at, in the order [`PathTrie::new`] got them. Then the
-    /// paths that end at every node, each node's next to each other, in that order too. One
-    /// list, since small tries are the most common and each list costs an allocation.
-    ends_and_paths: Box<[u32]>,
+    /// paths that end at every node, each node's next to each other, in that order too. Then
+    /// every node's parent, to tell a path back. One list, since small tries are the most
+    /// common and each list costs an allocation.
+    ids: Box<[u32]>,
     /// What only a few nodes have, and many tries have none of
     rare: Option<Box<RareParts>>,
 }
@@ -126,6 +127,7 @@ fn range<T>(items: &[T], (start, len): (u32, u32)) -> &[T] {
 /// so a build allocates per trie, not per node.
 #[derive(Clone, Copy)]
 struct BuildNode {
+    parent: u32,
     /// The first and the last of the node's field steps
     fields: (u32, u32),
     field_count: u32,
@@ -137,6 +139,7 @@ struct BuildNode {
 impl Default for BuildNode {
     fn default() -> Self {
         Self {
+            parent: NONE,
             fields: (NONE, NONE),
             field_count: 0,
             list: NONE,
@@ -222,7 +225,10 @@ impl PathTrie {
                     continue;
                 }
                 let child = nodes.len() as u32;
-                nodes.push(BuildNode::default());
+                nodes.push(BuildNode {
+                    parent: node as u32,
+                    ..Default::default()
+                });
                 let parent = &mut nodes[node];
                 match segment {
                     PathSegment::Field(name) => {
@@ -276,13 +282,15 @@ impl PathTrie {
             (*count, start) = (start, start + *count);
         }
         let mut path_ends = path_starts.clone();
-        let mut ends_and_paths = vec![0u32; 2 * path_count];
-        ends_and_paths[..path_count].copy_from_slice(&ends);
+        let mut ids = Vec::with_capacity(2 * path_count + nodes.len());
+        ids.extend_from_slice(&ends);
+        ids.resize(2 * path_count, 0);
         for (path, &end) in ends.iter().enumerate() {
             let slot = &mut path_ends[end as usize];
-            ends_and_paths[*slot as usize] = path as u32;
+            ids[*slot as usize] = path as u32;
             *slot += 1;
         }
+        ids.extend(nodes.iter().map(|node| node.parent));
 
         let mut fields = Vec::with_capacity(steps.len());
         let mut rare = Vec::new();
@@ -330,7 +338,7 @@ impl PathTrie {
             nodes,
             fields: fields.into(),
             names: names.into(),
-            ends_and_paths: ends_and_paths.into(),
+            ids: ids.into(),
             rare: (!rare.is_empty()).then(|| {
                 Box::new(RareParts {
                     nodes: rare.into(),
@@ -343,12 +351,69 @@ impl PathTrie {
 
     /// The node each path ends at, in the order [`Self::new`] got them
     pub fn ends(&self) -> &[u32] {
-        &self.ends_and_paths[..self.ends_and_paths.len() / 2]
+        &self.ids[..self.path_count()]
     }
 
     /// The paths that end at `node`, in the order [`Self::new`] got them
     pub fn paths_ending_at(&self, node: usize) -> &[u32] {
-        range(&self.ends_and_paths, self.nodes[node].paths)
+        range(&self.ids, self.nodes[node].paths)
+    }
+
+    fn path_count(&self) -> usize {
+        (self.ids.len() - self.nodes.len()) / 2
+    }
+
+    fn parent(&self, node: u32) -> u32 {
+        self.ids[2 * self.path_count() + node as usize]
+    }
+
+    /// The nodes of path `path`, from the one below the root to its end
+    fn nodes_of(&self, path: usize) -> Vec<u32> {
+        let mut nodes = Vec::new();
+        let mut node = self.ends()[path];
+        while node != 0 {
+            nodes.push(node);
+            node = self.parent(node);
+        }
+        nodes.reverse();
+        nodes
+    }
+
+    /// How many steps path `path` has
+    pub fn path_len(&self, path: usize) -> usize {
+        let mut len = 0;
+        let mut node = self.ends()[path];
+        while node != 0 {
+            len += 1;
+            node = self.parent(node);
+        }
+        len
+    }
+
+    /// Path `path` again, as the steps it was built from. Plans keep only their tries, so this is
+    /// what shows a plan or an error.
+    pub fn path(&self, path: usize) -> Vec<PathSegment> {
+        self.nodes_of(path)
+            .into_iter()
+            .map(|child| {
+                let parent = &self.nodes[self.parent(child) as usize];
+                if parent.list == child {
+                    return PathSegment::List;
+                }
+                if let Some(step) = range(&self.fields, parent.fields)
+                    .iter()
+                    .find(|step| step.child == child)
+                {
+                    return PathSegment::Field(Arc::clone(&self.names[step.name as usize]));
+                }
+                let (parts, rare) = self.rare(parent);
+                let (condition, _) = range(&parts.conditions, rare.conditions)
+                    .iter()
+                    .find(|(_, condition_child)| *condition_child == child)
+                    .expect("a node is a step below its parent");
+                PathSegment::TypeCondition(Arc::clone(condition))
+            })
+            .collect()
     }
 
     pub fn len(&self) -> usize {

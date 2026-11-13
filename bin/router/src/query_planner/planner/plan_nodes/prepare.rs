@@ -20,8 +20,8 @@ impl QueryPlan<Planning> {
     }
 }
 
-/// What making a plan executable keeps track of. The executable plan stays in the cache, so its
-/// paths share their steps.
+/// What making a plan executable keeps track of. The executable plan stays in the cache, so it
+/// keeps its paths only as tries, and they share one copy of every name.
 struct Prepare<'s> {
     supergraph: &'s SupergraphState,
     steps: SharedSteps,
@@ -47,13 +47,36 @@ impl Prepare<'_> {
         Some(Arc::clone(executable))
     }
 
-    fn entity_batch(&mut self, mut entity_batch: EntityBatch) -> EntityBatch {
-        for alias in &mut entity_batch.aliases {
-            alias.entity_reuse = self.reuse(alias.entity_reuse.take());
-            alias.merge_paths.share_steps(&mut self.steps);
-        }
-        entity_batch.build_merge_trie();
-        entity_batch
+    /// One trie for the merge paths of every alias, one alias after another
+    fn entity_batch(&mut self, entity_batch: EntityBatch<Planning>) -> EntityBatch {
+        let merge_paths = entity_batch.aliases.iter().flat_map(|alias| {
+            alias
+                .merge_paths
+                .iter()
+                .map(|merge_path| merge_path.as_slice())
+        });
+        let trie = Arc::new(PathTrie::sharing(merge_paths, &mut self.steps));
+        let mut start = 0;
+        let aliases = entity_batch
+            .aliases
+            .into_iter()
+            .map(|alias| {
+                let paths = start..start + alias.merge_paths.len();
+                start = paths.end;
+                EntityBatchAlias {
+                    alias: alias.alias,
+                    representations_variable_name: alias.representations_variable_name,
+                    merge_paths: TriePaths::new(Arc::clone(&trie), paths),
+                    requires: alias.requires,
+                    input_rewrites: alias.input_rewrites,
+                    output_rewrites: alias.output_rewrites,
+                    context: alias.context,
+                    run_if: alias.run_if,
+                    entity_reuse: self.reuse(alias.entity_reuse),
+                }
+            })
+            .collect();
+        EntityBatch { aliases }
     }
 }
 
@@ -88,25 +111,27 @@ impl EntityReuse {
 }
 
 impl EntityBatch {
-    /// Builds the trie of every alias's merge paths, and of where each alias's entities might
-    /// already be.
+    /// For a batch that wasn't made executable from a plan, like one built by hand: puts the
+    /// merge paths of every alias in one trie, and builds the tries of where each alias's
+    /// entities might already be.
     pub fn build_tries(&mut self) {
+        let merge_paths: Vec<FlattenNodePath> = self
+            .aliases
+            .iter()
+            .flat_map(|alias| alias.merge_paths.to_paths().into_owned())
+            .collect();
+        let trie = Arc::new(PathTrie::new(
+            merge_paths.iter().map(FlattenNodePath::as_slice),
+        ));
+        let mut start = 0;
         for alias in &mut self.aliases {
             if let Some(reuse) = &alias.entity_reuse {
                 reuse.build_trie();
             }
+            let paths = start..start + alias.merge_paths.len();
+            start = paths.end;
+            alias.merge_paths = TriePaths::new(Arc::clone(&trie), paths);
         }
-        self.build_merge_trie();
-    }
-
-    fn build_merge_trie(&mut self) {
-        let merge_paths = self.aliases.iter().flat_map(|alias| {
-            alias
-                .merge_paths
-                .iter()
-                .map(|merge_path| merge_path.as_slice())
-        });
-        self.trie = Some(Box::new(PathTrie::new(merge_paths)));
     }
 }
 
@@ -127,14 +152,10 @@ impl PlanNode<Planning> {
                 depends_on: (),
                 completes: (),
             })),
-            Self::Flatten(mut flatten) => {
-                flatten.path.share_steps(&mut prepare.steps);
-                PlanNode::Flatten(FlattenNode {
-                    trie: Some(Box::new(PathTrie::new([flatten.path.as_slice()]))),
-                    path: flatten.path,
-                    node: Box::new(flatten.node.into_executable(prepare)),
-                })
-            }
+            Self::Flatten(flatten) => PlanNode::Flatten(FlattenNode {
+                path: TriePath::new(flatten.path.as_slice(), &mut prepare.steps),
+                node: Box::new(flatten.node.into_executable(prepare)),
+            }),
             Self::Sequence(sequence) => PlanNode::Sequence(SequenceNode {
                 nodes: sequence
                     .nodes

@@ -22,7 +22,7 @@ use crate::query_planner::{
 use serde::{Deserialize, Serialize};
 
 mod state;
-pub use state::{Executable, FetchIdList, PlanState, Planning};
+pub use state::{Executable, FetchIdList, PathList, PlanState, Planning};
 pub mod dependencies;
 use crate::query_planner::planner::error::QueryPlanError;
 use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
@@ -57,6 +57,8 @@ pub mod planning {
     pub type FetchNode = super::FetchNode<Planning>;
     pub type BatchFetchNode = super::BatchFetchNode<Planning>;
     pub type FlattenNode = super::FlattenNode<Planning>;
+    pub type EntityBatch = super::EntityBatch<Planning>;
+    pub type EntityBatchAlias = super::EntityBatchAlias<Planning>;
     pub type SequenceNode = super::SequenceNode<Planning>;
     pub type ParallelNode = super::ParallelNode<Planning>;
     pub type SubscriptionNode = super::SubscriptionNode<Planning>;
@@ -67,7 +69,9 @@ pub mod planning {
 
 mod path;
 pub(crate) use path::SharedSteps;
-pub use path::{FlattenNodePath, MergePaths, PathSegment, ResponsePathRef, TypeCondition};
+pub use path::{
+    FlattenNodePath, MergePaths, PathSegment, ResponsePathRef, TriePath, TriePaths, TypeCondition,
+};
 mod conditions;
 mod typename;
 pub use conditions::{display_run_if, ConditionGroup};
@@ -354,7 +358,7 @@ pub struct BatchFetchNode<S: PlanState = Executable> {
     pub operation: S::Operation,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_scalar_paths: Option<CustomScalarPaths>,
-    pub entity_batch: EntityBatch,
+    pub entity_batch: EntityBatch<S>,
     /// What the merged fetches waited for, without the merged fetches themselves.
     #[serde(skip)]
     pub depends_on: S::FetchIds,
@@ -580,26 +584,33 @@ pub fn custom_scalar_paths_for_entities_selection(
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EntityBatch {
-    pub aliases: Vec<EntityBatchAlias>,
-    /// The merge paths of every alias as one trie
-    #[serde(skip)]
-    pub trie: Option<Box<PathTrie>>,
+#[serde(bound = "")]
+pub struct EntityBatch<S: PlanState = Executable> {
+    pub aliases: Vec<EntityBatchAlias<S>>,
 }
 
 impl EntityBatch {
+    /// The merge paths of every alias as one trie, one alias after another
     pub fn trie(&self) -> &PathTrie {
-        self.trie.as_deref().expect(TRIE_BUILT)
+        let trie = self.aliases[0].merge_paths.trie();
+        debug_assert!(
+            self.aliases
+                .iter()
+                .all(|alias| std::sync::Arc::ptr_eq(alias.merge_paths.trie(), trie)),
+            "{TRIE_BUILT}"
+        );
+        trie
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EntityBatchAlias {
+#[serde(bound = "")]
+pub struct EntityBatchAlias<S: PlanState = Executable> {
     pub alias: String,
     pub representations_variable_name: String,
     #[serde(rename = "paths")]
-    pub merge_paths: MergePaths,
+    pub merge_paths: S::MergePaths,
     pub requires: RequiresSelectionSet,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_rewrites: Option<Vec<FetchRewrite>>,
@@ -619,16 +630,14 @@ pub struct EntityBatchAlias {
 #[serde(rename_all = "camelCase")]
 #[serde(bound = "")]
 pub struct FlattenNode<S: PlanState = Executable> {
-    pub path: FlattenNodePath,
+    pub path: S::FlattenPath,
     pub node: Box<PlanNode<S>>,
-    /// `path` as a trie
-    #[serde(skip)]
-    pub trie: Option<Box<PathTrie>>,
 }
 
-impl<S: PlanState> FlattenNode<S> {
+impl FlattenNode {
+    /// `path` as a trie
     pub fn trie(&self) -> &PathTrie {
-        self.trie.as_deref().expect(TRIE_BUILT)
+        self.path.trie()
     }
 }
 
@@ -989,7 +998,6 @@ impl PlanNode<Planning> {
             PlanNode::Flatten(FlattenNode {
                 path: step.response_path.clone().into(),
                 node: Box::new(PlanNode::Fetch(Box::new(fetch))),
-                trie: Default::default(),
             })
         } else if matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {
             PlanNode::Subscription(Box::new(SubscriptionNode { primary: fetch }))
@@ -1093,7 +1101,7 @@ impl<S: PlanState> PrettyDisplay for BatchFetchNode<S> {
                 )?,
             }
             writeln!(f, "{indent}      paths: [")?;
-            for merge_path in alias.merge_paths.iter() {
+            for merge_path in alias.merge_paths.to_paths().iter() {
                 writeln!(f, "{indent}        \"{}\"", merge_path)?;
             }
             writeln!(f, "{indent}      ]")?;
@@ -1248,12 +1256,11 @@ mod stored_size_tests {
     #[test]
     fn stored_sizes_stay_small() {
         for (name, actual, expected) in [
-            // `FlattenNode` keeps its trie inline
-            ("PlanNode", size_of::<PlanNode>(), 40),
+            ("PlanNode", size_of::<PlanNode>(), 32),
             // `run_if` is an `Option<Vec<_>>`, `entity_reuse` an `Option<Arc<_>>`. Executable nodes
             // keep no dependency ids, the plan's schedule has them by position
             ("FetchNode", size_of::<FetchNode>(), 272),
-            ("BatchFetchNode", size_of::<BatchFetchNode>(), 176),
+            ("BatchFetchNode", size_of::<BatchFetchNode>(), 168),
             (
                 "SubgraphFetchOperation",
                 size_of::<crate::query_planner::ast::operation::SubgraphFetchOperation>(),
