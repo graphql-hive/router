@@ -53,11 +53,22 @@ const NONE: u32 = u32::MAX;
 /// Each path sees its values in the same order a walk of that path alone gives them, so hashes
 /// collected with [`PathTrie::walk`] line up with the values [`PathTrie::walk_mut`] gives later.
 ///
-/// Tries stay around as long as their plan is cached, and a big one has tens of thousands of
-/// nodes. So a node is a few ranges into lists the whole trie shares, and a field step points at
-/// its name by number.
+/// Tries stay around as long as their plan is cached. Most have one path, a flatten fetch's, and
+/// a tree of it would take a few times the memory of the path, so those keep the path as it is.
+/// It's one node, `0`.
 #[derive(Debug, Clone)]
-pub struct PathTrie {
+pub struct PathTrie(Repr);
+
+#[derive(Debug, Clone)]
+enum Repr {
+    One(Box<[PathSegment]>),
+    Tree(Box<Tree>),
+}
+
+/// A big trie has tens of thousands of nodes. So a node is a few ranges into lists the whole
+/// trie shares, and a field step points at its name by number.
+#[derive(Debug, Clone)]
+struct Tree {
     nodes: Box<[TrieNode]>,
     /// The field steps below every node, each node's next to each other
     fields: Box<[FieldStep]>,
@@ -197,6 +208,252 @@ impl PathTrie {
         Self::build(paths, Some(shared))
     }
 
+    fn build<'p>(
+        paths: impl IntoIterator<Item = &'p [PathSegment]>,
+        mut shared: Option<&mut SharedSteps>,
+    ) -> Self {
+        let mut paths = paths.into_iter();
+        Self(match (paths.next(), paths.next()) {
+            (Some(path), None) => Repr::One(
+                path.iter()
+                    .map(|segment| match (segment, shared.as_deref_mut()) {
+                        (PathSegment::Field(name), Some(shared)) => {
+                            PathSegment::Field(shared.name(name))
+                        }
+                        (PathSegment::TypeCondition(condition), Some(shared)) => {
+                            PathSegment::TypeCondition(shared.condition(condition))
+                        }
+                        (segment, _) => segment.clone(),
+                    })
+                    .collect(),
+            ),
+            (first, second) => Repr::Tree(Box::new(Tree::build(
+                first.into_iter().chain(second).chain(paths),
+                shared,
+            ))),
+        })
+    }
+
+    /// The node each path ends at, in the order [`Self::new`] got them
+    pub fn ends(&self) -> &[u32] {
+        match &self.0 {
+            Repr::One(_) => &[0],
+            Repr::Tree(tree) => tree.ends(),
+        }
+    }
+
+    /// The paths that end at `node`, in the order [`Self::new`] got them
+    pub fn paths_ending_at(&self, node: usize) -> &[u32] {
+        match &self.0 {
+            Repr::One(_) => &[0],
+            Repr::Tree(tree) => tree.paths_ending_at(node),
+        }
+    }
+
+    /// How many steps path `path` has
+    pub fn path_len(&self, path: usize) -> usize {
+        match &self.0 {
+            Repr::One(steps) => steps.len(),
+            Repr::Tree(tree) => tree.path_len(path),
+        }
+    }
+
+    /// Path `path` again, as the steps it was built from. Plans keep only their tries, so this is
+    /// what shows a plan or an error.
+    pub fn path(&self, path: usize) -> Vec<PathSegment> {
+        match &self.0 {
+            Repr::One(steps) => steps.to_vec(),
+            Repr::Tree(tree) => tree.path(path),
+        }
+    }
+
+    /// How many nodes the trie has
+    pub fn len(&self) -> usize {
+        match &self.0 {
+            Repr::One(_) => 1,
+            Repr::Tree(tree) => tree.nodes.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Calls `callback` for every value at the end of every path, with the node the path ends at
+    /// and the objects that hold the fields walked to get there (nearest last).
+    pub fn walk<'d, 'v>(
+        &self,
+        data: &'d Value<'v>,
+        possible_types: &PossibleTypes,
+        callback: &mut impl FnMut(usize, &'d Value<'v>, &[&'d Value<'v>]),
+    ) {
+        let objects = &mut Vec::new();
+        match &self.0 {
+            Repr::One(steps) => walk_one(steps, data, possible_types, objects, callback),
+            Repr::Tree(tree) => tree.walk_node(0, data, possible_types, objects, callback),
+        }
+    }
+
+    /// Like [`Self::walk`], but with mutable values and, when `error_path` is given, the path to
+    /// each value. A value is given out before the walk goes below it, so a path shouldn't go
+    /// through what's written at the end of another one.
+    pub fn walk_mut<'a>(
+        &self,
+        data: &mut Value<'a>,
+        possible_types: &PossibleTypes,
+        error_path: Option<GraphQLErrorPath>,
+        callback: &mut impl FnMut(usize, &mut Value<'a>, Option<&GraphQLErrorPath>),
+    ) {
+        let mut error_path = error_path;
+        match &self.0 {
+            Repr::One(steps) => {
+                walk_one_mut(steps, data, possible_types, &mut error_path, callback)
+            }
+            Repr::Tree(tree) => {
+                tree.walk_node_mut(0, data, possible_types, &mut error_path, callback)
+            }
+        }
+    }
+}
+
+/// [`PathTrie::walk`] of one path: its steps, one after another
+fn walk_one<'d, 'v>(
+    steps: &[PathSegment],
+    data: &'d Value<'v>,
+    possible_types: &PossibleTypes,
+    objects: &mut Vec<&'d Value<'v>>,
+    callback: &mut impl FnMut(usize, &'d Value<'v>, &[&'d Value<'v>]),
+) {
+    let Some((step, rest)) = steps.split_first() else {
+        if let Value::Array(items) = data {
+            for item in items {
+                callback(0, item, objects);
+            }
+        } else {
+            callback(0, data, objects);
+        }
+        return;
+    };
+    match (step, data) {
+        (PathSegment::Field(name), Value::Object(object)) => {
+            if let Some(child) = Value::object_get(object, name) {
+                objects.push(data);
+                walk_one(rest, child, possible_types, objects, callback);
+                objects.pop();
+            }
+        }
+        (PathSegment::List, Value::Array(items)) => {
+            for item in items {
+                walk_one(rest, item, possible_types, objects, callback);
+            }
+        }
+        (PathSegment::TypeCondition(condition), _) => {
+            walk_one_type_condition(condition, rest, data, possible_types, objects, callback)
+        }
+        _ => {}
+    }
+}
+
+/// See [`Tree::walk_type_condition`]
+fn walk_one_type_condition<'d, 'v>(
+    condition: &TypeCondition,
+    rest: &[PathSegment],
+    data: &'d Value<'v>,
+    possible_types: &PossibleTypes,
+    objects: &mut Vec<&'d Value<'v>>,
+    callback: &mut impl FnMut(usize, &'d Value<'v>, &[&'d Value<'v>]),
+) {
+    match data {
+        Value::Object(object) => {
+            if satisfies_type_condition(object, condition, possible_types) {
+                walk_one(rest, data, possible_types, objects, callback);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                walk_one_type_condition(condition, rest, item, possible_types, objects, callback);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// [`PathTrie::walk_mut`] of one path, see [`walk_one`]
+fn walk_one_mut<'a>(
+    steps: &[PathSegment],
+    data: &mut Value<'a>,
+    possible_types: &PossibleTypes,
+    error_path: &mut Option<GraphQLErrorPath>,
+    callback: &mut impl FnMut(usize, &mut Value<'a>, Option<&GraphQLErrorPath>),
+) {
+    let Some((step, rest)) = steps.split_first() else {
+        if let Value::Array(items) = &mut *data {
+            for (item_index, item) in items.iter_mut().enumerate() {
+                push_index(error_path, item_index);
+                callback(0, item, error_path.as_ref());
+                pop(error_path);
+            }
+        } else {
+            callback(0, data, error_path.as_ref());
+        }
+        return;
+    };
+    match (step, &mut *data) {
+        (PathSegment::Field(name), Value::Object(object)) => {
+            if let Some(child) = Value::object_get_mut(object, name) {
+                push_field(error_path, name);
+                walk_one_mut(rest, child, possible_types, error_path, callback);
+                pop(error_path);
+            }
+        }
+        (PathSegment::List, Value::Array(items)) => {
+            for (item_index, item) in items.iter_mut().enumerate() {
+                push_index(error_path, item_index);
+                walk_one_mut(rest, item, possible_types, error_path, callback);
+                pop(error_path);
+            }
+        }
+        (PathSegment::TypeCondition(condition), _) => {
+            walk_one_type_condition_mut(condition, rest, data, possible_types, error_path, callback)
+        }
+        _ => {}
+    }
+}
+
+/// See [`Tree::walk_type_condition_mut`]
+fn walk_one_type_condition_mut<'a>(
+    condition: &TypeCondition,
+    rest: &[PathSegment],
+    data: &mut Value<'a>,
+    possible_types: &PossibleTypes,
+    error_path: &mut Option<GraphQLErrorPath>,
+    callback: &mut impl FnMut(usize, &mut Value<'a>, Option<&GraphQLErrorPath>),
+) {
+    match data {
+        Value::Object(object) => {
+            if satisfies_type_condition(object, condition, possible_types) {
+                walk_one_mut(rest, data, possible_types, error_path, callback);
+            }
+        }
+        Value::Array(items) => {
+            for (item_index, item) in items.iter_mut().enumerate() {
+                push_index(error_path, item_index);
+                walk_one_type_condition_mut(
+                    condition,
+                    rest,
+                    item,
+                    possible_types,
+                    error_path,
+                    callback,
+                );
+                pop(error_path);
+            }
+        }
+        _ => {}
+    }
+}
+
+impl Tree {
     fn build<'p>(
         paths: impl IntoIterator<Item = &'p [PathSegment]>,
         mut shared: Option<&mut SharedSteps>,
@@ -416,31 +673,12 @@ impl PathTrie {
             .collect()
     }
 
-    pub fn len(&self) -> usize {
-        self.nodes.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
-    }
-
     fn rare(&self, node: &TrieNode) -> (&RareParts, &Rare) {
         let parts = self
             .rare
             .as_deref()
             .expect("a node with rare parts has them");
         (parts, &parts.nodes[node.rare as usize])
-    }
-
-    /// Calls `callback` for every value at the end of every path, with the node the path ends at
-    /// and the objects that hold the fields walked to get there (nearest last).
-    pub fn walk<'d, 'v>(
-        &self,
-        data: &'d Value<'v>,
-        possible_types: &PossibleTypes,
-        callback: &mut impl FnMut(usize, &'d Value<'v>, &[&'d Value<'v>]),
-    ) {
-        self.walk_node(0, data, possible_types, &mut Vec::new(), callback);
     }
 
     /// Inlined, so most paths reach their end without a call. A call costs more than the
@@ -587,20 +825,6 @@ impl PathTrie {
             }
             _ => {}
         }
-    }
-
-    /// Like [`Self::walk`], but with mutable values and, when `error_path` is given, the path to
-    /// each value. A value is given out before the walk goes below it, so a path shouldn't go
-    /// through what's written at the end of another one.
-    pub fn walk_mut<'a>(
-        &self,
-        data: &mut Value<'a>,
-        possible_types: &PossibleTypes,
-        error_path: Option<GraphQLErrorPath>,
-        callback: &mut impl FnMut(usize, &mut Value<'a>, Option<&GraphQLErrorPath>),
-    ) {
-        let mut error_path = error_path;
-        self.walk_node_mut(0, data, possible_types, &mut error_path, callback);
     }
 
     /// See [`Self::walk_node`]

@@ -139,14 +139,14 @@ impl PathList for MergePaths {
     }
 }
 
-/// A flatten node's path in an executable plan. Plans stay in the cache, so only the trie of it
-/// is kept, and the path is told again from it to show a plan or an error.
+/// A flatten node's path in an executable plan, as the trie walks use. A trie of one path keeps
+/// just the path, with the plan's shared names.
 #[derive(Debug, Clone)]
-pub struct TriePath(Box<PathTrie>);
+pub struct TriePath(PathTrie);
 
 impl TriePath {
     pub(crate) fn new(path: &[PathSegment], shared: &mut SharedSteps) -> Self {
-        Self(Box::new(PathTrie::sharing([path], shared)))
+        Self(PathTrie::sharing([path], shared))
     }
 
     pub fn trie(&self) -> &PathTrie {
@@ -181,7 +181,7 @@ impl Serialize for TriePath {
 impl<'de> Deserialize<'de> for TriePath {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let path = FlattenNodePath::deserialize(deserializer)?;
-        Ok(Self(Box::new(PathTrie::new([path.as_slice()]))))
+        Ok(Self(PathTrie::new([path.as_slice()])))
     }
 }
 
