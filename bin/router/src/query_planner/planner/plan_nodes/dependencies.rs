@@ -38,7 +38,7 @@ impl PlanSchedule {
                     .get(dependency.index())
                     .copied()
                     .filter(|&dependency_index| dependency_index < index)
-                    .ok_or_else(|| QueryPlanError::DependsOnLaterFetch {
+                    .ok_or(QueryPlanError::DependsOnLaterFetch {
                         fetch: id,
                         dependency,
                     })?;
