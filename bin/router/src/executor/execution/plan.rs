@@ -923,6 +923,15 @@ impl<'exec> Executor<'exec> {
                 release(schedule, index, &mut waits, &mut ready);
             }
         }
+        // the schedule has no cycles, so every fetch was let go and ran, or had nothing to run.
+        // A fetch still waiting means the schedule doesn't fit the plan, a bug
+        if waits.iter().any(|&waits| waits != 0) {
+            error!(
+                target: targets::GRAPHQL_EXECUTION,
+                waits = ?waits,
+                "fetches still waiting after the plan finished",
+            );
+        }
     }
 
     fn prepare_root_reentry_fetch_job<'wave>(

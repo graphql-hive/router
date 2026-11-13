@@ -4,6 +4,8 @@
 //! When the plan is made, that's turned into a [`PlanSchedule`] by position, so the executor starts
 //! a fetch the moment those are done, and executable nodes don't keep any ids for it.
 
+use std::slice;
+
 use smallvec::SmallVec;
 
 use super::{FetchId, PlanNode, PlanState, Planning};
@@ -29,7 +31,7 @@ impl PlanSchedule {
         let position = positions_by_id(&fetches)?;
         let mut dependencies: Vec<(u32, u32)> = Vec::new();
         for (index, fetch) in fetches.iter().enumerate() {
-            let Some((id, depends_on)) = id_and_depends_on(fetch) else {
+            let Some((completes, depends_on)) = fetch_ids(fetch) else {
                 continue;
             };
             let index = index as u32;
@@ -39,7 +41,8 @@ impl PlanSchedule {
                     .copied()
                     .filter(|&dependency_index| dependency_index < index)
                     .ok_or(QueryPlanError::DependsOnLaterFetch {
-                        fetch: id,
+                        // never empty, `positions_by_id` refuses a fetch that completes nothing
+                        fetch: completes[0],
                         dependency,
                     })?;
                 dependencies.push((dependency_index, index));
@@ -132,12 +135,7 @@ fn push_fetches<'p, S: PlanState>(
 /// `u32::MAX` where no fetch has that id. Fails when two fetches have one id, a dependency on it
 /// would pick one of them.
 fn positions_by_id(fetches: &[&PlanNode<Planning>]) -> Result<Vec<u32>, QueryPlanError> {
-    let ids = |fetch| {
-        id_and_depends_on(fetch)
-            .map(|(id, _)| id)
-            .into_iter()
-            .chain(completes(fetch))
-    };
+    let ids = |fetch| fetch_ids(fetch).map_or(&[][..], |(completes, _)| completes);
     // one more than the highest id
     let id_bound = fetches
         .iter()
@@ -147,38 +145,37 @@ fn positions_by_id(fetches: &[&PlanNode<Planning>]) -> Result<Vec<u32>, QueryPla
         .unwrap_or(0);
     let mut position = vec![u32::MAX; id_bound];
     for (index, fetch) in fetches.iter().enumerate() {
-        let index = index as u32;
-        for id in ids(fetch) {
-            // a batch has its own id in `completes` too
-            match position[id.index()] {
-                u32::MAX => position[id.index()] = index,
-                other if other == index => {}
-                _ => return Err(QueryPlanError::DuplicateFetchId { id }),
+        let Some((completes, _)) = fetch_ids(fetch) else {
+            continue;
+        };
+        if completes.is_empty() {
+            return Err(QueryPlanError::Internal(
+                "a batch fetch that completes no fetch".to_string(),
+            ));
+        }
+        for &id in completes {
+            if position[id.index()] != u32::MAX {
+                return Err(QueryPlanError::DuplicateFetchId { id });
             }
+            position[id.index()] = index as u32;
         }
     }
     Ok(position)
 }
 
-/// A fetch's id and the fetches it depends on, `None` for a node that isn't a fetch.
-fn id_and_depends_on(node: &PlanNode<Planning>) -> Option<(FetchId, &[FetchId])> {
+/// The ids a fetch completes (its own, or every fetch merged into a batch) and the ids it depends
+/// on. `None` for a node that isn't a fetch.
+fn fetch_ids(node: &PlanNode<Planning>) -> Option<(&[FetchId], &[FetchId])> {
     match node {
-        PlanNode::Fetch(fetch) => Some((fetch.id, &fetch.depends_on)),
-        PlanNode::Flatten(flatten) => id_and_depends_on(&flatten.node),
-        PlanNode::BatchFetch(batch) => Some((batch.id, &batch.depends_on)),
-        PlanNode::Subscription(subscription) => {
-            Some((subscription.primary.id, &subscription.primary.depends_on))
-        }
+        PlanNode::Fetch(fetch) => Some((slice::from_ref(&fetch.id), &fetch.depends_on)),
+        PlanNode::Flatten(flatten) => fetch_ids(&flatten.node),
+        PlanNode::BatchFetch(batch) => Some((&batch.completes, &batch.depends_on)),
+        PlanNode::Subscription(subscription) => Some((
+            slice::from_ref(&subscription.primary.id),
+            &subscription.primary.depends_on,
+        )),
         _ => None,
     }
-}
-
-fn completes(node: &PlanNode<Planning>) -> impl Iterator<Item = FetchId> + '_ {
-    let completes: &[FetchId] = match node {
-        PlanNode::BatchFetch(batch) => &batch.completes,
-        _ => &[],
-    };
-    completes.iter().copied()
 }
 
 #[cfg(test)]
