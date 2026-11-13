@@ -39,6 +39,8 @@ mod error_masking;
 #[cfg(test)]
 mod extensions_propagation;
 #[cfg(test)]
+mod fetch_scheduling;
+#[cfg(test)]
 mod file_supergraph;
 #[cfg(test)]
 mod graceful_shutdown;

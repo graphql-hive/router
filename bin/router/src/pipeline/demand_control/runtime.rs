@@ -244,8 +244,7 @@ impl DemandControlRuntime {
             };
 
         let root = query_plan
-            .node
-            .as_ref()
+            .node()
             .map(|node| {
                 self.compile_formula_plan_node(
                     node,

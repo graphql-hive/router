@@ -4,10 +4,12 @@ impl QueryPlan<Planning> {
     /// Drops the parsed documents the planner used,
     /// and keeps the operation text that execution sends.
     pub fn into_executable(self, supergraph: &SupergraphState) -> QueryPlan {
-        QueryPlan {
-            kind: self.kind,
-            node: self.node.map(|node| node.into_executable(supergraph)),
-        }
+        // the nodes keep their shape, so the schedule stays right
+        let schedule = self.schedule().clone();
+        QueryPlan::with_schedule(
+            self.node.map(|node| node.into_executable(supergraph)),
+            schedule,
+        )
     }
 }
 
@@ -28,6 +30,7 @@ impl FetchNode<Planning> {
             output_rewrites: self.output_rewrites,
             context: self.context,
             run_if: self.run_if,
+            depends_on: (),
         }
     }
 }
@@ -47,6 +50,8 @@ impl PlanNode<Planning> {
                     .into_executable(supergraph, batch.custom_scalar_paths.as_ref()),
                 custom_scalar_paths: batch.custom_scalar_paths,
                 entity_batch: batch.entity_batch,
+                depends_on: (),
+                completes: (),
             })),
             Self::Flatten(flatten) => PlanNode::Flatten(FlattenNode {
                 path: flatten.path,

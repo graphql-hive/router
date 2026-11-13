@@ -24,7 +24,7 @@ fn non_null_context_variables_disable_group_aliasing() -> Result<(), Box<dyn Err
             &format!("fixture/tests/{fixture}.supergraph.graphql"),
             parse_operation(query),
         )?;
-        let Some(PlanNode::Sequence(sequence)) = plan.node else {
+        let Some(PlanNode::Sequence(sequence)) = plan.into_node() else {
             panic!("sequence");
         };
         let Some(PlanNode::Flatten(flatten)) = sequence.nodes.last() else {
@@ -108,7 +108,7 @@ fn contextual_fetches_carry_a_compiled_template() -> Result<(), Box<dyn Error>> 
         // plans are cloned out of the cache
         let plan = plan.clone();
         let mut found = Vec::new();
-        contextual(plan.node.as_ref().unwrap(), &mut found);
+        contextual(plan.node().unwrap(), &mut found);
         assert!(!found.is_empty(), "{fixture}");
         assert_eq!(
             found

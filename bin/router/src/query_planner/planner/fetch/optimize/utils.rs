@@ -611,6 +611,7 @@ impl FetchStepData<MultiTypeFetchStep> {
 
 #[cfg(test)]
 mod tests {
+    use crate::query_planner::planner::plan_nodes::FetchId;
     use graphql_tools::parser::query::{Definition, OperationDefinition};
 
     use crate::query_planner::{
@@ -677,7 +678,7 @@ mod tests {
         output: FetchStepSelections<MultiTypeFetchStep>,
     ) -> FetchStepData<MultiTypeFetchStep> {
         FetchStepData {
-            id: 0,
+            id: FetchId(0),
             service_name: SubgraphName(service.to_string()),
             response_path,
             input,
@@ -713,7 +714,7 @@ mod tests {
             selections(&[("User", "{ id }")]),
             selections(&[("User", "{ currency }")]),
         );
-        producer.id = 1;
+        producer.id = FetchId(1);
         let producer = graph.add_step(producer);
         let mut parent = entity_step(
             "b",
@@ -721,7 +722,7 @@ mod tests {
             selections(&[("User", "{ id }")]),
             selections(&[("User", "{ tx { __typename id } }")]),
         );
-        parent.id = 2;
+        parent.id = FetchId(2);
         let parent = graph.add_step(parent);
         let mut consumer = entity_step(
             "b",
@@ -729,8 +730,8 @@ mod tests {
             selections(&[("Transaction", "{ __typename id }")]),
             selections(&[("Transaction", "{ amount }")]),
         );
-        consumer.id = 3;
-        consumer.context_producers.insert(1);
+        consumer.id = FetchId(3);
+        consumer.context_producers.insert(FetchId(1));
         consumer.context_rewrites = Some(vec![KeyRenamer {
             path: vec![
                 FetchNodePathSegment::Parent,
@@ -776,14 +777,14 @@ mod tests {
             ]
         );
         assert_eq!(merged.context_variable_definitions.len(), 1);
-        assert_eq!(merged.context_producers, [1].into());
+        assert_eq!(merged.context_producers, [FetchId(1)].into());
         let mut target = graph.get_step_data(producer).unwrap().clone();
-        target.id = 4;
+        target.id = FetchId(4);
         let target = graph.add_step(target);
         perform_fetch_step_merge(target, producer, &mut graph, false).unwrap();
         assert_eq!(
             graph.get_step_data(parent).unwrap().context_producers,
-            [4].into()
+            [FetchId(4)].into()
         );
     }
 
