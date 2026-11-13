@@ -19,6 +19,8 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn, Instrument};
 
+pub(crate) const WEBSOCKET_EXTENSIONS_HEADERS_KEY: &str = "headers";
+
 use crate::executor::executors::graphql_transport_ws::{
     ClientMessage, CloseCode, ConnectionInitPayload, ServerMessage, WS_SUBPROTOCOL,
 };
@@ -929,7 +931,7 @@ fn parse_headers_from_connection_init_payload(
     let mut header_map = HeaderMap::new();
     if let Some(payload) = payload {
         // First check if there's a nested "headers" object
-        if let Some(headers_prop) = payload.fields.get("headers") {
+        if let Some(headers_prop) = payload.fields.get(WEBSOCKET_EXTENSIONS_HEADERS_KEY) {
             if let Some(headers_obj) = headers_prop.as_object() {
                 header_map = parse_headers_from_object(headers_obj);
                 return header_map;
@@ -950,7 +952,7 @@ fn parse_headers_from_connection_init_payload(
 fn parse_headers_from_extensions(extensions: Option<&HashMap<String, Value>>) -> HeaderMap {
     let mut header_map = HeaderMap::new();
     if let Some(ext) = extensions {
-        if let Some(headers_value) = ext.get("headers") {
+        if let Some(headers_value) = ext.get(WEBSOCKET_EXTENSIONS_HEADERS_KEY) {
             if let Some(headers_obj) = headers_value.as_object() {
                 header_map = parse_headers_from_object(headers_obj);
             }

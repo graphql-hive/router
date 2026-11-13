@@ -987,6 +987,12 @@ pub async fn execute_pipeline<'exec>(
         demand_control_execution_context,
         plugin_req_state,
         connection_fingerprint,
+        subgraph_request_extensions: shared_state
+            .subgraph_request_extensions_plan
+            .as_ref()
+            .zip(graphql_params.extensions.as_ref())
+            .and_then(|(plan, extensions)| plan.select(extensions))
+            .map(Arc::new),
     };
 
     execute_plan(

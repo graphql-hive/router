@@ -85,6 +85,8 @@ mod query_plan_cache;
 #[cfg(test)]
 mod read_deadline;
 #[cfg(test)]
+mod request_extensions_propagation;
+#[cfg(test)]
 mod router_timeout;
 #[cfg(test)]
 mod skip_entity_fetch;
