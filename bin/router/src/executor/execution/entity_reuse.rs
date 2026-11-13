@@ -93,7 +93,7 @@ fn merge_walk<'v>(
     }
     trie.walk_mut(data, possible_types, None, &mut |node, target, _| {
         for &path in trie.paths_ending_at(node) {
-            let Some((fetch, targets)) = &mut next[path] else {
+            let Some((fetch, targets)) = &mut next[path as usize] else {
                 continue;
             };
             if let Some(index) = targets.next().and_then(copied) {

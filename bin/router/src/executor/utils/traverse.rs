@@ -44,42 +44,91 @@ fn pop(error_path: &mut Option<GraphQLErrorPath>) {
 // ponytail: picked by benching, not tuned per object width
 const FIELDS_BY_NAME_FROM: usize = 8;
 
+/// No list step below a node, or nothing rare about it
+const NONE: u32 = u32::MAX;
+
 /// The paths of a fetch merged into a tree, so one walk covers all of them and the steps they
 /// share are walked once.
 ///
 /// Each path sees its values in the same order a walk of that path alone gives them, so hashes
 /// collected with [`PathTrie::walk`] line up with the values [`PathTrie::walk_mut`] gives later.
+///
+/// Tries stay around as long as their plan is cached, and a big one has tens of thousands of
+/// nodes. So a node is a few ranges into lists the whole trie shares, and a field step points at
+/// its name by number.
 #[derive(Debug, Clone)]
 pub struct PathTrie {
-    nodes: Vec<TrieNode>,
-    /// The node each path ends at, in the order the paths were given
-    ends: Vec<usize>,
+    nodes: Box<[TrieNode]>,
+    /// The field steps below every node, each node's next to each other
+    fields: Box<[FieldStep]>,
+    /// The field names of the trie. A plan's paths share their names, so most come once.
+    names: Box<[Arc<str>]>,
+    /// First the node each path ends at, in the order [`PathTrie::new`] got them. Then the
+    /// paths that end at every node, each node's next to each other, in that order too. One
+    /// list, since small tries are the most common and each list costs an allocation.
+    ends_and_paths: Box<[u32]>,
+    /// What only a few nodes have, and many tries have none of
+    rare: Option<Box<RareParts>>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
+struct RareParts {
+    nodes: Box<[Rare]>,
+    /// The type conditions below every node that has some, each node's next to each other
+    conditions: Box<[(Arc<TypeCondition>, u32)]>,
+    /// The fields of nodes that have lots of them, by name
+    fields_by_name: Box<[AHashMap<Arc<str>, u32>]>,
+}
+
+/// Lists are (start, length) in the trie's shared ones
+#[derive(Debug, Clone, Copy)]
 struct TrieNode {
-    /// The paths that end here, in the order [`PathTrie::new`] got them
-    paths: Vec<usize>,
-    fields: Vec<(Arc<str>, usize)>,
-    /// `fields` by name, when there are enough of them
-    fields_by_name: Option<AHashMap<Arc<str>, usize>>,
-    list: Option<usize>,
-    type_conditions: Vec<(Arc<TypeCondition>, usize)>,
+    fields: (u32, u32),
+    paths: (u32, u32),
+    list: u32,
+    /// Index into [`RareParts::nodes`], or `NONE`
+    rare: u32,
 }
 
-/// Most lists in a trie hold one item, and a `Vec` makes room for four on the first push. Tries
-/// stay around as long as their plan is cached, so the room left over adds up.
-fn push_exact<T>(list: &mut Vec<T>, item: T) {
-    if list.capacity() == 0 {
-        list.reserve_exact(1);
-    }
-    list.push(item);
+#[derive(Debug, Clone, Copy)]
+struct FieldStep {
+    /// Index into [`PathTrie::names`]
+    name: u32,
+    child: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Rare {
+    conditions: (u32, u32),
+    /// Index into [`RareParts::fields_by_name`], or `NONE`
+    fields_by_name: u32,
 }
 
 impl TrieNode {
     fn has_children(&self) -> bool {
-        !self.fields.is_empty() || self.list.is_some() || !self.type_conditions.is_empty()
+        self.fields.1 != 0 || self.list != NONE || self.rare != NONE
     }
+
+    fn has_fields(&self) -> bool {
+        self.fields.1 != 0
+    }
+
+    fn has_paths(&self) -> bool {
+        self.paths.1 != 0
+    }
+}
+
+fn range<T>(items: &[T], (start, len): (u32, u32)) -> &[T] {
+    &items[start as usize..][..len as usize]
+}
+
+/// A node while the trie is built, with lists of its own
+#[derive(Default)]
+struct BuildNode {
+    paths: Vec<u32>,
+    fields: Vec<FieldStep>,
+    list: Option<u32>,
+    type_conditions: Vec<(Arc<TypeCondition>, u32)>,
 }
 
 fn satisfies_type_condition(
@@ -95,7 +144,8 @@ fn satisfies_type_condition(
 impl PathTrie {
     /// Identical paths end at the same node.
     pub fn new<'p>(paths: impl IntoIterator<Item = &'p [PathSegment]>) -> Self {
-        let mut nodes = vec![TrieNode::default()];
+        let mut nodes = vec![BuildNode::default()];
+        let mut names: Vec<Arc<str>> = Vec::new();
         let mut ends = Vec::new();
         for path in paths {
             let mut node = 0;
@@ -104,63 +154,120 @@ impl PathTrie {
                     PathSegment::Field(name) => nodes[node]
                         .fields
                         .iter()
-                        .find(|(existing, _)| existing == name)
-                        .map(|(_, child)| *child),
-                    PathSegment::List => nodes[node].list,
+                        .find(|step| names[step.name as usize] == *name)
+                        .map(|step| step.child)
+                        .ok_or(()),
+                    PathSegment::List => nodes[node].list.ok_or(()),
                     PathSegment::TypeCondition(condition) => nodes[node]
                         .type_conditions
                         .iter()
                         .find(|(existing, _)| existing == condition)
-                        .map(|(_, child)| *child),
+                        .map(|(_, child)| *child)
+                        .ok_or(()),
                 };
                 node = match existing {
-                    Some(child) => child,
-                    None => {
-                        let child = nodes.len();
-                        nodes.push(TrieNode::default());
+                    Ok(child) => child as usize,
+                    Err(()) => {
+                        let child = nodes.len() as u32;
+                        nodes.push(BuildNode::default());
                         let parent = &mut nodes[node];
                         match segment {
                             PathSegment::Field(name) => {
-                                push_exact(&mut parent.fields, (Arc::clone(name), child))
+                                // names a plan shares are found by pointer, any other one is
+                                // only kept twice
+                                let id =
+                                    match names.iter().position(|known| Arc::ptr_eq(known, name)) {
+                                        Some(id) => id,
+                                        None => {
+                                            names.push(Arc::clone(name));
+                                            names.len() - 1
+                                        }
+                                    };
+                                parent.fields.push(FieldStep {
+                                    name: id as u32,
+                                    child,
+                                })
+                            }
+                            PathSegment::TypeCondition(condition) => {
+                                parent.type_conditions.push((Arc::clone(condition), child))
                             }
                             PathSegment::List => parent.list = Some(child),
-                            PathSegment::TypeCondition(condition) => push_exact(
-                                &mut parent.type_conditions,
-                                (Arc::clone(condition), child),
-                            ),
                         }
-                        child
+                        child as usize
                     }
                 };
             }
-            push_exact(&mut nodes[node].paths, ends.len());
-            ends.push(node);
+            nodes[node].paths.push(ends.len() as u32);
+            ends.push(node as u32);
         }
-        for node in &mut nodes {
-            if node.fields.len() >= FIELDS_BY_NAME_FROM {
-                node.fields_by_name = Some(node.fields.iter().cloned().collect());
-            }
-            // only lists that grew past one item have room left over
-            if node.fields.capacity() > node.fields.len() {
-                node.fields.shrink_to_fit();
-            }
-            if node.paths.capacity() > node.paths.len() {
-                node.paths.shrink_to_fit();
-            }
+
+        let mut fields = Vec::with_capacity(nodes.len() - 1);
+        // the paths of every node go after the ends
+        let mut paths = Vec::with_capacity(2 * ends.len());
+        paths.extend_from_slice(&ends);
+        let mut rare = Vec::new();
+        let mut conditions = Vec::new();
+        let mut fields_by_name = Vec::new();
+        let span = |list_len: usize, added: usize| ((list_len - added) as u32, added as u32);
+        let nodes = nodes
+            .into_iter()
+            .map(|node| {
+                let by_name = if node.fields.len() >= FIELDS_BY_NAME_FROM {
+                    fields_by_name.push(
+                        node.fields
+                            .iter()
+                            .map(|step| (Arc::clone(&names[step.name as usize]), step.child))
+                            .collect(),
+                    );
+                    fields_by_name.len() as u32 - 1
+                } else {
+                    NONE
+                };
+                let rare_index = if by_name != NONE || !node.type_conditions.is_empty() {
+                    let condition_count = node.type_conditions.len();
+                    conditions.extend(node.type_conditions);
+                    rare.push(Rare {
+                        conditions: span(conditions.len(), condition_count),
+                        fields_by_name: by_name,
+                    });
+                    rare.len() as u32 - 1
+                } else {
+                    NONE
+                };
+                let (field_count, path_count) = (node.fields.len(), node.paths.len());
+                fields.extend(node.fields);
+                paths.extend(node.paths);
+                TrieNode {
+                    fields: span(fields.len(), field_count),
+                    paths: span(paths.len(), path_count),
+                    list: node.list.unwrap_or(NONE),
+                    rare: rare_index,
+                }
+            })
+            .collect();
+        Self {
+            nodes,
+            fields: fields.into(),
+            names: names.into(),
+            ends_and_paths: paths.into(),
+            rare: (!rare.is_empty()).then(|| {
+                Box::new(RareParts {
+                    nodes: rare.into(),
+                    conditions: conditions.into(),
+                    fields_by_name: fields_by_name.into(),
+                })
+            }),
         }
-        nodes.shrink_to_fit();
-        ends.shrink_to_fit();
-        Self { nodes, ends }
     }
 
     /// The node each path ends at, in the order [`Self::new`] got them
-    pub fn ends(&self) -> &[usize] {
-        &self.ends
+    pub fn ends(&self) -> &[u32] {
+        &self.ends_and_paths[..self.ends_and_paths.len() / 2]
     }
 
     /// The paths that end at `node`, in the order [`Self::new`] got them
-    pub fn paths_ending_at(&self, node: usize) -> &[usize] {
-        &self.nodes[node].paths
+    pub fn paths_ending_at(&self, node: usize) -> &[u32] {
+        range(&self.ends_and_paths, self.nodes[node].paths)
     }
 
     pub fn len(&self) -> usize {
@@ -169,6 +276,14 @@ impl PathTrie {
 
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
+    }
+
+    fn rare(&self, node: &TrieNode) -> (&RareParts, &Rare) {
+        let parts = self
+            .rare
+            .as_deref()
+            .expect("a node with rare parts has them");
+        (parts, &parts.nodes[node.rare as usize])
     }
 
     /// Calls `callback` for every value at the end of every path, with the node the path ends at
@@ -194,7 +309,7 @@ impl PathTrie {
         callback: &mut impl FnMut(usize, &'d Value<'v>, &[&'d Value<'v>]),
     ) {
         let node = &self.nodes[index];
-        if !node.paths.is_empty() {
+        if node.has_paths() {
             if let Value::Array(items) = data {
                 for item in items {
                     callback(index, item, objects);
@@ -216,43 +331,83 @@ impl PathTrie {
         objects: &mut Vec<&'d Value<'v>>,
         callback: &mut impl FnMut(usize, &'d Value<'v>, &[&'d Value<'v>]),
     ) {
-        match data {
-            Value::Object(object) if !node.fields.is_empty() => {
-                objects.push(data);
-                if let Some(fields_by_name) = &node.fields_by_name {
-                    // a key the object has twice is walked twice, a search would find it once
-                    for (key, child) in object {
-                        if let Some(&child_index) = fields_by_name.get(*key) {
-                            self.walk_node(child_index, child, possible_types, objects, callback);
-                        }
-                    }
-                } else {
-                    for (name, child_index) in &node.fields {
-                        if let Some(child) = Value::object_get(object, name) {
-                            self.walk_node(*child_index, child, possible_types, objects, callback);
-                        }
-                    }
-                }
-                objects.pop();
-            }
-            Value::Array(items) => {
-                if let Some(list) = node.list {
-                    for item in items {
-                        self.walk_node(list, item, possible_types, objects, callback);
-                    }
-                }
-            }
-            _ => {}
+        if node.rare != NONE {
+            self.walk_below_rare(node, data, possible_types, objects, callback);
+        } else {
+            self.walk_steps(node, None, data, possible_types, objects, callback);
         }
-        for (condition, child_index) in &node.type_conditions {
+    }
+
+    /// Kept apart, so the nodes with only fields and lists don't pay for what few nodes have
+    fn walk_below_rare<'d, 'v>(
+        &self,
+        node: &TrieNode,
+        data: &'d Value<'v>,
+        possible_types: &PossibleTypes,
+        objects: &mut Vec<&'d Value<'v>>,
+        callback: &mut impl FnMut(usize, &'d Value<'v>, &[&'d Value<'v>]),
+    ) {
+        let (parts, rare) = self.rare(node);
+        let fields_by_name = parts.fields_by_name.get(rare.fields_by_name as usize);
+        self.walk_steps(
+            node,
+            fields_by_name,
+            data,
+            possible_types,
+            objects,
+            callback,
+        );
+        for (condition, child_index) in range(&parts.conditions, rare.conditions) {
             self.walk_type_condition(
                 condition,
-                *child_index,
+                *child_index as usize,
                 data,
                 possible_types,
                 objects,
                 callback,
             );
+        }
+    }
+
+    #[inline(always)]
+    fn walk_steps<'d, 'v>(
+        &self,
+        node: &TrieNode,
+        fields_by_name: Option<&AHashMap<Arc<str>, u32>>,
+        data: &'d Value<'v>,
+        possible_types: &PossibleTypes,
+        objects: &mut Vec<&'d Value<'v>>,
+        callback: &mut impl FnMut(usize, &'d Value<'v>, &[&'d Value<'v>]),
+    ) {
+        match data {
+            Value::Object(object) if node.has_fields() => {
+                objects.push(data);
+                if let Some(fields_by_name) = fields_by_name {
+                    // a key the object has twice is walked twice, a search would find it once
+                    for (key, child) in object {
+                        if let Some(&child_index) = fields_by_name.get(*key) {
+                            let child_index = child_index as usize;
+                            self.walk_node(child_index, child, possible_types, objects, callback);
+                        }
+                    }
+                } else {
+                    for step in range(&self.fields, node.fields) {
+                        if let Some(child) =
+                            Value::object_get(object, &self.names[step.name as usize])
+                        {
+                            let child_index = step.child as usize;
+                            self.walk_node(child_index, child, possible_types, objects, callback);
+                        }
+                    }
+                }
+                objects.pop();
+            }
+            Value::Array(items) if node.list != NONE => {
+                for item in items {
+                    self.walk_node(node.list as usize, item, possible_types, objects, callback);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -313,7 +468,7 @@ impl PathTrie {
         callback: &mut impl FnMut(usize, &mut Value<'a>, Option<&GraphQLErrorPath>),
     ) {
         let node = &self.nodes[index];
-        if !node.paths.is_empty() {
+        if node.has_paths() {
             if let Value::Array(items) = &mut *data {
                 for (item_index, item) in items.iter_mut().enumerate() {
                     push_index(error_path, item_index);
@@ -337,14 +492,62 @@ impl PathTrie {
         error_path: &mut Option<GraphQLErrorPath>,
         callback: &mut impl FnMut(usize, &mut Value<'a>, Option<&GraphQLErrorPath>),
     ) {
-        match &mut *data {
-            Value::Object(object) if !node.fields.is_empty() => {
-                if let Some(fields_by_name) = &node.fields_by_name {
+        if node.rare != NONE {
+            self.walk_below_rare_mut(node, data, possible_types, error_path, callback);
+        } else {
+            self.walk_steps_mut(node, None, data, possible_types, error_path, callback);
+        }
+    }
+
+    /// See [`Self::walk_below_rare`]
+    fn walk_below_rare_mut<'a>(
+        &self,
+        node: &TrieNode,
+        data: &mut Value<'a>,
+        possible_types: &PossibleTypes,
+        error_path: &mut Option<GraphQLErrorPath>,
+        callback: &mut impl FnMut(usize, &mut Value<'a>, Option<&GraphQLErrorPath>),
+    ) {
+        let (parts, rare) = self.rare(node);
+        let fields_by_name = parts.fields_by_name.get(rare.fields_by_name as usize);
+        self.walk_steps_mut(
+            node,
+            fields_by_name,
+            data,
+            possible_types,
+            error_path,
+            callback,
+        );
+        for (condition, child_index) in range(&parts.conditions, rare.conditions) {
+            self.walk_type_condition_mut(
+                condition,
+                *child_index as usize,
+                data,
+                possible_types,
+                error_path,
+                callback,
+            );
+        }
+    }
+
+    #[inline(always)]
+    fn walk_steps_mut<'a>(
+        &self,
+        node: &TrieNode,
+        fields_by_name: Option<&AHashMap<Arc<str>, u32>>,
+        data: &mut Value<'a>,
+        possible_types: &PossibleTypes,
+        error_path: &mut Option<GraphQLErrorPath>,
+        callback: &mut impl FnMut(usize, &mut Value<'a>, Option<&GraphQLErrorPath>),
+    ) {
+        match data {
+            Value::Object(object) if node.has_fields() => {
+                if let Some(fields_by_name) = fields_by_name {
                     for (key, child) in object.iter_mut() {
                         if let Some(&child_index) = fields_by_name.get(*key) {
                             push_field(error_path, key);
                             self.walk_node_mut(
-                                child_index,
+                                child_index as usize,
                                 child,
                                 possible_types,
                                 error_path,
@@ -354,11 +557,12 @@ impl PathTrie {
                         }
                     }
                 } else {
-                    for (name, child_index) in &node.fields {
+                    for step in range(&self.fields, node.fields) {
+                        let name = &self.names[step.name as usize];
                         if let Some(child) = Value::object_get_mut(object, name) {
                             push_field(error_path, name);
                             self.walk_node_mut(
-                                *child_index,
+                                step.child as usize,
                                 child,
                                 possible_types,
                                 error_path,
@@ -369,26 +573,15 @@ impl PathTrie {
                     }
                 }
             }
-            Value::Array(items) => {
-                if let Some(list) = node.list {
-                    for (item_index, item) in items.iter_mut().enumerate() {
-                        push_index(error_path, item_index);
-                        self.walk_node_mut(list, item, possible_types, error_path, callback);
-                        pop(error_path);
-                    }
+            Value::Array(items) if node.list != NONE => {
+                let list = node.list as usize;
+                for (item_index, item) in items.iter_mut().enumerate() {
+                    push_index(error_path, item_index);
+                    self.walk_node_mut(list, item, possible_types, error_path, callback);
+                    pop(error_path);
                 }
             }
             _ => {}
-        }
-        for (condition, child_index) in &node.type_conditions {
-            self.walk_type_condition_mut(
-                condition,
-                *child_index,
-                data,
-                possible_types,
-                error_path,
-                callback,
-            );
         }
     }
 
@@ -721,7 +914,11 @@ mod tests {
         );
 
         for (index, (end, alone)) in ends.iter().zip(&alone).enumerate() {
-            assert_eq!(&by_node[*end], alone, "walk_mut of path {}", paths[index]);
+            assert_eq!(
+                &by_node[*end as usize], alone,
+                "walk_mut of path {}",
+                paths[index]
+            );
             let expected: Vec<(String, usize)> = alone
                 .iter()
                 .map(|(value, error_path)| {
@@ -733,7 +930,7 @@ mod tests {
                 })
                 .collect();
             assert_eq!(
-                by_node_shared[*end], expected,
+                by_node_shared[*end as usize], expected,
                 "walk of path {}",
                 paths[index]
             );
