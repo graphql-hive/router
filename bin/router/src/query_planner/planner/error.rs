@@ -3,7 +3,7 @@ use crate::query_planner::{
     utils::cancellation::CancellationError,
 };
 
-use super::fetch::error::FetchGraphError;
+use super::{fetch::error::FetchGraphError, plan_nodes::FetchId};
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum QueryPlanError {
@@ -19,6 +19,8 @@ pub enum QueryPlanError {
     UnexpectedPendingState,
     #[error("Internal Error: {0}")]
     Internal(String),
+    #[error("Fetch {fetch} depends on fetch {dependency}, which doesn't come before it")]
+    DependsOnLaterFetch { fetch: FetchId, dependency: FetchId },
     #[error("Fragment expansion error: {0}")]
     FragmentExpansionFailure(#[from] FragmentExpansionError),
     #[error(transparent)]

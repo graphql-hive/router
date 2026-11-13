@@ -1,3 +1,4 @@
+use crate::query_planner::planner::plan_nodes::FetchId;
 use std::{collections::HashSet, sync::Arc};
 
 use crate::config::traffic_shaping::SupergraphTrafficShapingConfig;
@@ -99,14 +100,14 @@ impl OperationNameFactory {
         }
     }
 
-    pub fn generate(&self, subgraph_name: &str, fetch_step_id: u32) -> Option<String> {
+    pub fn generate(&self, subgraph_name: &str, fetch_step_id: FetchId) -> Option<String> {
         if !self.config.should_forward(subgraph_name) {
             return None;
         }
 
         let client_operation_name = self.client_operation_name.as_deref()?;
         let mut fetch_step_id_buf = itoa::Buffer::new();
-        let fetch_step_id = fetch_step_id_buf.format(fetch_step_id);
+        let fetch_step_id = fetch_step_id_buf.format(fetch_step_id.0);
         let separator = "__";
         let mut operation_name = String::with_capacity(
             separator.len() + client_operation_name.len() + fetch_step_id.len(),
@@ -123,7 +124,7 @@ impl OperationNameFactory {
 
 #[cfg(test)]
 mod tests {
-    use super::{OperationNameFactory, OperationNameForwardConfig};
+    use super::{FetchId, OperationNameFactory, OperationNameForwardConfig};
     use std::sync::Arc;
 
     #[test]
@@ -131,12 +132,21 @@ mod tests {
         let name =
             OperationNameFactory::new(Arc::new(OperationNameForwardConfig::all()), Some("Example"));
 
-        assert_eq!(name.generate("foo", 2).as_deref(), Some("Example__2"));
-        assert_eq!(name.generate("foo-v2", 2).as_deref(), Some("Example__2"));
         assert_eq!(
-            name.generate("foo service", 3).as_deref(),
+            name.generate("foo", FetchId(2)).as_deref(),
+            Some("Example__2")
+        );
+        assert_eq!(
+            name.generate("foo-v2", FetchId(2)).as_deref(),
+            Some("Example__2")
+        );
+        assert_eq!(
+            name.generate("foo service", FetchId(3)).as_deref(),
             Some("Example__3")
         );
-        assert_eq!(name.generate("123foo", 4).as_deref(), Some("Example__4"));
+        assert_eq!(
+            name.generate("123foo", FetchId(4)).as_deref(),
+            Some("Example__4")
+        );
     }
 }

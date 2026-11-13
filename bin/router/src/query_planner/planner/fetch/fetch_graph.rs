@@ -17,6 +17,7 @@ use crate::query_planner::planner::fetch::fetch_step_data::{
 use crate::query_planner::planner::fetch::response_keys::{place_of, ResponseKeys};
 use crate::query_planner::planner::fetch::selections::FetchStepSelections;
 use crate::query_planner::planner::fetch::state::{MultiTypeFetchStep, SingleTypeFetchStep};
+use crate::query_planner::planner::plan_nodes::FetchId;
 use crate::query_planner::planner::plan_nodes::{
     FetchNodePathSegment, FetchRewrite, KeyRenamer, ValueSetter,
 };
@@ -202,9 +203,9 @@ impl<State> FetchGraph<State> {
         self.graph.node_references()
     }
 
-    pub fn create_fetch_id(&self) -> u32 {
+    pub fn create_fetch_id(&self) -> FetchId {
         // a plan with more fetches than that doesn't get past the request limits
-        u32::try_from(self.graph.node_count() + 1).expect("fewer than 2^32 fetches")
+        FetchId(u32::try_from(self.graph.node_count() + 1).expect("fewer than 2^32 fetches"))
     }
 
     pub fn get_step_data_mut(

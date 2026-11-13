@@ -1,3 +1,4 @@
+use crate::query_planner::planner::plan_nodes::FetchId;
 use std::{collections::BTreeSet, fmt::Display};
 
 use bitflags::bitflags;
@@ -34,7 +35,7 @@ bitflags! {
 
 #[derive(Debug, Clone)]
 pub struct FetchStepData<State> {
-    pub id: u32,
+    pub id: FetchId,
     pub service_name: SubgraphName,
     pub response_path: MergePath,
     pub input: FetchStepSelections<State>,
@@ -55,7 +56,7 @@ pub struct FetchStepData<State> {
     pub output_rewrites: Option<Vec<FetchRewrite>>,
     pub context_rewrites: Option<Vec<KeyRenamer>>,
     pub context_variable_definitions: Vec<VariableDefinition>,
-    pub context_producers: BTreeSet<u32>,
+    pub context_producers: BTreeSet<FetchId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

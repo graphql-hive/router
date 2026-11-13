@@ -72,8 +72,8 @@ use crate::query_planner::{
     planner::error::QueryPlanError,
     planner::plan_nodes::planning::{
         custom_scalar_paths_for_entities_selection, BatchFetchNode, ConditionGroup,
-        CustomScalarPaths, EntityBatch, EntityBatchAlias, FetchContext, FetchRewrite,
-        FlattenNodePath, PlanNode,
+        CustomScalarPaths, EntityBatch, EntityBatchAlias, FetchContext, FetchId, FetchIdList,
+        FetchRewrite, FlattenNodePath, PlanNode,
     },
     planner::QueryPlannerOptions,
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
@@ -329,8 +329,8 @@ impl<'a> BatchFetchBuilder<'a> {
             entity_batch: EntityBatch {
                 aliases: self.batched_aliases,
             },
-            depends_on: Box::default(),
-            completes: Box::default(),
+            depends_on: FetchIdList::new(),
+            completes: FetchIdList::new(),
         })
     }
 }
@@ -350,7 +350,7 @@ impl<'a> BatchFetchBuilder<'a> {
 struct EntityFetch {
     /// Original index in the Parallel block (for stable ordering).
     index: usize,
-    fetch_node_id: u32,
+    fetch_node_id: FetchId,
     service_name: String,
     flatten_path: FlattenNodePath,
     variable_usages: Option<BTreeSet<String>>,
@@ -360,7 +360,7 @@ struct EntityFetch {
     output_rewrites: Option<Vec<FetchRewrite>>,
     context: Option<Box<FetchContext>>,
     run_if: Option<Vec<ConditionGroup>>,
-    depends_on: Box<[u32]>,
+    depends_on: FetchIdList,
     shape_key: ShapeKey,
     non_representations_variable_definitions: Vec<VariableDefinition>,
 }
@@ -933,13 +933,12 @@ fn build_batched_fetch_node(
         .map(|candidate| candidate.fetch_node_id)
         .collect();
     // what any of them waited for
-    let mut depends_on: Vec<u32> = candidates()
+    batch.depends_on = candidates()
         .flat_map(|candidate| candidate.depends_on.iter().copied())
         .filter(|id| !batch.completes.contains(id))
         .collect();
-    depends_on.sort_unstable();
-    depends_on.dedup();
-    batch.depends_on = depends_on.into_boxed_slice();
+    batch.depends_on.sort_unstable();
+    batch.depends_on.dedup();
     Ok(batch)
 }
 
@@ -985,8 +984,8 @@ mod tests {
             selection_item::SelectionItem,
         },
         planner::plan_nodes::planning::{
-            ConditionGroup, FetchNode, FetchNodePathSegment, FetchRewrite, FlattenNode,
-            FlattenNodePath, PlanNode, QueryPlan, ValueSetter,
+            ConditionGroup, FetchId, FetchIdList, FetchNode, FetchNodePathSegment, FetchRewrite,
+            FlattenNode, FlattenNodePath, PlanNode, QueryPlan, ValueSetter,
         },
         planner::QueryPlannerOptions,
         state::supergraph_state::{OperationKind, SupergraphState},
@@ -1622,10 +1621,14 @@ mod tests {
     fn with_depends_on(mut node: PlanNode, depends_on: Vec<u32>) -> PlanNode {
         if let PlanNode::Flatten(flatten) = &mut node {
             if let PlanNode::Fetch(fetch) = flatten.node.as_mut() {
-                fetch.depends_on = depends_on.into_boxed_slice();
+                fetch.depends_on = depends_on.into_iter().map(FetchId).collect();
             }
         }
         node
+    }
+
+    fn ids(ids: &[FetchId]) -> Vec<u32> {
+        ids.iter().map(|id| id.0).collect()
     }
 
     /// A batch depends on what any of its fetches depends on, and completes all of them
@@ -1672,12 +1675,12 @@ mod tests {
         };
 
         let both = batch(vec![7], vec![8, 7]);
-        assert_eq!(both.id, 1);
-        assert_eq!(&*both.completes, [1, 2]);
-        assert_eq!(&*both.depends_on, [7, 8]);
+        assert_eq!(both.id, FetchId(1));
+        assert_eq!(ids(&both.completes), [1, 2]);
+        assert_eq!(ids(&both.depends_on), [7, 8]);
 
         // the merged fetches don't wait for each other
-        assert_eq!(&*batch(vec![], vec![1]).depends_on, [] as [u32; 0]);
+        assert_eq!(ids(&batch(vec![], vec![1]).depends_on), [] as [u32; 0]);
     }
 
     /// A batch split by `max_aliases_per_request` gives each part its own fetches
@@ -1725,13 +1728,13 @@ mod tests {
         for batch in &batches {
             assert_eq!(batch.completes.len(), 2);
             assert_eq!(batch.completes[0], batch.id);
-            let expected: Vec<u32> = batch.completes.iter().map(|id| id + 10).collect();
-            let mut depends_on = batch.depends_on.to_vec();
+            let expected: Vec<u32> = batch.completes.iter().map(|id| id.0 + 10).collect();
+            let mut depends_on = ids(&batch.depends_on);
             depends_on.sort_unstable();
             let mut expected = expected;
             expected.sort_unstable();
             assert_eq!(depends_on, expected);
-            all.extend(batch.completes.iter());
+            all.extend(ids(&batch.completes));
         }
         all.sort_unstable();
         assert_eq!(all, [1, 2, 3, 4]);
@@ -2851,7 +2854,7 @@ mod tests {
         let operation = PlanningFetchOperation::from_anonymous_operation(entities_document);
 
         let fetch_node = FetchNode {
-            id,
+            id: FetchId(id),
             service_name: service_name.to_string(),
             variable_usages: non_representation_variable_names,
             operation_kind: Some(OperationKind::Query),
@@ -2863,7 +2866,7 @@ mod tests {
             output_rewrites: None,
             context: None,
             run_if: None,
-            depends_on: Box::default(),
+            depends_on: FetchIdList::new(),
         };
 
         let path = FlattenNodePath::from(&MergePath::new(vec![
@@ -2933,7 +2936,7 @@ mod tests {
         ));
 
         FetchNode {
-            id,
+            id: FetchId(id),
             service_name: service_name.to_string(),
             variable_usages: None,
             operation_kind: Some(OperationKind::Query),
@@ -2945,7 +2948,7 @@ mod tests {
             output_rewrites: None,
             context: None,
             run_if: None,
-            depends_on: Box::default(),
+            depends_on: FetchIdList::new(),
         }
     }
 

@@ -1,76 +1,120 @@
 //! Which fetches of a plan wait for which, what the executor schedules on.
 //!
-//! A plan lists its fetches in `Sequence` and `Parallel` nodes, in waves: every fetch of a wave
-//! comes after every fetch of the waves before it. The planner also tells each fetch which fetches
-//! it really reads from (`depends_on`), so a fetch can start as soon as those are done, not when
-//! its whole wave could. The schedule is worked out once, with the plan.
+//! The planner tells each fetch which fetches it reads from (`depends_on`, by [`FetchId`]).
+//! When the plan is made, that's turned into a [`PlanSchedule`] by position, so the executor starts
+//! a fetch the moment those are done, and executable nodes don't keep any ids for it.
 
-use super::{PlanNode, PlanState};
+use smallvec::SmallVec;
 
-/// What every fetch of a plan waits for. Fetches are counted in the plan's order, the order
-/// [`plan_fetches`] lists them in.
+use super::{FetchId, PlanNode, PlanState, Planning};
+use crate::query_planner::planner::error::QueryPlanError;
+
+/// The fetches of a plan by position, the order [`plan_fetches`] lists them in, and which ones
+/// wait for which. Kept as flat arrays: a plan is made once and run many times.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PlanSchedule {
-    /// For each fetch, the fetches it waits for. Always earlier ones.
-    waits_for: Box<[Box<[usize]>]>,
+    /// How many fetches each fetch waits for.
+    waits: Box<[u32]>,
+    /// Where each fetch's dependents start in `dependents`, with one more at the end.
+    dependents_start: Box<[u32]>,
+    /// The fetches that wait for each fetch, back to back.
+    dependents: Box<[u32]>,
 }
 
 impl PlanSchedule {
-    /// The schedule of `node`. Fails when a fetch depends on an id that isn't a fetch (or one
-    /// merged into a batch) the plan's order puts before it.
-    pub fn new<S: PlanState>(node: Option<&PlanNode<S>>) -> Result<Self, String> {
-        let mut fetches = Vec::new();
-        let mut waits_for = Vec::new();
-        if let Some(node) = node {
-            collect(node, &[], &mut fetches, &mut waits_for)?;
+    /// The schedule of `node`. Fails when a fetch depends on one that doesn't come before it in
+    /// the plan, so a schedule never has a cycle.
+    pub fn new(node: Option<&PlanNode<Planning>>) -> Result<Self, QueryPlanError> {
+        let fetches = node.map(plan_fetches).unwrap_or_default();
+        let position = positions_by_id(&fetches);
+        let mut dependencies: Vec<(u32, u32)> = Vec::new();
+        for (index, fetch) in fetches.iter().enumerate() {
+            let Some((id, depends_on)) = id_and_depends_on(fetch) else {
+                continue;
+            };
+            let index = index as u32;
+            for &dependency in depends_on {
+                let dependency_index = position
+                    .get(dependency.index())
+                    .copied()
+                    .filter(|&dependency_index| dependency_index < index)
+                    .ok_or_else(|| QueryPlanError::DependsOnLaterFetch {
+                        fetch: id,
+                        dependency,
+                    })?;
+                dependencies.push((dependency_index, index));
+            }
         }
-        Ok(Self {
-            waits_for: waits_for.into_boxed_slice(),
-        })
+        Ok(Self::from_dependencies(fetches.len(), dependencies))
+    }
+
+    /// The schedule of `fetch_count` fetches, from `(dependency, dependent)` pairs by position: the
+    /// dependent waits for the dependency.
+    pub(crate) fn from_dependencies(fetch_count: usize, mut dependencies: Vec<(u32, u32)>) -> Self {
+        dependencies.sort_unstable();
+        // two ids merged into one batch are one fetch
+        dependencies.dedup();
+        let mut waits = vec![0; fetch_count];
+        let mut dependents_start = vec![0; fetch_count + 1];
+        for &(dependency, dependent) in &dependencies {
+            waits[dependent as usize] += 1;
+            dependents_start[dependency as usize + 1] += 1;
+        }
+        for index in 0..fetch_count {
+            dependents_start[index + 1] += dependents_start[index];
+        }
+        Self {
+            waits: waits.into(),
+            dependents_start: dependents_start.into(),
+            dependents: dependencies
+                .into_iter()
+                .map(|(_, dependent)| dependent)
+                .collect(),
+        }
     }
 
     /// How many fetches the plan has.
-    pub fn len(&self) -> usize {
-        self.waits_for.len()
+    pub fn fetch_count(&self) -> usize {
+        self.waits.len()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.waits_for.is_empty()
+    /// How many fetches each fetch waits for.
+    pub fn waits(&self) -> &[u32] {
+        &self.waits
     }
 
-    /// The fetches the `index`th fetch waits for.
-    pub fn waits_for(&self, index: usize) -> &[usize] {
-        &self.waits_for[index]
+    /// The fetches that wait for the `index`th one.
+    pub fn dependents(&self, index: usize) -> &[u32] {
+        let start = self.dependents_start[index] as usize;
+        let end = self.dependents_start[index + 1] as usize;
+        &self.dependents[start..end]
     }
 
-    /// The schedule of the plan without its first fetch, for the rest of a subscription's plan
-    /// that runs on every event: the subscription fetch is done by then.
-    pub fn without_first(&self) -> Self {
-        Self {
-            waits_for: self
-                .waits_for
-                .iter()
-                .skip(1)
-                .map(|waits_for| {
-                    waits_for
-                        .iter()
-                        .filter(|index| **index != 0)
-                        .map(|index| index - 1)
-                        .collect()
-                })
-                .collect(),
-        }
+    /// The schedule without the first fetch, for the rest of a subscription's plan that runs on
+    /// every event: the subscription fetch is done by then.
+    pub fn after_first_fetch(&self) -> Self {
+        let dependencies = (1..self.fetch_count())
+            .flat_map(|dependency| {
+                self.dependents(dependency)
+                    .iter()
+                    .map(move |dependent| (dependency as u32 - 1, dependent - 1))
+            })
+            .collect();
+        Self::from_dependencies(self.fetch_count().saturating_sub(1), dependencies)
     }
 }
 
 /// The fetches of `node` in the plan's order: every node that isn't a `Sequence` or a `Parallel`.
-pub fn plan_fetches<S: PlanState>(node: &PlanNode<S>) -> Vec<&PlanNode<S>> {
-    let mut fetches = Vec::new();
+pub fn plan_fetches<S: PlanState>(node: &PlanNode<S>) -> SmallVec<[&PlanNode<S>; 16]> {
+    let mut fetches = SmallVec::new();
     push_fetches(node, &mut fetches);
     fetches
 }
 
-fn push_fetches<'p, S: PlanState>(node: &'p PlanNode<S>, fetches: &mut Vec<&'p PlanNode<S>>) {
+fn push_fetches<'p, S: PlanState>(
+    node: &'p PlanNode<S>,
+    fetches: &mut SmallVec<[&'p PlanNode<S>; 16]>,
+) {
     match node {
         PlanNode::Sequence(sequence) => sequence
             .nodes
@@ -84,85 +128,50 @@ fn push_fetches<'p, S: PlanState>(node: &'p PlanNode<S>, fetches: &mut Vec<&'p P
     }
 }
 
-/// Adds the fetches in `node` to `fetches` and what they wait for to `waits_for`, and returns
-/// their positions. `preds` are the fetches the plan's order puts before `node`.
-fn collect<'p, S: PlanState>(
-    node: &'p PlanNode<S>,
-    preds: &[usize],
-    fetches: &mut Vec<&'p PlanNode<S>>,
-    waits_for: &mut Vec<Box<[usize]>>,
-) -> Result<Vec<usize>, String> {
-    match node {
-        PlanNode::Sequence(sequence) => {
-            let mut before = preds.to_vec();
-            let mut all = Vec::new();
-            for child in &sequence.nodes {
-                let added = collect(child, &before, fetches, waits_for)?;
-                before.extend(&added);
-                all.extend(added);
-            }
-            Ok(all)
-        }
-        PlanNode::Parallel(parallel) => {
-            let mut all = Vec::new();
-            for child in &parallel.nodes {
-                all.extend(collect(child, preds, fetches, waits_for)?);
-            }
-            Ok(all)
-        }
-        node => {
-            let mut waits: Vec<usize> = depends_on(node)
-                .iter()
-                .map(|id| {
-                    preds
-                        .iter()
-                        .copied()
-                        .find(|pred| fetch_ids(fetches[*pred]).any(|pred_id| pred_id == *id))
-                        .ok_or_else(|| {
-                            format!(
-                                "fetch {:?} depends on {id}, which isn't a fetch before it",
-                                fetch_id(node)
-                            )
-                        })
-                })
-                .collect::<Result<_, _>>()?;
-            waits.sort_unstable();
-            waits.dedup();
-            fetches.push(node);
-            waits_for.push(waits.into_boxed_slice());
-            Ok(vec![fetches.len() - 1])
+/// Each fetch's position, by id. Fetch ids count up from one, so a flat array holds them.
+/// `u32::MAX` where no fetch has that id.
+fn positions_by_id(fetches: &[&PlanNode<Planning>]) -> Vec<u32> {
+    let ids = |fetch| {
+        id_and_depends_on(fetch)
+            .map(|(id, _)| id)
+            .into_iter()
+            .chain(completes(fetch))
+    };
+    // one more than the highest id
+    let id_bound = fetches
+        .iter()
+        .flat_map(|fetch| ids(fetch))
+        .map(|id| id.index() + 1)
+        .max()
+        .unwrap_or(0);
+    let mut position = vec![u32::MAX; id_bound];
+    for (index, fetch) in fetches.iter().enumerate() {
+        for id in ids(fetch) {
+            position[id.index()] = index as u32;
         }
     }
+    position
 }
 
-/// What the fetch in `node` depends on.
-fn depends_on<S: PlanState>(node: &PlanNode<S>) -> &[u32] {
+/// A fetch's id and the fetches it depends on, `None` for a node that isn't a fetch.
+fn id_and_depends_on(node: &PlanNode<Planning>) -> Option<(FetchId, &[FetchId])> {
     match node {
-        PlanNode::Fetch(fetch) => &fetch.depends_on,
-        PlanNode::Flatten(flatten) => depends_on(&flatten.node),
-        PlanNode::BatchFetch(batch) => &batch.depends_on,
-        PlanNode::Subscription(subscription) => &subscription.primary.depends_on,
-        _ => &[],
-    }
-}
-
-fn fetch_id<S: PlanState>(node: &PlanNode<S>) -> Option<u32> {
-    match node {
-        PlanNode::Fetch(fetch) => Some(fetch.id),
-        PlanNode::Flatten(flatten) => fetch_id(&flatten.node),
-        PlanNode::BatchFetch(batch) => Some(batch.id),
-        PlanNode::Subscription(subscription) => Some(subscription.primary.id),
+        PlanNode::Fetch(fetch) => Some((fetch.id, &fetch.depends_on)),
+        PlanNode::Flatten(flatten) => id_and_depends_on(&flatten.node),
+        PlanNode::BatchFetch(batch) => Some((batch.id, &batch.depends_on)),
+        PlanNode::Subscription(subscription) => {
+            Some((subscription.primary.id, &subscription.primary.depends_on))
+        }
         _ => None,
     }
 }
 
-/// The ids of the fetches in `node`, a batch has all the ones merged into it.
-fn fetch_ids<S: PlanState>(node: &PlanNode<S>) -> impl Iterator<Item = u32> + '_ {
-    let completes: &[u32] = match node {
+fn completes(node: &PlanNode<Planning>) -> impl Iterator<Item = FetchId> + '_ {
+    let completes: &[FetchId] = match node {
         PlanNode::BatchFetch(batch) => &batch.completes,
         _ => &[],
     };
-    fetch_id(node).into_iter().chain(completes.iter().copied())
+    completes.iter().copied()
 }
 
 #[cfg(test)]
@@ -170,16 +179,16 @@ mod tests {
     use super::PlanSchedule;
 
     #[test]
-    fn without_first_drops_the_first_fetch_and_moves_the_rest_up() {
-        let schedule = PlanSchedule {
-            waits_for: [vec![], vec![0], vec![0, 1], vec![2]]
-                .map(Vec::into_boxed_slice)
-                .into(),
-        };
-        let rest = schedule.without_first();
-        assert_eq!(rest.len(), 3);
-        assert_eq!(rest.waits_for(0), [] as [usize; 0]);
-        assert_eq!(rest.waits_for(1), [0]);
-        assert_eq!(rest.waits_for(2), [1]);
+    fn after_first_fetch_drops_it_and_moves_the_rest_up() {
+        // 0 → 1, 0 → 2, 1 → 2, 2 → 3
+        let schedule = PlanSchedule::from_dependencies(4, vec![(0, 1), (0, 2), (1, 2), (2, 3)]);
+        assert_eq!(schedule.waits(), [0, 1, 2, 1]);
+        assert_eq!(schedule.dependents(0), [1, 2]);
+
+        let rest = schedule.after_first_fetch();
+        assert_eq!(rest.waits(), [0, 1, 1]);
+        assert_eq!(rest.dependents(0), [1]);
+        assert_eq!(rest.dependents(1), [2]);
+        assert_eq!(rest.dependents(2), [] as [u32; 0]);
     }
 }

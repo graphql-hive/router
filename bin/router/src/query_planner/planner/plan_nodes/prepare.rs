@@ -30,7 +30,7 @@ impl FetchNode<Planning> {
             output_rewrites: self.output_rewrites,
             context: self.context,
             run_if: self.run_if,
-            depends_on: self.depends_on,
+            depends_on: (),
         }
     }
 }
@@ -50,8 +50,8 @@ impl PlanNode<Planning> {
                     .into_executable(supergraph, batch.custom_scalar_paths.as_ref()),
                 custom_scalar_paths: batch.custom_scalar_paths,
                 entity_batch: batch.entity_batch,
-                depends_on: batch.depends_on,
-                completes: batch.completes,
+                depends_on: (),
+                completes: (),
             })),
             Self::Flatten(flatten) => PlanNode::Flatten(FlattenNode {
                 path: flatten.path,

@@ -1,7 +1,9 @@
 use std::error::Error;
 
 use crate::query_planner::{
-    planner::plan_nodes::{dependencies::plan_fetches, planning::PlanNode, QueryPlan},
+    planner::plan_nodes::{
+        dependencies::plan_fetches, planning::PlanNode, FetchNode, Planning, QueryPlan,
+    },
     tests::testkit::{build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
@@ -24,20 +26,14 @@ fn waits(fixture: &str, query: &str) -> Result<Waits, Box<dyn Error>> {
             other => format!("{other:?}"),
         }
     };
-    Ok(fetches
-        .iter()
-        .enumerate()
-        .map(|(index, node)| {
-            (
-                name(node),
-                plan.schedule()
-                    .waits_for(index)
-                    .iter()
-                    .map(|dep| name(fetches[*dep]))
-                    .collect(),
-            )
-        })
-        .collect())
+    // the schedule keeps who waits for each fetch, turn it around
+    let mut waits: Waits = fetches.iter().map(|node| (name(node), vec![])).collect();
+    for (dep, node) in fetches.iter().enumerate() {
+        for dependent in plan.schedule().dependents(dep) {
+            waits[*dependent as usize].1.push(name(node));
+        }
+    }
+    Ok(waits)
 }
 
 /// The plan has `inventory` and `reviews` in one wave and `accounts` in the next, but the
@@ -84,25 +80,22 @@ fn mutation_fields_depend_on_the_one_before() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// A fetch that depends on one the plan's order doesn't put before it can't be scheduled, so
-/// the plan isn't made.
+/// A fetch that depends on one that comes after it can't be scheduled, so the plan isn't made.
 #[test]
-fn a_plan_with_a_dependency_that_is_not_before_it_is_refused() -> Result<(), Box<dyn Error>> {
-    fn depend_on(node: &mut PlanNode, service: &str, id: u32) {
+fn a_plan_with_a_dependency_that_comes_later_is_refused() -> Result<(), Box<dyn Error>> {
+    fn fetch_mut<'p>(node: &'p mut PlanNode, service: &str) -> Option<&'p mut FetchNode<Planning>> {
         match node {
             PlanNode::Sequence(sequence) => sequence
                 .nodes
                 .iter_mut()
-                .for_each(|node| depend_on(node, service, id)),
+                .find_map(|node| fetch_mut(node, service)),
             PlanNode::Parallel(parallel) => parallel
                 .nodes
                 .iter_mut()
-                .for_each(|node| depend_on(node, service, id)),
-            PlanNode::Flatten(flatten) => depend_on(&mut flatten.node, service, id),
-            PlanNode::Fetch(fetch) if fetch.service_name == service => {
-                fetch.depends_on = vec![id].into_boxed_slice()
-            }
-            _ => {}
+                .find_map(|node| fetch_mut(node, service)),
+            PlanNode::Flatten(flatten) => fetch_mut(&mut flatten.node, service),
+            PlanNode::Fetch(fetch) if fetch.service_name == service => Some(fetch),
+            _ => None,
         }
     }
     init_logger();
@@ -111,28 +104,18 @@ fn a_plan_with_a_dependency_that_is_not_before_it_is_refused() -> Result<(), Box
         parse_operation("{ topProducts { upc inStock reviews { author { name } } } }"),
     )?;
     let mut node = plan.node.ok_or("an empty plan")?;
-    // `inventory` and `reviews` run side by side, one can't wait for the other
-    let reviews_id = match &node {
-        PlanNode::Sequence(sequence) => match &sequence.nodes[1] {
-            PlanNode::Parallel(parallel) => parallel
-                .nodes
-                .iter()
-                .find_map(|node| match node {
-                    PlanNode::Flatten(flatten) => match flatten.node.as_ref() {
-                        PlanNode::Fetch(fetch) if fetch.service_name == "reviews" => Some(fetch.id),
-                        _ => None,
-                    },
-                    _ => None,
-                })
-                .ok_or("a reviews fetch")?,
-            _ => return Err("a parallel wave".into()),
-        },
-        _ => return Err("a sequence".into()),
-    };
-    depend_on(&mut node, "inventory", reviews_id);
+    // the authors come last, the reviews can't wait for them
+    let accounts = fetch_mut(&mut node, "accounts")
+        .ok_or("an accounts fetch")?
+        .id;
+    fetch_mut(&mut node, "reviews")
+        .ok_or("a reviews fetch")?
+        .depends_on = smallvec::smallvec![accounts];
     let error = QueryPlan::new(Some(node)).expect_err("a plan that can't be scheduled");
     assert!(
-        error.contains(&format!("depends on {reviews_id}")),
+        error
+            .to_string()
+            .contains(&format!("depends on fetch {accounts},")),
         "{error}"
     );
     Ok(())
