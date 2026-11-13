@@ -82,6 +82,7 @@ impl TryFrom<&HiveRouterConfig> for SupergraphOptions {
                     .query_planner
                     .experimental_abstract_type_folding,
                 arguments_to_variables: config.query_planner.arguments_to_variables,
+                experimental_entity_reuse: config.traffic_shaping.experimental_entity_reuse,
                 max_aliases_per_request: config.traffic_shaping.all.max_aliases_per_request,
                 subgraph_max_aliases_per_request: config
                     .traffic_shaping
