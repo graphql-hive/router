@@ -162,9 +162,10 @@ impl<'a> EntityReuseIndex<'a> {
     pub(super) fn new(
         fetch_graph: &'a FetchGraph<MultiTypeFetchStep>,
         supergraph: &'a SupergraphState,
+        enabled: bool,
     ) -> Self {
         let mut positions = HashMap::default();
-        if fetch_graph.operation_kind == OperationKind::Query {
+        if enabled && fetch_graph.operation_kind == OperationKind::Query {
             for index in fetch_graph.step_indices() {
                 if let Some((type_name, _)) = fetch_graph.get_step_data(index).ok().and_then(wanted)
                 {

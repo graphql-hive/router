@@ -1,9 +1,28 @@
 use crate::query_planner::{
-    planner::plan_nodes::planning::{PlanNode, QueryPlan},
-    tests::testkit::{build_query_plan_with_defaults, init_logger},
+    planner::{
+        plan_nodes::planning::{PlanNode, QueryPlan},
+        QueryPlannerOptions,
+    },
+    tests::testkit::{build_query_plan, build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
+
+/// Plans with entity reuse on, it's off by default
+fn plan_with_reuse(
+    fixture_path: &str,
+    document: graphql_tools::parser::query::Document<'static, String>,
+) -> Result<QueryPlan, Box<dyn Error>> {
+    build_query_plan(
+        fixture_path,
+        document,
+        Default::default(),
+        QueryPlannerOptions {
+            experimental_entity_reuse: true,
+            ..Default::default()
+        },
+    )
+}
 
 /// One line per entity fetch (or batch alias): where it merges, and where it may copy from.
 fn describe(plan: &QueryPlan) -> String {
@@ -67,7 +86,7 @@ fn bench_operation_entities_can_come_from_earlier_fetches() -> Result<(), Box<dy
         &std::fs::read_to_string("../../bench/operation.graphql")
             .expect("Unable to read input file"),
     );
-    let query_plan = build_query_plan_with_defaults("../../bench/supergraph.graphql", document)?;
+    let query_plan = plan_with_reuse("../../bench/supergraph.graphql", document)?;
 
     insta::assert_snapshot!(describe(&query_plan), @r"
     inventory at topProducts.@ <- -
@@ -82,12 +101,27 @@ fn bench_operation_entities_can_come_from_earlier_fetches() -> Result<(), Box<dy
 }
 
 #[test]
+fn nothing_is_planned_with_entity_reuse_off() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        &std::fs::read_to_string("../../bench/operation.graphql")
+            .expect("Unable to read input file"),
+    );
+    let query_plan = build_query_plan_with_defaults("../../bench/supergraph.graphql", document)?;
+
+    assert!(!describe(&query_plan).contains("<- topProducts"));
+    assert!(!describe(&query_plan).contains("<- users"));
+
+    Ok(())
+}
+
+#[test]
 fn source_with_an_aliased_key_is_left_out() -> Result<(), Box<dyn Error>> {
     init_logger();
     // `id` on users is the username, the executor would match authors by it
     let document =
         parse_operation(r#"{ users { id: username name reviews { author { name } } } }"#);
-    let query_plan = build_query_plan_with_defaults("../../bench/supergraph.graphql", document)?;
+    let query_plan = plan_with_reuse("../../bench/supergraph.graphql", document)?;
 
     insta::assert_snapshot!(describe(&query_plan), @r"
     reviews at users.@ <- -
@@ -109,8 +143,7 @@ fn mutation_fields_never_copy_from_each_other() -> Result<(), Box<dyn Error>> {
           second: addProduct(input: { name: "b", price: 2 }) { id isAvailable }
         }"#,
     );
-    let query_plan =
-        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+    let query_plan = plan_with_reuse("fixture/tests/mutations.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(describe(&query_plan), @r"
     b at first <- -
@@ -126,7 +159,7 @@ fn copies_a_field_under_a_labelled_override_from_the_subgraph_the_plan_uses(
     init_logger();
     // the plan gets `createdAt` from `b`, and `bFeed` already holds it from `b`
     let document = parse_operation("{ aFeed { createdAt } bFeed { createdAt } }");
-    let query_plan = build_query_plan_with_defaults(
+    let query_plan = plan_with_reuse(
         "fixture/tests/simple-progressive-overrides.supergraph.graphql",
         document,
     )?;
