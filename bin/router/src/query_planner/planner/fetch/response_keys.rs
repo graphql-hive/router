@@ -13,11 +13,15 @@
 
 use ahash::HashMap;
 
+use crate::query_planner::ast::flat::{
+    arena::{Arena, ListId},
+    selection_tree::{Sel, SelectionTree},
+    Kind,
+};
+
 use crate::query_planner::ast::{
     arguments::ArgumentsMap,
     merge_path::{MergePath, Segment},
-    selection_item::SelectionItem,
-    selection_set::{FieldSelection, SelectionSet},
 };
 
 type Signature = (String, Option<ArgumentsMap>);
@@ -37,9 +41,41 @@ struct Place {
 }
 
 impl ResponseKeys {
-    pub fn from_operation(selection_set: &SelectionSet) -> Self {
+    /// The client's keys, from the flat operation the walker reads.
+    pub fn from_selection_tree(tree: &SelectionTree) -> Self {
+        fn take<'a>(
+            keys: &mut ResponseKeys,
+            place: &mut Vec<String>,
+            items: impl Iterator<Item = Sel<'a>>,
+        ) {
+            for item in items {
+                match item.kind() {
+                    Kind::Field => {
+                        let attributes = item.attributes();
+                        let key = attributes
+                            .and_then(|a| a.alias.clone())
+                            .unwrap_or_else(|| item.name().to_string());
+                        let arguments = attributes
+                            .and_then(|a| a.arguments.as_ref())
+                            .filter(|a| !a.is_empty())
+                            .cloned();
+                        let signature = (item.name().to_string(), arguments);
+                        keys.place_mut(place)
+                            .occupants
+                            .entry(key.clone())
+                            .or_default()
+                            .push(signature);
+                        place.push(key);
+                        take(keys, place, item.children());
+                        place.pop();
+                    }
+                    Kind::InlineFragment => take(keys, place, item.children()),
+                    Kind::FragmentSpread => {}
+                }
+            }
+        }
         let mut keys = Self::default();
-        keys.take_client_keys(&mut Vec::new(), selection_set);
+        take(&mut keys, &mut Vec::new(), tree.roots());
         keys
     }
 
@@ -51,53 +87,38 @@ impl ResponseKeys {
         self.places.get_mut(place).expect("inserted above")
     }
 
-    fn take_client_keys(&mut self, place: &mut Vec<String>, selection_set: &SelectionSet) {
-        for item in &selection_set.items {
-            match item {
-                SelectionItem::Field(field) => {
-                    let key = field.selection_identifier().to_string();
-                    let occupants = &mut self.place_mut(place).occupants;
-                    match occupants.get_mut(&key) {
-                        Some(signatures) => signatures.push(signature(field)),
-                        None => {
-                            occupants.insert(key.clone(), vec![signature(field)]);
-                        }
-                    }
-                    place.push(key);
-                    self.take_client_keys(place, &field.selections);
-                    place.pop();
-                }
-                SelectionItem::InlineFragment(fragment) => {
-                    self.take_client_keys(place, &fragment.selections)
-                }
-                SelectionItem::FragmentSpread(_) => {}
-            }
+    /// The key the field `name(arguments)` goes under at `place`. Its own name, unless something
+    /// else writes that key there, then the first `_internal_qp_alias_N` nobody uses there.
+    pub fn wire_key(
+        &mut self,
+        place: &[String],
+        name: &str,
+        arguments: Option<&ArgumentsMap>,
+    ) -> String {
+        if name == "__typename" {
+            return name.to_string();
         }
-    }
-
-    /// The key `field` goes under at `place`. Its own name, unless something else writes that
-    /// key there, then the first `_internal_qp_alias_N` nobody uses there.
-    pub fn wire_key(&mut self, place: &[String], field: &FieldSelection) -> String {
-        if field.name == "__typename" {
-            return field.name.clone();
-        }
+        // like `FieldSelection::arguments()`, empty arguments are no arguments
+        let arguments = arguments.filter(|a| !a.is_empty());
 
         let place = self.place_mut(place);
         // Compared in place, the signature is only built when it gets stored.
-        if let Some((_, key)) = place.picked.iter().find(|((name, arguments), _)| {
-            *name == field.name && arguments.as_ref() == field.arguments()
-        }) {
+        if let Some((_, key)) = place
+            .picked
+            .iter()
+            .find(|((n, a), _)| n == name && a.as_ref() == arguments)
+        {
             return key.clone();
         }
 
-        let signature = signature(field);
+        let signature: Signature = (name.to_string(), arguments.cloned());
 
         let name_is_free = place
             .occupants
-            .get(&field.name)
+            .get(name)
             .is_none_or(|occupants| occupants.iter().all(|occupant| *occupant == signature));
         let key = if name_is_free {
-            field.name.clone()
+            name.to_string()
         } else {
             (0..)
                 .map(|index| format!("_internal_qp_alias_{index}"))
@@ -114,55 +135,43 @@ impl ResponseKeys {
         key
     }
 
-    /// `selection_set`, at `place`, the way a fetch writes it: `_internal_qp_alias_0: price`.
-    pub fn output(&mut self, place: &[String], selection_set: &SelectionSet) -> SelectionSet {
-        self.map(&mut place.to_vec(), selection_set, &|field, key| {
-            if key != field.name {
-                field.alias = Some(key);
-            }
-        })
+    /// `list`, at `place`, changed in place to the way a fetch writes it:
+    /// `_internal_qp_alias_0: price`.
+    pub fn output(&mut self, arena: &mut Arena, place: &[String], list: ListId) {
+        self.map(arena, &mut place.to_vec(), list, false)
     }
 
-    /// `selection_set`, at `place`, the way a representation reads it:
+    /// `list`, at `place`, changed in place to the way a representation reads it:
     /// `price: _internal_qp_alias_0`, the value under the key, put back under the field's name.
-    pub fn input(&mut self, place: &[String], selection_set: &SelectionSet) -> SelectionSet {
-        self.map(&mut place.to_vec(), selection_set, &|field, key| {
-            if key != field.name {
-                field.alias = Some(std::mem::replace(&mut field.name, key));
-            }
-        })
+    pub fn input(&mut self, arena: &mut Arena, place: &[String], list: ListId) {
+        self.map(arena, &mut place.to_vec(), list, true)
     }
 
     /// `place` is a stack: a field's key goes on it while its selections are mapped.
-    fn map<F: Fn(&mut FieldSelection, String)>(
-        &mut self,
-        place: &mut Vec<String>,
-        selection_set: &SelectionSet,
-        apply: &F,
-    ) -> SelectionSet {
-        let items = selection_set
-            .items
-            .iter()
-            .map(|item| match item {
-                SelectionItem::Field(field) => {
-                    let key = self.wire_key(place, field);
+    fn map(&mut self, arena: &mut Arena, place: &mut Vec<String>, list: ListId, input: bool) {
+        for index in 0..arena.items(list).len() {
+            let id = arena.items(list)[index];
+            let node = *arena.node(id);
+            match node.kind {
+                Kind::Field => {
+                    let key = self.wire_key(place, arena.str(node.name), arena.args(node.args));
                     place.push(key);
-                    let selections = self.map(place, &field.selections, apply);
+                    self.map(arena, place, node.children, input);
                     let key = place.pop().expect("pushed above");
-                    let mut field = field.with_new_selections(selections);
-                    apply(&mut field, key);
-                    SelectionItem::Field(field)
+                    if key != arena.str(node.name) {
+                        let key = arena.intern(&key);
+                        let node = arena.node_mut(id);
+                        if input {
+                            node.alias = std::mem::replace(&mut node.name, key);
+                        } else {
+                            node.alias = key;
+                        }
+                    }
                 }
-                SelectionItem::InlineFragment(fragment) => {
-                    let mut fragment = fragment.clone();
-                    fragment.selections = self.map(place, &fragment.selections, apply);
-                    SelectionItem::InlineFragment(fragment)
-                }
-                SelectionItem::FragmentSpread(_) => item.clone(),
-            })
-            .collect();
-
-        SelectionSet { items }
+                Kind::InlineFragment => self.map(arena, place, node.children, input),
+                Kind::FragmentSpread => {}
+            }
+        }
     }
 }
 
@@ -177,15 +186,17 @@ pub fn place_of(path: &MergePath) -> Vec<String> {
         .collect()
 }
 
-fn signature(field: &FieldSelection) -> Signature {
-    (field.name.clone(), field.arguments().cloned())
-}
-
 #[cfg(test)]
 mod tests {
     use graphql_tools::parser::query::{Definition, OperationDefinition};
 
-    use crate::query_planner::{ast::selection_set::SelectionSet, utils::parsing::parse_operation};
+    use crate::query_planner::{
+        ast::{
+            flat::{arena::Arena, plan_document::DisplayList, selection_tree::SelectionTree},
+            selection_set::SelectionSet,
+        },
+        utils::parsing::parse_operation,
+    };
 
     use super::ResponseKeys;
 
@@ -197,7 +208,21 @@ mod tests {
     }
 
     fn keys(client: &str) -> ResponseKeys {
-        ResponseKeys::from_operation(&parse(client))
+        ResponseKeys::from_selection_tree(&SelectionTree::from_tree(&parse(client)))
+    }
+
+    fn output(keys: &mut ResponseKeys, place: &[String], query: &str) -> String {
+        let mut arena = Arena::new();
+        let list = arena.import(&parse(query));
+        keys.output(&mut arena, place, list);
+        DisplayList(&arena, list).to_string()
+    }
+
+    fn input(keys: &mut ResponseKeys, place: &[String], query: &str) -> String {
+        let mut arena = Arena::new();
+        let list = arena.import(&parse(query));
+        keys.input(&mut arena, place, list);
+        DisplayList(&arena, list).to_string()
     }
 
     #[test]
@@ -205,17 +230,18 @@ mod tests {
         let mut keys = keys(r#"{ me { price(currency: "GBP") } }"#);
         let me = ["me".to_string()];
 
-        let gbp = keys.output(&me, &parse(r#"{ price(currency: "GBP") }"#));
-        let eur = keys.output(&me, &parse(r#"{ price(currency: "EUR") }"#));
-        let eur_read = keys.input(&me, &parse(r#"{ ... on Cat { price(currency: "EUR") } }"#));
-
-        assert_eq!(gbp.to_string(), r#"{price(currency: "GBP")}"#);
-        assert_eq!(
-            eur.to_string(),
-            r#"{_internal_qp_alias_0: price(currency: "EUR")}"#
+        let gbp = output(&mut keys, &me, r#"{ price(currency: "GBP") }"#);
+        let eur = output(&mut keys, &me, r#"{ price(currency: "EUR") }"#);
+        let eur_read = input(
+            &mut keys,
+            &me,
+            r#"{ ... on Cat { price(currency: "EUR") } }"#,
         );
+
+        assert_eq!(gbp, r#"{price(currency: "GBP")}"#);
+        assert_eq!(eur, r#"{_internal_qp_alias_0: price(currency: "EUR")}"#);
         assert_eq!(
-            eur_read.to_string(),
+            eur_read,
             r#"{...on Cat{price: _internal_qp_alias_0(currency: "EUR")}}"#
         );
     }
@@ -229,24 +255,25 @@ mod tests {
         );
         let things = ["things".to_string()];
 
-        let gbp = keys.output(&things, &parse(r#"{ price(currency: "GBP") }"#));
-        assert_eq!(
-            gbp.to_string(),
-            r#"{_internal_qp_alias_1: price(currency: "GBP")}"#
-        );
+        let gbp = output(&mut keys, &things, r#"{ price(currency: "GBP") }"#);
+        assert_eq!(gbp, r#"{_internal_qp_alias_1: price(currency: "GBP")}"#);
     }
 
     #[test]
     fn a_read_turns_back_into_the_write() {
         let mut keys = keys(r#"{ me { price(currency: "GBP") } }"#);
         let me = ["me".to_string()];
-        let written = keys.output(&me, &parse(r#"{ ... on Cat { price(currency: "EUR") } }"#));
-        let read = keys.input(&me, &parse(r#"{ ... on Cat { price(currency: "EUR") } }"#));
+        let written = output(
+            &mut keys,
+            &me,
+            r#"{ ... on Cat { price(currency: "EUR") } }"#,
+        );
 
-        let mut arena = crate::query_planner::ast::flat::arena::Arena::new();
-        let list = arena.import(&read);
+        let mut arena = Arena::new();
+        let list = arena.import(&parse(r#"{ ... on Cat { price(currency: "EUR") } }"#));
+        keys.input(&mut arena, &me, list);
         arena.read_as_written(list);
-        assert_eq!(arena.export(list).to_string(), written.to_string());
+        assert_eq!(DisplayList(&arena, list).to_string(), written);
     }
 
     /// Below an aliased object, places follow the alias.
@@ -255,15 +282,12 @@ mod tests {
         let mut keys = keys(r#"{ me { team(role: "user") { name } } }"#);
         let me = ["me".to_string()];
 
-        let admin = keys.output(&me, &parse(r#"{ team(role: "admin") { name } }"#));
+        let admin = output(&mut keys, &me, r#"{ team(role: "admin") { name } }"#);
         assert_eq!(
-            admin.to_string(),
+            admin,
             r#"{_internal_qp_alias_0: team(role: "admin"){name}}"#
         );
         let nested = ["me".to_string(), "_internal_qp_alias_0".to_string()];
-        assert_eq!(
-            keys.output(&nested, &parse("{ name }")).to_string(),
-            "{name}"
-        );
+        assert_eq!(output(&mut keys, &nested, "{ name }"), "{name}");
     }
 }

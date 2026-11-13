@@ -1,3 +1,4 @@
+use crate::query_planner::ast::flat::selection_tree::PlanOperation;
 use std::hash::Hash;
 use std::sync::{Arc, LazyLock};
 
@@ -50,15 +51,18 @@ pub async fn plan_operation_with_cache(
 
     async {
         let mut on_end_callbacks = vec![];
-        let mut filtered_operation_for_plan = normalized_operation.operation_for_plan.as_ref();
+        // a plugin may hand back its own operation, as a tree, that one gets planned instead
+        let mut plugin_operation_for_plan = None;
         if let Some(plugin_req_state) = plugin_req_state {
+            // ponytail: the tree is built here only because the hook API takes one
+            let operation_for_plan_tree = normalized_operation.operation_for_plan_tree().as_ref();
             let mut start_payload = OnQueryPlanStartHookPayload {
                 router_http_request: &plugin_req_state.router_http_request,
                 context: &plugin_req_state.context,
                 request_context: plugin_req_state
                     .request_context
                     .for_plugin::<hooks::OnQueryPlan>(),
-                filtered_operation_for_plan,
+                filtered_operation_for_plan: operation_for_plan_tree,
                 cancellation_token,
                 planner: &supergraph.snapshot.planner,
             };
@@ -79,7 +83,12 @@ pub async fn plan_operation_with_cache(
                 }
             }
 
-            filtered_operation_for_plan = start_payload.filtered_operation_for_plan;
+            if !std::ptr::eq(
+                start_payload.filtered_operation_for_plan,
+                operation_for_plan_tree,
+            ) {
+                plugin_operation_for_plan = Some(start_payload.filtered_operation_for_plan);
+            }
         };
 
         let metrics = &schema_state.telemetry_context.metrics;
@@ -89,38 +98,43 @@ pub async fn plan_operation_with_cache(
             &supergraph.snapshot.planner.supergraph,
             request_override_context,
         );
-        let operation_for_plan_hash = if std::ptr::eq(
-            filtered_operation_for_plan,
-            normalized_operation.operation_for_plan.as_ref(),
-        ) {
-            normalized_operation.operation_for_plan_hash
-        } else {
-            filtered_operation_for_plan.hash()
-        };
+        let document_for_plan = &normalized_operation.document_for_plan;
+        let (operation_for_plan_hash, is_plan_operation_empty, operation_kind) =
+            match plugin_operation_for_plan {
+                Some(operation) => (
+                    operation.hash(),
+                    operation.selection_set.is_empty(),
+                    &operation.operation_kind,
+                ),
+                None => (
+                    normalized_operation.operation_for_plan_hash,
+                    document_for_plan
+                        .arena
+                        .is_empty(document_for_plan.selections),
+                    &document_for_plan.kind,
+                ),
+            };
         let plan_cache_key = calculate_cache_key(operation_for_plan_hash, &stable_override_context);
-        let is_plan_operation_empty = filtered_operation_for_plan.selection_set.is_empty();
         let is_projection_plan_empty = normalized_operation.projection_plan.is_empty();
-        let contains_introspection = normalized_operation.operation_for_introspection.is_some();
+        let contains_introspection = normalized_operation.document_for_introspection.is_some();
         let is_pure_introspection = is_plan_operation_empty && contains_introspection;
-        let is_subscription = matches!(
-            filtered_operation_for_plan.operation_kind,
-            Some(OperationKind::Subscription)
-        );
+        let is_subscription = matches!(operation_kind, Some(OperationKind::Subscription));
 
-        let compile_demand_control = |plan: &QueryPlan<Planning>| {
-            supergraph
-                .runtime
-                .demand_control_runtime
-                .as_ref()
-                .map(|runtime| {
-                    Arc::new(runtime.compile_plan(
-                        plan,
-                        filtered_operation_for_plan,
-                        &normalized_operation.root_type_name,
-                        &supergraph.snapshot.planner.supergraph,
-                    ))
-                })
-        };
+        let compile_demand_control =
+            |plan: &QueryPlan<Planning>, plan_operation: &PlanOperation| {
+                supergraph
+                    .runtime
+                    .demand_control_runtime
+                    .as_ref()
+                    .map(|runtime| {
+                        Arc::new(runtime.compile_plan(
+                            plan,
+                            plan_operation,
+                            &normalized_operation.root_type_name,
+                            &supergraph.snapshot.planner.supergraph,
+                        ))
+                    })
+            };
 
         let mut cache_hint = CacheHint::Hit;
         plan_span.record_cache_hit(true);
@@ -129,10 +143,23 @@ pub async fn plan_operation_with_cache(
             .plan_cache
             .entry(plan_cache_key)
             .or_try_insert_with(async {
+                // a plugin's own operation comes as a tree
+                let plugin_operation;
+                let plan_operation = match plugin_operation_for_plan {
+                    Some(operation) => {
+                        plugin_operation = PlanOperation::from_tree(operation);
+                        &plugin_operation
+                    }
+                    None => normalized_operation.plan_operation.as_ref(),
+                };
+
                 if is_pure_introspection {
                     return Ok(PlannedQuery {
                         plan: EMPTY_QUERY_PLAN.clone(),
-                        demand_control: compile_demand_control(&QueryPlan::<Planning>::empty()),
+                        demand_control: compile_demand_control(
+                            &QueryPlan::<Planning>::empty(),
+                            plan_operation,
+                        ),
                         indexed_plan: IndexedPlanCache::new(),
                     });
                 }
@@ -156,7 +183,10 @@ pub async fn plan_operation_with_cache(
                 if is_plan_operation_empty && (!is_projection_plan_empty || !is_subscription) {
                     return Ok(PlannedQuery {
                         plan: EMPTY_QUERY_PLAN.clone(),
-                        demand_control: compile_demand_control(&QueryPlan::<Planning>::empty()),
+                        demand_control: compile_demand_control(
+                            &QueryPlan::<Planning>::empty(),
+                            plan_operation,
+                        ),
                         indexed_plan: IndexedPlanCache::new(),
                     });
                 }
@@ -164,13 +194,13 @@ pub async fn plan_operation_with_cache(
                 supergraph
                     .snapshot
                     .planner
-                    .plan_from_normalized_operation(
-                        filtered_operation_for_plan,
+                    .plan(
+                        plan_operation,
                         (&request_override_context.clone()).into(),
                         cancellation_token,
                     )
                     .map(|plan| {
-                        let demand_control = compile_demand_control(&plan);
+                        let demand_control = compile_demand_control(&plan, plan_operation);
                         PlannedQuery {
                             plan: Arc::new(
                                 plan.into_executable(&supergraph.snapshot.planner.supergraph),

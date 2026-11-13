@@ -11,10 +11,7 @@ use crate::{
     config::HiveRouterConfig,
     executor::{
         execution::client_request_details::JwtRequestDetails,
-        introspection::{
-            partition::partition_operation,
-            schema::{SchemaMetadata, SchemaWithMetadata},
-        },
+        introspection::schema::{SchemaMetadata, SchemaWithMetadata},
         projection::plan::ProjectionPlan,
         response::graphql_error::GraphQLError,
     },
@@ -54,17 +51,17 @@ impl Display for AuthorizationDecision {
         match self {
             AuthorizationDecision::NoChange => write!(f, "[NoChange]"),
             AuthorizationDecision::Modified {
-                new_operation_definition,
+                new_document,
                 errors,
                 ..
             } => {
                 write!(
                     f,
                     "[Modified]\nOperation: {}\nErrors:    {:?}",
-                    if new_operation_definition.selection_set.is_empty() {
+                    if new_document.arena.is_empty(new_document.selections) {
                         "<empty>".to_string()
                     } else {
-                        new_operation_definition.to_string()
+                        new_document.to_string()
                     },
                     print_errors(errors)
                 )
@@ -139,41 +136,41 @@ impl SupergraphTestData {
     fn normalize(&self, operation: &'static str) -> GraphQLNormalizationPayload {
         let parsed_query = parse_query(operation).unwrap();
         let doc = normalize_operation(&self.supergraph_state, &parsed_query, None).unwrap();
-        let operation = doc.operation;
-        let operation_kind = operation
-            .operation_kind
-            .clone()
-            .unwrap_or(OperationKind::Query);
+        let (document_for_plan, document_for_introspection) =
+            match doc.document.partition_introspection() {
+                Some((down, intro)) => (Arc::new(down), Some(Arc::new(intro))),
+                None => (doc.document.clone(), None),
+            };
+        let operation_kind = doc.document.kind.clone().unwrap_or(OperationKind::Query);
         let (root_type_name, projection_plan) =
-            ProjectionPlan::from_operation(&operation, &self.schema_metadata);
+            ProjectionPlan::from_operation(&doc.document, &self.schema_metadata);
         let root_type_name = root_type_name.to_string();
-        let partitioned_operation = partition_operation(operation);
-        let operation_for_plan = Arc::new(partitioned_operation.downstream_operation);
-        let operation_for_introspection =
-            partitioned_operation.introspection_operation.map(Arc::new);
 
         let hashes = hash_normalized_operation(
-            &operation_for_plan,
-            operation_for_introspection.as_deref(),
+            &document_for_plan,
+            document_for_introspection.as_deref(),
             &[],
         );
 
-        GraphQLNormalizationPayload {
+        GraphQLNormalizationPayload::new(
+            Arc::new(
+                crate::query_planner::ast::flat::selection_tree::PlanOperation::from_document(
+                    &document_for_plan,
+                ),
+            ),
+            document_for_plan,
+            document_for_introspection,
+            hashes,
             root_type_name,
             operation_kind,
-            projection_plan: Arc::new(projection_plan),
-            operation_for_plan,
-            operation_for_plan_hash: hashes.operation_for_plan_hash,
-            operation_for_introspection,
-            operation_for_introspection_hash: hashes.operation_for_introspection_hash,
-            normalized_operation_hash: hashes.combined_operation_hash,
-            operation_identity: OperationIdentity {
+            Arc::new(projection_plan),
+            OperationIdentity {
                 name: doc.operation_name.clone(),
                 operation_type: OperationKind::Query,
                 client_document_hash: "".to_string(),
             },
-            extracted_variables: Default::default(),
-        }
+            Default::default(),
+        )
     }
 }
 

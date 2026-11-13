@@ -12,13 +12,13 @@ use ahash::{HashMap, HashMapExt, HashSet};
 
 use graphql_tools::flat::Definition;
 
+use super::selection_tree::SelectionTree;
 use super::{
     Document, Fragment, Interner, Kind, Operation, OperationKind, SelId, Selection, Span, Sym,
     Value, ValueId, NONE,
 };
 use crate::query_planner::ast::document::NormalizedDocument;
 use crate::query_planner::ast::normalization::error::NormalizationError;
-use crate::query_planner::ast::selection_set::SelectionSet;
 use crate::query_planner::state::supergraph_state::{
     SupergraphDefinition, SupergraphField, SupergraphObjectType, SupergraphState,
 };
@@ -84,17 +84,13 @@ pub fn normalize_field_set(
     type_name: &str,
     subgraph_name: &str,
     fields: &str,
-) -> std::result::Result<SelectionSet, String> {
+) -> std::result::Result<SelectionTree, String> {
     let doc =
         graphql_tools::flat::parse(&format!("{{{fields}}}")).map_err(|err| err.to_string())?;
     let (mut n, op) = run(state, &doc, None, Some(type_name), Some(subgraph_name))
         .map_err(|err| err.to_string())?;
     // no `__typename` step, that's for the operations the router executes
-    Ok(super::convert::selection_set(
-        &mut n,
-        op.selection_set,
-        None,
-    ))
+    Ok(super::convert::field_set(&mut n, op.selection_set))
 }
 
 fn run<'a>(
@@ -717,7 +713,7 @@ impl<'a> Norm<'a> {
             let start = self.directives.len() as u32;
             self.directives.extend_from_within(child.directives.range());
             for at in conditions.range() {
-                let condition = self.directives[at].clone();
+                let condition = self.directives[at];
                 let existing = self.directives[child.directives.range()]
                     .iter()
                     .find(|d| d.name == condition.name)
@@ -735,7 +731,10 @@ impl<'a> Norm<'a> {
                 start,
                 len: self.directives.len() as u32 - start,
             };
-            children.push(Selection { directives, ..child });
+            children.push(Selection {
+                directives,
+                ..child
+            });
         }
         for child in children {
             let id = self.push_sel(child);

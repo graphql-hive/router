@@ -13,16 +13,16 @@ mod tables;
 use crate::executor::projection::plan::collect::Collector;
 use crate::executor::projection::plan::encode::Encoder;
 use crate::executor::projection::plan::merge::Merger;
-use crate::query_planner::ast::operation::OperationDefinition;
+use crate::query_planner::ast::flat::plan_document::PlanDocument;
 use crate::query_planner::state::supergraph_state::OperationKind;
 use bumpalo::Bump;
 
 impl ProjectionPlan {
     pub fn from_operation<'schema>(
-        operation: &OperationDefinition,
+        document: &PlanDocument,
         schema: &'schema crate::executor::introspection::schema::SchemaMetadata,
     ) -> (&'schema str, ProjectionPlan) {
-        let root = match operation.operation_kind {
+        let root = match document.kind {
             None | Some(OperationKind::Query) => schema.query_type_name.as_ref(),
             Some(OperationKind::Mutation) => schema.mutation_type_name.as_ref(),
             Some(OperationKind::Subscription) => schema.subscription_type_name.as_ref(),
@@ -30,7 +30,8 @@ impl ProjectionPlan {
         .expect("validated operation has a root type");
         let arena = Bump::new();
         let collected = Collector::collect_fields(
-            &operation.selection_set,
+            &document.arena,
+            document.selections,
             schema,
             root,
             ir::Condition::Always,

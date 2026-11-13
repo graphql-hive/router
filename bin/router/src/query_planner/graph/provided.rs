@@ -3,7 +3,7 @@ use std::{
     fmt::{self, Display},
 };
 
-use crate::query_planner::ast::{selection_item::SelectionItem, selection_set::SelectionSet};
+use crate::query_planner::ast::flat::{selection_tree::Sel, Kind};
 
 /// What a `@provides` path makes available, as a tree of fields and type conditions.
 ///
@@ -16,28 +16,28 @@ pub struct Provided {
 }
 
 impl Provided {
-    pub fn from_selection_set(selection_set: &SelectionSet) -> Self {
+    pub fn from_selections<'a>(selections: impl Iterator<Item = Sel<'a>>) -> Self {
         let mut provided = Self::default();
-        for selection in &selection_set.items {
-            match selection {
-                SelectionItem::Field(field) => {
+        for selection in selections {
+            match selection.kind() {
+                Kind::Field => {
                     // Every node resolves `__typename` already.
-                    if field.name != "__typename" {
+                    if selection.name() != "__typename" {
                         provided
                             .fields
-                            .entry(field.name.clone())
+                            .entry(selection.name().to_string())
                             .or_default()
-                            .merge(Self::from_selection_set(&field.selections));
+                            .merge(Self::from_selections(selection.children()));
                     }
                 }
-                SelectionItem::InlineFragment(fragment) => {
+                Kind::InlineFragment => {
                     provided
                         .on_types
-                        .entry(fragment.type_condition.clone())
+                        .entry(selection.name().to_string())
                         .or_default()
-                        .merge(Self::from_selection_set(&fragment.selections));
+                        .merge(Self::from_selections(selection.children()));
                 }
-                SelectionItem::FragmentSpread(_) => {
+                Kind::FragmentSpread => {
                     // Fragment spreads should have been normalized (converted into inline fragments) at this point
                     panic!(
                         "Fragment spread detected. Expected either a Field or an Inline Fragment"

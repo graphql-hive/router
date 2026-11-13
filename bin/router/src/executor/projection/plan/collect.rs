@@ -1,9 +1,7 @@
 use crate::executor::introspection::schema::{FieldNullability, SchemaMetadata};
 use crate::executor::utils::consts::TYPENAME_FIELD_NAME;
-use crate::query_planner::ast::{
-    selection_item::SelectionItem,
-    selection_set::{FieldSelection, SelectionSet},
-};
+use crate::query_planner::ast::flat::arena::{Arena, ListId, NodeId};
+use crate::query_planner::ast::flat::Kind;
 use crate::telemetry::logging::targets;
 use ahash::HashSet as AHashSet;
 use bumpalo::collections::Vec as BumpVec;
@@ -21,45 +19,45 @@ struct FieldInfo<'arena> {
 pub(super) struct Collector<'arena> {
     schema: &'arena SchemaMetadata,
     arena: &'arena Bump,
+    /// Where the operation's selections live.
+    doc: &'arena Arena,
 }
 
 impl<'arena> Collector<'arena> {
     pub(super) fn collect_fields<'a>(
-        selection_set: &'a SelectionSet,
+        doc: &'a Arena,
+        selections: ListId,
         schema: &'a SchemaMetadata,
         parent_type: &'a str,
         parent_cond: Condition<'a>,
         arena: &'a Bump,
     ) -> BumpVec<'a, Field<'a>> {
-        Collector { schema, arena }.collect_selection_set(selection_set, parent_type, parent_cond)
+        Collector { schema, arena, doc }.collect_selection_set(selections, parent_type, parent_cond)
     }
 
     fn collect_selection_set(
         &self,
-        selection_set: &'arena SelectionSet,
+        selections: ListId,
         parent_type: &'arena str,
         parent_cond: Condition<'arena>,
     ) -> BumpVec<'arena, Field<'arena>> {
         let mut collected = BumpVec::new_in(self.arena);
-        for item in &selection_set.items {
-            match item {
-                SelectionItem::Field(field) => {
-                    self.collect_field(field, parent_type, parent_cond, &mut collected)
-                }
-                SelectionItem::InlineFragment(fragment) => {
-                    let fragment_scope = self.type_set(&fragment.type_condition);
+        for &id in self.doc.items(selections) {
+            let node = self.doc.node(id);
+            match node.kind {
+                Kind::Field => self.collect_field(id, parent_type, parent_cond, &mut collected),
+                Kind::InlineFragment => {
+                    let type_condition = self.doc.str(node.name);
+                    let fragment_scope = self.type_set(type_condition);
                     let frag_cond = parent_cond
                         .and(Condition::ParentType(fragment_scope), self.arena)
                         .with_directives(
-                            fragment.include_if.as_deref(),
-                            fragment.skip_if.as_deref(),
+                            self.doc.opt_str(node.include_if),
+                            self.doc.opt_str(node.skip_if),
                             self.arena,
                         );
-                    let frag_fields = self.collect_selection_set(
-                        &fragment.selections,
-                        &fragment.type_condition,
-                        frag_cond,
-                    );
+                    let frag_fields =
+                        self.collect_selection_set(node.children, type_condition, frag_cond);
                     for mut frag_field in frag_fields {
                         // Narrow, don't replace. In `... on Node { ... on Cat { x } }`,
                         // `x` is only for Cats, not for every Node.
@@ -70,7 +68,7 @@ impl<'arena> Collector<'arena> {
                         collected.push(frag_field);
                     }
                 }
-                SelectionItem::FragmentSpread(_) => {
+                Kind::FragmentSpread => {
                     unreachable!("fragments are inlined before projection")
                 }
             }
@@ -80,12 +78,17 @@ impl<'arena> Collector<'arena> {
 
     fn collect_field(
         &self,
-        field: &'arena FieldSelection,
+        id: NodeId,
         parent_type: &'arena str,
         parent_cond: Condition<'arena>,
         collected: &mut BumpVec<'arena, Field<'arena>>,
     ) {
-        let Some(info) = self.field_info(field, parent_type) else {
+        let doc = self.doc;
+        let field = doc.node(id);
+        let name = doc.str(field.name);
+        let include_if = doc.opt_str(field.include_if);
+        let skip_if = doc.opt_str(field.skip_if);
+        let Some(info) = self.field_info(name, parent_type) else {
             return;
         };
 
@@ -101,11 +104,7 @@ impl<'arena> Collector<'arena> {
             condition = condition.and(Condition::FieldType(output_types), self.arena);
         }
 
-        condition = condition.with_directives(
-            field.include_if.as_deref(),
-            field.skip_if.as_deref(),
-            self.arena,
-        );
+        condition = condition.with_directives(include_if, skip_if, self.arena);
 
         if let Some(allowed) = self.schema.enum_values.get(info.output_type) {
             condition = condition.and(
@@ -115,15 +114,13 @@ impl<'arena> Collector<'arena> {
         }
         let condition = condition.without_redundant_parent_scope(&parent_scope, self.arena);
 
-        let value = if field.selections.items.is_empty() {
+        let children = doc.items(field.children);
+        let value = if children.is_empty() {
             Value::Passthrough
-        } else if matches!(
-            field.selections.items.as_slice(),
-            [SelectionItem::Field(FieldSelection {
-                omit_from_response: true,
-                ..
-            })]
-        ) {
+        } else if matches!(children, [only] if {
+            let only = doc.node(*only);
+            matches!(only.kind, Kind::Field) && only.omit_from_response
+        }) {
             Value::Children(BumpVec::new_in(self.arena))
         } else {
             // Child selections keep the parent's variable checks,
@@ -137,21 +134,17 @@ impl<'arena> Collector<'arena> {
             let children_cond = parent_cond
                 .inherited_by_child(self.arena)
                 .and(inherited_scope, self.arena)
-                .with_directives(
-                    field.include_if.as_deref(),
-                    field.skip_if.as_deref(),
-                    self.arena,
-                );
+                .with_directives(include_if, skip_if, self.arena);
             Value::Children(self.collect_selection_set(
-                &field.selections,
+                field.children,
                 info.output_type,
                 children_cond,
             ))
         };
 
         collected.push(Field {
-            field_name: &field.name,
-            response_key: field.alias.as_deref().unwrap_or(&field.name),
+            field_name: name,
+            response_key: doc.response_key(id),
             is_typename: info.is_typename,
             nullability: info.nullability,
             parent_scope,
@@ -160,12 +153,8 @@ impl<'arena> Collector<'arena> {
         });
     }
 
-    fn field_info(
-        &self,
-        field: &'arena FieldSelection,
-        parent_type: &'arena str,
-    ) -> Option<FieldInfo<'arena>> {
-        let is_typename = field.name == TYPENAME_FIELD_NAME;
+    fn field_info(&self, name: &str, parent_type: &'arena str) -> Option<FieldInfo<'arena>> {
+        let is_typename = name == TYPENAME_FIELD_NAME;
         if is_typename {
             return Some(FieldInfo {
                 output_type: "String",
@@ -183,11 +172,11 @@ impl<'arena> Collector<'arena> {
             return None;
         };
 
-        let Some(info) = fields.get(&field.name) else {
+        let Some(info) = fields.get(name) else {
             warn!(
                 target: targets::EXECUTOR,
                 parent_type = parent_type,
-                field = field.name.as_str(),
+                field = name,
                 "field is missing from schema metadata, skipping it in the projection plan"
             );
             return None;
@@ -270,11 +259,13 @@ mod tests {
         );
         let planner = Planner::new_from_supergraph(&schema, Default::default()).unwrap();
         let schema = planner.consumer_schema.schema_metadata();
+        let doc = Arena::new();
         for _ in 0..64 {
             let arena = Bump::new();
             let collector = Collector {
                 schema: &schema,
                 arena: &arena,
+                doc: &doc,
             };
             let node_types = collector.type_set("Node");
             assert!(node_types.len() > 1);
@@ -318,8 +309,7 @@ mod tests {
         );
         let normalized = normalize_operation(&supergraph, &operation, None).unwrap();
         let schema_metadata = planner.consumer_schema.schema_metadata();
-        let (_, plan) =
-            ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+        let (_, plan) = ProjectionPlan::from_operation(&normalized.document, &schema_metadata);
 
         let project = |node_type: &'static str, sub_type: &'static str| {
             let data = JsonValue::Object(vec![(
@@ -376,8 +366,7 @@ mod tests {
         );
         let normalized = normalize_operation(&supergraph, &operation, None).unwrap();
         let schema_metadata = planner.consumer_schema.schema_metadata();
-        let (_, plan) =
-            ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+        let (_, plan) = ProjectionPlan::from_operation(&normalized.document, &schema_metadata);
 
         let thing = |type_name: &'static str, id: &'static str| {
             JsonValue::Object(vec![

@@ -36,6 +36,7 @@ enum Raw {
     Value(ValueId),
     Enum(Sym),
     List(Span),
+    Object(Span),
 }
 
 impl Raw {
@@ -44,6 +45,7 @@ impl Raw {
             Raw::Value(id) => *ctx.doc.value(id),
             Raw::Enum(name) => Value::Enum(name),
             Raw::List(items) => Value::List(items),
+            Raw::Object(fields) => Value::Object(fields),
         }
     }
 
@@ -57,6 +59,15 @@ impl Raw {
                     .map(|&item| display_value(ctx.doc, item))
                     .collect();
                 format!("[{}]", items.join(", "))
+            }
+            Raw::Object(fields) => {
+                let fields: Vec<_> = ctx.doc.object_fields[fields.range()]
+                    .iter()
+                    .map(|&(name, value)| {
+                        format!("{}: {}", ctx.str(name), display_value(ctx.doc, value))
+                    })
+                    .collect();
+                format!("{{{}}}", fields.join(", "))
             }
         }
     }
@@ -171,6 +182,12 @@ impl<'a> Visitor<'a> for Rule {
 
     fn enter_object_value(&mut self, ctx: &mut Ctx<'a>, errors: &mut Errors, fields: Span) {
         let Some(input_type @ TypeDefinition::InputObject(def)) = ctx.current_input_type() else {
+            // an object literal outside an input object position is only valid for a custom
+            // scalar, which `validate_value` allows. objects nested in it have no type, so
+            // they're skipped
+            if ctx.current_input_type_literal().is_some() {
+                self.validate_value(ctx, errors, Raw::Object(fields));
+            }
             return;
         };
         let object = &ctx.doc.object_fields[fields.range()];

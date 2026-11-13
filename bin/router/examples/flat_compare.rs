@@ -296,12 +296,12 @@ fn check(cases: &[Case], states: &[Option<SupergraphState>]) {
         for name in operation_names(&case.query) {
             let old = catch_unwind(AssertUnwindSafe(|| {
                 normalize_operation(state, &tree, name.as_deref())
-                    .map(|d| (format!("{:?}", d.operation), d.operation_name))
+                    .map(|d| (format!("{:?}", d.operation_tree()), d.operation_name))
                     .map_err(|e| e.to_string())
             }));
             let new = catch_unwind(AssertUnwindSafe(|| {
                 flat::normalize::normalize_operation(state, &flat_doc, name.as_deref())
-                    .map(|d| (format!("{:?}", d.operation), d.operation_name))
+                    .map(|d| (format!("{:?}", d.operation_tree()), d.operation_name))
                     .map_err(|e| e.to_string())
             }));
             let (old, new) = match (old, new) {

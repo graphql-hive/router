@@ -1,10 +1,9 @@
-use crate::query_planner::ast::flat::arena::Arena;
+use crate::query_planner::ast::flat::arena::{Arena, ListId, NodeId};
+use crate::query_planner::ast::flat::plan_document::DisplayList;
+use crate::query_planner::ast::flat::selection_tree::PlanOperation;
+use crate::query_planner::ast::flat::Kind;
 use crate::query_planner::ast::merge_path::{Condition, FieldPathSegment, MergePath, Segment};
-use crate::query_planner::ast::operation::{OperationDefinition, VariableDefinition};
-use crate::query_planner::ast::selection_item::SelectionItem;
-use crate::query_planner::ast::selection_set::{
-    FieldSelection, InlineFragmentSelection, SelectionSet,
-};
+use crate::query_planner::ast::operation::VariableDefinition;
 use crate::query_planner::ast::type_aware_selection::TypeAwareSelection;
 use crate::query_planner::ast::value::Value;
 use crate::query_planner::graph::edge::{
@@ -168,19 +167,26 @@ impl FetchGraph<SingleTypeFetchStep> {
 }
 
 impl FetchGraph<SingleTypeFetchStep> {
-    /// A key or requirement of the objects at `response_path`, the way an entity call reads it.
-    fn read_at<'selection>(
+    /// A key or requirement of the objects at `response_path`, copied into the arena the way
+    /// an entity call reads it.
+    fn read_at(&mut self, response_path: &MergePath, selection: &TypeAwareSelection<'_>) -> ListId {
+        let list = self.arena.copy_from_tree(selection.selections.roots());
+        self.response_keys
+            .input(&mut self.arena, &place_of(response_path), list);
+        list
+    }
+
+    /// A key or requirement of the objects at `response_path`, copied into the arena the way
+    /// a fetch writes it.
+    fn write_at(
         &mut self,
         response_path: &MergePath,
-        selection: &TypeAwareSelection<'selection>,
-    ) -> TypeAwareSelection<'selection> {
-        TypeAwareSelection {
-            flat: Default::default(),
-            type_name: selection.type_name,
-            selection_set: self
-                .response_keys
-                .input(&place_of(response_path), &selection.selection_set),
-        }
+        selection: &TypeAwareSelection<'_>,
+    ) -> ListId {
+        let list = self.arena.copy_from_tree(selection.selections.roots());
+        self.response_keys
+            .output(&mut self.arena, &place_of(response_path), list);
+        list
     }
 
     /// The alias of a field on the objects at `response_path`. The client's, or for a field the
@@ -196,15 +202,12 @@ impl FetchGraph<SingleTypeFetchStep> {
             return query_node.selection_alias().map(|alias| alias.to_string());
         }
 
-        let field = FieldSelection {
-            name: field_name.to_string(),
-            arguments: query_node.selection_arguments().cloned(),
-            ..Default::default()
-        };
-        let key = self
-            .response_keys
-            .wire_key(&place_of(response_path), &field);
-        (key != field.name).then_some(key)
+        let key = self.response_keys.wire_key(
+            &place_of(response_path),
+            field_name,
+            query_node.selection_arguments(),
+        );
+        (key != field_name).then_some(key)
     }
 }
 
@@ -568,14 +571,8 @@ fn create_fetch_step_for_entity_call(
         FetchStepFlags::empty()
     };
     let mut input = FetchStepSelections::new(&mut fetch_graph.arena, input_type_name);
-    input
-        .add(
-            &mut fetch_graph.arena,
-            &SelectionSet {
-                items: vec![SelectionItem::Field(FieldSelection::new_typename())],
-            },
-        )
-        .unwrap();
+    let typename = fetch_graph.arena.typename_list();
+    input.add(&mut fetch_graph.arena, typename).unwrap();
     let output = FetchStepSelections::new(&mut fetch_graph.arena, output_type_name);
 
     let id = fetch_graph.create_fetch_id();
@@ -684,47 +681,41 @@ fn ensure_fetch_step_for_subgraph(
     input_type_name: &str,
     output_type_name: &str,
     response_path: &MergePath,
-    key: Option<&TypeAwareSelection<'_>>,
-    requires: Option<&TypeAwareSelection<'_>>,
+    // the key's type, and the key in the arena
+    key: Option<(&str, ListId)>,
     conditions: Conditions<'_>,
     created_from_requires: bool,
 ) -> Result<NodeIndex, FetchGraphError> {
     let condition = conditions.current;
-    let matching_child_index = if requires.is_some() {
-        None
-    } else {
-        fetch_graph
-            .same_entity_calls(
-                parent_fetch_step_index,
-                subgraph_name,
-                input_type_name,
-                response_path,
-                condition,
-            )
-            .find(|&child_index| {
-                fetch_graph.get_step_data(child_index).is_ok_and(|step| {
-                    step.matches_entity_call(subgraph_name, input_type_name, response_path, condition)
+    let matching_child_index = fetch_graph
+        .same_entity_calls(
+            parent_fetch_step_index,
+            subgraph_name,
+            input_type_name,
+            response_path,
+            condition,
+        )
+        .find(|&child_index| {
+            fetch_graph.get_step_data(child_index).is_ok_and(|step| {
+                step.matches_entity_call(subgraph_name, input_type_name, response_path, condition)
                         // the requested key fields have to be part of the input
-                        && key.is_none_or(|key| {
-                            step.input.definition_name() == key.type_name
-                                && fetch_graph
-                                    .arena
-                                    .contains_tree(step.input.selection_set(), &key.selection_set)
+                        && key.is_none_or(|(type_name, key)| {
+                            step.input.definition_name() == type_name
+                                && fetch_graph.arena.is_subset(step.input.selection_set(), key)
                         })
                         // steps with requirements aren't reused here, the optimizations
                         // try that later
                         && !step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES)
-                })
             })
-    };
+        });
 
     match matching_child_index {
         Some(idx) => {
             trace!(
-                "found existing fetch step [{}] for entity move requirement({}) key({}) in children of {}",
+                "found existing fetch step [{}] for entity move key({}) in children of {}",
                 idx.index(),
-                requires.map(|r| r.to_string()).unwrap_or_default(),
-                key.map(|r| r.to_string()).unwrap_or_default(),
+                key.map(|(_, key)| DisplayList(&fetch_graph.arena, key).to_string())
+                    .unwrap_or_default(),
                 parent_fetch_step_index.index(),
             );
             let step = fetch_graph
@@ -744,20 +735,20 @@ fn ensure_fetch_step_for_subgraph(
                 output_type_name,
                 response_path,
                 conditions,
-                created_from_requires || requires.is_some(),
+                created_from_requires,
             );
-            if let Some(selection) = key {
+            if let Some((_, key)) = key {
                 let (step, arena) = fetch_graph.step_and_arena_mut(step_index)?;
-                step.input.add(arena, &selection.selection_set)?
+                step.input.add(arena, key)?
             }
 
             trace!(
-                "created a new fetch step [{}] subgraph({}) type({}) requirement({}) key({}) in children of {}",
+                "created a new fetch step [{}] subgraph({}) type({}) key({}) in children of {}",
                 step_index.index(),
                 subgraph_name,
                 input_type_name,
-                requires.map(|r| r.to_string()).unwrap_or_default(),
-                key.map(|r| r.to_string()).unwrap_or_default(),
+                key.map(|(_, key)| DisplayList(&fetch_graph.arena, key).to_string())
+                    .unwrap_or_default(),
                 parent_fetch_step_index.index(),
             );
 
@@ -773,7 +764,8 @@ fn ensure_fetch_step_for_requirement(
     type_name: &str,
     response_path: &MergePath,
     conditions: Conditions<'_>,
-    requirement: &TypeAwareSelection<'_>,
+    // the requirement's type, and the requirement in the arena
+    (requirement_type, requirement): (&str, ListId),
 ) -> Result<NodeIndex, FetchGraphError> {
     let condition = conditions.current;
     let matching_child_index = fetch_graph
@@ -788,11 +780,9 @@ fn ensure_fetch_step_for_requirement(
             fetch_graph.get_step_data(child_index).is_ok_and(|step| {
                 step.matches_entity_call(subgraph_name, type_name, response_path, condition)
                     && step.context_rewrites.is_none()
-                    && step.input.contains(
-                        &fetch_graph.arena,
-                        requirement.type_name,
-                        &requirement.selection_set,
-                    )
+                    && step
+                        .input
+                        .contains(&fetch_graph.arena, requirement_type, requirement)
             })
         });
 
@@ -822,7 +812,7 @@ fn ensure_fetch_step_for_requirement(
                 step_index.index(),
                 subgraph_name,
                 type_name,
-                requirement.to_string(),
+                DisplayList(&fetch_graph.arena, requirement),
                 parent_fetch_step_index.index(),
             );
 
@@ -1000,21 +990,15 @@ fn process_entity_move_edge(
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     let edge = graph.edge(edge_index)?;
     let (requirement, is_interface) = match edge {
-        Edge::EntityMove(em) => (
-            TypeAwareSelection {
-                flat: Default::default(),
-                selection_set: em.requirements.selection_set.clone(),
-                type_name: em.requirements.type_name,
-            },
-            em.is_interface,
-        ),
+        Edge::EntityMove(em) => (&em.requirements, em.is_interface),
         _ => {
             return Err(FetchGraphError::UnexpectedEdgeMove(
                 "EntityMove".to_string(),
             ))
         }
     };
-    let mut requirement = fetch_graph.read_at(response_path, &requirement);
+    let requirement_type = requirement.type_name;
+    let mut requirement = fetch_graph.read_at(response_path, requirement);
 
     let head_node_index = graph.get_edge_head(&edge_index)?;
     let head_type = match graph.node(head_node_index)? {
@@ -1030,19 +1014,21 @@ fn process_entity_move_edge(
     let asked_types = only_asked_types(graph, query_node)?;
     let narrowed = is_interface && !head_type.is_interface_object && !asked_types.is_empty();
     if narrowed {
-        requirement.selection_set = SelectionSet {
-            items: asked_types
-                .into_iter()
-                .map(|type_name| {
-                    SelectionItem::InlineFragment(InlineFragmentSelection {
-                        type_condition: type_name.to_string(),
-                        selections: requirement.selection_set.clone(),
-                        skip_if: None,
-                        include_if: None,
-                    })
-                })
-                .collect(),
-        };
+        let arena = &mut fetch_graph.arena;
+        let items = arena.items(requirement).to_vec();
+        let fragments: Vec<_> = asked_types
+            .into_iter()
+            .map(|type_name| {
+                let fragment = arena.new_fragment(type_name, None);
+                let children = arena.node(fragment).children;
+                for &item in &items {
+                    let copy = arena.copy_node(item);
+                    arena.push(children, copy);
+                }
+                fragment
+            })
+            .collect();
+        requirement = arena.list_of(&fragments);
     }
 
     let tail_node_index = graph.get_edge_tail(&edge_index)?;
@@ -1059,8 +1045,7 @@ fn process_entity_move_edge(
         input_type_name,
         output_type_name,
         response_path,
-        Some(&requirement),
-        None,
+        Some((requirement_type, requirement)),
         conditions,
         created_from_requires,
     )?;
@@ -1072,10 +1057,10 @@ fn process_entity_move_edge(
     let (fetch_step, arena) = fetch_graph.step_and_arena_mut(fetch_step_index)?;
     trace!(
         "adding input requirement '{}' to fetch step [{}]",
-        requirement,
+        DisplayList(arena, requirement),
         fetch_step_index.index()
     );
-    fetch_step.input.add(arena, &requirement.selection_set)?;
+    fetch_step.input.add(arena, requirement)?;
 
     if is_interface && !narrowed {
         // We use `output_type_name` as there's no connection from `Interface` to `Object`,
@@ -1165,18 +1150,15 @@ fn process_interface_object_type_move_edge(
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     let edge = graph.edge(edge_index)?;
     let requirement = match edge {
-        Edge::InterfaceObjectTypeMove(m) => TypeAwareSelection {
-            flat: Default::default(),
-            selection_set: m.requirements.selection_set.clone(),
-            type_name: m.requirements.type_name,
-        },
+        Edge::InterfaceObjectTypeMove(m) => &m.requirements,
         _ => {
             return Err(FetchGraphError::UnexpectedEdgeMove(
                 "InterfaceObjectTypeMove".to_string(),
             ))
         }
     };
-    let requirement = fetch_graph.read_at(response_path, &requirement);
+    let requirement_type = requirement.type_name;
+    let requirement = fetch_graph.read_at(response_path, requirement);
 
     let head_node_index = graph.get_edge_head(&edge_index)?;
     let head_node = graph.node(head_node_index)?;
@@ -1200,15 +1182,14 @@ fn process_interface_object_type_move_edge(
         object_type_name,
         interface_type_name,
         response_path,
-        Some(&requirement),
-        None,
+        Some((requirement_type, requirement)),
         conditions,
         created_from_requires,
     )?;
 
     trace!(
         "adding input requirement '{}' to fetch step [{}]",
-        requirement,
+        DisplayList(&fetch_graph.arena, requirement),
         step_for_children_index.index()
     );
     let key_to_reenter_subgraph = find_satisfiable_key(
@@ -1218,19 +1199,17 @@ fn process_interface_object_type_move_edge(
         query_node.requirements.first().unwrap().node_index,
         false,
     )?;
-    let key_to_reenter_subgraph = &fetch_graph.read_at(response_path, key_to_reenter_subgraph);
+    let key_to_reenter_subgraph = fetch_graph.read_at(response_path, key_to_reenter_subgraph);
     let (step_for_children, arena) = fetch_graph.step_and_arena_mut(step_for_children_index)?;
-    step_for_children
-        .input
-        .add(arena, &requirement.selection_set)?;
+    step_for_children.input.add(arena, requirement)?;
     trace!(
         "adding key '{}' to fetch step [{}]",
-        key_to_reenter_subgraph,
+        DisplayList(arena, key_to_reenter_subgraph),
         step_for_children_index.index()
     );
     step_for_children
         .input
-        .add(arena, &key_to_reenter_subgraph.selection_set)?;
+        .add(arena, key_to_reenter_subgraph)?;
 
     trace!(
         "adding input rewrite '... on {} {{ __typename }}' to '{}' of [{}]",
@@ -1267,12 +1246,12 @@ fn process_interface_object_type_move_edge(
         fetch_graph.step_and_arena_mut(step_for_requirements_index)?;
     trace!(
         "Adding {} to fetch([{}]).input",
-        key_to_reenter_subgraph,
+        DisplayList(arena, key_to_reenter_subgraph),
         step_for_requirements_index.index()
     );
     step_for_requirements
         .input
-        .add(arena, &key_to_reenter_subgraph.selection_set)?;
+        .add(arena, key_to_reenter_subgraph)?;
 
     //
     // Given `f0 { ... on User { f1 } }` where f1 is a field contributed by @interfaceObject,
@@ -1418,23 +1397,19 @@ fn process_subgraph_reentry(
         created_from_requires,
     );
     let (parent_fetch_step, arena) = fetch_graph.step_and_arena_mut(parent_fetch_step_index)?;
-    parent_fetch_step.output.add_at_path(
-        arena,
-        fetch_path,
-        SelectionSet {
-            items: vec![SelectionItem::Field(FieldSelection {
-                name: reentry_move.name.to_string(),
-                alias: field_alias.clone(),
-                selections: SelectionSet {
-                    items: vec![SelectionItem::Field(FieldSelection::new_typename())],
-                },
-                arguments: query_node.selection_arguments().cloned(),
-                skip_if: field_condition.as_ref().and_then(Condition::to_skip_if),
-                include_if: field_condition.as_ref().and_then(Condition::to_include_if),
-                omit_from_response: false,
-            })],
-        },
-    )?;
+    let field = arena.new_field(
+        &reentry_move.name,
+        field_alias.as_deref(),
+        query_node.selection_arguments(),
+        field_condition.as_ref(),
+    );
+    let typename = arena.new_field("__typename", None, None, None);
+    let field_children = arena.node(field).children;
+    arena.push(field_children, typename);
+    let source = arena.list_of(&[field]);
+    parent_fetch_step
+        .output
+        .add_at_path(arena, fetch_path, source)?;
 
     let segment_field = Rc::new(FieldPathSegment::new(
         reentry_move.name.to_string(),
@@ -1505,30 +1480,11 @@ fn process_selfie_edge(
         parent_fetch_step_index.index(),
         target_type_name,
     );
-    parent_fetch_step.output.add_at_path(
-        arena,
-        fetch_path,
-        SelectionSet {
-            items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-                type_condition: target_type_name.clone(),
-                selections: SelectionSet::default(),
-                skip_if: condition.and_then(|c| {
-                    if condition_on_step {
-                        None
-                    } else {
-                        c.to_skip_if()
-                    }
-                }),
-                include_if: condition.and_then(|c| {
-                    if condition_on_step {
-                        None
-                    } else {
-                        c.to_include_if()
-                    }
-                }),
-            })],
-        },
-    )?;
+    let fragment = arena.new_fragment(target_type_name, condition.filter(|_| !condition_on_step));
+    let source = arena.list_of(&[fragment]);
+    parent_fetch_step
+        .output
+        .add_at_path(arena, fetch_path, source)?;
 
     let segment_condition = if condition_on_step {
         None
@@ -1609,23 +1565,12 @@ fn process_abstract_edge(
         target_type_name,
     );
 
-    parent_fetch_step.output.add_at_path(
-        arena,
-        fetch_path,
-        SelectionSet {
-            items: vec![
-                SelectionItem::Field(FieldSelection::new_typename()),
-                SelectionItem::InlineFragment(InlineFragmentSelection {
-                    type_condition: target_type_name.clone(),
-                    selections: SelectionSet::default(),
-                    skip_if: segment_condition.as_ref().and_then(Condition::to_skip_if),
-                    include_if: segment_condition
-                        .as_ref()
-                        .and_then(Condition::to_include_if),
-                }),
-            ],
-        },
-    )?;
+    let typename = arena.new_field("__typename", None, None, None);
+    let fragment = arena.new_fragment(target_type_name, segment_condition.as_ref());
+    let source = arena.list_of(&[typename, fragment]);
+    parent_fetch_step
+        .output
+        .add_at_path(arena, fetch_path, source)?;
 
     let child_response_path = response_path.push(Segment::TypeCondition(
         Rc::new(BTreeSet::from([target_type_name.clone()])),
@@ -1709,23 +1654,16 @@ fn process_plain_field_edge(
         parent_fetch_step_index.index()
     );
 
-    parent_fetch_step.output.add_at_path(
-        arena,
-        fetch_path,
-        SelectionSet {
-            items: vec![SelectionItem::Field(FieldSelection {
-                name: field_move.name.to_string(),
-                alias: field_alias.clone(),
-                selections: SelectionSet::default(),
-                arguments: query_node.selection_arguments().cloned(),
-                skip_if: segment_condition.as_ref().and_then(Condition::to_skip_if),
-                include_if: segment_condition
-                    .as_ref()
-                    .and_then(Condition::to_include_if),
-                omit_from_response: false,
-            })],
-        },
-    )?;
+    let field = arena.new_field(
+        field_move.name,
+        field_alias.as_deref(),
+        query_node.selection_arguments(),
+        segment_condition.as_ref(),
+    );
+    let source = arena.list_of(&[field]);
+    parent_fetch_step
+        .output
+        .add_at_path(arena, fetch_path, source)?;
 
     let segment_args_hash = query_node
         .selection_arguments()
@@ -1767,34 +1705,38 @@ fn process_plain_field_edge(
 }
 
 fn context_selection_rewrites(
-    items: &[SelectionItem],
+    arena: &Arena,
+    items: &[NodeId],
     path: &[FetchNodePathSegment],
     variable: &str,
     rewrites: &mut Vec<KeyRenamer>,
 ) {
-    for item in items {
+    for &id in items {
+        let node = arena.node(id);
         let mut path = path.to_vec();
-        match item {
-            SelectionItem::Field(field) => {
+        match node.kind {
+            Kind::Field => {
                 path.push(FetchNodePathSegment::Key(
-                    field.selection_identifier().to_string(),
+                    arena.response_key(id).to_string(),
                 ));
-                if field.selections.items.is_empty() {
+                if arena.is_empty(node.children) {
                     rewrites.push(KeyRenamer {
                         path,
                         rename_key_to: variable.to_string(),
                     });
                 } else {
-                    context_selection_rewrites(&field.selections.items, &path, variable, rewrites);
+                    let children = arena.items(node.children);
+                    context_selection_rewrites(arena, children, &path, variable, rewrites);
                 }
             }
-            SelectionItem::InlineFragment(fragment) => {
+            Kind::InlineFragment => {
                 path.push(FetchNodePathSegment::typename_equals_from_type(
-                    fragment.type_condition.clone(),
+                    arena.str(node.name).to_string(),
                 ));
-                context_selection_rewrites(&fragment.selections.items, &path, variable, rewrites);
+                let children = arena.items(node.children);
+                context_selection_rewrites(arena, children, &path, variable, rewrites);
             }
-            SelectionItem::FragmentSpread(_) => {}
+            Kind::FragmentSpread => {}
         }
     }
 }
@@ -1831,10 +1773,7 @@ fn process_requires_field_edge(
         find_satisfiable_key(graph, supergraph, override_context, head_node_index, true)?;
     let requires_input = requires.map(|requires| fetch_graph.read_at(response_path, requires));
     let key_input = fetch_graph.read_at(response_path, key_to_reenter_subgraph);
-    let key_output = fetch_graph.response_keys.output(
-        &place_of(response_path),
-        &key_to_reenter_subgraph.selection_set,
-    );
+    let key_output = fetch_graph.write_at(response_path, key_to_reenter_subgraph);
     let field_alias = fetch_graph.alias_at(
         response_path,
         query_node,
@@ -1897,8 +1836,9 @@ fn process_requires_field_edge(
             head_type_name,
             response_path,
             conditions,
-            requires_input
-                .as_ref()
+            requires
+                .map(|requires| requires.type_name)
+                .zip(requires_input)
                 .ok_or(FetchGraphError::MissingRequires)?,
         )?
     } else {
@@ -1981,22 +1921,27 @@ fn process_requires_field_edge(
         };
         arguments.add_argument(argument.name.clone(), Value::Variable(variable.clone()));
         let selection = &argument.selections[requirement.selection];
-        let output = fetch_graph
-            .response_keys
-            .output(&place_of(&ancestor_path), &selection.selection_set);
+        let output = fetch_graph.write_at(&ancestor_path, selection);
         let prefix = vec![FetchNodePathSegment::Parent; requirement.levels];
         let mut field_prefix = prefix.clone();
         field_prefix.push(FetchNodePathSegment::typename_equals_from_type(
             selection.type_name.to_string(),
         ));
         let mut rewrites = Vec::new();
-        for item in &output.items {
+        let arena = &fetch_graph.arena;
+        for item in arena.items(output) {
             // root fields read from the matched ancestor type, root fragments carry their own type
-            let path = match item {
-                SelectionItem::Field(_) => &field_prefix,
+            let path = match arena.node(*item).kind {
+                Kind::Field => &field_prefix,
                 _ => &prefix,
             };
-            context_selection_rewrites(std::slice::from_ref(item), path, &variable, &mut rewrites);
+            context_selection_rewrites(
+                arena,
+                std::slice::from_ref(item),
+                path,
+                &variable,
+                &mut rewrites,
+            );
         }
         let step = fetch_graph.get_step_data_mut(step_for_children_index)?;
         if step
@@ -2022,21 +1967,16 @@ fn process_requires_field_edge(
         .unwrap_or(0);
     let (step_for_children, arena) = fetch_graph.step_and_arena_mut(step_for_children_index)?;
 
-    step_for_children.output.add_at_path(
-        arena,
-        &MergePath::default(),
-        SelectionSet {
-            items: vec![SelectionItem::Field(FieldSelection {
-                name: field_move.name.to_string(),
-                alias: field_alias.clone(),
-                selections: SelectionSet::default(),
-                arguments,
-                skip_if: None,
-                include_if: None,
-                omit_from_response: false,
-            })],
-        },
-    )?;
+    let field = arena.new_field(
+        field_move.name,
+        field_alias.as_deref(),
+        arguments.as_ref(),
+        None,
+    );
+    let source = arena.list_of(&[field]);
+    step_for_children
+        .output
+        .add_at_path(arena, &MergePath::default(), source)?;
 
     if *is_interface_object {
         trace!(
@@ -2054,24 +1994,20 @@ fn process_requires_field_edge(
         }));
     }
 
-    if let Some(requires_input) = &requires_input {
+    if let Some(requires_input) = requires_input {
         trace!(
             "Adding {} to fetch([{}]).input (requires)",
-            requires_input,
+            DisplayList(arena, requires_input),
             step_for_children_index.index()
         );
-        step_for_children
-            .input
-            .add(arena, &requires_input.selection_set)?;
+        step_for_children.input.add(arena, requires_input)?;
     }
     trace!(
         "Adding {} to fetch([{}]).input (key re-enter)",
-        key_input,
+        DisplayList(arena, key_input),
         step_for_children_index.index()
     );
-    step_for_children
-        .input
-        .add(arena, &key_input.selection_set)?;
+    step_for_children.input.add(arena, key_input)?;
 
     let (real_parent_fetch_step, arena) =
         fetch_graph.step_and_arena_mut(real_parent_fetch_step_index)?;
@@ -2122,12 +2058,10 @@ fn process_requires_field_edge(
             fetch_graph.step_and_arena_mut(step_for_requirements_index)?;
         trace!(
             "Adding {} to fetch([{}]).input",
-            key_input,
+            DisplayList(arena, key_input),
             step_for_requirements_index.index()
         );
-        step_for_requirements
-            .input
-            .add(arena, &key_input.selection_set)?;
+        step_for_requirements.input.add(arena, key_input)?;
         fetch_graph.connect(real_parent_fetch_step_index, step_for_requirements_index);
 
         if let Some(holder_node) = holder_node {
@@ -2184,12 +2118,10 @@ fn process_requires_field_edge(
         }
         for key in jump_keys {
             let input = fetch_graph.read_at(response_path, key);
-            let output = fetch_graph
-                .response_keys
-                .output(&place_of(response_path), &key.selection_set);
+            let output = fetch_graph.write_at(response_path, key);
             {
                 let (step, arena) = fetch_graph.step_and_arena_mut(step_for_requirements_index)?;
-                step.input.add(arena, &input.selection_set)?;
+                step.input.add(arena, input)?;
             }
             {
                 let (step, arena) = fetch_graph.step_and_arena_mut(real_parent_fetch_step_index)?;
@@ -2659,21 +2591,16 @@ pub fn build_fetch_graph_from_query_tree(
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_tree: QueryTree,
-    operation: &OperationDefinition,
+    operation: &PlanOperation,
     options: &QueryPlannerOptions,
     cancellation_token: &CancellationToken,
 ) -> Result<FetchGraph<MultiTypeFetchStep>, FetchGraphError> {
-    let mut fetch_graph = FetchGraph::new(
-        operation
-            .operation_kind
-            .clone()
-            .unwrap_or(OperationKind::Query),
-    );
-    fetch_graph.response_keys = ResponseKeys::from_operation(&operation.selection_set);
+    let mut fetch_graph = FetchGraph::new(operation.kind.clone());
+    fetch_graph.response_keys = ResponseKeys::from_selection_tree(&operation.selections);
     // only names that look like ours can clash, so for nearly every operation this stays
     // empty and allocates nothing
     fetch_graph.operation_variables = operation
-        .variable_definitions
+        .variables
         .iter()
         .flatten()
         .filter(|variable| variable.name.starts_with("__context_"))

@@ -16,15 +16,18 @@
 //! as missing, which is what they are.
 //!
 //! Nothing here needs the schema: the layouts come from the fetch documents and the plan's paths.
+//! The fetch documents are read flat, as the planner kept them on the plan, never re-parsed.
 
 use std::sync::Arc;
 
 use ahash::{HashMap as AHashMap, HashSet as AHashSet};
-use graphql_tools::parser::query as gql;
 
 use crate::executor::introspection::schema::SchemaMetadata;
 use crate::executor::projection::plan::{Condition, ConditionId, FieldRecord, ProjectionPlan};
-use crate::query_planner::ast::operation::OperationDefinition;
+use crate::query_planner::ast::flat::arena::ListId;
+use crate::query_planner::ast::flat::plan_document::PlanDocument;
+use crate::query_planner::ast::flat::Kind;
+use crate::query_planner::ast::operation::SubgraphFetchOperation;
 use crate::query_planner::ast::requires::{
     RequiresSelection, RequiresSelectionSet, RequiresSelectionSetRef,
 };
@@ -49,7 +52,7 @@ pub enum Seed<'a> {
     None,
     /// Data the router has for an operation's fields: what it resolved for the introspection
     /// part, or what a plugin's `on_execute` put in
-    Operation(&'a OperationDefinition),
+    Operation(&'a PlanDocument),
     /// The subscription's own fetch: each event of its stream, before the plan resolves the
     /// event's entities
     Subscription(&'a FetchNode),
@@ -613,17 +616,12 @@ impl IndexedResponsePlan {
         }
         match seed {
             Seed::None => {}
-            Seed::Operation(operation) => compiler.document(
-                SEED_FETCH,
-                &operation.to_string(),
-                None,
-                None,
-                None,
-                Vec::new(),
-            )?,
+            Seed::Operation(operation) => {
+                compiler.document(SEED_FETCH, operation, None, None, None, Vec::new())?
+            }
             Seed::Subscription(fetch) => compiler.document(
                 SEED_FETCH,
-                &fetch.operation.document_str,
+                flat_document(&fetch.operation)?,
                 fetch.custom_scalar_paths.as_ref(),
                 None,
                 None,
@@ -666,7 +664,7 @@ impl<'p> Compiler<'p> {
                 }
                 self.document(
                     i64::from(batch.id.0),
-                    &batch.operation.document_str,
+                    flat_document(&batch.operation)?,
                     batch.custom_scalar_paths.as_ref(),
                     Some(aliases),
                     None,
@@ -697,7 +695,7 @@ impl<'p> Compiler<'p> {
         match (&fetch.requires, flatten) {
             (Some(requires), Some(path)) => self.document(
                 i64::from(fetch.id.0),
-                &fetch.operation.document_str,
+                flat_document(&fetch.operation)?,
                 fetch.custom_scalar_paths.as_ref(),
                 Some(vec![(
                     "_entities".into(),
@@ -714,7 +712,7 @@ impl<'p> Compiler<'p> {
             // the other pipeline doesn't use them either
             (None, merge_path) => self.document(
                 i64::from(fetch.id.0),
-                &fetch.operation.document_str,
+                flat_document(&fetch.operation)?,
                 fetch.custom_scalar_paths.as_ref(),
                 None,
                 merge_path,
@@ -723,13 +721,13 @@ impl<'p> Compiler<'p> {
         }
     }
 
-    /// Parses the fetch's query and builds its shape. `aliases` are the entity fields of an
+    /// Builds the fetch's shape from its document. `aliases` are the entity fields of an
     /// entity fetch, with their merge paths.
     #[allow(clippy::type_complexity)]
     fn document(
         &mut self,
         id: i64,
-        document: &str,
+        document: &PlanDocument,
         paths: Option<&CustomScalarPaths>,
         aliases: Option<Vec<PlanAlias<'p>>>,
         merge_path: Option<&'p [PathSegment]>,
@@ -739,30 +737,8 @@ impl<'p> Compiler<'p> {
         if paths.is_some_and(|paths| paths.group_suffixed || paths.terminal) {
             return Err(Unsupported("custom scalar paths of this kind"));
         }
-        let parsed = gql::parse_query::<&str>(document)
-            .map_err(|_| Unsupported("fetch document doesn't parse"))?;
-        let mut operation = None;
-        let mut fragments = Vec::new();
-        for definition in &parsed.definitions {
-            match definition {
-                gql::Definition::Operation(op) => {
-                    if operation.is_some() {
-                        return Err(Unsupported("several operations"));
-                    }
-                    operation = Some(match op {
-                        gql::OperationDefinition::Query(q) => &q.selection_set,
-                        gql::OperationDefinition::Mutation(m) => &m.selection_set,
-                        gql::OperationDefinition::SelectionSet(s) => s,
-                        // only as a seed: plan nodes of a subscription are rejected before
-                        gql::OperationDefinition::Subscription(s) => &s.selection_set,
-                    });
-                }
-                gql::Definition::Fragment(fragment) => fragments.push(fragment),
-            }
-        }
-        let operation = operation.ok_or(Unsupported("no operation"))?;
         let mut builder = ShapeBuilder {
-            fragments: &fragments,
+            document,
             renames: &renames,
             trail: Vec::new(),
             shape: FetchShape::default(),
@@ -774,7 +750,12 @@ impl<'p> Compiler<'p> {
             (None, Some(path)) => self.positions.at_path(self.root, path),
             (None, None) => self.root,
         };
-        builder.object(&mut self.positions, &[operation], data_position, paths)?;
+        builder.object(
+            &mut self.positions,
+            &[document.selections],
+            data_position,
+            paths,
+        )?;
 
         let mut pending_aliases = Vec::new();
         for (key, merge_paths, requires, reuse, typename) in aliases.into_iter().flatten() {
@@ -1335,91 +1316,96 @@ impl Passthrough<'_> {
     }
 }
 
-/// A response key with the field's name (`None` when fragments put different fields under it)
-/// and the selection sets under it
-pub(crate) type Collected<'d, 'a> = (
-    &'a str,
-    Option<&'a str>,
-    Vec<&'d gql::SelectionSet<'a, &'a str>>,
-);
-
-/// The fields `set` selects, by response key, through its fragments: each key's field name
+/// The fields `list` selects, by response key, through its fragments: each key's field name
 /// (`None` when fragments put different fields under it) and the selection sets under it
-pub(crate) fn collect_fields<'d, 'a>(
-    fragments: &'d [&'d gql::FragmentDefinition<'a, &'a str>],
-    set: &'d gql::SelectionSet<'a, &'a str>,
-    out: &mut Vec<Collected<'d, 'a>>,
+pub(crate) type FlatCollected<'a> = (&'a str, Option<&'a str>, Vec<ListId>);
+
+pub(crate) fn collect_flat<'a>(
+    document: &'a PlanDocument,
+    list: ListId,
+    out: &mut Vec<FlatCollected<'a>>,
 ) -> Result<(), Unsupported> {
-    for item in &set.items {
-        match item {
-            gql::Selection::Field(field) => {
-                let key = field.alias.unwrap_or(field.name);
+    let arena = &document.arena;
+    for &id in arena.items(list) {
+        let node = arena.node(id);
+        match node.kind {
+            Kind::Field => {
+                let name = arena.str(node.name);
+                let key = arena.opt_str(node.alias).unwrap_or(name);
                 let index = match out.iter().position(|(k, _, _)| *k == key) {
                     Some(index) => {
                         // another field under the same key: no one name for it
-                        if out[index].1 != Some(field.name) {
+                        if out[index].1 != Some(name) {
                             out[index].1 = None;
                         }
                         index
                     }
                     None => {
-                        out.push((key, Some(field.name), Vec::new()));
+                        out.push((key, Some(name), Vec::new()));
                         out.len() - 1
                     }
                 };
-                if !field.selection_set.items.is_empty() {
-                    out[index].2.push(&field.selection_set);
+                if !arena.is_empty(node.children) {
+                    out[index].2.push(node.children);
                 }
             }
-            gql::Selection::InlineFragment(fragment) => {
-                collect_fields(fragments, &fragment.selection_set, out)?
-            }
-            gql::Selection::FragmentSpread(spread) => {
-                let fragment = fragments
-                    .iter()
-                    .find(|f| f.name == spread.fragment_name)
+            Kind::InlineFragment => collect_flat(document, node.children, out)?,
+            Kind::FragmentSpread => {
+                let fragment = document
+                    .fragment(arena.str(node.name))
                     .ok_or(Unsupported("unknown fragment"))?;
-                collect_fields(fragments, &fragment.selection_set, out)?
+                collect_flat(document, fragment.selections, out)?
             }
         }
     }
     Ok(())
 }
 
-/// The type condition every selection of `sets` is under, when they're all inline fragments on
+/// The type condition every selection of `lists` is under, when they're all inline fragments on
 /// the same type
-pub(crate) fn single_type_condition<'a>(
-    sets: &[&gql::SelectionSet<'a, &'a str>],
+pub(crate) fn flat_type_condition<'a>(
+    document: &'a PlanDocument,
+    lists: &[ListId],
 ) -> Option<&'a str> {
+    let arena = &document.arena;
     let mut found = None;
-    for item in sets.iter().flat_map(|set| &set.items) {
-        let gql::Selection::InlineFragment(fragment) = item else {
-            return None;
-        };
-        let gql::TypeCondition::On(name) = fragment.type_condition.as_ref()?;
-        if found.is_some_and(|found| found != *name) {
+    for &id in lists.iter().flat_map(|&list| arena.items(list)) {
+        let node = arena.node(id);
+        if node.kind != Kind::InlineFragment {
             return None;
         }
-        found = Some(*name);
+        let name = arena.opt_str(node.name)?;
+        if found.is_some_and(|found| found != name) {
+            return None;
+        }
+        found = Some(name);
     }
     found
 }
 
-struct ShapeBuilder<'d, 'a> {
-    fragments: &'d [&'d gql::FragmentDefinition<'a, &'a str>],
-    renames: &'d [Rename],
+/// A fetch's document, kept flat on the plan by the planner
+fn flat_document(operation: &SubgraphFetchOperation) -> Result<&PlanDocument, Unsupported> {
+    operation
+        .flat
+        .as_deref()
+        .ok_or(Unsupported("a fetch without its flat document"))
+}
+
+struct ShapeBuilder<'a> {
+    document: &'a PlanDocument,
+    renames: &'a [Rename],
     /// The keys from `data` to the object being built
     trail: Vec<&'a str>,
     shape: FetchShape,
 }
 
-impl<'d, 'a> ShapeBuilder<'d, 'a> {
-    /// Adds the object the sets select at `position`. Returns its index. Fields of all type
+impl<'a> ShapeBuilder<'a> {
+    /// Adds the object the lists select at `position`. Returns its index. Fields of all type
     /// conditions are merged, like `ResponseShape` does for an object of an unknown type.
     fn object(
         &mut self,
         positions: &mut Positions,
-        sets: &[&'d gql::SelectionSet<'a, &'a str>],
+        lists: &[ListId],
         position: u32,
         paths: Option<&CustomScalarPaths>,
     ) -> Result<u32, Unsupported> {
@@ -1429,17 +1415,17 @@ impl<'d, 'a> ShapeBuilder<'d, 'a> {
             nodes: (0, 0),
             position,
         });
-        let mut fields: Vec<Collected<'d, 'a>> = Vec::new();
-        for set in sets {
-            self.collect(set, &mut fields)?;
+        let mut fields: Vec<FlatCollected<'a>> = Vec::new();
+        for &list in lists {
+            collect_flat(self.document, list, &mut fields)?;
         }
-        let object_type = single_type_condition(sets);
+        let object_type = flat_type_condition(self.document, lists);
         let type_range = self.text_range(object_type.unwrap_or(""));
         self.shape.object_types.push(type_range);
         let start = self.shape.nodes.len() as u32;
         // an aliased field the response has under its own key: the key the subgraph sends is
         // matched, its value goes where the field's own key is
-        let logical = |trail: &[&str], key: &'a str| -> Option<&'d str> {
+        let logical = |trail: &[&str], key: &'a str| -> Option<&'a str> {
             self.renames
                 .iter()
                 .find(|rename| {
@@ -1487,17 +1473,17 @@ impl<'d, 'a> ShapeBuilder<'d, 'a> {
         }
         let end = self.shape.nodes.len() as u32;
         self.shape.objects[index as usize].nodes = (start, end);
-        for (offset, (key, _, sets)) in fields.iter().enumerate() {
+        for (offset, (key, _, lists)) in fields.iter().enumerate() {
             let node = start as usize + offset;
             // a leaf keeps whatever is under it as it came, custom scalars included
-            if self.shape.nodes[node].opaque_json || sets.is_empty() {
+            if self.shape.nodes[node].opaque_json || lists.is_empty() {
                 continue;
             }
             let child_position =
                 positions.child(position, logical(&self.trail, key).unwrap_or(key));
             let child_paths = paths.and_then(|paths| paths.child(key));
             self.trail.push(key);
-            let object = self.object(positions, sets, child_position, child_paths);
+            let object = self.object(positions, lists, child_position, child_paths);
             self.trail.pop();
             self.shape.nodes[node].object = object?;
         }
@@ -1509,13 +1495,5 @@ impl<'d, 'a> ShapeBuilder<'d, 'a> {
         let start = self.shape.text.len() as u32;
         self.shape.text.extend_from_slice(text.as_bytes());
         (start, text.len() as u32)
-    }
-
-    fn collect(
-        &self,
-        set: &'d gql::SelectionSet<'a, &'a str>,
-        out: &mut Vec<Collected<'d, 'a>>,
-    ) -> Result<(), Unsupported> {
-        collect_fields(self.fragments, set, out)
     }
 }

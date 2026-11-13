@@ -33,6 +33,7 @@ use crate::executor::response::graphql_error::{
     GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment,
 };
 use crate::executor::response::value::Value;
+use crate::query_planner::ast::operation::SubgraphFetchOperation;
 use crate::query_planner::state::supergraph_state::OperationKind;
 
 /// Why a change to a value was refused. The value is left as it was.
@@ -672,7 +673,7 @@ enum FetchStore<'exec> {
     },
     Value {
         data: Value<'exec>,
-        document: &'exec str,
+        operation: &'exec SubgraphFetchOperation,
     },
 }
 
@@ -700,12 +701,12 @@ impl<'exec> SubgraphData<'exec> {
 
     pub(crate) fn from_value(
         data: Value<'exec>,
-        document: &'exec str,
+        operation: &'exec SubgraphFetchOperation,
         schema: &'exec SchemaMetadata,
         kind: &OperationKind,
     ) -> Self {
         Self {
-            store: FetchStore::Value { data, document },
+            store: FetchStore::Value { data, operation },
             schema,
             root_type: root_type(schema, kind),
             errors: Vec::new(),
@@ -753,9 +754,9 @@ impl<'exec> SubgraphData<'exec> {
                 ),
                 None => Ok(()),
             },
-            FetchStore::Value { data, document } => crate::executor::projection::walk::walk_fetch(
+            FetchStore::Value { data, operation } => crate::executor::projection::walk::walk_fetch(
                 data,
-                document,
+                operation,
                 self.root_type,
                 schema,
                 &mut self.errors,

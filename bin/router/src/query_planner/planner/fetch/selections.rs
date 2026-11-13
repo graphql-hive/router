@@ -7,14 +7,12 @@ use std::{
 use crate::query_planner::{
     ast::{
         flat::{
-            arena::{Arena, ListId},
+            arena::{Arena, ListId, NodeId},
+            plan_document::DisplayList,
             Kind,
         },
         merge_path::{Condition, MergePath},
-        selection_item::SelectionItem,
-        selection_set::{
-            FieldSelection, InlineFragmentSelection, ResponseKeyConflict, SelectionSet,
-        },
+        selection_set::ResponseKeyConflict,
     },
     planner::fetch::state::{MultiTypeFetchStep, SingleTypeFetchStep},
 };
@@ -45,7 +43,11 @@ pub struct DisplaySelections<'a, State> {
 
 impl Display for DisplaySelections<'_, SingleTypeFetchStep> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.arena.export(self.selections.selection_set()))
+        write!(
+            f,
+            "{}",
+            DisplayList(self.arena, self.selections.selection_set())
+        )
     }
 }
 
@@ -71,56 +73,60 @@ impl<State> FetchStepSelections<State> {
 }
 
 impl FetchStepSelections<MultiTypeFetchStep> {
-    /// Meant for input and output of entity calls.
-    pub fn to_non_root_selection_set(&self, arena: &Arena) -> SelectionSet {
-        self.wrap_in_type_fragments(arena)
+    /// The input or output of an entity call: a `... on Type` for each type, copied from
+    /// `arena` into `target`.
+    pub fn copy_non_root_into(&self, arena: &Arena, target: &mut Arena) -> ListId {
+        self.copy_wrapped_in_type_fragments(arena, target)
     }
 
-    pub fn to_root_selection_set(&self, arena: &Arena, root_type_name: &str) -> SelectionSet {
+    /// The selections of a root fetch, copied from `arena` into `target`.
+    pub fn copy_root_into(
+        &self,
+        arena: &Arena,
+        target: &mut Arena,
+        root_type_name: &str,
+    ) -> ListId {
         if self.selections.len() == 1 {
             let (type_name, &selections) = self.selections.iter().next().unwrap();
 
             if type_name == root_type_name {
-                return arena.export(selections);
+                return target.copy_from(arena, selections);
             }
         }
 
-        self.wrap_in_type_fragments(arena)
+        self.copy_wrapped_in_type_fragments(arena, target)
     }
 
-    fn wrap_in_type_fragments(&self, arena: &Arena) -> SelectionSet {
-        SelectionSet {
-            items: self
-                .selections
-                .iter()
-                .map(|(type_name, &list)| {
-                    let selections = arena.export(list);
-                    // Build one `... on Type` wrapper item if needed
-                    let Some((condition, selections_for_wrapper)) =
-                        try_lift_condition(type_name, &selections)
-                    else {
-                        return SelectionItem::InlineFragment(InlineFragmentSelection {
-                            type_condition: type_name.to_string(),
-                            include_if: None,
-                            skip_if: None,
-                            selections,
-                        });
-                    };
-
-                    SelectionItem::InlineFragment(InlineFragmentSelection {
-                        type_condition: type_name.to_string(),
-                        include_if: condition.to_include_if(),
-                        skip_if: condition.to_skip_if(),
-                        selections: selections_for_wrapper,
-                    })
-                })
-                .collect(),
-        }
+    /// A `... on Type` around each type's selections, copied into `target`. When all of a
+    /// type's top-level items are `... on Type` with the same `@skip`/`@include`, the wrapper
+    /// takes that condition and they lose it.
+    fn copy_wrapped_in_type_fragments(&self, arena: &Arena, target: &mut Arena) -> ListId {
+        let wrappers: Vec<NodeId> = self
+            .selections
+            .iter()
+            .map(|(type_name, &list)| {
+                let selections = target.copy_from(arena, list);
+                let condition = shared_top_level_fragment_condition(target, type_name, selections);
+                let wrapper = target.new_fragment(type_name, condition.as_ref());
+                let children = match condition {
+                    None => selections,
+                    // one fragment: its selections, not a `... on Type` inside a `... on Type`
+                    Some(_) if target.items(selections).len() == 1 => {
+                        target.node(target.items(selections)[0]).children
+                    }
+                    Some(_) => {
+                        clear_top_level_fragment_conditions(target, type_name, selections);
+                        selections
+                    }
+                };
+                target.node_mut(wrapper).children = children;
+                wrapper
+            })
+            .collect();
+        let list = target.new_list();
+        target.set_items(list, &wrappers);
+        list
     }
-}
-
-fn inline_fragment_condition(fragment: &InlineFragmentSelection) -> Option<Condition> {
-    fragment.into()
 }
 
 // Returns a condition only when every top-level selection item is an inline fragment
@@ -168,80 +174,6 @@ fn clear_top_level_fragment_conditions(arena: &mut Arena, type_name: &str, list:
     }
 }
 
-/// Attempts to lift a common condition from the top-level inline fragments for
-/// `type_name` into the wrapper `... on Type` fragment we build in `wrap_in_type_fragments`.
-///
-/// Lifting is valid when every top-level item is an inline fragment on the same
-/// type and they all share the same condition. That condition may be
-/// `@include`, `@skip`, or both directives together
-/// (`Condition::SkipAndInclude`).
-fn try_lift_condition(
-    type_name: &str,
-    selections: &SelectionSet,
-) -> Option<(Condition, SelectionSet)> {
-    let first_item = selections.items.first()?;
-    let SelectionItem::InlineFragment(first_fragment) = first_item else {
-        return None;
-    };
-
-    // Use the first fragment as baseline condition.
-    // Valid means exactly one conditional directive:
-    // - @include(if: $x), or
-    // - @skip(if: $x)
-    // If it has neither or both, we do not lift.
-    let condition = inline_fragment_condition(first_fragment)?;
-
-    // Every top-level item must be an inline fragment with the same condition.
-    // If this fails, lifting would change semantics.
-    // Here's what i mean:
-    //   ... on User @include(if: $show) { id }
-    //   ... on User @skip(if: $show) { name }
-    // should not be lifted.
-    let all_match = selections.items.iter().all(|item| {
-        let SelectionItem::InlineFragment(inline_fragment) = item else {
-            return false;
-        };
-
-        // `... on Cat @include(if: $x)` under `Animal` is a type condition as well, lifting
-        // only the `@include` would lose it.
-        inline_fragment.type_condition == type_name
-            && inline_fragment_condition(inline_fragment).as_ref() == Some(&condition)
-    });
-
-    if !all_match {
-        return None;
-    }
-
-    // With one fragment, use its selections directly.
-    // This avoids creating an extra nested `... on Type` fragment.
-    //   ... on User @include(if: $show) { id }
-    // should not become:
-    //   ... on User @include(if: $show) { ... on User { id } }
-    if selections.items.len() == 1 {
-        return Some((condition, first_fragment.selections.clone()));
-    }
-
-    // We lifted the condition to the outer fragment.
-    // Remove identical inner conditions to avoid duplicated nesting.
-    // Before
-    //  ... on User @include(if: $show) { id }
-    //  ... on User @include(if: $show) { name }
-    // After
-    //  ... on User @include(if: $show) {
-    //    ... on User { id }
-    //    ... on User { name }
-    //  }
-    let mut lifted_selections = selections.clone();
-    for item in lifted_selections.items.iter_mut() {
-        if let SelectionItem::InlineFragment(inline_fragment) = item {
-            inline_fragment.include_if = None;
-            inline_fragment.skip_if = None;
-        }
-    }
-
-    Some((condition, lifted_selections))
-}
-
 impl FetchStepSelections<SingleTypeFetchStep> {
     /// The same lists, as a multi-type step's. Only for when this one goes away.
     pub(crate) fn move_into_multi_type(&self) -> FetchStepSelections<MultiTypeFetchStep> {
@@ -264,15 +196,14 @@ impl FetchStepSelections<SingleTypeFetchStep> {
             .expect("SingleTypeFetchStep should have exactly one selection")
     }
 
+    /// Merges a copy of `source` into the selections at `fetch_path`.
     pub fn add_at_path(
         &mut self,
         arena: &mut Arena,
         fetch_path: &MergePath,
-        selection_set: SelectionSet,
+        source: ListId,
     ) -> Result<(), FetchStepSelectionsError> {
         let def_name = self.definition_name().to_string();
-        let source = arena.import(&selection_set);
-
         self.add_at_path_inner(arena, &def_name, fetch_path, source, false)
     }
 
@@ -282,9 +213,7 @@ impl FetchStepSelections<SingleTypeFetchStep> {
         fetch_path: &MergePath,
     ) -> Result<(), FetchStepSelectionsError> {
         let def_name = self.definition_name().to_string();
-        let source = arena.import(&SelectionSet {
-            items: vec![SelectionItem::Field(FieldSelection::new_typename())],
-        });
+        let source = arena.typename_list();
 
         self.add_at_path_inner(arena, &def_name, fetch_path, source, true)
     }
@@ -300,14 +229,9 @@ impl<State> FetchStepSelections<State> {
         self.selections.len() > 1
     }
 
-    pub fn contains(
-        &self,
-        arena: &Arena,
-        definition_name: &str,
-        selection_set: &SelectionSet,
-    ) -> bool {
+    pub fn contains(&self, arena: &Arena, definition_name: &str, list: ListId) -> bool {
         if let Some(&self_selections) = self.selections.get(definition_name) {
-            return arena.contains_tree(self_selections, selection_set);
+            return arena.is_subset(self_selections, list);
         }
 
         false
@@ -523,12 +447,12 @@ impl FetchStepSelections<MultiTypeFetchStep> {
 }
 
 impl FetchStepSelections<SingleTypeFetchStep> {
+    /// Merges a copy of `source` in.
     pub fn add(
         &mut self,
         arena: &mut Arena,
-        selection_set: &SelectionSet,
+        source: ListId,
     ) -> Result<(), FetchStepSelectionsError> {
-        let source = arena.import(selection_set);
         arena.merge(self.selection_set(), source, false)?;
 
         Ok(())
@@ -564,7 +488,7 @@ mod tests {
     use crate::query_planner::utils::pretty_display::PrettyDisplay;
 
     use super::{FetchStepSelections, MultiTypeFetchStep};
-    use crate::query_planner::ast::flat::arena::Arena;
+    use crate::query_planner::ast::flat::{arena::Arena, plan_document::PrettyList};
 
     fn parse_selection_set(input: &str) -> SelectionSet {
         let op = parse_operation(input);
@@ -602,12 +526,17 @@ mod tests {
         }
     }
 
-    struct PrettySelectionSet(SelectionSet);
-
-    impl std::fmt::Display for PrettySelectionSet {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            self.0.pretty_fmt(f, 0)
+    /// The entity call's selections, pretty-printed.
+    fn non_root(arena: &Arena, selections: &FetchStepSelections<MultiTypeFetchStep>) -> String {
+        struct Pretty<'a>(PrettyList<'a>);
+        impl std::fmt::Display for Pretty<'_> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.0.pretty_fmt(f, 0)
+            }
         }
+        let mut target = Arena::new();
+        let list = selections.copy_non_root_into(arena, &mut target);
+        Pretty(PrettyList(&target, list)).to_string()
     }
 
     #[test]
@@ -624,7 +553,7 @@ mod tests {
             "#,
         );
         insta::assert_snapshot!(
-            format!("{}", PrettySelectionSet(fetch_selections.to_non_root_selection_set(&arena))),
+            non_root(&arena, &fetch_selections),
             @r#"
               ... on Book @skip(if: $title) {
                 sku
@@ -651,7 +580,7 @@ mod tests {
         );
 
         insta::assert_snapshot!(
-          format!("{}", PrettySelectionSet(fetch_selections.to_non_root_selection_set(&arena))),
+          non_root(&arena, &fetch_selections),
             @r#"
               ... on Book @include(if: $x) {
                 ... on Book {
@@ -683,7 +612,7 @@ mod tests {
         );
 
         insta::assert_snapshot!(
-          format!("{}", PrettySelectionSet(fetch_selections.to_non_root_selection_set(&arena))),
+          non_root(&arena, &fetch_selections),
             @r#"
               ... on Book {
                 ... on Book @include(if: $x) {
@@ -715,7 +644,7 @@ mod tests {
         );
 
         insta::assert_snapshot!(
-          format!("{}", PrettySelectionSet(fetch_selections.to_non_root_selection_set(&arena))),
+          non_root(&arena, &fetch_selections),
             @r#"
               ... on Book @include(if: $x) {
                 title

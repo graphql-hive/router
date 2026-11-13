@@ -1,9 +1,10 @@
 use indexmap::map::Entry;
 use indexmap::IndexMap;
 
-use crate::query_planner::ast::operation::{OperationDefinition, VariableDefinition};
-use crate::query_planner::ast::selection_item::SelectionItem;
-use crate::query_planner::ast::selection_set::SelectionSet;
+use crate::query_planner::ast::flat::arena::{Arena, ListId};
+use crate::query_planner::ast::flat::plan_document::PlanDocument;
+use crate::query_planner::ast::flat::Kind;
+use crate::query_planner::ast::operation::VariableDefinition;
 use crate::query_planner::ast::value::Value;
 use crate::query_planner::state::supergraph_state::{OperationKind, SupergraphState, TypeNode};
 
@@ -27,10 +28,10 @@ pub struct ExtractedVariable {
 /// Only field arguments are touched. Directive arguments like `@include(if: false)` are
 /// resolved by normalization already, and variables in default values aren't allowed.
 pub fn arguments_to_variables(
-    operation: &mut OperationDefinition,
+    document: &mut PlanDocument,
     supergraph: &SupergraphState,
 ) -> Vec<ExtractedVariable> {
-    let root_type = match operation.operation_kind {
+    let root_type = match document.kind {
         Some(OperationKind::Mutation) => supergraph.mutation_type.as_deref(),
         Some(OperationKind::Subscription) => supergraph.subscription_type.as_deref(),
         _ => Some(supergraph.query_type.as_str()),
@@ -41,21 +42,18 @@ pub fn arguments_to_variables(
 
     let mut extractor = Extractor {
         supergraph,
-        client_variables: operation
-            .variable_definitions
-            .as_deref()
-            .unwrap_or_default(),
+        client_variables: document.variables.as_deref().unwrap_or_default(),
         next_index: 0,
         extracted: IndexMap::new(),
     };
-    extractor.selection_set(&mut operation.selection_set, root_type);
+    extractor.selection_set(&mut document.arena, document.selections, root_type);
     let extracted = extractor.extracted;
 
     if extracted.is_empty() {
         return Vec::new();
     }
 
-    let definitions = operation.variable_definitions.get_or_insert_with(Vec::new);
+    let definitions = document.variables.get_or_insert_with(Vec::new);
     extracted
         .into_iter()
         .map(|((variable_type, value), (name, argument))| {
@@ -82,37 +80,52 @@ struct Extractor<'a> {
 }
 
 impl Extractor<'_> {
-    fn selection_set(&mut self, selection_set: &mut SelectionSet, parent_type: &str) {
-        for item in &mut selection_set.items {
-            match item {
-                SelectionItem::Field(field) => {
+    /// Every node of a normalized document is its own, no two lists share one, so a field's
+    /// arguments are replaced in place.
+    fn selection_set(&mut self, arena: &mut Arena, list: ListId, parent_type: &str) {
+        for index in 0..arena.items(list).len() {
+            let id = arena.items(list)[index];
+            let node = *arena.node(id);
+            match node.kind {
+                Kind::Field => {
+                    let name = arena.str(node.name);
                     let Some(field_def) = self
                         .supergraph
                         .definitions
                         .get(parent_type)
-                        .and_then(|def| def.fields().get(&field.name))
+                        .and_then(|def| def.fields().get(name))
                     else {
                         continue;
                     };
-                    for (arg_name, value) in field.arguments.iter_mut().flat_map(|a| a.iter_mut()) {
-                        let Some(arg_type) = field_def.argument_types.get(arg_name) else {
-                            continue;
-                        };
-                        // `{ id: $id, name: "a" }` stays as it is. Pulling out the literal
-                        // parts one by one isn't worth it.
-                        if value.contains_variable() {
-                            continue;
+                    if let Some(arguments) = arena.args(node.args) {
+                        let mut arguments = arguments.clone();
+                        let mut changed = false;
+                        for (arg_name, value) in arguments.iter_mut() {
+                            let Some(arg_type) = field_def.argument_types.get(arg_name) else {
+                                continue;
+                            };
+                            // `{ id: $id, name: "a" }` stays as it is. Pulling out the literal
+                            // parts one by one isn't worth it.
+                            if value.contains_variable() {
+                                continue;
+                            }
+                            let literal = std::mem::replace(value, Value::Null);
+                            let argument = || format!("{parent_type}.{name}({arg_name}:)");
+                            *value =
+                                Value::Variable(self.variable_for(arg_type, literal, argument));
+                            changed = true;
                         }
-                        let literal = std::mem::replace(value, Value::Null);
-                        let argument = || format!("{parent_type}.{}({arg_name}:)", field.name);
-                        *value = Value::Variable(self.variable_for(arg_type, literal, argument));
+                        if changed {
+                            arena.node_mut(id).args = arena.intern_args(&arguments);
+                        }
                     }
-                    self.selection_set(&mut field.selections, field_def.field_type.inner_type());
+                    self.selection_set(arena, node.children, field_def.field_type.inner_type());
                 }
-                SelectionItem::InlineFragment(fragment) => {
-                    self.selection_set(&mut fragment.selections, &fragment.type_condition);
+                Kind::InlineFragment => {
+                    let type_condition = arena.str(node.name).to_string();
+                    self.selection_set(arena, node.children, &type_condition);
                 }
-                SelectionItem::FragmentSpread(_) => {
+                Kind::FragmentSpread => {
                     // Fragment spreads are removed earlier in normalization.
                 }
             }
@@ -181,10 +194,11 @@ mod tests {
 
     fn extract(query: &'static str) -> String {
         let supergraph = SupergraphState::new(&parse_schema(SCHEMA));
-        let mut operation =
+        let mut operation = std::sync::Arc::unwrap_or_clone(
             normalize_operation(&supergraph, &parse_query(query).expect("to parse"), None)
                 .unwrap()
-                .operation;
+                .document,
+        );
         let values = arguments_to_variables(&mut operation, &supergraph);
         let values: Vec<String> = values
             .iter()
@@ -199,10 +213,11 @@ mod tests {
     fn different_literals_end_up_as_the_same_operation() {
         let supergraph = SupergraphState::new(&parse_schema(SCHEMA));
         let hash = |query: &'static str| {
-            let mut operation =
+            let mut operation = std::sync::Arc::unwrap_or_clone(
                 normalize_operation(&supergraph, &parse_query(query).expect("to parse"), None)
                     .unwrap()
-                    .operation;
+                    .document,
+            );
             arguments_to_variables(&mut operation, &supergraph);
             operation.hash()
         };

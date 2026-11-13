@@ -9,9 +9,8 @@ use std::collections::HashMap;
 use super::error::ProjectionError;
 use super::plan::{FieldRecord, ProjectionPlan, Range};
 use super::response::{evaluate, resolve_type_name, ConditionFailure, ShapeCursor, TypeName};
-use graphql_tools::parser::query as gql;
 
-use crate::executor::indexed::compile::{collect_fields, single_type_condition};
+use crate::executor::indexed::compile::{collect_flat, flat_type_condition};
 use crate::executor::introspection::schema::SchemaMetadata;
 use crate::executor::plugins::response_data::{
     DataValue, Nullability, PathFrame, Place, Step, WalkResult,
@@ -19,6 +18,9 @@ use crate::executor::plugins::response_data::{
 use crate::executor::response::graphql_error::GraphQLError;
 use crate::executor::response::value::Value;
 use crate::executor::utils::consts::TYPENAME_FIELD_NAME;
+use crate::query_planner::ast::flat::arena::ListId;
+use crate::query_planner::ast::flat::plan_document::PlanDocument;
+use crate::query_planner::ast::operation::SubgraphFetchOperation;
 
 pub(crate) fn walk<F: FnMut(&mut DataValue<'_, '_>)>(
     data: &mut Value<'_>,
@@ -205,69 +207,48 @@ impl<'w, F: FnMut(&mut DataValue<'_, '_>)> Walker<'w, F> {
 
 /// Walks one fetch's data in a `Value` tree, before it's merged, field for field the way the
 /// fetch's query selects it (see `SubgraphData::walk`). Field names come from the query, types
-/// from the objects' `__typename` and the schema.
-// ponytail: parses the fetch's document on each walk, Value pipeline only; keep a parsed copy
-// on the fetch if it ever shows in a profile
+/// from the objects' `__typename` and the schema. A fetch without its flat document (a
+/// deserialized plan) isn't walked.
 pub(crate) fn walk_fetch<F: FnMut(&mut DataValue<'_, '_>)>(
     data: &mut Value<'_>,
-    document: &str,
+    operation: &SubgraphFetchOperation,
     root_type: &str,
     schema: &SchemaMetadata,
     errors: &mut Vec<GraphQLError>,
     visit: F,
 ) -> WalkResult {
-    let Ok(parsed) = gql::parse_query::<&str>(document) else {
-        return Ok(());
-    };
-    let mut operation = None;
-    let mut fragments = Vec::new();
-    for definition in &parsed.definitions {
-        match definition {
-            gql::Definition::Operation(op) => {
-                operation = Some(match op {
-                    gql::OperationDefinition::Query(q) => &q.selection_set,
-                    gql::OperationDefinition::Mutation(m) => &m.selection_set,
-                    gql::OperationDefinition::SelectionSet(s) => s,
-                    gql::OperationDefinition::Subscription(s) => &s.selection_set,
-                })
-            }
-            gql::Definition::Fragment(fragment) => fragments.push(fragment),
-        }
-    }
-    let (Some(operation), Value::Object(object)) = (operation, data) else {
+    let (Some(document), Value::Object(object)) = (operation.flat.as_deref(), data) else {
         return Ok(());
     };
     let mut walker = FetchWalker {
-        fragments: &fragments,
+        document,
         schema,
         errors,
         visit,
     };
-    walker.object(object, &[operation], root_type, None);
+    walker.object(object, &[document.selections], root_type, None);
     Ok(())
 }
 
-type Set<'d, 'a> = gql::SelectionSet<'a, &'a str>;
-
-struct FetchWalker<'d, 'a, 's, F> {
-    fragments: &'d [&'d gql::FragmentDefinition<'a, &'a str>],
+struct FetchWalker<'d, 's, F> {
+    document: &'d PlanDocument,
     schema: &'s SchemaMetadata,
     errors: &'s mut Vec<GraphQLError>,
     visit: F,
 }
 
-impl<'d, 'a, 's, F: FnMut(&mut DataValue<'_, '_>)> FetchWalker<'d, 'a, 's, F> {
+impl<'d, 's, F: FnMut(&mut DataValue<'_, '_>)> FetchWalker<'d, 's, F> {
     fn object(
         &mut self,
         object: &mut [(&str, Value<'_>)],
-        sets: &[&'d Set<'d, 'a>],
+        sets: &[ListId],
         parent_type: &str,
         path: Option<&PathFrame<'_>>,
     ) {
         let mut fields = Vec::new();
-        for set in sets {
+        for &set in sets {
             // a fragment the document doesn't define: what's before it is still walked
-            let _ = collect_fields(self.fragments, set, &mut fields);
+            let _ = collect_flat(self.document, set, &mut fields);
         }
         let mut cursor = 0;
         for (key, name, child_sets) in &fields {
@@ -300,9 +281,9 @@ impl<'d, 'a, 's, F: FnMut(&mut DataValue<'_, '_>)> FetchWalker<'d, 'a, 's, F> {
     fn value(
         &mut self,
         value: &mut Value<'_>,
-        name: &'a str,
-        key: &'a str,
-        sets: &[&'d Set<'d, 'a>],
+        name: &'d str,
+        key: &'d str,
+        sets: &[ListId],
         parent_type: &str,
         nullability: Nullability<'_>,
         list_index: Option<u32>,
@@ -352,7 +333,7 @@ impl<'d, 'a, 's, F: FnMut(&mut DataValue<'_, '_>)> FetchWalker<'d, 'a, 's, F> {
                     .and_then(Value::as_str)
                     .and_then(|name| schema.object_types.get(name))
                     .map(String::as_str)
-                    .or_else(|| single_type_condition(sets))
+                    .or_else(|| flat_type_condition(self.document, sets))
                     .or_else(|| {
                         schema
                             .get_type_fields(parent_type)

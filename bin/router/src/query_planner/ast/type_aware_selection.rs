@@ -1,45 +1,20 @@
-use std::{fmt::Display, hash::Hash, sync::OnceLock};
+use std::fmt::Display;
 
-use super::{flat::selection_tree::SelectionTree, selection_set::SelectionSet};
+use super::flat::selection_tree::SelectionTree;
 
-#[derive(Debug, Clone)]
+/// A federation field set (`@key`, `@requires`, a context's selection) on `type_name`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TypeAwareSelection<'a> {
     pub type_name: &'a str,
-    pub selection_set: SelectionSet,
-    /// `selection_set` the way the walker reads it, made the first time it does.
-    /// Leave it empty, it's filled from `selection_set`.
-    pub flat: OnceLock<SelectionTree>,
-}
-
-impl TypeAwareSelection<'_> {
-    pub fn flat(&self) -> &SelectionTree {
-        self.flat
-            .get_or_init(|| SelectionTree::from_tree(&self.selection_set))
-    }
-}
-
-impl Hash for TypeAwareSelection<'_> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.type_name.hash(state);
-        self.selection_set.hash(state);
-    }
+    pub selections: SelectionTree,
 }
 
 impl Display for TypeAwareSelection<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.selection_set.is_empty() {
+        if self.selections.is_empty() {
             write!(f, "{{}}")
         } else {
-            write!(f, "{}", self.selection_set)
+            write!(f, "{}", self.selections)
         }
     }
 }
-
-impl PartialEq for TypeAwareSelection<'_> {
-    fn eq(&self, other: &Self) -> bool {
-        // TODO: This needs to be improved and check the internal selection sets correctly.
-        self.type_name == other.type_name && self.selection_set.items == other.selection_set.items
-    }
-}
-
-impl Eq for TypeAwareSelection<'_> {}

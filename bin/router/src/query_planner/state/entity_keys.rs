@@ -1,8 +1,7 @@
 use ahash::HashMap;
 
 use crate::query_planner::{
-    ast::selection_item::SelectionItem, federation_spec::FederationRules,
-    state::supergraph_state::SupergraphState,
+    ast::flat::Kind, federation_spec::FederationRules, state::supergraph_state::SupergraphState,
 };
 
 /// The top-level fields of one resolvable `@key`, without `__typename`: `id` and `org` for
@@ -34,15 +33,10 @@ impl EntityKeys {
                 let selection =
                     FederationRules::parse_key(supergraph, &join_type.graph_id, type_name, key);
                 let fields = selection
-                    .selection_set
-                    .items
-                    .iter()
-                    .filter_map(|item| match item {
-                        SelectionItem::Field(field) if field.name != "__typename" => {
-                            Some(field.name.clone())
-                        }
-                        _ => None,
-                    })
+                    .selections
+                    .roots()
+                    .filter(|item| item.kind() == Kind::Field && item.name() != "__typename")
+                    .map(|item| item.name().to_string())
                     .collect();
 
                 subgraphs

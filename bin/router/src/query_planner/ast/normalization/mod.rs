@@ -586,9 +586,10 @@ mod tests {
         )
         .unwrap();
 
+        let operation = r.operation_tree();
         match (
-            &r.operation.selection_set.items[0],
-            &r.operation.selection_set.items[1],
+            &operation.selection_set.items[0],
+            &operation.selection_set.items[1],
         ) {
             (SelectionItem::Field(f1), SelectionItem::Field(f2)) => {
                 assert_eq!(f1.arguments_hash(), f2.arguments_hash());

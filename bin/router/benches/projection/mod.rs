@@ -53,7 +53,7 @@ fn abstract_type_benchmarks(c: &mut Criterion) {
     let normalized = normalize_operation(&planner.supergraph, &document, None)
         .expect("Failed to normalize operation");
     let (root_type_name, plan) =
-        ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+        ProjectionPlan::from_operation(&normalized.document, &schema_metadata);
 
     let user = |row: usize| {
         Value::Object(vec![
@@ -139,7 +139,7 @@ fn list_benchmarks(c: &mut Criterion) {
         let normalized = normalize_operation(&planner.supergraph, &document, None)
             .expect("Failed to normalize operation");
         let (root_type_name, plan) =
-            ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+            ProjectionPlan::from_operation(&normalized.document, &schema_metadata);
 
         // Keys are stored in schema order, the opposite of the selection order above.
         let objects = (0..LIST_LENGTH)

@@ -93,8 +93,10 @@ use crate::executor::response::{
     graphql_error::GraphQLError,
     value::{bytes_eq, Value},
 };
-use crate::query_planner::ast::{
-    document::Document, selection_item::SelectionItem, selection_set::SelectionSet,
+use crate::query_planner::ast::flat::{
+    arena::{ListId, NodeId},
+    plan_document::PlanDocument,
+    Kind,
 };
 use crate::query_planner::planner::plan_nodes::CustomScalarPaths;
 
@@ -272,7 +274,7 @@ impl ResponseShape {
     /// Returns `None` when the shape does not fit in its indices: a key longer than 253 bytes, or
     /// more than 16 MB of keys.
     pub fn new<'s>(
-        document: &Document,
+        document: &PlanDocument,
         possible_types: impl Fn(&str) -> Option<&'s HashSet<String>>,
         custom_scalar_paths: Option<&CustomScalarPaths>,
     ) -> Option<Self> {
@@ -295,7 +297,7 @@ impl ResponseShape {
             fits: true,
         };
         let opaque_json_data = paths.is_some_and(|paths| paths.terminal);
-        builder.object(&[&document.operation.selection_set], paths);
+        builder.object(&[document.selections], paths);
         builder.fits.then(|| Self {
             nodes: builder.nodes.into(),
             objects: builder.objects.into(),
@@ -358,33 +360,29 @@ impl ResponseShape {
     }
 }
 
-/// A field of an object, and the selection sets of each place that selects it.
+/// A field of an object, and the field nodes that select it (their children are the sets).
 ///
 /// In `{ u { ... on A { n { x } } ... on B { n { y } } } }`, the fields of `u` have one `n` with
 /// two sets, `{ x }` and `{ y }`. So the object in `n` has `x` and `y`.
 struct Field<'d> {
     key: &'d str,
-    sets: SmallVec<[&'d SelectionSet; 2]>,
+    /// The field nodes, not their lists: a node id is unique, so it tells two sets apart.
+    sets: SmallVec<[NodeId; 2]>,
 }
 
 impl Field<'_> {
     /// Returns true if the two lists have the same keys from the same selection sets. Then they
-    /// make the same nodes. All sets come from one document, so we can compare pointers.
+    /// make the same nodes. All sets come from one document, so comparing node ids is enough.
     fn same(a: &[Field], b: &[Field]) -> bool {
         a.len() == b.len()
-            && a.iter().zip(b).all(|(a, b)| {
-                a.key == b.key
-                    && a.sets.len() == b.sets.len()
-                    && a.sets
-                        .iter()
-                        .zip(&b.sets)
-                        .all(|(a, b)| std::ptr::eq(*a, *b))
-            })
+            && a.iter()
+                .zip(b)
+                .all(|(a, b)| a.key == b.key && a.sets == b.sets)
     }
 }
 
 struct Builder<'d, F> {
-    document: &'d Document,
+    document: &'d PlanDocument,
     possible_types: F,
     nodes: Vec<Node>,
     objects: Vec<Object>,
@@ -402,7 +400,8 @@ struct Builder<'d, F> {
 }
 
 /// What `Builder::object` is called with. Same sets in, same object out.
-type ObjectInput = (SmallVec<[*const SelectionSet; 2]>, *const CustomScalarPaths);
+/// The sets are list ids, see `Builder::key`.
+type ObjectInput = (SmallVec<[u32; 2]>, *const CustomScalarPaths);
 
 /// The run of `vec` from `start` to its end
 fn span_from<T>(start: usize, vec: &[T]) -> Span {
@@ -436,9 +435,9 @@ impl<'d, 's: 'd, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
     /// ```
     ///
     /// If two types select the same fields, and those are not all the fields, they share one run.
-    fn object(&mut self, sets: &[&'d SelectionSet], paths: Option<&'d CustomScalarPaths>) -> u32 {
+    fn object(&mut self, sets: &[ListId], paths: Option<&'d CustomScalarPaths>) -> u32 {
         let input: ObjectInput = (
-            sets.iter().flat_map(|set| self.key(set)).collect(),
+            sets.iter().flat_map(|&set| self.key(set)).collect(),
             paths.map_or(std::ptr::null(), |paths| paths as *const _),
         );
         if let Some(&index) = self.built.get(&input) {
@@ -463,7 +462,7 @@ impl<'d, 's: 'd, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
         let extra = self.flatten(&extra, paths);
 
         let mut names = Vec::new();
-        for set in sets {
+        for &set in sets {
             self.conditions(set, &mut names);
         }
         // Sort them, so the parser can use a binary search.
@@ -516,25 +515,32 @@ impl<'d, 's: 'd, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
     /// A set with only fragment spreads is keyed by the fragment bodies, so `a { ...F }` and
     /// `b { ...F }` share one object. We never build from a fragment body directly, so the keys
     /// don't mix.
-    fn key(&self, set: &'d SelectionSet) -> SmallVec<[*const SelectionSet; 2]> {
-        let spreads_only = !set.items.is_empty()
-            && set
-                .items
+    fn key(&self, set: ListId) -> SmallVec<[u32; 2]> {
+        let arena = &self.document.arena;
+        let items = arena.items(set);
+        let spreads_only = !items.is_empty()
+            && items
                 .iter()
-                .all(|item| matches!(item, SelectionItem::FragmentSpread(_)));
+                .all(|&id| arena.node(id).kind == Kind::FragmentSpread);
         if !spreads_only {
-            return smallvec::smallvec![set as *const SelectionSet];
+            return smallvec::smallvec![set.index()];
         }
-        set.items
+        items
             .iter()
-            .filter_map(|item| match item {
-                SelectionItem::FragmentSpread(name) => {
-                    self.document.fragments.iter().find(|f| &f.name == name)
-                }
-                _ => None,
-            })
-            .map(|fragment| &fragment.selection_set as *const SelectionSet)
+            .filter_map(|&id| self.document.fragment(arena.str(arena.node(id).name)))
+            .map(|fragment| fragment.selections.index())
             .collect()
+    }
+
+    /// Like `text`, with quotes around the key, without a temporary string.
+    fn quoted(&mut self, key: &str) -> Text {
+        let start = self.text.len();
+        self.text.push(b'"');
+        self.text.extend_from_slice(key.as_bytes());
+        self.text.push(b'"');
+        let len = key.len() + 2;
+        self.fits &= start <= MAX_TEXT_OFFSET && len <= u8::MAX as usize;
+        Text(start as u32 & MAX_TEXT_OFFSET as u32 | (len as u32 & 0xff) << TEXT_LEN_SHIFT)
     }
 
     fn text(&mut self, bytes: &[u8]) -> Text {
@@ -550,25 +556,22 @@ impl<'d, 's: 'd, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
     /// `... on Node { ... on User { .. } }` gives each type that implements `Node`, and `User`.
     /// Only these types can have different fields than all the fields. So only these types get
     /// their own list.
-    fn conditions<'x>(&self, set: &'d SelectionSet, out: &mut Vec<&'x str>)
+    fn conditions<'x>(&self, set: ListId, out: &mut Vec<&'x str>)
     where
         'd: 'x,
         's: 'x,
     {
-        for item in &set.items {
-            let (condition, set) = match item {
-                SelectionItem::Field(_) => continue,
-                SelectionItem::InlineFragment(fragment) => {
-                    (fragment.type_condition.as_str(), &fragment.selections)
-                }
-                SelectionItem::FragmentSpread(name) => {
-                    match self.document.fragments.iter().find(|f| &f.name == name) {
-                        Some(fragment) => {
-                            (fragment.type_condition.as_str(), &fragment.selection_set)
-                        }
-                        None => continue,
-                    }
-                }
+        let document = self.document;
+        let arena = &document.arena;
+        for &id in arena.items(set) {
+            let node = arena.node(id);
+            let (condition, set) = match node.kind {
+                Kind::Field => continue,
+                Kind::InlineFragment => (arena.str(node.name), node.children),
+                Kind::FragmentSpread => match document.fragment(arena.str(node.name)) {
+                    Some(fragment) => (fragment.type_condition.as_str(), fragment.selections),
+                    None => continue,
+                },
             };
             match (self.possible_types)(condition) {
                 Some(types) => out.extend(types.iter().map(String::as_str)),
@@ -597,19 +600,22 @@ impl<'d, 's: 'd, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
     /// The fields are in the order that they first appear. This is the order that the subgraph
     /// sends them in. A field that is selected two times is one field. We use the response key,
     /// so each alias is its own field.
-    fn fields(&self, sets: &[&'d SelectionSet], typename: Option<&str>) -> Vec<Field<'d>> {
+    fn fields(&self, sets: &[ListId], typename: Option<&str>) -> Vec<Field<'d>> {
         let mut out = Vec::new();
-        for set in sets {
+        for &set in sets {
             self.collect(set, typename, &mut out);
         }
         out
     }
 
-    fn collect(&self, set: &'d SelectionSet, typename: Option<&str>, out: &mut Vec<Field<'d>>) {
-        for item in &set.items {
-            match item {
-                SelectionItem::Field(field) => {
-                    let key = field.selection_identifier();
+    fn collect(&self, set: ListId, typename: Option<&str>, out: &mut Vec<Field<'d>>) {
+        let document = self.document;
+        let arena = &document.arena;
+        for &id in arena.items(set) {
+            let node = arena.node(id);
+            match node.kind {
+                Kind::Field => {
+                    let key = arena.response_key(id);
                     let index = match out.iter().position(|f| f.key == key) {
                         Some(index) => index,
                         None => {
@@ -620,20 +626,19 @@ impl<'d, 's: 'd, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
                             out.len() - 1
                         }
                     };
-                    if !field.selections.items.is_empty() {
-                        out[index].sets.push(&field.selections);
+                    if !arena.is_empty(node.children) {
+                        out[index].sets.push(id);
                     }
                 }
-                SelectionItem::InlineFragment(fragment) => {
-                    if self.applies(&fragment.type_condition, typename) {
-                        self.collect(&fragment.selections, typename, out)
+                Kind::InlineFragment => {
+                    if self.applies(arena.str(node.name), typename) {
+                        self.collect(node.children, typename, out)
                     }
                 }
-                SelectionItem::FragmentSpread(name) => {
-                    if let Some(fragment) = self.document.fragments.iter().find(|f| &f.name == name)
-                    {
+                Kind::FragmentSpread => {
+                    if let Some(fragment) = document.fragment(arena.str(node.name)) {
                         if self.applies(&fragment.type_condition, typename) {
-                            self.collect(&fragment.selection_set, typename, out)
+                            self.collect(fragment.selections, typename, out)
                         }
                     }
                 }
@@ -652,13 +657,10 @@ impl<'d, 's: 'd, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
             let (key, prefix) = match self.keys.get(field.key) {
                 Some(&key) => key,
                 None => {
-                    let quoted = format!("\"{}\"", field.key);
-                    let key = (
-                        self.text(quoted.as_bytes()),
-                        u64::from_le_bytes(first_bytes(quoted.as_bytes())),
-                    );
-                    self.keys.insert(field.key, key);
-                    key
+                    let key = self.quoted(field.key);
+                    let prefix = u64::from_le_bytes(first_bytes(&self.text[key.range()]));
+                    self.keys.insert(field.key, (key, prefix));
+                    (key, prefix)
                 }
             };
             let opaque_json = paths
@@ -690,7 +692,13 @@ impl<'d, 's: 'd, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
                 .and_then(|paths| paths.child(field.key))
                 .filter(|paths| !paths.is_empty());
             if !field.sets.is_empty() || child.is_some() {
-                let object = self.object(&field.sets, child);
+                let arena = &self.document.arena;
+                let sets: SmallVec<[ListId; 2]> = field
+                    .sets
+                    .iter()
+                    .map(|&id| arena.node(id).children)
+                    .collect();
+                let object = self.object(&sets, child);
                 self.nodes[index].object |= object & OBJECT_MASK;
             }
         }
@@ -1294,7 +1302,8 @@ mod tests {
     use crate::executor::response::subgraph_response::SubgraphResponse;
     use crate::executor::response::value::Value;
     use crate::query_planner::ast::{
-        document::Document, fragment::FragmentDefinition, operation::OperationDefinition,
+        document::Document, flat::plan_document::PlanDocument, fragment::FragmentDefinition,
+        operation::OperationDefinition,
     };
     use crate::query_planner::planner::plan_nodes::CustomScalarPaths;
     use crate::query_planner::utils::parsing::parse_operation;
@@ -1325,7 +1334,7 @@ mod tests {
         let mut interface = HashSet::new();
         interface.extend(["A".to_string(), "C".to_string()]);
         ResponseShape::new(
-            &Document {
+            &PlanDocument::from_tree(&Document {
                 operation: OperationDefinition {
                     name: None,
                     operation_kind: None,
@@ -1333,7 +1342,7 @@ mod tests {
                     variable_definitions: None,
                 },
                 fragments,
-            },
+            }),
             |name| (name == "I").then_some(&interface),
             paths,
         )
@@ -1649,7 +1658,7 @@ mod tests {
             },
             fragments: Vec::new(),
         };
-        assert!(ResponseShape::new(&document, |_| None, None).is_none());
+        assert!(ResponseShape::new(&PlanDocument::from_tree(&document), |_| None, None).is_none());
     }
 
     #[test]

@@ -13,8 +13,9 @@ use crate::executor::execution::demand_control::{
 };
 use crate::executor::execution::plan::CoerceVariablesPayload;
 use crate::executor::hooks::on_supergraph_load::SupergraphSnapshot;
-use crate::query_planner::ast::operation::{OperationDefinition, PlanningFetchOperation};
-use crate::query_planner::ast::{selection_item::SelectionItem, selection_set::SelectionSet};
+use crate::query_planner::ast::flat::selection_tree::PlanOperation;
+use crate::query_planner::ast::flat::Kind;
+use crate::query_planner::ast::operation::PlanningFetchOperation;
 use crate::query_planner::planner::plan_nodes::{PlanNode, Planning, QueryPlan};
 use crate::query_planner::state::supergraph_state::{OperationKind, SupergraphState};
 use crate::telemetry::logging::targets;
@@ -232,7 +233,7 @@ impl DemandControlRuntime {
     pub(crate) fn compile_plan(
         &self,
         query_plan: &QueryPlan<Planning>,
-        operation_for_plan: &OperationDefinition,
+        operation_for_plan: &PlanOperation,
         root_type_name: &str,
         supergraph_state: &SupergraphState,
     ) -> DemandControlFormulaPlan {
@@ -284,7 +285,7 @@ impl DemandControlRuntime {
     ) -> FormulaFetchNode {
         let default_list_size = self.default_list_size_for_subgraph(service_name);
         let root_type = supergraph_state.expect_root_type_name(operation_kind);
-        let document = operation.document.as_ref();
+        let document = operation.flat.as_ref();
         if let Some(actual_plans_by_fetch_hash) = actual_plans_by_fetch_hash {
             actual_plans_by_fetch_hash
                 .entry(operation.operation.hash)
@@ -293,8 +294,8 @@ impl DemandControlRuntime {
         FormulaFetchNode {
             service_name: service_name.to_string(),
             estimated_expr: compile_cost_expr_for_operation(
-                &document.operation,
-                &document.fragments,
+                document,
+                document.arena.items(document.selections),
                 root_type,
                 operation_kind,
                 supergraph_state,
@@ -341,32 +342,28 @@ impl DemandControlRuntime {
                 let aliases = &fetch.entity_batch.aliases;
                 if aliases.iter().any(|alias| alias.run_if.is_some()) {
                     // an alias that's off costs nothing, so each one is costed on its own
-                    let document = fetch.operation.document.as_ref();
+                    let document = fetch.operation.flat.as_ref();
+                    let arena = &document.arena;
                     let root_type =
                         supergraph_state.expect_root_type_name(fetch.operation_kind.as_ref());
                     let default_list_size =
                         self.default_list_size_for_subgraph(&fetch.service_name);
-                    let costs = document.operation.selection_set.items.iter().map(|item| {
-                        let operation = OperationDefinition {
-                            name: None,
-                            operation_kind: document.operation.operation_kind.clone(),
-                            selection_set: SelectionSet {
-                                items: vec![item.clone()],
-                            },
-                            variable_definitions: document.operation.variable_definitions.clone(),
-                        };
+                    let costs = arena.items(document.selections).iter().map(|id| {
                         let expr = compile_cost_expr_for_operation(
-                            &operation,
-                            &document.fragments,
+                            document,
+                            std::slice::from_ref(id),
                             root_type,
                             fetch.operation_kind.as_ref(),
                             supergraph_state,
                             default_list_size,
                         );
-                        let run_if = match item {
-                            SelectionItem::Field(field) => aliases
+                        let node = arena.node(*id);
+                        let run_if = match node.kind {
+                            Kind::Field => aliases
                                 .iter()
-                                .find(|alias| field.alias.as_ref() == Some(&alias.alias))
+                                .find(|alias| {
+                                    arena.opt_str(node.alias) == Some(alias.alias.as_str())
+                                })
                                 .and_then(|alias| alias.run_if.clone()),
                             _ => None,
                         };

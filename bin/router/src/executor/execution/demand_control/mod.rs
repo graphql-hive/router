@@ -11,10 +11,13 @@ use crate::config::demand_control::{
 use crate::pipeline::demand_control::formula::{estimate_input_value_cost, is_input_object_typed};
 use crate::query_planner::{
     ast::{
-        document::Document,
-        operation::OperationDefinition,
-        selection_item::SelectionItem,
-        selection_set::{FieldSelection, SelectionSet},
+        arguments::ArgumentsMap,
+        flat::{
+            arena::{Arena, NodeId},
+            plan_document::PlanDocument,
+            selection_tree::{PlanOperation, Sel},
+            Kind,
+        },
         value::Value as AstValue,
     },
     state::supergraph_state::{SupergraphDefinition, SupergraphState, TypeNode},
@@ -294,39 +297,123 @@ struct CompiledInlineFragmentActualCostPlan {
     child: CompiledSelectionSetActualCostPlan,
 }
 
+/// A selection the actual cost plan is compiled from: a fetch's, in its `PlanDocument`,
+/// or the client's, in its `PlanOperation`. Both walk the same way, so they can't count differently.
+trait CostSelection<'a>: Copy {
+    fn kind(self) -> Kind;
+    /// The field's name, or the fragment's type condition
+    fn name(self) -> &'a str;
+    /// The alias, or the name
+    fn response_key(self) -> &'a str;
+    fn arguments(self) -> Option<&'a ArgumentsMap>;
+    fn skip_if(self) -> Option<String>;
+    fn include_if(self) -> Option<String>;
+    fn children(self) -> impl Iterator<Item = Self>;
+}
+
+/// A node of a fetch's `PlanDocument`
+#[derive(Clone, Copy)]
+struct ArenaSel<'a>(&'a Arena, NodeId);
+
+impl<'a> CostSelection<'a> for ArenaSel<'a> {
+    fn kind(self) -> Kind {
+        self.0.node(self.1).kind
+    }
+
+    fn name(self) -> &'a str {
+        self.0.str(self.0.node(self.1).name)
+    }
+
+    fn response_key(self) -> &'a str {
+        self.0.response_key(self.1)
+    }
+
+    fn arguments(self) -> Option<&'a ArgumentsMap> {
+        self.0.args(self.0.node(self.1).args)
+    }
+
+    fn skip_if(self) -> Option<String> {
+        self.0
+            .opt_str(self.0.node(self.1).skip_if)
+            .map(str::to_string)
+    }
+
+    fn include_if(self) -> Option<String> {
+        self.0
+            .opt_str(self.0.node(self.1).include_if)
+            .map(str::to_string)
+    }
+
+    fn children(self) -> impl Iterator<Item = Self> {
+        let arena = self.0;
+        arena
+            .items(arena.node(self.1).children)
+            .iter()
+            .map(move |&id| ArenaSel(arena, id))
+    }
+}
+
+impl<'a> CostSelection<'a> for Sel<'a> {
+    fn kind(self) -> Kind {
+        Sel::kind(&self)
+    }
+
+    fn name(self) -> &'a str {
+        Sel::name(&self)
+    }
+
+    fn response_key(self) -> &'a str {
+        self.attributes()
+            .and_then(|attributes| attributes.alias.as_deref())
+            .unwrap_or(Sel::name(&self))
+    }
+
+    fn arguments(self) -> Option<&'a ArgumentsMap> {
+        self.attributes()
+            .and_then(|attributes| attributes.arguments.as_ref())
+    }
+
+    fn skip_if(self) -> Option<String> {
+        self.condition()
+            .and_then(|condition| condition.to_skip_if())
+    }
+
+    fn include_if(self) -> Option<String> {
+        self.condition()
+            .and_then(|condition| condition.to_include_if())
+    }
+
+    fn children(self) -> impl Iterator<Item = Self> {
+        Sel::children(&self)
+    }
+}
+
 pub fn compile_actual_subgraph_cost_plan(
-    document: &Document,
+    document: &PlanDocument,
     supergraph_state: &SupergraphState,
 ) -> CompiledSubgraphActualCostPlan {
-    let operation_def = &document.operation;
-    let root_type_name =
-        supergraph_state.expect_root_type_name(operation_def.operation_kind.as_ref());
+    let arena = &document.arena;
+    let root_type_name = supergraph_state.expect_root_type_name(document.kind.as_ref());
+    let roots = || {
+        arena
+            .items(document.selections)
+            .iter()
+            .map(|&id| ArenaSel(arena, id))
+    };
 
     // Detect if every top-level selection is a `_entities` field (with or without alias).
     // This covers FlattenFetch (single `_entities`) and BatchFetch (multiple `_eN: _entities`).
-    let all_entity_fields = !operation_def.selection_set.items.is_empty()
-        && operation_def
-            .selection_set
-            .items
-            .iter()
-            .all(|item| matches!(item, SelectionItem::Field(f) if f.name == "_entities"));
+    let all_entity_fields = roots().next().is_some()
+        && roots().all(|sel| sel.kind() == Kind::Field && sel.name() == "_entities");
 
     if all_entity_fields {
-        let mut groups = Vec::with_capacity(operation_def.selection_set.items.len());
+        let mut groups = Vec::with_capacity(arena.items(document.selections).len());
 
-        for item in &operation_def.selection_set.items {
-            let SelectionItem::Field(field) = item else {
-                continue;
-            };
-
-            let response_key = field
-                .alias
-                .as_deref()
-                .unwrap_or(field.name.as_str())
-                .to_string();
+        for field in roots() {
+            let response_key = field.response_key().to_string();
 
             let mut referenced_entity_types = AHashSet::default();
-            collect_entity_root_type_conditions(&field.selections, &mut referenced_entity_types);
+            collect_entity_root_type_conditions(field, &mut referenced_entity_types);
 
             let mut entity_plans_by_type = AHashMap::default();
             for type_name in &referenced_entity_types {
@@ -335,7 +422,7 @@ pub fn compile_actual_subgraph_cost_plan(
                     CompiledEntityTypePlan {
                         type_cost: demand_control_definition_cost(supergraph_state, type_name),
                         selections: compile_selection_set_actual_cost_plan(
-                            &field.selections,
+                            field.children(),
                             type_name,
                             supergraph_state,
                         ),
@@ -356,7 +443,7 @@ pub fn compile_actual_subgraph_cost_plan(
 
     CompiledSubgraphActualCostPlan {
         root: CompiledActualCostRootPlan::SelectionSet(compile_selection_set_actual_cost_plan(
-            &operation_def.selection_set,
+            roots(),
             root_type_name,
             supergraph_state,
         )),
@@ -364,23 +451,23 @@ pub fn compile_actual_subgraph_cost_plan(
 }
 
 pub fn compile_actual_response_shape_cost_plan(
-    operation: &OperationDefinition,
+    operation: &PlanOperation,
     root_type_name: &str,
     supergraph_state: &SupergraphState,
 ) -> CompiledResponseShapeActualCostPlan {
     CompiledResponseShapeActualCostPlan {
         root: compile_selection_set_actual_cost_plan(
-            &operation.selection_set,
+            operation.selections.roots(),
             root_type_name,
             supergraph_state,
         ),
     }
 }
 
-fn collect_entity_root_type_conditions(selection_set: &SelectionSet, out: &mut AHashSet<String>) {
-    for item in &selection_set.items {
-        if let SelectionItem::InlineFragment(fragment) = item {
-            out.insert(fragment.type_condition.clone());
+fn collect_entity_root_type_conditions<'a>(field: ArenaSel<'a>, out: &mut AHashSet<String>) {
+    for sel in field.children() {
+        if sel.kind() == Kind::InlineFragment {
+            out.insert(sel.name().to_string());
         }
     }
 }
@@ -493,52 +580,50 @@ pub fn estimate_actual_response_shape_cost_with_compiled_plan<'a, D: CostData<'a
     evaluate_selection_set_actual_cost_plan(&plan.root, response_data, variable_values, supergraph)
 }
 
-fn compile_selection_set_actual_cost_plan(
-    selection_set: &SelectionSet,
+fn compile_selection_set_actual_cost_plan<'a, S: CostSelection<'a>>(
+    selections: impl Iterator<Item = S>,
     parent_type_name: &str,
     supergraph_state: &SupergraphState,
 ) -> CompiledSelectionSetActualCostPlan {
-    let mut items = Vec::with_capacity(selection_set.items.len());
-
-    for item in &selection_set.items {
-        match item {
-            SelectionItem::Field(field) => items.push(CompiledSelectionItemActualCostPlan::Field(
-                compile_field_actual_cost_plan(field, parent_type_name, supergraph_state),
+    let items = selections
+        .filter_map(|sel| match sel.kind() {
+            Kind::Field => Some(CompiledSelectionItemActualCostPlan::Field(
+                compile_field_actual_cost_plan(sel, parent_type_name, supergraph_state),
             )),
-            SelectionItem::InlineFragment(fragment) => {
-                items.push(CompiledSelectionItemActualCostPlan::InlineFragment(
+            Kind::InlineFragment => {
+                let type_condition = sel.name();
+                Some(CompiledSelectionItemActualCostPlan::InlineFragment(
                     CompiledInlineFragmentActualCostPlan {
-                        applies_to: (fragment.type_condition != parent_type_name).then(|| {
+                        applies_to: (type_condition != parent_type_name).then(|| {
                             // `... on Product` applies to a `Book`, and to a `Product` too, which
                             // is what a subgraph with `Product` as an `@interfaceObject` returns
                             let mut types: AHashSet<String> = supergraph_state
-                                .all_possible_types(&fragment.type_condition)
+                                .all_possible_types(type_condition)
                                 .into_iter()
                                 .flatten()
                                 .cloned()
                                 .collect();
-                            types.insert(fragment.type_condition.clone());
+                            types.insert(type_condition.to_string());
                             types
                         }),
                         child: compile_selection_set_actual_cost_plan(
-                            &fragment.selections,
-                            fragment.type_condition.as_str(),
+                            sel.children(),
+                            type_condition,
                             supergraph_state,
                         ),
                     },
                 ))
             }
-            SelectionItem::FragmentSpread(_) => {
-                // Normalized operations used for planning are expected to inline fragment spreads.
-            }
-        }
-    }
+            // Normalized operations used for planning are expected to inline fragment spreads.
+            Kind::FragmentSpread => None,
+        })
+        .collect();
 
     CompiledSelectionSetActualCostPlan { items }
 }
 
-fn compile_field_actual_cost_plan(
-    field: &FieldSelection,
+fn compile_field_actual_cost_plan<'a, S: CostSelection<'a>>(
+    field: S,
     parent_type_name: &str,
     supergraph_state: &SupergraphState,
 ) -> CompiledFieldActualCostPlan {
@@ -547,15 +632,15 @@ fn compile_field_actual_cost_plan(
     // fallback below would compute `return_type_cost = dc_type_cost(parent)`
     // (e.g. 1 for an interface/union/object), which would wrongly inflate
     // the actual cost. Treat it as a free scalar.
-    if field.name.as_str() == "__typename" {
+    if field.name() == "__typename" {
         return CompiledFieldActualCostPlan {
-            response_key: field.selection_identifier().to_string(),
+            response_key: field.response_key().to_string(),
             field_base_cost: 0,
             input_object_arguments: Vec::new(),
             return_type_cost: 0,
             list_depth: 0,
-            include_if: field.include_if.clone(),
-            skip_if: field.skip_if.clone(),
+            include_if: field.include_if(),
+            skip_if: field.skip_if(),
             child: CompiledSelectionSetActualCostPlan { items: Vec::new() },
         };
     }
@@ -563,7 +648,7 @@ fn compile_field_actual_cost_plan(
     let field_def = supergraph_state
         .definitions
         .get(parent_type_name)
-        .and_then(|definition| definition.fields().get(field.name.as_str()));
+        .and_then(|definition| definition.fields().get(field.name()));
 
     let mut input_object_arguments = Vec::new();
     let (return_type_name, field_type, field_base_cost) = if let Some(definition) = field_def {
@@ -573,7 +658,7 @@ fn compile_field_actual_cost_plan(
             .map(|cost| cost.weight)
             .unwrap_or(0);
 
-        if let Some(arguments) = &field.arguments {
+        if let Some(arguments) = field.arguments() {
             for (key, value) in arguments {
                 if let Some(cost) = definition.cost_by_arguments.get(key) {
                     base = base.saturating_add(cost.weight);
@@ -602,15 +687,15 @@ fn compile_field_actual_cost_plan(
     };
 
     CompiledFieldActualCostPlan {
-        response_key: field.selection_identifier().to_string(),
+        response_key: field.response_key().to_string(),
         field_base_cost,
         input_object_arguments,
         return_type_cost: demand_control_definition_cost(supergraph_state, return_type_name),
         list_depth: field_type.list_depth(),
-        include_if: field.include_if.clone(),
-        skip_if: field.skip_if.clone(),
+        include_if: field.include_if(),
+        skip_if: field.skip_if(),
         child: compile_selection_set_actual_cost_plan(
-            &field.selections,
+            field.children(),
             return_type_name,
             supergraph_state,
         ),
@@ -846,7 +931,7 @@ mod tests {
 
         let normalized = normalize_operation(&supergraph, &parse_operation(query), None).unwrap();
         let plan = compile_actual_response_shape_cost_plan(
-            normalized.executable_operation(),
+            &normalized.plan_operation,
             "Query",
             &supergraph,
         );
@@ -861,7 +946,7 @@ mod tests {
         let Some(PlanNode::Fetch(fetch)) = query_plan.node() else {
             panic!("expected a single fetch, got {query_plan}");
         };
-        let plan = compile_actual_subgraph_cost_plan(&fetch.operation.document, &supergraph);
+        let plan = compile_actual_subgraph_cost_plan(&fetch.operation.flat, &supergraph);
         let by_subgraph = estimate_actual_subgraph_response_cost_with_compiled_plan(
             &plan,
             &data,
@@ -897,7 +982,7 @@ mod tests {
             let normalized =
                 normalize_operation(&supergraph, &parse_operation(query), None).unwrap();
             let plan = compile_actual_response_shape_cost_plan(
-                normalized.executable_operation(),
+                &normalized.plan_operation,
                 "Query",
                 &supergraph,
             );

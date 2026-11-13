@@ -1,9 +1,7 @@
-use crate::query_planner::ast::document::Document;
+use crate::query_planner::ast::flat::plan_document::PlanDocument;
+use crate::query_planner::ast::minification::error::MinificationError;
 use crate::query_planner::ast::minification::stats::Stats;
 use crate::query_planner::ast::minification::transform::transform_operation;
-use crate::query_planner::ast::{
-    minification::error::MinificationError, operation::OperationDefinition,
-};
 use crate::query_planner::state::supergraph_state::{OperationKind, SupergraphState};
 
 pub mod error;
@@ -11,20 +9,27 @@ mod selection_id;
 mod stats;
 mod transform;
 
-pub fn minify_operation(
-    operation: OperationDefinition,
+/// Moves repeated selection sets of `document`'s operation into fragments. `document` comes
+/// without fragments, its lists each its own.
+pub fn minify(
+    document: &mut PlanDocument,
     supergraph: &SupergraphState,
-) -> Result<Document, MinificationError> {
-    let root_type_name = get_root_type_name(&operation, supergraph)?.to_string();
-    let stats = Stats::from_operation(&operation.selection_set, supergraph, &root_type_name)?;
-    transform_operation(supergraph, stats, &root_type_name, operation)
+) -> Result<(), MinificationError> {
+    let root_type_name = get_root_type_name(document.kind.as_ref(), supergraph)?;
+    let stats = Stats::from_operation(
+        &document.arena,
+        document.selections,
+        supergraph,
+        root_type_name,
+    )?;
+    transform_operation(supergraph, stats, root_type_name, document)
 }
 
 fn get_root_type_name<'a>(
-    operation: &'a OperationDefinition,
+    kind: Option<&OperationKind>,
     supergraph: &'a SupergraphState,
 ) -> Result<&'a str, MinificationError> {
-    Ok(match operation.operation_kind {
+    Ok(match kind {
         None => &supergraph.query_type,
         Some(OperationKind::Query) => &supergraph.query_type,
         Some(OperationKind::Mutation) => supergraph
@@ -44,11 +49,25 @@ mod tests {
     use graphql_tools::parser::parse_query;
     use graphql_tools::parser::query::Document;
 
-    use crate::query_planner::ast::minification::minify_operation;
+    use crate::query_planner::ast::flat::plan_document::PlanDocument;
+    use crate::query_planner::ast::minification::minify;
     use crate::query_planner::ast::normalization::normalize_operation;
     use crate::query_planner::ast::operation::OperationDefinition;
     use crate::query_planner::state::supergraph_state::SupergraphState;
     use crate::query_planner::utils::parsing::parse_schema;
+
+    fn minify_operation(
+        operation: OperationDefinition,
+        supergraph: &SupergraphState,
+    ) -> PlanDocument {
+        let mut document =
+            PlanDocument::from_tree(&crate::query_planner::ast::document::Document {
+                operation,
+                fragments: vec![],
+            });
+        minify(&mut document, supergraph).expect("Failed to minify");
+        document
+    }
 
     fn pretty_query(query_str: String) -> String {
         format!(
@@ -181,7 +200,7 @@ mod tests {
 
         let normalized =
             normalize_operation(&supergraph, &document, None).expect("Failed to normalized");
-        let operation: OperationDefinition = normalized.operation;
+        let operation: OperationDefinition = normalized.operation_tree();
 
         // After normalization
         insta::assert_snapshot!(
@@ -257,7 +276,7 @@ mod tests {
         "
         );
 
-        let document = minify_operation(operation, &supergraph).expect("Failed to minify");
+        let document = minify_operation(operation, &supergraph);
 
         // After minification
         insta::assert_snapshot!(
@@ -357,8 +376,8 @@ mod tests {
         .expect("Failed to parse query");
         let operation = normalize_operation(&supergraph, &document, None)
             .expect("Failed to normalized")
-            .operation;
-        let document = minify_operation(operation, &supergraph).expect("Failed to minify");
+            .operation_tree();
+        let document = minify_operation(operation, &supergraph);
 
         // a subgraph answers in the order the fragment has: sharing one fragment between
         // `{ locale value }` and `{ value locale }` would give the router fields to reorder

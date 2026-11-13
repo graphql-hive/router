@@ -354,8 +354,7 @@ mod tests {
         );
         let normalized = normalize_operation(&supergraph, &operation, None).unwrap();
         let schema_metadata = planner.consumer_schema.schema_metadata();
-        let (_, plan) =
-            ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+        let (_, plan) = ProjectionPlan::from_operation(&normalized.document, &schema_metadata);
 
         let rendered = plan.to_string();
         // The two `item` variants keep their guards (A vs B still differ),
@@ -373,8 +372,7 @@ mod tests {
         let supergraph_state = SupergraphState::new(&supergraph);
         let normalized =
             normalize_operation(&supergraph_state, &operation, None).expect("failed to normalize");
-        let (_, plan) =
-            ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+        let (_, plan) = ProjectionPlan::from_operation(&normalized.document, &schema_metadata);
 
         plan.to_string()
     }

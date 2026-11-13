@@ -29,11 +29,11 @@ use tracing::instrument;
 
 use crate::query_planner::{
     ast::{
-        flat::arena::Arena,
+        flat::{
+            arena::{Arena, ListId, NodeId},
+            Kind,
+        },
         merge_path::{Condition, MergePath, Segment},
-        selection_item::SelectionItem,
-        selection_set::{merge_selection_set, InlineFragmentSelection, SelectionSet},
-        semantic_eq::SemanticEq,
     },
     planner::fetch::{
         error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
@@ -102,14 +102,15 @@ struct InterfaceInSubgraph<'a> {
 /// Object-type branch that we might try to fold into an interface
 struct ObjectTypeBranch<'a> {
     type_name: &'a str,
-    selection_set: &'a SelectionSet,
+    selections: ListId,
     condition: Option<Condition>,
     remove_index: Option<usize>,
 }
 
 /// The result of folding concrete object type into one interface
 struct FoldedSelection {
-    selection_set: SelectionSet,
+    /// The first branch's selections. Its branch goes away, so they can move.
+    selections: ListId,
     condition: Option<Condition>,
     remove_indexes: Vec<usize>,
 }
@@ -120,27 +121,22 @@ struct FoldCandidate<'a> {
 }
 
 impl<'a> StepConverter<'a> {
-    // ponytail: runs on the planner's tree, copied out of the arena and back. Port it to the
-    // arena if this pass shows up in a profile.
+    /// Changes the step's output lists in place, they're its own.
     fn rewrite_step(
         &self,
         arena: &mut Arena,
         step: &mut FetchStepData<MultiTypeFetchStep>,
     ) -> Result<bool, FetchGraphError> {
-        let mut output: BTreeMap<String, SelectionSet> = step
+        let mut output: BTreeMap<String, ListId> = step
             .output
             .iter()
-            .map(|(type_name, list)| (type_name.clone(), arena.export(list)))
+            .map(|(type_name, list)| (type_name.clone(), list))
             .collect();
         let mut changed = false;
-        changed |= self.rewrite_root_output(&step.response_path, &mut output)?;
-        changed |= self.rewrite_nested_output(&mut output)?;
+        changed |= self.rewrite_root_output(arena, &step.response_path, &mut output)?;
+        changed |= self.rewrite_nested_output(arena, &output)?;
         if changed {
-            step.output = FetchStepSelections::from_lists(
-                output
-                    .into_iter()
-                    .map(|(type_name, set)| (type_name, arena.import(&set))),
-            );
+            step.output = FetchStepSelections::from_lists(output);
         }
         Ok(changed)
     }
@@ -156,8 +152,9 @@ impl<'a> StepConverter<'a> {
     ///   `{ Media: { id } }`
     fn rewrite_root_output(
         &self,
+        arena: &Arena,
         response_path: &MergePath,
-        output: &mut BTreeMap<String, SelectionSet>,
+        output: &mut BTreeMap<String, ListId>,
     ) -> Result<bool, FetchGraphError> {
         // Only rewrite if the step is at the root (no response path).
         if !response_path.inner.is_empty() {
@@ -169,22 +166,22 @@ impl<'a> StepConverter<'a> {
 
         let branches = output
             .iter()
-            .map(|(type_name, selection_set)| ObjectTypeBranch {
+            .map(|(type_name, &selections)| ObjectTypeBranch {
                 type_name: type_name.as_str(),
-                selection_set,
+                selections,
                 condition: None,
                 remove_index: None,
             })
             .collect::<Vec<_>>();
 
-        let Some(candidate) = self.try_fold(interface_name, &branches)? else {
+        let Some(candidate) = self.try_fold(arena, interface_name, &branches)? else {
             return Ok(false);
         };
 
         output.clear();
         output.insert(
             candidate.interface_name.to_string(),
-            candidate.folded.selection_set,
+            candidate.folded.selections,
         );
 
         Ok(true)
@@ -199,12 +196,13 @@ impl<'a> StepConverter<'a> {
     /// `{ media { id } }`
     fn rewrite_nested_output(
         &self,
-        output: &mut BTreeMap<String, SelectionSet>,
+        arena: &mut Arena,
+        output: &BTreeMap<String, ListId>,
     ) -> Result<bool, FetchGraphError> {
         let mut changed = false;
 
-        for (definition_name, selection_set) in output.iter_mut() {
-            changed |= self.rewrite_selection_set(definition_name, selection_set)?;
+        for (definition_name, &list) in output.iter() {
+            changed |= self.rewrite_selection_set(arena, definition_name, list)?;
         }
 
         Ok(changed)
@@ -212,33 +210,33 @@ impl<'a> StepConverter<'a> {
 
     fn rewrite_selection_set(
         &self,
+        arena: &mut Arena,
         current_type_name: &str,
-        selection_set: &mut SelectionSet,
+        list: ListId,
     ) -> Result<bool, FetchGraphError> {
         let mut changed = false;
 
-        for item in &mut selection_set.items {
-            match item {
-                SelectionItem::Field(field) => {
+        for index in 0..arena.items(list).len() {
+            let node = *arena.node(arena.items(list)[index]);
+            match node.kind {
+                Kind::Field => {
                     let child_type_name = self
                         .supergraph
-                        .field_return_type_name(current_type_name, field.name.as_str())
+                        .field_return_type_name(current_type_name, arena.str(node.name))
                         .ok_or_else(|| {
                             FetchGraphError::Internal(format!(
                                 "No field found for name '{}' in type '{}'",
-                                field.name, current_type_name
+                                arena.str(node.name),
+                                current_type_name
                             ))
                         })?;
-                    changed |=
-                        self.rewrite_selection_set(child_type_name, &mut field.selections)?;
+                    changed |= self.rewrite_selection_set(arena, child_type_name, node.children)?;
                 }
-                SelectionItem::InlineFragment(fragment) => {
-                    changed |= self.rewrite_selection_set(
-                        &fragment.type_condition,
-                        &mut fragment.selections,
-                    )?;
+                Kind::InlineFragment => {
+                    let type_condition = arena.str(node.name).to_string();
+                    changed |= self.rewrite_selection_set(arena, &type_condition, node.children)?;
                 }
-                SelectionItem::FragmentSpread(_) => {
+                Kind::FragmentSpread => {
                     // Fragment spreads should have been inlined before we get here.
                     // If we see one, something went wrong earlier.
                     return Err(FetchGraphError::Internal(
@@ -248,33 +246,35 @@ impl<'a> StepConverter<'a> {
                 }
             }
         }
-        changed |= self.rewrite_inline_fragments(current_type_name, selection_set)?;
+        changed |= self.rewrite_inline_fragments(arena, current_type_name, list)?;
 
         Ok(changed)
     }
 
     fn rewrite_inline_fragments(
         &self,
+        arena: &mut Arena,
         current_type_name: &str,
-        selection_set: &mut SelectionSet,
+        list: ListId,
     ) -> Result<bool, FetchGraphError> {
         let candidate = {
-            let branches = selection_set
-                .items
+            let arena = &*arena;
+            let branches = arena
+                .items(list)
                 .iter()
                 .enumerate()
-                .filter_map(|(index, item)| match item {
-                    SelectionItem::InlineFragment(fragment) => Some(ObjectTypeBranch {
-                        type_name: fragment.type_condition.as_str(),
-                        selection_set: &fragment.selections,
-                        condition: Option::<Condition>::from(fragment),
+                .filter_map(|(index, &id)| {
+                    let node = arena.node(id);
+                    (node.kind == Kind::InlineFragment).then(|| ObjectTypeBranch {
+                        type_name: arena.str(node.name),
+                        selections: node.children,
+                        condition: arena.condition(id),
                         remove_index: Some(index),
-                    }),
-                    _ => None,
+                    })
                 })
                 .collect::<Vec<_>>();
 
-            self.try_fold(current_type_name, &branches)?
+            self.try_fold(arena, current_type_name, &branches)?
         };
 
         let Some(candidate) = candidate else {
@@ -282,41 +282,26 @@ impl<'a> StepConverter<'a> {
         };
 
         // Remove the branches we folded
-        selection_set.items = selection_set
-            .items
-            .drain(..)
+        let kept: Vec<NodeId> = arena
+            .items(list)
+            .iter()
             .enumerate()
-            .filter_map(|(index, item)| {
-                if candidate.folded.remove_indexes.contains(&index) {
-                    None // drop
-                } else {
-                    Some(item) // keep
-                }
-            })
+            .filter(|(index, _)| !candidate.folded.remove_indexes.contains(index))
+            .map(|(_, &id)| id)
             .collect();
+        arena.set_items(list, &kept);
 
-        if let Some(condition) = candidate.folded.condition {
-            // If the original branches had @skip/@include
-            selection_set
-                .items
-                .push(SelectionItem::InlineFragment(InlineFragmentSelection {
-                    type_condition: candidate.interface_name.to_string(),
-                    selections: candidate.folded.selection_set,
-                    skip_if: condition.to_skip_if(),
-                    include_if: condition.to_include_if(),
-                }));
-        } else if candidate.interface_name != current_type_name {
-            selection_set
-                .items
-                .push(SelectionItem::InlineFragment(InlineFragmentSelection {
-                    type_condition: candidate.interface_name.to_string(),
-                    selections: candidate.folded.selection_set,
-                    skip_if: None,
-                    include_if: None,
-                }));
+        // With @skip/@include on the branches, or folded into a type other than the parent's,
+        // they go under one `... on Interface`. Otherwise right into the parent.
+        if candidate.folded.condition.is_some() || candidate.interface_name != current_type_name {
+            let fragment = arena.new_fragment(
+                candidate.interface_name,
+                candidate.folded.condition.as_ref(),
+            );
+            arena.node_mut(fragment).children = candidate.folded.selections;
+            arena.push(list, fragment);
         } else {
-            // Otherwise merge the fields directly into the parent selection set
-            merge_selection_set(selection_set, &candidate.folded.selection_set, false)?;
+            arena.merge(list, candidate.folded.selections, false)?;
         }
 
         Ok(true)
@@ -324,6 +309,7 @@ impl<'a> StepConverter<'a> {
 
     fn try_fold<'b>(
         &'a self,
+        arena: &Arena,
         default_interface_name: &'b str,
         branches: &[ObjectTypeBranch<'_>],
     ) -> Result<Option<FoldCandidate<'b>>, FetchGraphError>
@@ -331,14 +317,15 @@ impl<'a> StepConverter<'a> {
         'a: 'b,
     {
         if self.options.experimental_abstract_type_folding {
-            self.try_fold_into_any_matching_interface(branches)
+            self.try_fold_into_any_matching_interface(arena, branches)
         } else {
-            self.try_fold_into_interface(default_interface_name, branches)
+            self.try_fold_into_interface(arena, default_interface_name, branches)
         }
     }
 
     fn try_fold_into_any_matching_interface<'b>(
         &'a self,
+        arena: &Arena,
         branches: &[ObjectTypeBranch<'_>],
     ) -> Result<Option<FoldCandidate<'b>>, FetchGraphError>
     where
@@ -365,7 +352,9 @@ impl<'a> StepConverter<'a> {
         interface_names.dedup();
 
         for interface_name in interface_names {
-            if let Some(candidate) = self.try_fold_into_interface(interface_name, branches)? {
+            if let Some(candidate) =
+                self.try_fold_into_interface(arena, interface_name, branches)?
+            {
                 return Ok(Some(candidate));
             }
         }
@@ -375,6 +364,7 @@ impl<'a> StepConverter<'a> {
 
     fn try_fold_into_interface<'b>(
         &'a self,
+        arena: &Arena,
         interface_name: &'b str,
         branches: &[ObjectTypeBranch<'_>],
     ) -> Result<Option<FoldCandidate<'b>>, FetchGraphError>
@@ -417,27 +407,28 @@ impl<'a> StepConverter<'a> {
             return Ok(None);
         }
 
-        let selection_set = first_branch.selection_set;
+        let selections = first_branch.selections;
 
         if !branches
             .iter()
             .skip(1)
             // All must branches ask for the same fields
-            .all(|branch| selection_set.semantic_eq(branch.selection_set))
+            .all(|branch| arena.same_selections(selections, branch.selections))
         {
             return Ok(None);
         }
 
         if !self.selected_fields_exist_on_interface(
+            arena,
             first_branch.type_name,
-            selection_set,
+            selections,
             interface.fields,
         ) {
             // The selected fields do not exist on the interface
             return Ok(None);
         }
 
-        if !self.selection_set_is_valid_for_type(interface_name, selection_set)? {
+        if !self.selection_set_is_valid_for_type(arena, interface_name, selections)? {
             // The selection set (fields and fragments) is not valid for the interface
             return Ok(None);
         }
@@ -445,7 +436,7 @@ impl<'a> StepConverter<'a> {
         Ok(Some(FoldCandidate {
             interface_name,
             folded: FoldedSelection {
-                selection_set: selection_set.clone(),
+                selections,
                 condition: shared_condition,
                 remove_indexes: branches
                     .iter()
@@ -457,29 +448,44 @@ impl<'a> StepConverter<'a> {
 
     /// Check that every field exists on the interface.
     /// If a field exists on the object type but not on the interface, we cannot fold.
+    /// Fields in `... on <type_name>` count too.
     fn selected_fields_exist_on_interface(
         &self,
+        arena: &Arena,
         type_name: &str,
-        selection_set: &SelectionSet,
+        list: ListId,
         interface_fields: &[SubgraphField],
     ) -> bool {
-        selection_set
-            .iter_fields_and_fragments_of_same_type(type_name)
-            .all(|field| {
-                field.name == "__typename"
-                    || interface_fields
-                        .iter()
-                        .any(|interface_field| interface_field.name == field.name)
-            })
+        arena.items(list).iter().all(|&id| {
+            let node = arena.node(id);
+            let name = arena.str(node.name);
+            match node.kind {
+                Kind::Field => {
+                    name == "__typename"
+                        || interface_fields
+                            .iter()
+                            .any(|interface_field| interface_field.name == name)
+                }
+                Kind::InlineFragment if name == type_name => self
+                    .selected_fields_exist_on_interface(
+                        arena,
+                        type_name,
+                        node.children,
+                        interface_fields,
+                    ),
+                _ => true,
+            }
+        })
     }
 
     /// Check that a selection set is valid for a given type in this subgraph.
     fn selection_set_is_valid_for_type(
         &self,
+        arena: &Arena,
         type_name: &str,
-        selection_set: &SelectionSet,
+        list: ListId,
     ) -> Result<bool, FetchGraphError> {
-        if selection_set.items.is_empty() {
+        if arena.is_empty(list) {
             return Ok(true);
         }
 
@@ -487,39 +493,37 @@ impl<'a> StepConverter<'a> {
             return Ok(false);
         };
 
-        for item in &selection_set.items {
-            match item {
-                SelectionItem::Field(field) => {
-                    if field.name == "__typename" {
+        for &id in arena.items(list) {
+            let node = arena.node(id);
+            let name = arena.str(node.name);
+            match node.kind {
+                Kind::Field => {
+                    if name == "__typename" {
                         continue;
                     }
 
-                    let Some(field_definition) = definition.field(field.name.as_str()) else {
+                    let Some(field_definition) = definition.field(name) else {
                         return Ok(false);
                     };
 
                     if !self.selection_set_is_valid_for_type(
+                        arena,
                         field_definition.field_type.inner_type(),
-                        &field.selections,
+                        node.children,
                     )? {
                         return Ok(false);
                     }
                 }
-                SelectionItem::InlineFragment(fragment) => {
-                    if !self
-                        .fragment_type_is_valid_for_parent_type(type_name, &fragment.type_condition)
-                    {
+                Kind::InlineFragment => {
+                    if !self.fragment_type_is_valid_for_parent_type(type_name, name) {
                         return Ok(false);
                     }
 
-                    if !self.selection_set_is_valid_for_type(
-                        &fragment.type_condition,
-                        &fragment.selections,
-                    )? {
+                    if !self.selection_set_is_valid_for_type(arena, name, node.children)? {
                         return Ok(false);
                     }
                 }
-                SelectionItem::FragmentSpread(_) => {
+                Kind::FragmentSpread => {
                     return Err(FetchGraphError::Internal(
                         "fragment spreads should have been inlined before abstract type conversion"
                             .to_string(),

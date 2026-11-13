@@ -14,7 +14,6 @@ use super::parse::parse_body;
 use super::store::{Arena, ValueCell};
 use super::write::write_response;
 use crate::executor::execution::plan::CoerceVariablesPayload;
-use crate::executor::introspection::partition::partition_operation;
 use crate::executor::plugins::hooks::on_supergraph_load::Supergraph;
 use crate::executor::plugins::response_data::{DataEditError, DataValue, ResponseData};
 use crate::executor::projection::plan::ProjectionPlan;
@@ -103,11 +102,15 @@ fn both_edited(
     let metadata = Arc::clone(&supergraph.metadata);
     let document = parse_operation(query);
     let normalized = normalize_operation(&planner.supergraph, &document, None).expect("normalizes");
-    let (root, projection) = ProjectionPlan::from_operation(&normalized.operation, &metadata);
+    let (root, projection) = ProjectionPlan::from_operation(&normalized.document, &metadata);
     let projection = Arc::new(projection);
-    let operation = partition_operation(normalized.operation).downstream_operation;
+    // no introspection in these, nothing to split off
     let plan = planner
-        .plan_from_normalized_operation(&operation, Default::default(), &CancellationToken::new())
+        .plan(
+            &normalized.plan_operation,
+            Default::default(),
+            &CancellationToken::new(),
+        )
         .expect("plans")
         .into_executable(&planner.supergraph);
     let Some(PlanNode::Fetch(fetch)) = plan.node() else {
@@ -413,11 +416,15 @@ fn a_rewritten_projection_plan_gets_an_indexed_plan_of_its_own() {
     let metadata = Arc::clone(&supergraph.metadata);
     let document = parse_operation("{ products { id name } }");
     let normalized = normalize_operation(&planner.supergraph, &document, None).expect("normalizes");
-    let (root, projection) = ProjectionPlan::from_operation(&normalized.operation, &metadata);
+    let (root, projection) = ProjectionPlan::from_operation(&normalized.document, &metadata);
     let projection = Arc::new(projection);
-    let operation = partition_operation(normalized.operation).downstream_operation;
+    // no introspection in these, nothing to split off
     let plan = planner
-        .plan_from_normalized_operation(&operation, Default::default(), &CancellationToken::new())
+        .plan(
+            &normalized.plan_operation,
+            Default::default(),
+            &CancellationToken::new(),
+        )
         .expect("plans")
         .into_executable(&planner.supergraph);
     let Some(PlanNode::Fetch(fetch)) = plan.node() else {

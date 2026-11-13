@@ -8,14 +8,9 @@ pub(crate) mod utils;
 use std::{borrow::Cow, collections::VecDeque, rc::Rc};
 
 use crate::query_planner::{
-    ast::{
-        flat::{
-            selection_tree::{Sel, SelectionTree},
-            Kind,
-        },
-        operation::OperationDefinition,
-        selection_item::SelectionItem,
-        selection_set::{FieldSelection, SelectionSet},
+    ast::flat::{
+        selection_tree::{PlanOperation, Sel, SelectionTree},
+        Kind,
     },
     graph::{
         edge::{Edge, PlannerOverrideContext},
@@ -56,16 +51,13 @@ pub fn walk_operation<'graph>(
     graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
-    operation: &OperationDefinition,
+    operation: &PlanOperation,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<ResolvedOperation<'graph>, WalkOperationError> {
-    let operation_kind = operation
-        .operation_kind
-        .clone()
-        .unwrap_or(OperationKind::Query);
-    let (op_type, selection_set) = operation.parts();
+    let operation_kind = operation.kind.clone();
+    let op_type = &operation.kind;
     trace!("operation is of type {:?}", op_type);
-    let selection_set = SelectionTree::from_tree(selection_set);
+    let selection_set = &operation.selections;
 
     let root_entrypoints = get_entrypoints(graph, op_type)?;
     let initial_paths: Rc<Vec<OperationPath<'graph>>> = Rc::new(
@@ -76,7 +68,7 @@ pub fn walk_operation<'graph>(
     );
 
     let mut paths_grouped_by_root_field: Vec<BestPathsPerLeaf> =
-        Vec::with_capacity(operation.selection_set.items.len());
+        Vec::with_capacity(selection_set.roots().count());
 
     // It's critical to iterate over root fiels and preserve their original order
     for selection_item in selection_set.roots() {
@@ -851,12 +843,8 @@ fn field_target_subgraph_ids<'s>(
 /// A `__typename` field, for when only the type of an object can be resolved.
 fn typename_field() -> Sel<'static> {
     static TREE: std::sync::OnceLock<SelectionTree> = std::sync::OnceLock::new();
-    TREE.get_or_init(|| {
-        SelectionTree::from_tree(&SelectionSet {
-            items: vec![SelectionItem::Field(FieldSelection::new_typename())],
-        })
-    })
-    .roots()
-    .next()
-    .expect("one field")
+    TREE.get_or_init(SelectionTree::typename)
+        .roots()
+        .next()
+        .expect("one field")
 }

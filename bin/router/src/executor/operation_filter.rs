@@ -1,9 +1,10 @@
 use ahash::HashMap;
 use std::collections::hash_map::Entry;
 
-use crate::query_planner::ast::{
-    selection_item::SelectionItem,
-    selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
+use crate::query_planner::ast::flat::{
+    arena::{Arena, ListId, NodeId},
+    plan_document::PlanDocument,
+    Kind, Sym,
 };
 
 use crate::executor::execution::plan::CoerceVariablesPayload;
@@ -111,25 +112,27 @@ impl<'exec> OperationFilter<'exec> {
     pub fn filter(
         &self,
         root_type_name: &'exec str,
-        selection_set: &'exec SelectionSet,
+        document: &'exec PlanDocument,
         // We need variables to be able to evaluate `@skip`/`@include` directives,
         // and ignore selections that are not included.
         variable_payload: &'exec CoerceVariablesPayload,
         mut visitor: impl FnMut(&Selection<'exec>) -> FilterDecision,
     ) -> Result<OperationFilterOutput<'exec>, OperationFilterError> {
         let mut ctx = FilteringContext {
+            arena: &document.arena,
             schema_metadata: self.schema_metadata,
             variable_payload,
             decisions: HashMap::default(),
             path: Vec::new(),
             result: OperationFilterOutput::default(),
         };
-        ctx.visit_selection_set(selection_set, root_type_name, &mut visitor)?;
+        ctx.visit_selection_set(document.selections, root_type_name, &mut visitor)?;
         Ok(ctx.result)
     }
 }
 
 struct FilteringContext<'exec> {
+    arena: &'exec Arena,
     schema_metadata: &'exec SchemaMetadata,
     variable_payload: &'exec CoerceVariablesPayload,
     decisions: HashMap<(&'exec str, &'exec str), FilterDecision>,
@@ -140,31 +143,33 @@ struct FilteringContext<'exec> {
 impl<'exec> FilteringContext<'exec> {
     fn visit_selection_set(
         &mut self,
-        selection_set: &'exec SelectionSet,
+        selection_set: ListId,
         parent_type_name: &'exec str,
         visitor: &mut impl FnMut(&Selection<'exec>) -> FilterDecision,
     ) -> Result<NullPropagation, OperationFilterError> {
         let mut null_propagation = NullPropagation::None;
-        for item in &selection_set.items {
-            match item {
-                SelectionItem::Field(field) => {
-                    if self.is_ignored(&field.skip_if, &field.include_if) {
+        let arena = self.arena;
+        for &id in arena.items(selection_set) {
+            let node = arena.node(id);
+            match node.kind {
+                Kind::Field => {
+                    if self.is_ignored(node.skip_if, node.include_if) {
                         continue;
                     }
                     null_propagation =
-                        null_propagation.or(self.visit_field(field, parent_type_name, visitor)?);
+                        null_propagation.or(self.visit_field(id, parent_type_name, visitor)?);
                 }
-                SelectionItem::InlineFragment(fragment) => {
-                    if self.is_ignored(&fragment.skip_if, &fragment.include_if) {
+                Kind::InlineFragment => {
+                    if self.is_ignored(node.skip_if, node.include_if) {
                         continue;
                     }
                     null_propagation = null_propagation.or(self.visit_inline_fragment(
-                        fragment,
+                        id,
                         parent_type_name,
                         visitor,
                     )?);
                 }
-                SelectionItem::FragmentSpread(_) => {
+                Kind::FragmentSpread => {
                     // Fragment spreads are expected to have been expanded
                     // before this traversal runs.
                 }
@@ -175,12 +180,14 @@ impl<'exec> FilteringContext<'exec> {
 
     fn visit_field(
         &mut self,
-        field: &'exec FieldSelection,
+        field: NodeId,
         parent_type_name: &'exec str,
         visitor: &mut impl FnMut(&Selection<'exec>) -> FilterDecision,
     ) -> Result<NullPropagation, OperationFilterError> {
-        let field_name: &'exec str = field.name.as_str();
-        let response_key: &'exec str = field.alias.as_deref().unwrap_or(field_name);
+        let arena = self.arena;
+        let children = arena.node(field).children;
+        let field_name: &'exec str = arena.str(arena.node(field).name);
+        let response_key: &'exec str = arena.response_key(field);
 
         if field_name == "__typename" {
             return Ok(NullPropagation::None);
@@ -220,10 +227,10 @@ impl<'exec> FilteringContext<'exec> {
                 true
             }
             FilterDecision::Keep => {
-                let propagation = if field.selections.is_empty() {
+                let propagation = if arena.is_empty(children) {
                     NullPropagation::None
                 } else {
-                    self.visit_selection_set(&field.selections, output_type_name, visitor)?
+                    self.visit_selection_set(children, output_type_name, visitor)?
                 };
                 if propagation.is_propagate() {
                     self.record_rejected_path();
@@ -242,32 +249,29 @@ impl<'exec> FilteringContext<'exec> {
 
     fn visit_inline_fragment(
         &mut self,
-        fragment: &'exec InlineFragmentSelection,
+        fragment: NodeId,
         parent_type_name: &'exec str,
         visitor: &mut impl FnMut(&Selection<'exec>) -> FilterDecision,
     ) -> Result<NullPropagation, OperationFilterError> {
+        let arena = self.arena;
+        let type_condition: &'exec str = arena.str(arena.node(fragment).name);
+        let children = arena.node(fragment).children;
         let decision = visitor(&Selection::Fragment(TypeConditionInfo {
-            type_condition: &fragment.type_condition,
+            type_condition,
             parent_type_name,
         }));
 
         match decision {
             FilterDecision::Keep => {
-                self.path
-                    .push(PathSegment::Fragment(&fragment.type_condition));
-                let result = self.visit_selection_set(
-                    &fragment.selections,
-                    &fragment.type_condition,
-                    visitor,
-                );
+                self.path.push(PathSegment::Fragment(type_condition));
+                let result = self.visit_selection_set(children, type_condition, visitor);
                 self.path.pop();
                 result
             }
             FilterDecision::Reject { error } => {
                 self.record_error(error);
-                self.path
-                    .push(PathSegment::Fragment(&fragment.type_condition));
-                self.collect_all_field_paths(&fragment.selections);
+                self.path.push(PathSegment::Fragment(type_condition));
+                self.collect_all_field_paths(children);
                 self.path.pop();
 
                 Ok(NullPropagation::None)
@@ -275,23 +279,22 @@ impl<'exec> FilteringContext<'exec> {
         }
     }
 
-    fn collect_all_field_paths(&mut self, selection_set: &'exec SelectionSet) {
-        for item in &selection_set.items {
-            match item {
-                SelectionItem::Field(field) => {
-                    let response_key: &'exec str =
-                        field.alias.as_deref().unwrap_or(field.name.as_str());
-                    self.path.push(PathSegment::Field(response_key));
+    fn collect_all_field_paths(&mut self, selection_set: ListId) {
+        let arena = self.arena;
+        for &id in arena.items(selection_set) {
+            let node = arena.node(id);
+            match node.kind {
+                Kind::Field => {
+                    self.path.push(PathSegment::Field(arena.response_key(id)));
                     self.record_rejected_path();
                     self.path.pop();
                 }
-                SelectionItem::InlineFragment(fragment) => {
-                    self.path
-                        .push(PathSegment::Fragment(&fragment.type_condition));
-                    self.collect_all_field_paths(&fragment.selections);
+                Kind::InlineFragment => {
+                    self.path.push(PathSegment::Fragment(arena.str(node.name)));
+                    self.collect_all_field_paths(node.children);
                     self.path.pop();
                 }
-                SelectionItem::FragmentSpread(_) => {}
+                Kind::FragmentSpread => {}
             }
         }
     }
@@ -316,14 +319,14 @@ impl<'exec> FilteringContext<'exec> {
         self.result.errors.push(error);
     }
 
-    fn is_ignored(&self, skip_if: &Option<String>, include_if: &Option<String>) -> bool {
-        if let Some(variable_name) = skip_if {
+    fn is_ignored(&self, skip_if: Sym, include_if: Sym) -> bool {
+        if let Some(variable_name) = self.arena.opt_str(skip_if) {
             if self.variable_payload.variable_equals_true(variable_name) {
                 return true;
             }
         }
 
-        if let Some(variable_name) = include_if {
+        if let Some(variable_name) = self.arena.opt_str(include_if) {
             if !self.variable_payload.variable_equals_true(variable_name) {
                 return true;
             }

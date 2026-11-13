@@ -9,8 +9,8 @@ use graphql_tools::parser::{
 
 use crate::query_planner::{
     ast::{
-        flat::normalize::normalize_field_set, selection_item::SelectionItem,
-        selection_set::SelectionSet, type_aware_selection::TypeAwareSelection,
+        flat::{normalize::normalize_field_set, selection_tree::SelectionTree, Kind},
+        type_aware_selection::TypeAwareSelection,
     },
     state::supergraph_state::{SupergraphDefinition, SupergraphField, SupergraphState},
 };
@@ -37,7 +37,7 @@ fn normalize_fields_argument_value_mut(
     type_name: &str,
     subgraph_name: &str,
     fields_str: &str,
-) -> SelectionSet {
+) -> SelectionTree {
     normalize_field_set(supergraph, type_name, subgraph_name, fields_str)
         .unwrap_or_else(|err| panic!("Normalization error: {err}"))
 }
@@ -84,7 +84,7 @@ struct SelectionCacheKey<'a> {
 /// The cache keys borrow the immutable supergraph; cached selections are shared by graph edges.
 #[derive(Debug, Default)]
 pub(crate) struct CachedFederationRules<'a> {
-    selections: AHashMap<SelectionCacheKey<'a>, Arc<SelectionSet>>,
+    selections: AHashMap<SelectionCacheKey<'a>, Arc<SelectionTree>>,
     type_aware_selections: AHashMap<SelectionCacheKey<'a>, Arc<TypeAwareSelection<'a>>>,
 }
 
@@ -95,7 +95,7 @@ impl<'a> CachedFederationRules<'a> {
         subgraph_name: &'a str,
         type_name: &'a str,
         selection: &'a str,
-    ) -> Arc<SelectionSet> {
+    ) -> Arc<SelectionTree> {
         let key = SelectionCacheKey {
             subgraph_name,
             type_name,
@@ -133,9 +133,8 @@ impl<'a> CachedFederationRules<'a> {
 
         let selection_set = self.parse_selection(supergraph, subgraph_name, type_name, selection);
         let selection = Arc::new(TypeAwareSelection {
-            flat: Default::default(),
             type_name,
-            selection_set: selection_set.as_ref().clone(),
+            selections: selection_set.as_ref().clone(),
         });
         self.type_aware_selections
             .insert(key, Arc::clone(&selection));
@@ -168,7 +167,7 @@ impl<'a> CachedFederationRules<'a> {
         join_field: &'a JoinFieldDirective,
         subgraph_name: &'a str,
         type_name: &'a str,
-    ) -> Option<Arc<SelectionSet>> {
+    ) -> Option<Arc<SelectionTree>> {
         let provides = join_field.provides.as_deref()?;
         Some(self.parse_selection(supergraph, subgraph_name, type_name, provides))
     }
@@ -182,9 +181,8 @@ impl FederationRules {
         key: &str,
     ) -> TypeAwareSelection<'a> {
         TypeAwareSelection {
-            flat: Default::default(),
             type_name,
-            selection_set: normalize_fields_argument_value_mut(
+            selections: normalize_fields_argument_value_mut(
                 supergraph,
                 type_name,
                 subgraph_name,
@@ -207,13 +205,13 @@ impl FederationRules {
         } else {
             selection
         };
-        let mut selection_set =
+        let mut selections =
             normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, fields);
-        selection_set.items.retain(|selection| {
-            let SelectionItem::InlineFragment(fragment) = selection else {
+        selections.retain_roots(|selection| {
+            if selection.kind() != Kind::InlineFragment {
                 return true;
-            };
-            let condition = &fragment.type_condition;
+            }
+            let condition = selection.name();
             if condition == type_name {
                 return true;
             }
@@ -222,42 +220,14 @@ impl FederationRules {
                 SupergraphDefinition::Interface(_) => supergraph
                     .interface_members(type_name)
                     .is_some_and(|members| members.contains(condition)),
-                SupergraphDefinition::Union(union) => union.types.contains(condition),
+                SupergraphDefinition::Union(union) => union.types.iter().any(|t| t == condition),
                 _ => false,
             }
         });
         TypeAwareSelection {
-            flat: Default::default(),
             type_name,
-            selection_set,
+            selections,
         }
-    }
-
-    pub fn parse_provides(
-        supergraph: &SupergraphState,
-        join_field: &JoinFieldDirective,
-        subgraph_name: &str,
-        type_name: &str,
-    ) -> Option<SelectionSet> {
-        if let Some(provides) = &join_field.provides {
-            return Some(normalize_fields_argument_value_mut(
-                supergraph,
-                type_name,
-                subgraph_name,
-                provides,
-            ));
-        }
-
-        None
-    }
-
-    pub fn parse_requires(
-        supergraph: &SupergraphState,
-        subgraph_name: &str,
-        type_name: &str,
-        requires: &str,
-    ) -> SelectionSet {
-        normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, requires)
     }
 
     /// Parses a single `@listSize(sizedFields: [...])` entry, written in
@@ -322,8 +292,7 @@ impl FederationRules {
 #[cfg(test)]
 mod tests {
     use crate::query_planner::{
-        ast::selection_item::SelectionItem, state::supergraph_state::SupergraphState,
-        utils::parsing::parse_schema,
+        ast::flat::Kind, state::supergraph_state::SupergraphState, utils::parsing::parse_schema,
     };
 
     use super::FederationRules;
@@ -414,7 +383,7 @@ mod tests {
             "A",
             " ... on B { other }",
         )
-        .selection_set
+        .selections
         .is_empty());
     }
 
@@ -430,11 +399,10 @@ mod tests {
                 " ... on A { child { code } } ... on B { other } ... on C { third }",
             );
             let conditions: Vec<&str> = parsed
-                .selection_set
-                .items
-                .iter()
-                .map(|item| match item {
-                    SelectionItem::InlineFragment(fragment) => fragment.type_condition.as_str(),
+                .selections
+                .roots()
+                .map(|item| match item.kind() {
+                    Kind::InlineFragment => item.name(),
                     _ => panic!("expected a type-conditioned selection"),
                 })
                 .collect();
@@ -453,18 +421,8 @@ mod tests {
             " ... on Node { id }",
         );
         assert_eq!(parsed.type_name, "A");
-        assert_eq!(parsed.selection_set.items.len(), 1);
-        match &parsed.selection_set.items[0] {
-            SelectionItem::InlineFragment(fragment) => {
-                assert_eq!(fragment.type_condition, "A");
-                assert_eq!(
-                    fragment.selections,
-                    FederationRules::parse_key(&supergraph, &subgraph, "A", &"id".to_string())
-                        .selection_set
-                );
-            }
-            _ => panic!("expected a type-conditioned selection"),
-        }
+        assert_eq!(parsed.selections.roots().count(), 1);
+        assert_eq!(parsed.selections.to_string(), "{...on A{id}}");
     }
 }
 

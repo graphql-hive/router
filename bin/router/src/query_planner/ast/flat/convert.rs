@@ -1,18 +1,18 @@
-//! The planner's `OperationDefinition`, or a field set's `SelectionSet`, from a normalized flat
-//! operation. For an operation, every composite field left with no selections gets a skipped
-//! `__typename` on the way.
+//! The planner's flat `PlanDocument` and `PlanOperation`, or a field set's `SelectionTree`, from a
+//! normalized flat operation. For an operation, every composite field left with no selections
+//! gets a skipped `__typename` on the way.
 
 use std::collections::BTreeMap;
 
+use super::arena::{Arena, ListId};
 use super::normalize::Norm;
+use super::plan_document::PlanDocument;
+use super::selection_tree::{PlanOperation, SelectionAttributes, SelectionTree};
 use super::{Kind, Operation, OperationKind, Span, TypeRef, Value, ValueId, NONE};
 use crate::query_planner::ast::arguments::ArgumentsMap;
 use crate::query_planner::ast::document::NormalizedDocument;
-use crate::query_planner::ast::operation::{OperationDefinition, VariableDefinition};
-use crate::query_planner::ast::selection_item::SelectionItem;
-use crate::query_planner::ast::selection_set::{
-    FieldSelection, InlineFragmentSelection, SelectionSet,
-};
+use crate::query_planner::ast::merge_path::Condition;
+use crate::query_planner::ast::operation::VariableDefinition;
 use crate::query_planner::ast::value::Value as AstValue;
 use crate::query_planner::state::supergraph_state::{
     OperationKind as AstKind, SupergraphDefinition, TypeNode,
@@ -47,71 +47,151 @@ pub(super) fn normalized_document<'a>(
             })
             .collect()
     });
-    let operation = OperationDefinition {
+    let mut arena = Arena::new();
+    let selections = arena_list(n, &mut arena, op.selection_set, root);
+    let document = PlanDocument {
+        arena,
+        kind: Some(operation_kind),
         name: name.clone(),
-        operation_kind: Some(operation_kind),
-        selection_set: selection_set(n, op.selection_set, root),
-        variable_definitions,
+        variables: variable_definitions,
+        selections,
+        fragments: vec![],
     };
+    let plan_operation = PlanOperation::from_document(&document);
     NormalizedDocument {
-        operation,
         operation_name: operation_name.map(str::to_string).or(name),
+        plan_operation: std::sync::Arc::new(plan_operation),
+        document: std::sync::Arc::new(document),
     }
 }
 
-/// `parent` is the type of the selection set, when the `__typename` step goes into it. It doesn't
-/// go below a field whose type it can't tell, or isn't composite.
-pub(super) fn selection_set<'a>(
+/// `selection_set`, into an arena: the normalized operation the executor and the planner read.
+fn arena_list<'a>(
     n: &mut Norm<'a>,
+    arena: &mut Arena,
     list: Span,
     parent: Option<&'a SupergraphDefinition>,
-) -> SelectionSet {
-    let mut items = Vec::with_capacity(list.len as usize);
+) -> ListId {
+    let mut ids = Vec::with_capacity(list.len as usize);
     for index in list.range() {
         let selection = n.sels[n.kids[index] as usize];
         let (skip_if, include_if) = conditions(n, selection.directives);
-        items.push(match selection.kind {
+        let condition = match (skip_if, include_if) {
+            (Some(skip), Some(include)) => Some(Condition::SkipAndInclude { skip, include }),
+            (Some(variable), None) => Some(Condition::Skip(variable)),
+            (None, Some(variable)) => Some(Condition::Include(variable)),
+            (None, None) => None,
+        };
+        ids.push(match selection.kind {
             Kind::Field => {
                 let child_parent = parent
                     .and_then(|parent| n.field_info(parent.fields(), selection.name))
                     .and_then(|info| info.ty)
                     .filter(|ty| ty.is_composite_type());
-                let mut selections = selection_set(n, selection.children, child_parent);
-                if child_parent.is_some() && selections.items.is_empty() {
-                    selections
-                        .items
-                        .push(SelectionItem::Field(FieldSelection::new_skipped_typename()));
+                let mut children = arena_list(n, arena, selection.children, child_parent);
+                if child_parent.is_some() && arena.is_empty(children) {
+                    let typename = arena.new_field("__typename", None, None, None);
+                    arena.node_mut(typename).omit_from_response = true;
+                    children = arena.list_of(&[typename]);
                 }
-                SelectionItem::Field(FieldSelection {
-                    name: n.s(selection.name).to_string(),
-                    alias: (selection.alias != NONE).then(|| n.s(selection.alias).to_string()),
-                    arguments: (!selection.args.is_empty()).then(|| {
-                        ArgumentsMap::from(
-                            n.args[selection.args.range()]
-                                .iter()
-                                .map(|arg| (n.s(arg.name).to_string(), value_of(n, arg.value)))
-                                .collect::<Vec<_>>(),
-                        )
-                    }),
-                    selections,
-                    skip_if,
-                    include_if,
-                    omit_from_response: false,
-                })
+                let alias = (selection.alias != NONE).then(|| n.s(selection.alias).to_string());
+                let arguments =
+                    (!selection.args.is_empty()).then(|| arguments_of(n, selection.args));
+                let name = n.s(selection.name).to_string();
+                let id = arena.new_field(
+                    &name,
+                    alias.as_deref(),
+                    arguments.as_ref(),
+                    condition.as_ref(),
+                );
+                arena.node_mut(id).children = children;
+                id
             }
             Kind::InlineFragment => {
                 let child_parent = parent.and(n.defs[selection.type_condition as usize]);
-                SelectionItem::InlineFragment(InlineFragmentSelection {
-                    type_condition: n.s(selection.type_condition).to_string(),
-                    selections: selection_set(n, selection.children, child_parent),
-                    skip_if,
-                    include_if,
-                })
+                let children = arena_list(n, arena, selection.children, child_parent);
+                let name = n.s(selection.type_condition).to_string();
+                let id = arena.new_fragment(&name, condition.as_ref());
+                arena.node_mut(id).children = children;
+                id
             }
-            Kind::FragmentSpread => SelectionItem::FragmentSpread(n.s(selection.name).into()),
+            Kind::FragmentSpread => {
+                let name = n.s(selection.name).to_string();
+                arena.new_spread(&name)
+            }
         });
     }
-    SelectionSet { items }
+    arena.list_of(&ids)
+}
+
+/// A field set, as a `SelectionTree` of its own. No `__typename` step.
+pub(super) fn field_set(n: &mut Norm<'_>, list: Span) -> SelectionTree {
+    let mut tree = SelectionTree::default();
+    let roots = selection_tree(n, &mut tree, list, None);
+    tree.set_roots(roots);
+    tree
+}
+
+/// `selection_set`, into the walker's `SelectionTree`: the same selections, `__typename` step
+/// included.
+fn selection_tree<'a>(
+    n: &mut Norm<'a>,
+    tree: &mut SelectionTree,
+    list: Span,
+    parent: Option<&'a SupergraphDefinition>,
+) -> Span {
+    let mut ids = Vec::with_capacity(list.len as usize);
+    for index in list.range() {
+        let selection = n.sels[n.kids[index] as usize];
+        let (skip_if, include_if) = conditions(n, selection.directives);
+        let condition = match (skip_if, include_if) {
+            (Some(skip), Some(include)) => Some(Condition::SkipAndInclude { skip, include }),
+            (Some(variable), None) => Some(Condition::Skip(variable)),
+            (None, Some(variable)) => Some(Condition::Include(variable)),
+            (None, None) => None,
+        };
+        ids.push(match selection.kind {
+            Kind::Field => {
+                let child_parent = parent
+                    .and_then(|parent| n.field_info(parent.fields(), selection.name))
+                    .and_then(|info| info.ty)
+                    .filter(|ty| ty.is_composite_type());
+                let mut children = selection_tree(n, tree, selection.children, child_parent);
+                if child_parent.is_some() && children.is_empty() {
+                    let typename =
+                        tree.add_node(Kind::Field, "__typename", Span::EMPTY, None, None);
+                    children = tree.add_children(&[typename]);
+                }
+                let alias = (selection.alias != NONE).then(|| n.s(selection.alias).to_string());
+                let arguments =
+                    (!selection.args.is_empty()).then(|| arguments_of(n, selection.args));
+                let attributes = (alias.is_some() || arguments.is_some())
+                    .then_some(SelectionAttributes { alias, arguments });
+                let name = n.s(selection.name).to_string();
+                tree.add_node(Kind::Field, &name, children, condition, attributes)
+            }
+            Kind::InlineFragment => {
+                let child_parent = parent.and(n.defs[selection.type_condition as usize]);
+                let children = selection_tree(n, tree, selection.children, child_parent);
+                let name = n.s(selection.type_condition).to_string();
+                tree.add_node(Kind::InlineFragment, &name, children, condition, None)
+            }
+            Kind::FragmentSpread => {
+                let name = n.s(selection.name).to_string();
+                tree.add_node(Kind::FragmentSpread, &name, Span::EMPTY, None, None)
+            }
+        });
+    }
+    tree.add_children(&ids)
+}
+
+fn arguments_of(n: &Norm<'_>, args: Span) -> ArgumentsMap {
+    ArgumentsMap::from(
+        n.args[args.range()]
+            .iter()
+            .map(|arg| (n.s(arg.name).to_string(), value_of(n, arg.value)))
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// The variables of the last `@skip(if: $v)` and `@include(if: $v)`.

@@ -5,13 +5,12 @@ use tracing::{instrument, trace};
 
 use crate::query_planner::{
     ast::{
+        flat::{
+            arena::{Arena, ListId},
+            Kind,
+        },
         merge_path::{MergePath, Segment},
         mismatch_finder::SelectionMismatchFinder,
-        selection_item::SelectionItem,
-        selection_set::{
-            field_condition_equal, fields_through_fragments, find_selection_set_by_path,
-            find_selection_set_by_path_mut, SelectionSet,
-        },
     },
     planner::{
         fetch::{error::FetchGraphError, fetch_graph::FetchGraph, state::MultiTypeFetchStep},
@@ -62,55 +61,49 @@ impl FetchGraph<MultiTypeFetchStep> {
                 if let Some(Segment::Field(field_seg, args_hash_lookup, condition)) =
                     mismatch_path.last()
                 {
-                    // TODO: We can avoid this cut and slice thing, if we return "SelectionItem" instead of "SelectionSet" inside "find_selection_set_by_path_mut".
                     let lookup_path = &mismatch_path.without_last();
                     let root_def_list = node
                         .output
                         .selections_for_definition(&root_def_name)
                         .expect("missing definition in step");
-                    // ponytail: changed on the planner's tree, then put back in the arena. Only
-                    // runs when a step has a mismatch.
-                    let mut root_def_tree = arena.export(root_def_list);
-                    let root_def_selections = &mut root_def_tree;
 
-                    let next_alias = free_alias(root_def_selections, lookup_path);
-                    if let Some(selection_set) =
-                        find_selection_set_by_path_mut(root_def_selections, lookup_path)
-                    {
-                        let item = selection_set
-                          .items
-                          .iter_mut()
-                          .find(|v| matches!(v, SelectionItem::Field(field) if field.selection_identifier() == field_seg.response_key() && field.arguments_hash() == *args_hash_lookup && field_condition_equal(condition, field)));
+                    let next_alias = free_alias(arena, root_def_list, lookup_path);
+                    let Some(list) = arena.find_by_path(root_def_list, lookup_path) else {
+                        continue;
+                    };
+                    let field_to_alias = arena.items(list).iter().copied().find(|&id| {
+                        let field = arena.node(id);
+                        field.kind == Kind::Field
+                            && arena.response_key(id) == field_seg.response_key()
+                            && arena.args_hash(field.args) == *args_hash_lookup
+                            && arena.condition_is(id, condition.as_ref())
+                    });
 
-                        if let Some(SelectionItem::Field(field_to_alias)) = item {
-                            let original_response_key =
-                                field_to_alias.selection_identifier().to_string();
+                    if let Some(field_to_alias) = field_to_alias {
+                        let original_response_key = arena.response_key(field_to_alias).to_string();
 
-                            trace!(
-                                "applying alias '{}' to existing field '{}' at path '{}'",
-                                next_alias,
-                                field_to_alias.name,
-                                lookup_path
-                            );
+                        trace!(
+                            "applying alias '{}' to existing field '{}' at path '{}'",
+                            next_alias,
+                            arena.str(arena.node(field_to_alias).name),
+                            lookup_path
+                        );
 
-                            let mut output_rewrite_path: Vec<FetchNodePathSegment> =
-                                lookup_path.into();
-                            output_rewrite_path.push(FetchNodePathSegment::Key(next_alias.clone()));
+                        let mut output_rewrite_path: Vec<FetchNodePathSegment> = lookup_path.into();
+                        output_rewrite_path.push(FetchNodePathSegment::Key(next_alias.clone()));
 
-                            pending_output_rewrites.push((
-                                node_index,
-                                FetchRewrite::KeyRenamer(KeyRenamer {
-                                    rename_key_to: original_response_key,
-                                    path: output_rewrite_path,
-                                }),
-                            ));
+                        pending_output_rewrites.push((
+                            node_index,
+                            FetchRewrite::KeyRenamer(KeyRenamer {
+                                rename_key_to: original_response_key,
+                                path: output_rewrite_path,
+                            }),
+                        ));
 
-                            field_to_alias.alias = Some(next_alias);
-                        }
+                        // the list is this step's own, so it changes in place
+                        let alias = arena.intern(&next_alias);
+                        arena.node_mut(field_to_alias).alias = alias;
                     }
-                    let new_list = arena.import(&root_def_tree);
-                    node.output
-                        .set_selections_for_definition(&root_def_name, new_list);
                 }
             }
         }
@@ -135,19 +128,27 @@ impl FetchGraph<MultiTypeFetchStep> {
 /// in every fragment, not just the ones next to the field: `TypeB` and `TypeC` fragments on one
 /// object can't both get `_internal_qp_alias_0`, and neither can a field next to a client's
 /// `_internal_qp_alias_0: __typename`.
-fn free_alias(selections: &SelectionSet, path: &MergePath) -> String {
+fn free_alias(arena: &Arena, selections: ListId, path: &MergePath) -> String {
+    fn collect<'a>(arena: &'a Arena, list: ListId, taken: &mut HashSet<&'a str>) {
+        for &id in arena.items(list) {
+            match arena.node(id).kind {
+                Kind::Field => {
+                    taken.insert(arena.response_key(id));
+                }
+                Kind::InlineFragment => collect(arena, arena.node(id).children, taken),
+                Kind::FragmentSpread => {}
+            }
+        }
+    }
+
     let mut object_path = path.clone();
     while matches!(object_path.last(), Some(Segment::TypeCondition(..))) {
         object_path = object_path.without_last();
     }
-    let taken: HashSet<&str> = find_selection_set_by_path(selections, &object_path)
-        .map(|object| {
-            fields_through_fragments(object)
-                .into_iter()
-                .map(|field| field.selection_identifier())
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut taken = HashSet::default();
+    if let Some(object) = arena.find_by_path(selections, &object_path) {
+        collect(arena, object, &mut taken);
+    }
 
     (0..)
         .map(|index| format!("_internal_qp_alias_{index}"))

@@ -3,8 +3,8 @@ use std::process;
 
 use hive_router::executor::introspection::schema::SchemaWithMetadata;
 use hive_router::executor::projection::plan::ProjectionPlan;
+use hive_router::query_planner::ast::flat::selection_tree::PlanOperation;
 use hive_router::query_planner::ast::normalization::normalize_operation;
-use hive_router::query_planner::ast::operation::OperationDefinition;
 use hive_router::query_planner::consumer_schema::ConsumerSchema;
 use hive_router::query_planner::graph::Graph;
 use hive_router::query_planner::graph::PlannerOverrideContext;
@@ -109,7 +109,7 @@ fn main() {
                 std::fs::read_to_string(&args[3]).expect("Unable to read input file");
             let parsed_document = parse_operation(&document_text);
             let document = normalize_operation(&supergraph, &parsed_document, None).unwrap();
-            let operation = document.executable_operation();
+            let operation = document.operation_tree();
 
             println!("{}", operation);
         }
@@ -122,11 +122,11 @@ fn main() {
                 std::fs::read_to_string(&args[3]).expect("Unable to read input file");
             let parsed_document = parse_operation(&document_text);
             let document = normalize_operation(&supergraph, &parsed_document, None).unwrap();
-            let operation = document.executable_operation();
             let consumer_schema = ConsumerSchema::new_from_supergraph(&parsed_schema);
             let schema_metadata = consumer_schema.schema_metadata();
 
-            let (_, projection) = ProjectionPlan::from_operation(operation, &schema_metadata);
+            let (_, projection) =
+                ProjectionPlan::from_operation(&document.document, &schema_metadata);
             println!("{projection}");
         }
         _ => {
@@ -207,7 +207,7 @@ fn process_merged_tree(
     Graph<'static>,
     QueryTree,
     &'static SupergraphState,
-    OperationDefinition,
+    PlanOperation,
 ) {
     let (graph, operation, supergraph_state) =
         load_graph_operation(supergraph_path, operation_path);
@@ -227,23 +227,18 @@ fn process_merged_tree(
     (graph, query_tree, supergraph_state, operation)
 }
 
-fn get_operation(operation_path: &str, supergraph: &SupergraphState) -> OperationDefinition {
+fn get_operation(operation_path: &str, supergraph: &SupergraphState) -> PlanOperation {
     let document_text = std::fs::read_to_string(operation_path).expect("Unable to read input file");
     let parsed_document = parse_operation(&document_text);
     let document = normalize_operation(supergraph, &parsed_document, None).unwrap();
-    let operation = document.executable_operation();
 
-    operation.clone()
+    document.plan_operation.as_ref().clone()
 }
 
 fn load_graph_operation(
     supergraph_path: &str,
     operation_path: &str,
-) -> (
-    Graph<'static>,
-    OperationDefinition,
-    &'static SupergraphState,
-) {
+) -> (Graph<'static>, PlanOperation, &'static SupergraphState) {
     let supergraph_sdl =
         std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);

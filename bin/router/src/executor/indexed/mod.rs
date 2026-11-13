@@ -16,7 +16,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::executor::introspection::schema::SchemaMetadata;
 use crate::executor::projection::plan::ProjectionPlan;
-use crate::query_planner::ast::operation::OperationDefinition;
+use crate::query_planner::ast::flat::plan_document::PlanDocument;
 use crate::query_planner::planner::plan_nodes::{FetchNode, QueryPlan};
 use compile::{IndexedResponsePlan, Seed};
 
@@ -78,7 +78,7 @@ impl IndexedPlanCache {
         projection: &Arc<ProjectionPlan>,
         schema: &SchemaMetadata,
         root_type: &str,
-        introspection: Option<&OperationDefinition>,
+        introspection: Option<&PlanDocument>,
         entity_reuse: bool,
     ) -> Option<Arc<IndexedResponsePlan>> {
         let seed = introspection.map_or(Seed::None, Seed::Operation);

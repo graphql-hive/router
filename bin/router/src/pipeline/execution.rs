@@ -57,7 +57,7 @@ pub async fn execute_plan<'exec>(
     let introspection_context = IntrospectionContext {
         query: planned_request
             .normalized_payload
-            .operation_for_introspection
+            .document_for_introspection
             .clone(),
         schema: Arc::clone(&supergraph.snapshot.planner.consumer_schema.document),
         metadata: Arc::clone(&supergraph.snapshot.metadata),
@@ -129,10 +129,18 @@ pub async fn execute_plan<'exec>(
         let operation_name = planned_request.client_request_details.operation.name;
         let result = execute_query_plan(QueryPlanExecutionOpts {
             query_plan: planned_request.query_plan_payload,
-            operation_for_plan: planned_request
+            document_for_plan: planned_request.normalized_payload.document_for_plan.clone(),
+            document_for_introspection: planned_request
                 .normalized_payload
-                .operation_for_plan
+                .document_for_introspection
                 .clone(),
+            // the payload's cached tree, built only when a plugin hook runs
+            operation_for_plan: planned_request.plugin_req_state.as_ref().map(|_| {
+                planned_request
+                    .normalized_payload
+                    .operation_for_plan_tree()
+                    .clone()
+            }),
             projection_plan: planned_request.normalized_payload.projection_plan.clone(),
             headers_plan: supergraph.runtime.headers_plan.clone(),
             extensions_plan: app_state.extensions_plan.clone(),

@@ -83,7 +83,7 @@ pub fn build_query_plan_from_sdl(
     let supergraph_state = SupergraphState::new(&schema);
     let graph = Graph::graph_from_supergraph_state(&supergraph_state)?;
     let document = normalize_operation(&supergraph_state, &query, None)?;
-    let operation = document.executable_operation();
+    let operation = document.plan_operation.as_ref();
     let best_paths_per_leaf = walk_operation(
         &graph,
         &supergraph_state,
@@ -101,7 +101,7 @@ pub fn build_query_plan_from_sdl(
         &options,
         &cancellation_token,
     )?;
-    add_variables_to_fetch_steps(&mut fetch_graph, &operation.variable_definitions)?;
+    add_variables_to_fetch_steps(&mut fetch_graph, &operation.variables)?;
 
     let plan = build_query_plan_from_fetch_graph(
         fetch_graph,

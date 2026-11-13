@@ -1,4 +1,4 @@
-use ahash::{HashMap as AHashMap, HashMapExt, HashSet as AHashSet, HashSetExt};
+use ahash::{HashSet as AHashSet, HashSetExt};
 
 use crate::executor::execution::demand_control::demand_control_definition_cost;
 use crate::executor::execution::demand_control::CompiledActualCostPlan;
@@ -7,10 +7,7 @@ use crate::executor::execution::plan::{CoerceVariablesPayload, VariablesMap};
 use crate::query_planner::federation_spec::demand_control::ListSizeDirective;
 use crate::query_planner::{
     ast::{
-        fragment::FragmentDefinition,
-        operation::OperationDefinition,
-        selection_item::SelectionItem,
-        selection_set::{FieldSelection, SelectionSet},
+        flat::{arena::NodeId, plan_document::PlanDocument, Kind},
         value::Value as AstValue,
     },
     planner::plan_nodes::{display_run_if, ConditionGroup},
@@ -325,9 +322,10 @@ fn eval_cost_expr(
     }
 }
 
+/// The cost of a fetch's `roots`: all of its root selections, or a few of them.
 pub(crate) fn compile_cost_expr_for_operation(
-    operation: &OperationDefinition,
-    operation_fragments: &[FragmentDefinition],
+    document: &PlanDocument,
+    roots: &[NodeId],
     root_type_name: &str,
     operation_kind: Option<&OperationKind>,
     supergraph_state: &SupergraphState,
@@ -337,15 +335,13 @@ pub(crate) fn compile_cost_expr_for_operation(
         Some(OperationKind::Mutation) => 10u64,
         _ => 0u64,
     };
-    let mut fragments_cache = AHashMap::new();
     let mut visited_fragments = AHashSet::new();
     let empty_overrides: SizeOverrides = Vec::new();
     let fields_expr = compile_cost_expr_for_selection_set(
-        &operation.selection_set,
-        operation_fragments,
+        document,
+        roots,
         root_type_name,
         supergraph_state,
-        &mut fragments_cache,
         &mut visited_fragments,
         &empty_overrides,
         default_list_size,
@@ -357,22 +353,22 @@ pub(crate) fn compile_cost_expr_for_operation(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn compile_cost_expr_for_selection_set<'exec>(
-    selection_set: &'exec SelectionSet,
-    operation_fragments: &'exec [FragmentDefinition],
+    document: &'exec PlanDocument,
+    items: &'exec [NodeId],
     parent_type_name: &'exec str,
     supergraph_state: &'exec SupergraphState,
-    fragments_cache: &mut AHashMap<&'exec str, &'exec FragmentDefinition>,
     visited_fragments: &mut AHashSet<&'exec str>,
     inherited_overrides: &SizeOverrides,
     default_list_size: usize,
 ) -> CostExpr {
+    let arena = &document.arena;
     let mut field_exprs = Vec::new();
-    for item in &selection_set.items {
-        match item {
-            SelectionItem::Field(field) => {
-                let field_name = field.name.as_str();
+    for &id in items {
+        let node = arena.node(id);
+        match node.kind {
+            Kind::Field => {
+                let field_name = arena.str(node.name);
                 let self_override = inherited_overrides
                     .iter()
                     .find(|(path, _)| path.len() == 1 && path[0] == field_name)
@@ -383,58 +379,51 @@ fn compile_cost_expr_for_selection_set<'exec>(
                     .map(|(path, expr)| (path[1..].to_vec(), expr.clone()))
                     .collect();
                 field_exprs.push(compile_cost_expr_for_field_selection(
-                    field,
-                    operation_fragments,
+                    document,
+                    id,
                     parent_type_name,
                     supergraph_state,
-                    fragments_cache,
                     visited_fragments,
                     self_override,
                     child_inherited,
                     default_list_size,
                 ));
             }
-            SelectionItem::InlineFragment(fragment) => {
+            Kind::InlineFragment => {
                 // `... on T @include(if: $a)` goes to the subgraph as it is, costed only when on
-                field_exprs.push(apply_conditions(
-                    &fragment.include_if,
-                    &fragment.skip_if,
+                field_exprs.push(apply_field_conditions(
+                    document,
+                    id,
                     compile_cost_expr_for_selection_set(
-                        &fragment.selections,
-                        operation_fragments,
-                        fragment.type_condition.as_str(),
+                        document,
+                        arena.items(node.children),
+                        arena.str(node.name),
                         supergraph_state,
-                        fragments_cache,
                         visited_fragments,
                         inherited_overrides,
                         default_list_size,
                     ),
                 ));
             }
-            SelectionItem::FragmentSpread(fragment_name) => {
-                if visited_fragments.contains(fragment_name.as_str()) {
+            Kind::FragmentSpread => {
+                let fragment_name = arena.str(node.name);
+                if visited_fragments.contains(fragment_name) {
                     continue;
                 }
-                if fragments_cache.is_empty() {
-                    for fragment in operation_fragments {
-                        fragments_cache.insert(fragment.name.as_str(), fragment);
-                    }
-                }
-                let Some(fragment_def) = fragments_cache.get(fragment_name.as_str()) else {
+                let Some(fragment_def) = document.fragment(fragment_name) else {
                     continue;
                 };
-                visited_fragments.insert(fragment_name.as_str());
+                visited_fragments.insert(fragment_name);
                 field_exprs.push(compile_cost_expr_for_selection_set(
-                    &fragment_def.selection_set,
-                    operation_fragments,
+                    document,
+                    arena.items(fragment_def.selections),
                     fragment_def.type_condition.as_str(),
                     supergraph_state,
-                    fragments_cache,
                     visited_fragments,
                     inherited_overrides,
                     default_list_size,
                 ));
-                visited_fragments.remove(fragment_name.as_str());
+                visited_fragments.remove(fragment_name);
             }
         }
     }
@@ -443,29 +432,31 @@ fn compile_cost_expr_for_selection_set<'exec>(
 
 #[allow(clippy::too_many_arguments)]
 fn compile_cost_expr_for_field_selection<'exec>(
-    field: &'exec FieldSelection,
-    operation_fragments: &'exec [FragmentDefinition],
+    document: &'exec PlanDocument,
+    field: NodeId,
     parent_type_name: &'exec str,
     supergraph_state: &'exec SupergraphState,
-    fragments_cache: &mut AHashMap<&'exec str, &'exec FragmentDefinition>,
     visited_fragments: &mut AHashSet<&'exec str>,
     override_list_size: Option<CostExpr>,
     extra_child_overrides: SizeOverrides,
     default_list_size: usize,
 ) -> CostExpr {
-    if field.name == "__typename" {
-        return apply_field_conditions(field, CostExpr::Const(0));
+    let arena = &document.arena;
+    let node = arena.node(field);
+    let field_name = arena.str(node.name);
+    if field_name == "__typename" {
+        return apply_field_conditions(document, field, CostExpr::Const(0));
     }
 
-    if field.name == "_entities" {
+    if field_name == "_entities" {
         return apply_field_conditions(
+            document,
             field,
             compile_cost_expr_for_entities_field_selection(
+                document,
                 field,
-                operation_fragments,
                 parent_type_name,
                 supergraph_state,
-                fragments_cache,
                 visited_fragments,
                 default_list_size,
             ),
@@ -475,7 +466,7 @@ fn compile_cost_expr_for_field_selection<'exec>(
     let field_def = supergraph_state
         .definitions
         .get(parent_type_name)
-        .and_then(|def| def.fields().get(field.name.as_str()));
+        .and_then(|def| def.fields().get(field_name));
 
     let mut base_parts: Vec<CostExpr> = Vec::new();
     let mut all_child_overrides = extra_child_overrides;
@@ -483,7 +474,7 @@ fn compile_cost_expr_for_field_selection<'exec>(
 
     let (return_type_name, _field_type_is_list) = if let Some(def) = field_def {
         let mut base_cost = def.cost.as_ref().map(|c| c.weight).unwrap_or(0);
-        if let Some(arguments) = &field.arguments {
+        if let Some(arguments) = arena.args(node.args) {
             for key in arguments.keys() {
                 if let Some(cost) = def.cost_by_arguments.get(key) {
                     base_cost = base_cost.saturating_add(cost.weight);
@@ -506,8 +497,12 @@ fn compile_cost_expr_for_field_selection<'exec>(
             base_parts.insert(0, CostExpr::Const(base_cost));
         }
         if let Some(list_size_directive) = &def.list_size {
-            let size_expr =
-                compile_cost_expr_for_list_size(list_size_directive, field, default_list_size);
+            let size_expr = compile_cost_expr_for_list_size(
+                list_size_directive,
+                document,
+                field,
+                default_list_size,
+            );
             if let Some(sized_fields) = &list_size_directive.sized_fields {
                 for path in sized_fields {
                     all_child_overrides.push((path.clone(), size_expr.clone()));
@@ -526,11 +521,10 @@ fn compile_cost_expr_for_field_selection<'exec>(
 
     let return_type_cost = demand_control_definition_cost(supergraph_state, return_type_name);
     let children_expr = compile_cost_expr_for_selection_set(
-        &field.selections,
-        operation_fragments,
+        document,
+        arena.items(node.children),
         return_type_name,
         supergraph_state,
-        fragments_cache,
         visited_fragments,
         &all_child_overrides,
         default_list_size,
@@ -560,15 +554,14 @@ fn compile_cost_expr_for_field_selection<'exec>(
 
     // Respect GraphQL semantics when both are present:
     // include iff (@include == true) AND (@skip != true).
-    apply_field_conditions(field, field_cost_expr)
+    apply_field_conditions(document, field, field_cost_expr)
 }
 
 fn compile_cost_expr_for_entities_field_selection<'exec>(
-    field: &'exec FieldSelection,
-    operation_fragments: &'exec [FragmentDefinition],
+    document: &'exec PlanDocument,
+    field: NodeId,
     parent_type_name: &'exec str,
     supergraph_state: &'exec SupergraphState,
-    fragments_cache: &mut AHashMap<&'exec str, &'exec FragmentDefinition>,
     visited_fragments: &mut AHashSet<&'exec str>,
     default_list_size: usize,
 ) -> CostExpr {
@@ -582,26 +575,21 @@ fn compile_cost_expr_for_entities_field_selection<'exec>(
     // estimated as zero work.
     let entity_count = CostExpr::Const(default_list_size.max(1) as u64);
 
-    let entity_type_cost = field
-        .selections
-        .items
+    let arena = &document.arena;
+    let children = arena.items(arena.node(field).children);
+    let entity_type_cost = children
         .iter()
-        .filter_map(|item| match item {
-            SelectionItem::InlineFragment(fragment) => Some(demand_control_definition_cost(
-                supergraph_state,
-                fragment.type_condition.as_str(),
-            )),
-            _ => None,
-        })
+        .map(|&id| arena.node(id))
+        .filter(|node| node.kind == Kind::InlineFragment)
+        .map(|node| demand_control_definition_cost(supergraph_state, arena.str(node.name)))
         .max()
         .unwrap_or(0);
 
     let per_entity_children = compile_cost_expr_for_selection_set(
-        &field.selections,
-        operation_fragments,
+        document,
+        children,
         parent_type_name,
         supergraph_state,
-        fragments_cache,
         visited_fragments,
         &Vec::new(),
         default_list_size,
@@ -618,25 +606,24 @@ fn compile_cost_expr_for_entities_field_selection<'exec>(
     CostExpr::mul(entity_count, CostExpr::add_nonzero(per_entity_parts))
 }
 
-fn apply_field_conditions(field: &FieldSelection, field_cost_expr: CostExpr) -> CostExpr {
-    apply_conditions(&field.include_if, &field.skip_if, field_cost_expr)
-}
-
-fn apply_conditions(
-    include_if: &Option<String>,
-    skip_if: &Option<String>,
-    mut expr: CostExpr,
+fn apply_field_conditions(
+    document: &PlanDocument,
+    field: NodeId,
+    field_cost_expr: CostExpr,
 ) -> CostExpr {
-    if let Some(include_if) = include_if {
+    let arena = &document.arena;
+    let node = arena.node(field);
+    let mut expr = field_cost_expr;
+    if let Some(include_if) = arena.opt_str(node.include_if) {
         expr = CostExpr::Cond {
-            variable: include_if.clone(),
+            variable: include_if.to_string(),
             if_true: Box::new(expr),
             if_false: Box::new(CostExpr::Const(0)),
         };
     }
-    if let Some(skip_if) = skip_if {
+    if let Some(skip_if) = arena.opt_str(node.skip_if) {
         expr = CostExpr::Cond {
-            variable: skip_if.clone(),
+            variable: skip_if.to_string(),
             if_true: Box::new(CostExpr::Const(0)),
             if_false: Box::new(expr),
         };
@@ -646,7 +633,8 @@ fn apply_conditions(
 
 fn compile_cost_expr_for_list_size(
     directive: &ListSizeDirective,
-    field: &FieldSelection,
+    document: &PlanDocument,
+    field: NodeId,
     default_list_size: usize,
 ) -> CostExpr {
     if let Some(assumed_size) = directive.assumed_size {
@@ -655,8 +643,10 @@ fn compile_cost_expr_for_list_size(
     let Some(slicing_arguments) = &directive.slicing_arguments else {
         return CostExpr::Const(default_list_size as u64);
     };
+    let arena = &document.arena;
+    let node = arena.node(field);
     let mut args = Vec::new();
-    if let Some(arguments) = &field.arguments {
+    if let Some(arguments) = arena.args(node.args) {
         for segments in slicing_arguments {
             if let Some(root_value) = arguments.get_argument(&segments[0]) {
                 args.push((root_value.clone(), segments[1..].to_vec()));
@@ -672,7 +662,7 @@ fn compile_cost_expr_for_list_size(
         return CostExpr::Const(default_list_size as u64);
     }
     CostExpr::ListSize {
-        field_name: field.name.clone(),
+        field_name: arena.str(node.name).to_string(),
         args,
         require_one: directive.require_one_slicing_argument,
         default: default_list_size,

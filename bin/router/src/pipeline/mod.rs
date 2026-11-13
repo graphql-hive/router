@@ -403,7 +403,7 @@ pub async fn graphql_request_handler(
 
         if req.method() == Method::GET {
             if let Some(OperationKind::Mutation) =
-                normalize_payload.operation_for_plan.operation_kind
+                normalize_payload.document_for_plan.kind
             {
                 warn!(
                     target: targets::GRAPHQL_VALIDATION,
@@ -415,7 +415,7 @@ pub async fn graphql_request_handler(
         }
 
         let is_subscription = matches!(
-            normalize_payload.operation_for_plan.operation_kind,
+            normalize_payload.document_for_plan.kind,
             Some(OperationKind::Subscription)
         );
 
@@ -476,7 +476,7 @@ pub async fn graphql_request_handler(
 
         let fingerprint = if request_dedupe_enabled
             && matches!(
-                normalize_payload.operation_for_plan.operation_kind,
+                normalize_payload.document_for_plan.kind,
                 // same deduplication applies for queries and subscriptions
                 None | Some(OperationKind::Query) | Some(OperationKind::Subscription)
             ) {
@@ -558,8 +558,8 @@ pub async fn graphql_request_handler(
                 started_at.elapsed(),
                 client_name,
                 client_version,
-                normalize_payload.operation_for_plan.name.as_deref(),
-                normalize_payload.operation_for_plan.operation_kind.as_ref(),
+                normalize_payload.document_for_plan.name.as_deref(),
+                normalize_payload.document_for_plan.kind.as_ref(),
                 &parser_payload.minified_document,
                 hive_usage_agent,
                 shared_response.error_count(),
@@ -646,8 +646,8 @@ pub async fn execute_planned_request<'exec>(
         url,
         headers,
         operation: OperationDetails {
-            name: normalize_payload.operation_for_plan.name.as_deref(),
-            kind: match normalize_payload.operation_for_plan.operation_kind {
+            name: normalize_payload.document_for_plan.name.as_deref(),
+            kind: match normalize_payload.document_for_plan.kind {
                 None | Some(OperationKind::Query) => "query",
                 Some(OperationKind::Mutation) => "mutation",
                 Some(OperationKind::Subscription) => "subscription",
@@ -804,7 +804,7 @@ pub async fn execute_pipeline<'exec>(
     response_header_sink: ResponseHeaderSink,
     connection_fingerprint: Option<ConnectionFingerprint>,
 ) -> Result<QueryPlanExecutionResult, PipelineError> {
-    if normalize_payload.operation_for_introspection.is_some() {
+    if normalize_payload.document_for_introspection.is_some() {
         handle_introspection_policy(&shared_state.introspection_policy, &client_request_details)?;
     }
 
@@ -891,7 +891,9 @@ pub async fn execute_pipeline<'exec>(
             plugin_req_state
                 .request_context
                 .for_plugin::<hooks::OnGraphqlAnalysis>(),
-            &normalize_payload.operation_for_plan,
+            // ponytail: the tree is built here only because the hook API takes one
+            normalize_payload.operation_for_plan_tree().as_ref(),
+            &normalize_payload.document_for_plan,
             client_request_details.clone(),
             graphql_params,
             &supergraph.snapshot.metadata,

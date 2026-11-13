@@ -1,5 +1,5 @@
 //! Runs an operation and its JSON variables through the same steps the router pipeline uses
-//! before coercion (parse, normalize, partition), then calls the real `collect_variables`.
+//! before coercion (parse, normalize), then calls the real `collect_variables`.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::LazyLock;
@@ -9,7 +9,6 @@ use graphql_tools::validation::rules::ValidationOptions;
 use graphql_tools::validation::validate::validate;
 use sonic_rs::Value;
 
-use crate::executor::introspection::partition::partition_operation;
 use crate::executor::introspection::schema::{SchemaMetadata, SchemaWithMetadata};
 use crate::executor::variables::{collect_variables_with_options, VariableCoercionError};
 use crate::query_planner::ast::normalization::normalize_operation;
@@ -61,13 +60,11 @@ pub(super) fn coerce_with_options(
         .unwrap_or_else(|err| panic!("failed to parse operation: {err}\n{operation}"));
     let normalized = normalize_operation(&SCHEMA.supergraph_state, &document, None)
         .unwrap_or_else(|err| panic!("failed to normalize operation: {err}\n{operation}"));
-    let operation_for_plan = partition_operation(normalized.operation).downstream_operation;
-
     let mut variables: HashMap<String, Value> = sonic_rs::from_str(variables)
         .unwrap_or_else(|err| panic!("variables must be a JSON object: {err}\n{variables}"));
 
     match collect_variables_with_options(
-        &operation_for_plan,
+        &normalized.document,
         &mut variables,
         &SCHEMA.metadata,
         options,

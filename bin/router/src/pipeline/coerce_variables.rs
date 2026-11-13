@@ -28,7 +28,7 @@ pub fn coerce_request_variables(
         variables.insert(extracted.name.clone(), (&extracted.value).into());
     }
     match collect_variables_with_options(
-        &normalized_operation.operation_for_plan,
+        &normalized_operation.document_for_plan,
         variables,
         &supergraph.metadata,
         validation_options,

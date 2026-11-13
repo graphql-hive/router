@@ -625,8 +625,8 @@ mod tests {
         )
         .expect("normalized operation");
         let plan = planner
-            .plan_from_normalized_operation(
-                normalized.executable_operation(),
+            .plan(
+                &normalized.plan_operation,
                 PlannerOverrideContext::default(),
                 &CancellationToken::new(),
             )

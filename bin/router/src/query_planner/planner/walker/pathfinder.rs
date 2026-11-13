@@ -67,8 +67,6 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
         }
     }
 
-    // `TypeAwareSelection` hashes without its `flat` cache, the only part that changes
-    #[allow(clippy::mutable_key_type)]
     pub fn add(
         &mut self,
         visited_graphs: VisitedGraphs<'graph>,
@@ -177,8 +175,6 @@ impl<'graph> PathSearch<'graph> {
                 Some(SupergraphDefinition::Union(union)) if union.types.iter().any(|name| name == current_type_name))
     }
 
-    // `TypeAwareSelection` hashes without its `flat` cache, the only part that changes
-    #[allow(clippy::mutable_key_type)]
     fn find_indirect_paths(
         &mut self,
         path: &OperationPath<'graph>,
@@ -646,7 +642,7 @@ impl<'graph> PathSearch<'graph> {
         let paths = if let Some(selections) = edge.requirements() {
             let Some(paths) = self.resolve_requirements(
                 path,
-                selections.flat(),
+                &selections.selections,
                 excluded,
                 use_only_direct_edges,
                 false,
@@ -714,7 +710,7 @@ impl<'graph> PathSearch<'graph> {
                     let ancestor = path.before_segment(graph, segment);
                     let Some(paths) = self.resolve_requirements(
                         &ancestor,
-                        selection.flat(),
+                        &selection.selections,
                         excluded,
                         use_only_direct_edges,
                         true,
@@ -1094,7 +1090,7 @@ impl<'graph> RequirementCycleChecker<'graph> {
             return false;
         }
         requirements
-            .flat()
+            .selections
             .roots()
             .any(|item| self.requirement_item_depends_on_target_field(item, target_field))
     }

@@ -22,11 +22,7 @@ use super::graph::{
 };
 use crate::query_planner::planner::walker::utils::get_entrypoints;
 use crate::query_planner::{
-    ast::{
-        selection_item::SelectionItem,
-        selection_set::{InlineFragmentSelection, SelectionSet},
-        type_aware_selection::TypeAwareSelection,
-    },
+    ast::{flat::selection_tree::SelectionTree, type_aware_selection::TypeAwareSelection},
     federation_spec::{CachedFederationRules, FederationRules},
     graph::node::{SubgraphTypeSpecialization, UnionMembersData},
     state::supergraph_state::{
@@ -753,24 +749,17 @@ impl<'graph> Graph<'graph> {
             }
             // keep each implementation behind its type condition so both field
             // fetching and context rewrites only apply to matching runtime objects
-            let items = selections
+            let parts: Vec<_> = selections
                 .iter()
                 .filter(|selection| members.contains(selection.type_name))
-                .map(|selection| {
-                    SelectionItem::InlineFragment(InlineFragmentSelection {
-                        type_condition: selection.type_name.to_string(),
-                        selections: selection.selection_set.clone(),
-                        skip_if: None,
-                        include_if: None,
-                    })
-                })
-                .collect::<Vec<_>>();
-            if !items.is_empty() {
-                selections.push(TypeAwareSelection {
-                    flat: Default::default(),
+                .map(|selection| (selection.type_name, &selection.selections))
+                .collect();
+            if !parts.is_empty() {
+                let selection = TypeAwareSelection {
                     type_name: interface,
-                    selection_set: SelectionSet { items },
-                });
+                    selections: SelectionTree::fragments_of(parts),
+                };
+                selections.push(selection);
             }
         }
         selections.into()
@@ -957,7 +946,7 @@ impl<'graph> Graph<'graph> {
                             let graph_id = join_field.graph_id.as_ref()?;
                             cached_rules.parse_provides(state, join_field, graph_id, target_type)
                         })
-                        .map(|selection_set| Provided::from_selection_set(&selection_set));
+                        .map(|selections| Provided::from_selections(selections.roots()));
 
                     // If a field points to a union type:
                     //

@@ -4,7 +4,9 @@ use hive_router::executor::execution::demand_control::{
     compile_actual_subgraph_cost_plan, estimate_actual_subgraph_response_cost_with_compiled_plan,
 };
 use hive_router::executor::response::value::Value;
-use hive_router::query_planner::ast::{document::Document, normalization::normalize_operation};
+use hive_router::query_planner::ast::{
+    flat::plan_document::PlanDocument, normalization::normalize_operation,
+};
 use hive_router::query_planner::state::supergraph_state::SupergraphState;
 use hive_router::query_planner::utils::parsing::{parse_operation, parse_schema};
 use std::hint::black_box;
@@ -12,15 +14,12 @@ use std::hint::black_box;
 fn build_subgraph_operation(
     supergraph_sdl: &str,
     operation_str: &str,
-) -> (SupergraphState, Document) {
+) -> (SupergraphState, PlanDocument) {
     let schema = parse_schema(supergraph_sdl);
     let supergraph_state = SupergraphState::new(&schema);
     let normalized =
         normalize_operation(&supergraph_state, &parse_operation(operation_str), None).unwrap();
-    let document = Document {
-        operation: normalized.operation,
-        fragments: vec![],
-    };
+    let document = normalized.document.as_ref().clone();
     (supergraph_state, document)
 }
 
@@ -154,10 +153,7 @@ fn demand_control_benchmarks(c: &mut Criterion) {
         None,
     )
     .unwrap();
-    let batch_operation = Document {
-        operation: normalized.operation,
-        fragments: vec![],
-    };
+    let batch_operation = normalized.document.as_ref().clone();
     let batch_compiled_plan =
         compile_actual_subgraph_cost_plan(&batch_operation, &batch_supergraph_state);
     let batch_response: Value<'static> = sonic_rs::from_str(

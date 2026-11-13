@@ -2,10 +2,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use hive_router::executor::execution::plan::CoerceVariablesPayload;
 use hive_router::executor::{
     execution::client_request_details::JwtRequestDetails,
-    introspection::{
-        partition::partition_operation,
-        schema::{SchemaMetadata, SchemaWithMetadata},
-    },
+    introspection::schema::{SchemaMetadata, SchemaWithMetadata},
     projection::plan::ProjectionPlan,
 };
 use hive_router::pipeline::authorization::metadata::AuthorizationMetadata;
@@ -14,6 +11,7 @@ use hive_router::pipeline::{
     authorization::apply_authorization_to_operation,
     normalize::{GraphQLNormalizationPayload, OperationIdentity},
 };
+use hive_router::query_planner::ast::flat::selection_tree::PlanOperation;
 use hive_router::query_planner::state::supergraph_state::OperationKind;
 use hive_router::query_planner::{
     ast::normalization::normalize_operation,
@@ -47,38 +45,46 @@ fn authorization_benchmark(c: &mut Criterion) {
         let parsed = safe_parse_operation(query).unwrap();
         let normalized = normalize_operation(supergraph, &parsed, None).unwrap();
         let (root_type_name, projection_plan) =
-            ProjectionPlan::from_operation(&normalized.operation, metadata);
+            ProjectionPlan::from_operation(&normalized.document, metadata);
         let root_type_name = root_type_name.to_string();
         let operation_kind = normalized
-            .operation
-            .operation_kind
+            .document
+            .kind
             .clone()
             .unwrap_or(OperationKind::Query);
-        let partitioned_operation = partition_operation(normalized.operation);
+        let (document_for_plan, document_for_introspection, plan_operation) =
+            match normalized.document.partition_introspection() {
+                Some((down, intro)) => {
+                    let plan_operation = Arc::new(PlanOperation::from_document(&down));
+                    (Arc::new(down), Some(Arc::new(intro)), plan_operation)
+                }
+                None => (
+                    normalized.document.clone(),
+                    None,
+                    normalized.plan_operation.clone(),
+                ),
+            };
         let hashes = hash_normalized_operation(
-            &partitioned_operation.downstream_operation,
-            partitioned_operation.introspection_operation.as_ref(),
+            &document_for_plan,
+            document_for_introspection.as_deref(),
             &[],
         );
 
-        GraphQLNormalizationPayload {
+        GraphQLNormalizationPayload::new(
+            plan_operation,
+            document_for_plan,
+            document_for_introspection,
+            hashes,
             root_type_name,
             operation_kind,
-            projection_plan: Arc::new(projection_plan),
-            operation_for_plan: Arc::new(partitioned_operation.downstream_operation),
-            operation_for_introspection: partitioned_operation
-                .introspection_operation
-                .map(Arc::new),
-            operation_identity: OperationIdentity {
+            Arc::new(projection_plan),
+            OperationIdentity {
                 name: None,
                 operation_type: OperationKind::Query,
                 client_document_hash: "".to_string(),
             },
-            operation_for_plan_hash: hashes.operation_for_plan_hash,
-            operation_for_introspection_hash: hashes.operation_for_introspection_hash,
-            normalized_operation_hash: hashes.combined_operation_hash,
-            extracted_variables: Default::default(),
-        }
+            Default::default(),
+        )
     }
 
     let bubble_up_payload = prepare(

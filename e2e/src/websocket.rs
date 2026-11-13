@@ -204,7 +204,7 @@ mod websocket_e2e_tests {
 
         let response = stream.next().await.expect("Expected a response");
         assert!(response.errors.is_none(), "Expected no errors");
-        assert!(!response.data.is_null(), "Expected data");
+        assert!(!response.data().is_null(), "Expected data");
     }
 
     #[ntex::test]

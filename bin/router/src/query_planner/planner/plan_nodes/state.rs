@@ -1,7 +1,7 @@
 use crate::query_planner::{
     ast::{
+        flat::plan_document::PlanDocument,
         operation::{PlanningFetchOperation, SubgraphFetchOperation},
-        selection_set::SelectionSet,
     },
     utils::pretty_display::PrettyDisplay,
 };
@@ -38,7 +38,8 @@ pub struct Executable;
 
 impl PlanState for Planning {
     type Operation = PlanningFetchOperation;
-    type Requires = Option<Box<SelectionSet>>;
+    /// The fetch's input selections, in `selections` (no operation around them).
+    type Requires = Option<Box<PlanDocument>>;
     type FetchIds = FetchIdList;
 }
 

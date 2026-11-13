@@ -28,7 +28,7 @@ fn project_data_by_operation_test(c: &mut Criterion) {
     );
     let normalized_document = normalize_operation(&planner.supergraph, &parsed_document, None)
         .expect("Failed to normalize operation");
-    let normalized_operation = normalized_document.executable_operation();
+    let normalized_operation = &normalized_document.document;
     let schema_metadata = &planner.consumer_schema.schema_metadata();
     let (root_type_name, projection_plan) =
         ProjectionPlan::from_operation(normalized_operation, schema_metadata);

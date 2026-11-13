@@ -6,11 +6,9 @@ use std::{
     hash::Hash,
 };
 
-use crate::query_planner::{
-    ast::merge_path::{Condition, MergePath, Segment},
-    ast::value::Value,
-    utils::pretty_display::{get_indent, PrettyDisplay},
-};
+#[cfg(test)]
+use crate::query_planner::ast::merge_path::{Condition, MergePath, Segment};
+use crate::query_planner::utils::pretty_display::{get_indent, PrettyDisplay};
 
 use super::{arguments::ArgumentsMap, selection_item::SelectionItem, shrink::ShrinkMemory};
 
@@ -65,20 +63,11 @@ impl ShrinkMemory for SelectionSet {
 }
 
 impl SelectionSet {
-    pub fn cost(&self) -> u64 {
-        let mut cost = 1;
-
-        for node in &self.items {
-            cost += node.cost();
-        }
-
-        cost
-    }
-
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
 
+    #[cfg(test)]
     pub fn contains(&self, other: &Self) -> bool {
         selection_items_are_subset_of(&self.items, &other.items)
     }
@@ -88,56 +77,6 @@ impl SelectionSet {
             .iter()
             .flat_map(|item| item.variable_usages())
             .collect()
-    }
-
-    pub fn strip_for_plan_input(&self) -> Self {
-        SelectionSet {
-            items: self
-                .items
-                .iter()
-                .map(|item| item.strip_for_plan_input())
-                .collect(),
-        }
-    }
-
-    pub fn entities_field(&self) -> Option<&FieldSelection> {
-        self.items.iter().find_map(|item| {
-            if let SelectionItem::Field(field) = item {
-                if field.name == "_entities" {
-                    return Some(field);
-                }
-            }
-            None
-        })
-    }
-
-    pub fn iter_fields_and_fragments_of_same_type<'a>(
-        &'a self,
-        type_name: &'a str,
-    ) -> impl Iterator<Item = &'a FieldSelection> + 'a {
-        let mut stack = vec![self.items.iter()];
-
-        std::iter::from_fn(move || loop {
-            let iter = stack.last_mut()?;
-
-            match iter.next() {
-                Some(SelectionItem::Field(field)) => {
-                    return Some(field);
-                }
-
-                Some(SelectionItem::InlineFragment(fragment))
-                    if fragment.type_condition == type_name =>
-                {
-                    stack.push(fragment.selections.items.iter());
-                }
-
-                Some(_) => {}
-
-                None => {
-                    stack.pop();
-                }
-            }
-        })
     }
 }
 
@@ -307,16 +246,6 @@ impl FieldSelection {
     pub fn is_introspection_field(&self) -> bool {
         self.name.starts_with("__")
     }
-
-    /// Returns the name of the variable if this field represents a representation variable.
-    pub fn representations_variable_name(&self) -> Option<&str> {
-        let value = self.arguments.as_ref()?.get_argument("representations")?;
-
-        match value {
-            Value::Variable(variable_name) => Some(variable_name.as_str()),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -463,6 +392,7 @@ impl PrettyDisplay for InlineFragmentSelection {
     }
 }
 
+#[cfg(test)]
 pub fn selection_items_are_subset_of(source: &[SelectionItem], target: &[SelectionItem]) -> bool {
     target.iter().all(|target_node| {
         source
@@ -475,6 +405,7 @@ pub fn selection_items_are_subset_of(source: &[SelectionItem], target: &[Selecti
 /// arguments, and the same `@skip`/`@include`: `price(currency: "GBP")` isn't
 /// `price(currency: "EUR")`, and a field fetched only under `$x` isn't there under `$y`.
 /// Conditions have to be equal, not just implied, which is stricter than needed but never wrong.
+#[cfg(test)]
 fn selection_item_is_subset_of(source: &SelectionItem, target: &SelectionItem) -> bool {
     match (source, target) {
         (SelectionItem::Field(source_field), SelectionItem::Field(target_field)) => {
@@ -511,6 +442,7 @@ pub struct ResponseKeyConflict(pub String);
 /// Merges `source` into `target`. Fails when a field of `source` lands next to another field
 /// with the same response key but another name or arguments: the object can't hold both.
 /// Fields in different fragments are never merged together, so they can't meet here.
+#[cfg(test)]
 pub fn merge_selection_set(
     target: &mut SelectionSet,
     source: &SelectionSet,
@@ -590,6 +522,7 @@ pub fn merge_selection_set(
     Ok(())
 }
 
+#[cfg(test)]
 #[inline]
 fn merge_field_omit_from_response(target: &mut FieldSelection, source: &FieldSelection) {
     // A skipped `__typename` is only there for an empty object.
@@ -600,6 +533,7 @@ fn merge_field_omit_from_response(target: &mut FieldSelection, source: &FieldSel
 }
 
 /// Does this path segment point at this selection item?
+#[cfg(test)]
 fn segment_selects(segment: &Segment, item: &SelectionItem) -> bool {
     match (segment, item) {
         (
@@ -618,6 +552,7 @@ fn segment_selects(segment: &Segment, item: &SelectionItem) -> bool {
     }
 }
 
+#[cfg(test)]
 fn item_selections(item: &SelectionItem) -> Option<&SelectionSet> {
     match item {
         SelectionItem::Field(field) => Some(&field.selections),
@@ -626,14 +561,7 @@ fn item_selections(item: &SelectionItem) -> Option<&SelectionSet> {
     }
 }
 
-fn item_selections_mut(item: &mut SelectionItem) -> Option<&mut SelectionSet> {
-    match item {
-        SelectionItem::Field(field) => Some(&mut field.selections),
-        SelectionItem::InlineFragment(fragment) => Some(&mut fragment.selections),
-        SelectionItem::FragmentSpread(_) => None,
-    }
-}
-
+#[cfg(test)]
 pub fn find_selection_set_by_path<'a>(
     root_selection_set: &'a SelectionSet,
     path: &MergePath,
@@ -655,28 +583,7 @@ pub fn find_selection_set_by_path<'a>(
     Some(current_selection_set)
 }
 
-pub fn find_selection_set_by_path_mut<'a>(
-    root_selection_set: &'a mut SelectionSet,
-    path: &MergePath,
-) -> Option<&'a mut SelectionSet> {
-    let mut current_selection_set = root_selection_set;
-
-    for path_element in path.inner.iter() {
-        if matches!(path_element, Segment::List) {
-            continue;
-        }
-
-        let index = current_selection_set
-            .items
-            .iter()
-            .position(|item| segment_selects(path_element, item))?;
-
-        current_selection_set = item_selections_mut(&mut current_selection_set.items[index])?;
-    }
-
-    Some(current_selection_set)
-}
-
+#[cfg(test)]
 pub fn field_condition_equal(cond: &Option<Condition>, field: &FieldSelection) -> bool {
     match cond {
         Some(cond) => match cond {
@@ -695,6 +602,7 @@ pub fn field_condition_equal(cond: &Option<Condition>, field: &FieldSelection) -
     }
 }
 
+#[cfg(test)]
 fn fragment_condition_equal(cond: &Option<Condition>, fragment: &InlineFragmentSelection) -> bool {
     match cond {
         Some(cond) => match cond {
@@ -729,8 +637,7 @@ pub fn response_keys_conflict(a: &SelectionSet, b: &SelectionSet) -> bool {
     })
 }
 
-/// Like `fields_through_fragments`, without collecting them, so the check runs on every merge
-/// candidate without allocating.
+/// Whether a field of `selection_set` or of its inline fragments, at any depth, passes.
 fn any_field_through_fragments(
     selection_set: &SelectionSet,
     predicate: &impl Fn(&FieldSelection) -> bool,

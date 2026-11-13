@@ -30,7 +30,7 @@ use crate::executor::operation_filter::{OperationFilter, Selection};
 use crate::executor::projection::plan::ProjectionPlan;
 use crate::executor::response::graphql_error::GraphQLError;
 use crate::pipeline::authorization::metadata::{AuthorizationMetadata, AuthorizationRule};
-use crate::query_planner::ast::operation::OperationDefinition;
+use crate::query_planner::ast::flat::plan_document::PlanDocument;
 use crate::telemetry::logging::targets;
 use ahash::HashMap;
 
@@ -53,7 +53,7 @@ pub enum AuthorizationDecision {
     NoChange,
     /// The operation was modified to remove unauthorized parts. Continue with the new operation.
     Modified {
-        new_operation_definition: OperationDefinition,
+        new_document: Box<PlanDocument>,
         new_projection_plan: Arc<ProjectionPlan>,
         errors: Vec<AuthorizationError>,
     },
@@ -204,7 +204,7 @@ pub fn collect_required_policies(
 
     OperationFilter::new(schema_metadata).filter(
         &normalized_payload.root_type_name,
-        &normalized_payload.operation_for_plan.selection_set,
+        &normalized_payload.document_for_plan,
         variable_payload,
         |selection| {
             match selection {
@@ -275,11 +275,11 @@ pub fn enforce_operation_authorization(
     Ok(match decision {
         AuthorizationDecision::NoChange => (normalized_payload.clone(), vec![]),
         AuthorizationDecision::Modified {
-            new_operation_definition,
+            new_document,
             new_projection_plan,
             errors,
         } => (
-            normalized_payload.with_operation(new_operation_definition, new_projection_plan),
+            normalized_payload.with_operation(*new_document, new_projection_plan),
             errors,
         ),
         AuthorizationDecision::Reject { errors } => {
@@ -331,7 +331,7 @@ pub fn apply_authorization_to_operation(
 
     let operation_filter_output = OperationFilter::new(schema_metadata).filter(
         &normalized_payload.root_type_name,
-        &normalized_payload.operation_for_plan.selection_set,
+        &normalized_payload.document_for_plan,
         variable_payload,
         |selection| match selection {
             Selection::Field(field) => {
@@ -382,14 +382,14 @@ pub fn apply_authorization_to_operation(
 
     let nulled_field_trie = Trie::from_paths(&operation_filter_output.rejected_paths);
 
-    let new_operation =
-        rebuild_nulled_operation(&normalized_payload.operation_for_plan, &nulled_field_trie);
+    let new_document =
+        rebuild_nulled_operation(&normalized_payload.document_for_plan, &nulled_field_trie);
     let new_projection_plan = normalized_payload
         .projection_plan
         .rewrite(&nulled_field_trie);
 
     Ok(AuthorizationDecision::Modified {
-        new_operation_definition: new_operation,
+        new_document: Box::new(new_document),
         new_projection_plan,
         errors,
     })

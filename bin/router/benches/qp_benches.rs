@@ -1,8 +1,9 @@
 use criterion::{criterion_group, criterion_main, measurement::WallTime, Bencher, Criterion};
 use graphql_tools::parser::query::Document;
-use hive_router::query_planner::ast::minification::minify_operation;
+use hive_router::query_planner::ast::flat::plan_document::PlanDocument;
+use hive_router::query_planner::ast::flat::selection_tree::PlanOperation;
+use hive_router::query_planner::ast::minification::minify;
 use hive_router::query_planner::ast::normalization::normalize_operation;
-use hive_router::query_planner::ast::operation::OperationDefinition;
 use hive_router::query_planner::graph::Graph;
 use hive_router::query_planner::graph::PlannerOverrideContext;
 use hive_router::query_planner::planner::best::find_best_combination;
@@ -33,10 +34,12 @@ fn get_executable_operation(
     parsed_document: &Document<'static, String>,
     supergraph_state: &SupergraphState,
     operation_name: Option<&str>,
-) -> OperationDefinition {
+) -> PlanOperation {
     normalize_operation(supergraph_state, parsed_document, operation_name)
         .unwrap()
-        .operation
+        .plan_operation
+        .as_ref()
+        .clone()
 }
 
 fn bench_query_plan(
@@ -44,7 +47,7 @@ fn bench_query_plan(
     name: &str,
     graph: &Graph,
     supergraph_state: &SupergraphState,
-    operation: &OperationDefinition,
+    operation: &PlanOperation,
 ) {
     let override_context = PlannerOverrideContext::default();
     let cancellation_token = CancellationToken::new();
@@ -185,23 +188,29 @@ fn query_plan_pipeline(c: &mut Criterion) {
 
     c.bench_function("normalization", |b| {
         b.iter(|| {
-            let op = get_executable_operation(
-                black_box(&parsed_document),
+            let doc = normalize_operation(
                 black_box(&supergraph_state),
+                black_box(&parsed_document),
                 black_box(Some("TestQuery")),
-            );
-            black_box(op);
+            )
+            .unwrap();
+            black_box(doc);
         })
     });
 
+    let plan_document: PlanDocument =
+        normalize_operation(&supergraph_state, &parsed_document, Some("TestQuery"))
+            .unwrap()
+            .document
+            .as_ref()
+            .clone();
     c.bench_function("minification", |b| {
         b.iter_batched(
-            || operation.clone(),
-            |cloned_operation| {
+            || plan_document.clone(),
+            |mut document| {
                 let bb_supergraph_state = black_box(&supergraph_state);
-                let bb_operation = black_box(cloned_operation);
-                let op = minify_operation(bb_operation, bb_supergraph_state).unwrap();
-                black_box(op);
+                minify(black_box(&mut document), bb_supergraph_state).unwrap();
+                black_box(document);
             },
             criterion::BatchSize::SmallInput,
         )
@@ -228,7 +237,7 @@ fn cache_preparation(c: &mut Criterion) {
         let document = get_operation(operation_path);
         let operation = get_executable_operation(&document, &planner.supergraph, None);
         let plan = planner
-            .plan_from_normalized_operation(
+            .plan(
                 &operation,
                 PlannerOverrideContext::default(),
                 &CancellationToken::new(),

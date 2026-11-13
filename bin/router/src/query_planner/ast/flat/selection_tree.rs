@@ -5,11 +5,18 @@
 
 use std::sync::Arc;
 
+use super::arena::{Arena, ListId};
+use super::plan_document::PlanDocument;
+
 use super::{Interner, Kind, SelId, Span, Sym};
 use crate::query_planner::ast::{
-    arguments::ArgumentsMap, merge_path::Condition, selection_item::SelectionItem,
+    arguments::ArgumentsMap,
+    merge_path::Condition,
+    operation::{OperationDefinition, VariableDefinition},
+    selection_item::SelectionItem,
     selection_set::SelectionSet,
 };
+use crate::query_planner::state::supergraph_state::OperationKind;
 
 /// The alias and arguments of a field from the operation, or from a field set.
 #[derive(Debug, Clone, Default)]
@@ -33,6 +40,48 @@ pub fn same_attributes(
         (None, None) => true,
         (Some(a), Some(b)) => Arc::ptr_eq(a, b) || a == b,
         _ => false,
+    }
+}
+
+/// The operation the planner plans: normalized, its selections flat.
+#[derive(Debug, Clone)]
+pub struct PlanOperation {
+    pub kind: OperationKind,
+    pub selections: SelectionTree,
+    // ponytail: still the tree's variables, until variables are flat too
+    pub variables: Option<Vec<VariableDefinition>>,
+}
+
+impl Default for PlanOperation {
+    fn default() -> Self {
+        PlanOperation {
+            kind: OperationKind::Query,
+            selections: SelectionTree::default(),
+            variables: None,
+        }
+    }
+}
+
+impl PlanOperation {
+    /// From the normalized operation: the same selections, read the walker's way.
+    pub fn from_document(document: &PlanDocument) -> Self {
+        PlanOperation {
+            kind: document.kind.clone().unwrap_or(OperationKind::Query),
+            selections: SelectionTree::from_arena(&document.arena, document.selections),
+            variables: document.variables.clone(),
+        }
+    }
+
+    /// From a tree operation: a plugin's, the authorization's, or a test's.
+    pub fn from_tree(operation: &OperationDefinition) -> Self {
+        PlanOperation {
+            kind: operation
+                .operation_kind
+                .clone()
+                .unwrap_or(OperationKind::Query),
+            selections: SelectionTree::from_tree(&operation.selection_set),
+            variables: operation.variable_definitions.clone(),
+        }
     }
 }
 
@@ -113,6 +162,177 @@ impl SelectionTree {
         (self.nodes.len() - 1) as SelId
     }
 
+    /// Adds a node; its children must be in already, see `add_children`.
+    pub(super) fn add_node(
+        &mut self,
+        kind: Kind,
+        name: &str,
+        children: Span,
+        condition: Option<Condition>,
+        attributes: Option<SelectionAttributes>,
+    ) -> SelId {
+        let arguments_hash = attributes
+            .as_ref()
+            .and_then(|a| a.arguments.as_ref())
+            .map_or(0, ArgumentsMap::hash_u64);
+        let node = Node {
+            kind,
+            name: self.strings.intern(name),
+            children,
+            condition,
+            attributes: attributes.map(Arc::new),
+            arguments_hash,
+        };
+        self.nodes.push(node);
+        (self.nodes.len() - 1) as SelId
+    }
+
+    /// A list of nodes added before, as one run.
+    pub(super) fn add_children(&mut self, ids: &[SelId]) -> Span {
+        let start = self.children.len() as u32;
+        self.children.extend_from_slice(ids);
+        Span {
+            start,
+            len: ids.len() as u32,
+        }
+    }
+
+    pub(super) fn set_roots(&mut self, roots: Span) {
+        self.root = roots;
+    }
+
+    /// Without the introspection fields, which the router answers itself: what
+    /// `partition_operation` leaves for the subgraphs. A field or fragment left with nothing
+    /// under it goes too.
+    /// The selections of `list`, read the walker's way.
+    pub fn from_arena(arena: &Arena, list: ListId) -> SelectionTree {
+        fn add(tree: &mut SelectionTree, arena: &Arena, list: ListId) -> Span {
+            let ids: Vec<SelId> = arena
+                .items(list)
+                .iter()
+                .map(|&id| {
+                    let node = arena.node(id);
+                    let children = add(tree, arena, node.children);
+                    let attributes = match node.kind {
+                        Kind::Field => {
+                            let alias = arena.opt_str(node.alias).map(str::to_string);
+                            let arguments = arena.args(node.args).cloned();
+                            (alias.is_some() || arguments.is_some())
+                                .then_some(SelectionAttributes { alias, arguments })
+                        }
+                        _ => None,
+                    };
+                    let condition = match node.kind {
+                        Kind::FragmentSpread => None,
+                        _ => arena.condition(id),
+                    };
+                    tree.add_node(
+                        node.kind,
+                        arena.str(node.name),
+                        children,
+                        condition,
+                        attributes,
+                    )
+                })
+                .collect();
+            tree.add_children(&ids)
+        }
+        let mut tree = SelectionTree::default();
+        tree.root = add(&mut tree, arena, list);
+        tree
+    }
+
+    pub fn without_introspection(&self) -> SelectionTree {
+        fn keep(from: &SelectionTree, to: &mut SelectionTree, list: Span) -> Span {
+            let mut ids = Vec::new();
+            for &id in &from.children[list.range()] {
+                let node = &from.nodes[id as usize];
+                let name = from.strings.str(node.name);
+                if node.kind == Kind::Field && name.starts_with("__") && name != "__typename" {
+                    continue;
+                }
+                let children = keep(from, to, node.children);
+                let empty = children.is_empty();
+                let dropped = match node.kind {
+                    Kind::Field => empty && !node.children.is_empty(),
+                    Kind::InlineFragment => empty,
+                    Kind::FragmentSpread => false,
+                };
+                if dropped {
+                    continue;
+                }
+                to.nodes.push(Node {
+                    name: to.strings.intern(name),
+                    children,
+                    ..node.clone()
+                });
+                ids.push((to.nodes.len() - 1) as SelId);
+            }
+            to.add_children(&ids)
+        }
+        let mut to = SelectionTree::default();
+        to.root = keep(self, &mut to, self.root);
+        to
+    }
+
+    /// `{ __typename }`
+    pub fn typename() -> SelectionTree {
+        let mut tree = SelectionTree::default();
+        let typename = tree.add_node(Kind::Field, "__typename", Span::EMPTY, None, None);
+        tree.root = tree.add_children(&[typename]);
+        tree
+    }
+
+    /// Drops the roots `keep` says no to.
+    pub fn retain_roots(&mut self, mut keep: impl FnMut(Sel<'_>) -> bool) {
+        let ids: Vec<SelId> = self.children[self.root.range()]
+            .iter()
+            .copied()
+            .filter(|&id| keep(Sel { tree: self, id }))
+            .collect();
+        self.root = self.add_children(&ids);
+    }
+
+    /// `... on <type> { <its selections> }` for each part, in one tree.
+    pub fn fragments_of<'a>(
+        parts: impl IntoIterator<Item = (&'a str, &'a SelectionTree)>,
+    ) -> SelectionTree {
+        let mut tree = SelectionTree::default();
+        let ids: Vec<SelId> = parts
+            .into_iter()
+            .map(|(type_name, part)| {
+                let children = tree.copy_list(part, part.root);
+                tree.add_node(Kind::InlineFragment, type_name, children, None, None)
+            })
+            .collect();
+        tree.root = tree.add_children(&ids);
+        tree
+    }
+
+    /// `list` of `from`, and everything below it, copied in.
+    fn copy_list(&mut self, from: &SelectionTree, list: Span) -> Span {
+        let ids: Vec<SelId> = from.children[list.range()]
+            .iter()
+            .map(|&id| {
+                let node = &from.nodes[id as usize];
+                let children = self.copy_list(from, node.children);
+                let name = self.strings.intern(from.strings.str(node.name));
+                self.nodes.push(Node {
+                    name,
+                    children,
+                    ..node.clone()
+                });
+                (self.nodes.len() - 1) as SelId
+            })
+            .collect();
+        self.add_children(&ids)
+    }
+
+    /// What `SelectionSet::cost` gives for the same selections.
+    pub fn cost(&self) -> u64 {
+        1 + self.roots().map(|sel| sel.cost()).sum::<u64>()
+    }
+
     pub fn roots(&self) -> impl Iterator<Item = Sel<'_>> + Clone {
         self.list(self.root)
     }
@@ -175,6 +395,95 @@ impl<'a> Sel<'a> {
     #[inline]
     pub fn arguments_hash(&self) -> u64 {
         self.node().arguments_hash
+    }
+
+    /// `SelectionItem::cost`
+    pub fn cost(&self) -> u64 {
+        1 + self.children().map(|sel| sel.cost()).sum::<u64>()
+    }
+}
+
+/// Prints like the tree's `SelectionSet`: `{a b{c} ...on T @skip(if: $s){d}}`, nothing when empty.
+impl std::fmt::Display for SelectionTree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write_list(self.roots(), f)
+    }
+}
+
+fn write_list<'a>(
+    items: impl Iterator<Item = Sel<'a>> + Clone,
+    f: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    if items.clone().next().is_none() {
+        return Ok(());
+    }
+    f.write_str("{")?;
+    for (i, sel) in items.enumerate() {
+        if i > 0 {
+            f.write_str(" ")?;
+        }
+        match sel.kind() {
+            Kind::Field => {
+                let attributes = sel.attributes();
+                if let Some(alias) = attributes.and_then(|a| a.alias.as_deref()) {
+                    write!(f, "{alias}: ")?;
+                }
+                f.write_str(sel.name())?;
+                if let Some(args) = attributes
+                    .and_then(|a| a.arguments.as_ref())
+                    .filter(|a| !a.is_empty())
+                {
+                    write!(f, "({args})")?;
+                }
+            }
+            Kind::InlineFragment => write!(f, "...on {}", sel.name())?,
+            Kind::FragmentSpread => {
+                write!(f, "...{}", sel.name())?;
+                continue;
+            }
+        }
+        if let Some(condition) = sel.condition() {
+            write!(f, " {condition}")?;
+        }
+        write_list(sel.children(), f)?;
+    }
+    f.write_str("}")
+}
+
+/// Same selections, the way the tree's `SelectionSet` compares them.
+impl PartialEq for SelectionTree {
+    fn eq(&self, other: &Self) -> bool {
+        fn same_list<'a, 'b>(
+            a: impl Iterator<Item = Sel<'a>> + Clone,
+            b: impl Iterator<Item = Sel<'b>> + Clone,
+        ) -> bool {
+            a.clone().count() == b.clone().count() && a.zip(b).all(|(a, b)| same(a, b))
+        }
+        fn same(a: Sel<'_>, b: Sel<'_>) -> bool {
+            a.kind() == b.kind()
+                && a.name() == b.name()
+                && a.condition() == b.condition()
+                && same_attributes(a.attributes(), b.attributes())
+                && same_list(a.children(), b.children())
+        }
+        same_list(self.roots(), other.roots())
+    }
+}
+
+impl Eq for SelectionTree {}
+
+impl std::hash::Hash for SelectionTree {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        fn hash_list<'a, H: std::hash::Hasher>(
+            items: impl Iterator<Item = Sel<'a>>,
+            state: &mut H,
+        ) {
+            for sel in items {
+                sel.name().hash(state);
+                hash_list(sel.children(), state);
+            }
+        }
+        hash_list(self.roots(), state);
     }
 }
 

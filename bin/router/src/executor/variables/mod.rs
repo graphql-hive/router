@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use crate::query_planner::ast::flat::plan_document::PlanDocument;
 use crate::query_planner::state::supergraph_state::TypeNode;
 use sonic_rs::{JsonNumberTrait, Value, ValueRef};
 
@@ -147,7 +148,7 @@ impl InvalidValue {
 
 #[inline]
 pub fn collect_variables(
-    operation: &crate::query_planner::ast::operation::OperationDefinition,
+    operation: &PlanDocument,
     variables_map: &mut HashMap<String, Value>,
     schema_metadata: &SchemaMetadata,
 ) -> Result<Option<HashMap<String, Value>>, VariableCoercionError> {
@@ -161,12 +162,12 @@ pub fn collect_variables(
 
 #[inline]
 pub fn collect_variables_with_options(
-    operation: &crate::query_planner::ast::operation::OperationDefinition,
+    operation: &PlanDocument,
     variables_map: &mut HashMap<String, Value>,
     schema_metadata: &SchemaMetadata,
     options: ValidationOptions,
 ) -> Result<Option<HashMap<String, Value>>, VariableCoercionError> {
-    let Some(variable_definitions) = operation.variable_definitions.as_ref() else {
+    let Some(variable_definitions) = operation.variables.as_ref() else {
         return Ok(None);
     };
 

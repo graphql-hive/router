@@ -1,13 +1,12 @@
 use crate::query_planner::ast::flat::arena::{Arena, ListId};
-use crate::query_planner::ast::flat::Kind;
+use crate::query_planner::ast::flat::plan_document::PlanDocument;
+use crate::query_planner::ast::flat::{Kind, NONE};
 use crate::query_planner::ast::requires::RequiresSelectionSet;
 use crate::query_planner::{
     ast::{
         merge_path::Condition,
-        minification::minify_operation,
-        operation::{split_group, OperationDefinition, PlanningFetchOperation, VariableDefinition},
-        selection_item::SelectionItem,
-        selection_set::{FieldSelection, SelectionSet},
+        minification::minify,
+        operation::{split_group, PlanningFetchOperation, VariableDefinition},
         value::Value,
     },
     planner::{
@@ -459,64 +458,7 @@ impl CustomScalarPathState {
     }
 }
 
-fn collect_custom_scalar_path_state(
-    path_kinds: &mut CustomScalarPathState,
-    response_path: &mut Vec<String>,
-    parent_type_name: &str,
-    selections: &SelectionSet,
-    supergraph: &SupergraphState,
-) {
-    let Some(parent_def) = supergraph.definitions.get(parent_type_name) else {
-        return;
-    };
-
-    let parent_fields = parent_def.fields();
-
-    for item in &selections.items {
-        match item {
-            SelectionItem::Field(field) => {
-                let Some(field_def) = parent_fields.get(&field.name) else {
-                    continue;
-                };
-
-                let response_key = field.selection_identifier();
-                let field_type_name = field_def.field_type.inner_type();
-
-                response_path.push(response_key.to_string());
-
-                if supergraph.is_custom_scalar_type(field_type_name) {
-                    path_kinds.mark_custom_scalar(response_path.iter().map(String::as_str));
-                } else {
-                    path_kinds.mark_standard_scalar(response_path.iter().map(String::as_str));
-
-                    if !field.selections.is_empty() {
-                        collect_custom_scalar_path_state(
-                            path_kinds,
-                            response_path,
-                            field_type_name,
-                            &field.selections,
-                            supergraph,
-                        );
-                    }
-                }
-
-                response_path.pop();
-            }
-            SelectionItem::InlineFragment(fragment) => {
-                collect_custom_scalar_path_state(
-                    path_kinds,
-                    response_path,
-                    &fragment.type_condition,
-                    &fragment.selections,
-                    supergraph,
-                );
-            }
-            SelectionItem::FragmentSpread(_) => {}
-        }
-    }
-}
-
-/// `collect_custom_scalar_path_state` for a fetch step's selections in the arena.
+/// Marks the response paths under `list` that hold a custom scalar.
 fn collect_custom_scalar_path_state_in_arena(
     path_kinds: &mut CustomScalarPathState,
     response_path: &mut Vec<String>,
@@ -612,20 +554,23 @@ fn custom_scalar_paths_from_fetch_output(
 ///
 /// Each fragment is visited using its own type condition.
 pub fn custom_scalar_paths_for_entities_selection(
-    selection_set: &SelectionSet,
+    arena: &Arena,
+    list: ListId,
     supergraph: &SupergraphState,
 ) -> Option<CustomScalarPaths> {
     let mut state = CustomScalarPathState::default();
     let mut response_path = Vec::new();
 
-    for item in &selection_set.items {
-        if let SelectionItem::InlineFragment(fragment) = item {
+    for &item in arena.items(list) {
+        let node = arena.node(item);
+        if node.kind == Kind::InlineFragment {
             response_path.clear();
-            collect_custom_scalar_path_state(
+            collect_custom_scalar_path_state_in_arena(
                 &mut state,
                 &mut response_path,
-                &fragment.type_condition,
-                &fragment.selections,
+                arena.str(node.name),
+                arena,
+                node.children,
                 supergraph,
             );
         }
@@ -816,13 +761,26 @@ impl<S: PlanState> PlanNode<S> {
     }
 }
 
+/// The fetch's input, `strip_for_plan_input`ed: fields lose their arguments and conditions.
 fn create_input_selection_set(
     input_selections: &FetchStepSelections<MultiTypeFetchStep>,
     arena: &Arena,
-) -> SelectionSet {
-    let selection_set = input_selections.to_non_root_selection_set(arena);
-
-    selection_set.strip_for_plan_input()
+) -> PlanDocument {
+    let mut document = PlanDocument::default();
+    document.selections = input_selections.copy_non_root_into(arena, &mut document.arena);
+    let mut lists = vec![document.selections];
+    while let Some(list) = lists.pop() {
+        for index in 0..document.arena.items(list).len() {
+            let node = document.arena.node_mut(document.arena.items(list)[index]);
+            if node.kind == Kind::Field {
+                node.args = NONE;
+                node.skip_if = NONE;
+                node.include_if = NONE;
+            }
+            lists.push(node.children);
+        }
+    }
+    document
 }
 
 fn create_output_operation(
@@ -842,35 +800,25 @@ fn create_output_operation(
         variables.extend(additional_vars.clone());
     }
 
-    let mut selections = step.output.to_non_root_selection_set(arena);
-    typename::add_typename_for_projection_to_entities(&mut selections, supergraph);
-
-    let operation_def = OperationDefinition {
-        name: None,
-        operation_kind: Some(OperationKind::Query),
-        variable_definitions: Some(variables),
-        selection_set: SelectionSet {
-            items: vec![SelectionItem::Field(FieldSelection {
-                name: "_entities".to_string(),
-                selections,
-                alias: None,
-                arguments: Some(
-                    (
-                        "representations".to_string(),
-                        Value::Variable("representations".to_string()),
-                    )
-                        .into(),
-                ),
-                skip_if: None,
-                include_if: None,
-                omit_from_response: false,
-            })],
-        },
+    let mut document = PlanDocument {
+        kind: Some(OperationKind::Query),
+        variables: Some(variables),
+        ..Default::default()
     };
+    let target = &mut document.arena;
+    let selections = step.output.copy_non_root_into(arena, target);
+    typename::add_typename_for_projection_to_entities(target, selections, supergraph);
+    let representations = (
+        "representations".to_string(),
+        Value::Variable("representations".to_string()),
+    )
+        .into();
+    let entities = target.new_field("_entities", None, Some(&representations), None);
+    target.node_mut(entities).children = selections;
+    target.push(document.selections, entities);
 
-    let document = minify_operation(operation_def, supergraph).expect("Failed to minify");
-
-    PlanningFetchOperation::from_anonymous_operation(document)
+    minify(&mut document, supergraph).expect("Failed to minify");
+    PlanningFetchOperation::from_plan_document(document)
 }
 
 impl FetchNode<Planning> {
@@ -927,7 +875,10 @@ impl FetchNode<Planning> {
                     operation_kind: Some(OperationKind::Query),
                     operation,
                     custom_scalar_paths,
-                    requires: Some(RequiresSelectionSet::from(&planner_requires)),
+                    requires: Some(RequiresSelectionSet::from_list(
+                        &planner_requires.arena,
+                        planner_requires.selections,
+                    )),
                     planner_requires: Some(Box::new(planner_requires)),
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
@@ -940,20 +891,21 @@ impl FetchNode<Planning> {
             }
             false => {
                 let root_type_name = supergraph.expect_root_type_name(Some(&step.operation_kind));
-                let mut selection_set = step.output.to_root_selection_set(arena, root_type_name);
+                let mut document = PlanDocument {
+                    kind: Some(step.operation_kind.clone()),
+                    variables: step.variable_definitions.clone(),
+                    ..Default::default()
+                };
+                document.selections =
+                    step.output
+                        .copy_root_into(arena, &mut document.arena, root_type_name);
                 typename::add_typename_for_projection(
-                    &mut selection_set,
+                    &mut document.arena,
+                    document.selections,
                     root_type_name,
                     supergraph,
                 );
-                let operation_def = OperationDefinition {
-                    name: None,
-                    operation_kind: Some(step.operation_kind.clone()),
-                    selection_set,
-                    variable_definitions: step.variable_definitions.clone(),
-                };
-                let document =
-                    minify_operation(operation_def, supergraph).expect("Failed to minify");
+                minify(&mut document, supergraph).expect("Failed to minify");
 
                 FetchNode {
                     id: step.id,
@@ -961,7 +913,7 @@ impl FetchNode<Planning> {
                     variable_usages: step.variable_usages.clone(),
                     operation_kind: Some(step.operation_kind.clone()),
                     planner_requires: None,
-                    operation: PlanningFetchOperation::from_anonymous_operation(document),
+                    operation: PlanningFetchOperation::from_plan_document(document),
                     custom_scalar_paths: custom_scalar_paths_from_fetch_output(
                         &step.output,
                         arena,
@@ -1229,7 +1181,8 @@ mod tests {
         utils::parsing::parse_schema,
     };
 
-    use super::{custom_scalar_paths_from_fetch_output, SelectionSet};
+    use super::custom_scalar_paths_from_fetch_output;
+    use crate::query_planner::ast::selection_set::SelectionSet;
 
     fn selection_set_for_field(field_name: &str) -> SelectionSet {
         let selection = format!("{{ {field_name} }}");
@@ -1303,12 +1256,13 @@ mod stored_size_tests {
             ("PlanNode", size_of::<PlanNode>(), 32),
             // `run_if` is an `Option<Vec<_>>`, `entity_reuse` an `Option<Arc<_>>`. Executable nodes
             // keep no dependency ids, the plan's schedule has them by position
-            ("FetchNode", size_of::<FetchNode>(), 272),
-            ("BatchFetchNode", size_of::<BatchFetchNode>(), 168),
+            ("FetchNode", size_of::<FetchNode>(), 280),
+            ("BatchFetchNode", size_of::<BatchFetchNode>(), 176),
             (
                 "SubgraphFetchOperation",
+                // `flat`, the fetch's document the executor reads, is one more pointer
                 size_of::<crate::query_planner::ast::operation::SubgraphFetchOperation>(),
-                48,
+                56,
             ),
         ] {
             assert_eq!(

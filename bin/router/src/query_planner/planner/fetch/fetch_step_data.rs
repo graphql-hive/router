@@ -6,7 +6,7 @@ use petgraph::graph::NodeIndex;
 
 use crate::query_planner::{
     ast::{
-        flat::arena::Arena,
+        flat::{arena::Arena, plan_document::DisplayList},
         merge_path::{Condition, MergePath, Segment},
         operation::VariableDefinition,
     },
@@ -78,13 +78,13 @@ impl<State> Display for DisplayStep<'_, State> {
         write!(f, "[{}]: ", step.service_name)?;
 
         for (def_name, selections) in step.input.iter() {
-            write!(f, "{}/{} ", def_name, arena.export(selections))?;
+            write!(f, "{}/{} ", def_name, DisplayList(arena, selections))?;
         }
 
         write!(f, "-> ")?;
 
         for (def_name, selections) in step.output.iter() {
-            write!(f, "{}/{} ", def_name, arena.export(selections))?;
+            write!(f, "{}/{} ", def_name, DisplayList(arena, selections))?;
         }
 
         write!(f, "at $.{}", step.response_path.join("."))?;

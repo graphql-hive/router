@@ -729,7 +729,7 @@ mod tests {
         let operation = parse_operation(operation);
         let normalized = normalize_operation(supergraph_state, &operation, None).unwrap();
         let (root_type_name, plan) =
-            ProjectionPlan::from_operation(normalized.executable_operation(), schema_metadata);
+            ProjectionPlan::from_operation(&normalized.document, schema_metadata);
         let data_json: sonic_rs::Value = sonic_rs::from_str(data).unwrap();
         let data = Value::from(data_json.as_ref());
 
@@ -776,7 +776,7 @@ mod tests {
         );
         let normalized = normalize_operation(&supergraph_state, &operation, None).unwrap();
         let (root_type_name, plan) =
-            ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+            ProjectionPlan::from_operation(&normalized.document, &schema_metadata);
 
         // Parsed from text rather than built with `json!`, so object keys keep the order
         // written here: the JSON scalar must come out in the order the subgraph sent it.
@@ -847,7 +847,7 @@ mod tests {
         );
         let normalized = normalize_operation(&supergraph_state, &operation, None).unwrap();
         let (root_type_name, plan) =
-            ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+            ProjectionPlan::from_operation(&normalized.document, &schema_metadata);
 
         // One empty list and one populated, so the list index cache is reused
         // across items that do not agree on which fields are present.
@@ -902,7 +902,7 @@ mod tests {
         );
         let normalized = normalize_operation(&supergraph, &operation, None).unwrap();
         let (_, plan) = ProjectionPlan::from_operation(
-            normalized.executable_operation(),
+            &normalized.document,
             &planner.consumer_schema.schema_metadata(),
         );
         let data = Value::Object(vec![(
@@ -958,8 +958,7 @@ mod tests {
         ] {
             let operation = parse_operation(&format!(r#"query {{ {field} {{ name nick }} }}"#));
             let normalized = normalize_operation(&supergraph_state, &operation, None).unwrap();
-            let (_, plan) =
-                ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+            let (_, plan) = ProjectionPlan::from_operation(&normalized.document, &schema_metadata);
             let root_fields = plan.root_fields();
             assert_eq!(root_fields.len(), 1, "one root field for {field}");
             assert_eq!(
@@ -1191,8 +1190,7 @@ mod tests {
         // itself is empty.
         let operation = parse_operation(r#"query { foo @skip(if: true) }"#);
         let normalized = normalize_operation(&supergraph_state, &operation, None).unwrap();
-        let (_, plan) =
-            ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+        let (_, plan) = ProjectionPlan::from_operation(&normalized.document, &schema_metadata);
         assert!(
             plan.is_empty(),
             "statically skipped operation should produce an empty plan"
@@ -1210,8 +1208,7 @@ mod tests {
         let operation =
             parse_operation(r#"query Example($skip: Boolean!) { foo @skip(if: $skip) }"#);
         let normalized = normalize_operation(&supergraph_state, &operation, None).unwrap();
-        let (_, plan) =
-            ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+        let (_, plan) = ProjectionPlan::from_operation(&normalized.document, &schema_metadata);
         assert!(
             !plan.is_empty(),
             "variable-skipped operation keeps its plan until execution"
@@ -1271,7 +1268,7 @@ mod tests {
         );
         let normalized = normalize_operation(&supergraph_state, &operation, None).unwrap();
         let (root_type_name, plan) =
-            ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+            ProjectionPlan::from_operation(&normalized.document, &schema_metadata);
         let plan = Arc::new(plan);
 
         let project_variant = |plan: &ProjectionPlan, typename: &str| -> String {
@@ -1341,7 +1338,7 @@ mod tests {
             parse_operation(r#"{ user { orders { id } _internal_qp_alias_0: orders { id } } }"#);
         let normalized = normalize_operation(&supergraph_state, &operation, None).unwrap();
         let (root_type_name, plan) =
-            ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+            ProjectionPlan::from_operation(&normalized.document, &schema_metadata);
         let data_json: sonic_rs::Value = sonic_rs::from_str(
             r#"{"user":{"orders":[{"id":"1"},null],"_internal_qp_alias_0":[{"id":"1"},null]}}"#,
         )

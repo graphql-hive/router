@@ -9,7 +9,6 @@ pub mod operation;
 pub mod requires;
 pub mod selection_item;
 pub mod selection_set;
-pub mod semantic_eq;
 pub mod shrink;
 
 pub(crate) mod arguments;

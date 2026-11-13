@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::query_planner::ast::flat::plan_document::PlanDocument;
 use crate::query_planner::ast::operation::OperationDefinition;
 use crate::query_planner::state::supergraph_state::OperationKind;
 
@@ -27,6 +28,8 @@ pub struct OnGraphqlAnalysisHookPayload<'exec> {
     pub filtered_operation_for_plan: &'exec OperationDefinition,
     pub client_request_details: Arc<ClientRequestDetails<'exec>>,
     pub graphql_params: &'exec GraphQLParams,
+    /// `filtered_operation_for_plan`, flat, what the filters walk.
+    document_for_plan: &'exec PlanDocument,
     schema_metadata: &'exec SchemaMetadata,
     variable_payload: &'exec CoerceVariablesPayload,
     operation_filter_visitors: Vec<OperationFilterVisitor<'exec>>,
@@ -39,6 +42,7 @@ impl<'exec> OnGraphqlAnalysisHookPayload<'exec> {
         context: &'exec PluginContext,
         request_context: RequestContextApi,
         filtered_operation_for_plan: &'exec OperationDefinition,
+        document_for_plan: &'exec PlanDocument,
         client_request_details: Arc<ClientRequestDetails<'exec>>,
         graphql_params: &'exec GraphQLParams,
         schema_metadata: &'exec SchemaMetadata,
@@ -49,6 +53,7 @@ impl<'exec> OnGraphqlAnalysisHookPayload<'exec> {
             context,
             request_context,
             filtered_operation_for_plan,
+            document_for_plan,
             client_request_details,
             graphql_params,
             schema_metadata,
@@ -94,9 +99,9 @@ impl<'exec> OnGraphqlAnalysisHookPayload<'exec> {
         }
 
         let schema_metadata = self.schema_metadata;
-        let operation = self.filtered_operation_for_plan;
+        let document = self.document_for_plan;
 
-        let root_type_name = match operation.operation_kind {
+        let root_type_name = match document.kind {
             None | Some(OperationKind::Query) => schema_metadata.query_type_name.as_deref(),
             Some(OperationKind::Mutation) => schema_metadata.mutation_type_name.as_deref(),
             Some(OperationKind::Subscription) => schema_metadata.subscription_type_name.as_deref(),
@@ -106,7 +111,7 @@ impl<'exec> OnGraphqlAnalysisHookPayload<'exec> {
         let mut visitors = self.operation_filter_visitors;
         OperationFilter::new(schema_metadata).filter(
             root_type_name,
-            &operation.selection_set,
+            document,
             self.variable_payload,
             |selection| {
                 for visitor in visitors.iter_mut() {

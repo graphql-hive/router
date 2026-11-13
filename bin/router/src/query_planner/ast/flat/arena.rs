@@ -11,12 +11,13 @@ use std::collections::BTreeSet;
 
 use ahash::HashMap;
 
-use super::{Interner, Kind, Span, Sym, NONE};
+use super::{selection_tree::Sel, Interner, Kind, Span, Sym, NONE};
+use crate::query_planner::ast::selection_set::{FieldSelection, InlineFragmentSelection};
 use crate::query_planner::ast::{
     arguments::ArgumentsMap,
     merge_path::{Condition, MergePath, Segment},
     selection_item::SelectionItem,
-    selection_set::{FieldSelection, InlineFragmentSelection, ResponseKeyConflict, SelectionSet},
+    selection_set::{ResponseKeyConflict, SelectionSet},
 };
 
 pub type NodeId = u32;
@@ -26,6 +27,13 @@ pub type ArgsId = u32;
 /// see `Arena::lists_equal`, never by id.
 #[derive(Clone, Copy, Debug)]
 pub struct ListId(u32);
+
+impl ListId {
+    /// The id as a number, for keying things built from a list. Not for comparing lists.
+    pub fn index(self) -> u32 {
+        self.0
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Node {
@@ -41,7 +49,7 @@ pub struct Node {
     pub children: ListId,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Arena {
     strings: Interner,
     args: Vec<ArgumentsMap>,
@@ -199,7 +207,7 @@ impl Arena {
         self.lists[list.0 as usize].len = kept as u32;
     }
 
-    fn add_node(&mut self, node: Node) -> NodeId {
+    pub fn add_node(&mut self, node: Node) -> NodeId {
         self.nodes.push(node);
         (self.nodes.len() - 1) as NodeId
     }
@@ -254,8 +262,97 @@ impl Arena {
         self.add_node(node)
     }
 
+    /// A copy of `list` from `other`, strings and arguments interned in this arena.
+    pub fn copy_from(&mut self, other: &Arena, list: ListId) -> ListId {
+        // collect first: pushing one by one would move the list each time a child list lands
+        // after it
+        let nodes: Vec<NodeId> = other
+            .items(list)
+            .iter()
+            .map(|&id| self.copy_node_from(other, id))
+            .collect();
+        let copy = self.new_list();
+        self.set_items(copy, &nodes);
+        copy
+    }
+
+    fn copy_node_from(&mut self, other: &Arena, id: NodeId) -> NodeId {
+        let children = self.copy_from(other, other.node(id).children);
+        self.copy_shell_from(other, id, children)
+    }
+
+    /// The node `id` of `other`, without what's under it: `children` goes there instead.
+    pub fn copy_shell_from(&mut self, other: &Arena, id: NodeId, children: ListId) -> NodeId {
+        let source = other.node(id);
+        let node = Node {
+            kind: source.kind,
+            name: self.intern(other.str(source.name)),
+            alias: self.intern_opt(other.opt_str(source.alias)),
+            args: other
+                .args(source.args)
+                .map_or(NONE, |args| self.intern_args(args)),
+            skip_if: self.intern_opt(other.opt_str(source.skip_if)),
+            include_if: self.intern_opt(other.opt_str(source.include_if)),
+            omit_from_response: source.omit_from_response,
+            children,
+        };
+        self.add_node(node)
+    }
+
+    /// Selections of a `SelectionTree`, a field set say, copied in.
+    pub fn copy_from_tree<'a>(&mut self, items: impl Iterator<Item = Sel<'a>>) -> ListId {
+        let nodes: Vec<NodeId> = items
+            .map(|sel| {
+                let children = self.copy_from_tree(sel.children());
+                let attributes = sel.attributes();
+                let node = Node {
+                    kind: sel.kind(),
+                    name: self.intern(sel.name()),
+                    alias: self.intern_opt(attributes.and_then(|a| a.alias.as_deref())),
+                    args: attributes
+                        .and_then(|a| a.arguments.as_ref())
+                        .map_or(NONE, |args| self.intern_args(args)),
+                    skip_if: self.intern_opt(sel.condition().and_then(skip_of)),
+                    include_if: self.intern_opt(sel.condition().and_then(include_of)),
+                    omit_from_response: false,
+                    children,
+                };
+                self.add_node(node)
+            })
+            .collect();
+        self.list_of(&nodes)
+    }
+
+    /// A new list of `nodes`.
+    pub fn list_of(&mut self, nodes: &[NodeId]) -> ListId {
+        let list = self.new_list();
+        self.set_items(list, nodes);
+        list
+    }
+
+    /// `{ __typename }`
+    pub fn typename_list(&mut self) -> ListId {
+        let typename = self.new_field("__typename", None, None, None);
+        self.list_of(&[typename])
+    }
+
+    pub fn new_spread(&mut self, fragment_name: &str) -> NodeId {
+        let node = Node {
+            kind: Kind::FragmentSpread,
+            name: self.intern(fragment_name),
+            alias: NONE,
+            args: NONE,
+            skip_if: NONE,
+            include_if: NONE,
+            omit_from_response: false,
+            children: self.new_list(),
+        };
+        self.add_node(node)
+    }
+
     // ---- the tree
 
+    // ponytail: only `PlanDocument::from_tree` (benches, tests) still brings a tree in
     pub fn import(&mut self, selection_set: &SelectionSet) -> ListId {
         let list = self.new_list();
         for item in &selection_set.items {
@@ -304,6 +401,7 @@ impl Arena {
         self.add_node(node)
     }
 
+    // ponytail: plugin hooks still take a tree, built from here on demand. Goes when they don't
     pub fn export(&self, list: ListId) -> SelectionSet {
         SelectionSet {
             items: self
@@ -457,6 +555,42 @@ impl Arena {
         }
     }
 
+    /// `SemanticEq`: the same items in any order. Fields compare by name, alias, arguments,
+    /// conditions, `omit_from_response` and what's under them.
+    pub fn same_selections(&self, a: ListId, b: ListId) -> bool {
+        let (a, b) = (self.items(a), self.items(b));
+        if a.len() != b.len() {
+            return false;
+        }
+        let mut matched = vec![false; b.len()];
+        a.iter().all(|&left| {
+            let found = b
+                .iter()
+                .enumerate()
+                .position(|(index, &right)| !matched[index] && self.same_item(left, right));
+            found.map(|index| matched[index] = true).is_some()
+        })
+    }
+
+    fn same_item(&self, a: NodeId, b: NodeId) -> bool {
+        let (na, nb) = (self.node(a), self.node(b));
+        match (na.kind, nb.kind) {
+            (Kind::Field, Kind::Field) => {
+                self.same_field(a, b)
+                    && self.same_condition(a, b)
+                    && na.omit_from_response == nb.omit_from_response
+                    && self.same_selections(na.children, nb.children)
+            }
+            (Kind::InlineFragment, Kind::InlineFragment) => {
+                na.name == nb.name
+                    && self.same_condition(a, b)
+                    && self.same_selections(na.children, nb.children)
+            }
+            (Kind::FragmentSpread, Kind::FragmentSpread) => na.name == nb.name,
+            _ => false,
+        }
+    }
+
     /// `selection_items_are_subset_of`: every item of `target` is in `source`.
     pub fn is_subset(&self, source: ListId, target: ListId) -> bool {
         self.items(target).iter().all(|&t| {
@@ -485,6 +619,7 @@ impl Arena {
     }
 
     /// `is_subset` with `target` still a tree: every item of `target` is in `source`.
+    #[cfg(test)]
     pub fn contains_tree(&self, source: ListId, target: &SelectionSet) -> bool {
         target.items.iter().all(|t| {
             self.items(source)
@@ -493,6 +628,7 @@ impl Arena {
         })
     }
 
+    #[cfg(test)]
     fn item_contains_tree(&self, source: NodeId, target: &SelectionItem) -> bool {
         let s = self.node(source);
         let same_condition = |skip_if: &Option<String>, include_if: &Option<String>| {
@@ -717,6 +853,10 @@ mod tests {
             assert_eq!(arena.export(list).to_string(), tree.to_string(), "{query}");
             let copy = arena.copy(list);
             assert_eq!(arena.export(copy).to_string(), tree.to_string(), "{query}");
+            let mut other = Arena::new();
+            other.intern("shifts the symbols");
+            let copy = other.copy_from(&arena, list);
+            assert_eq!(other.export(copy).to_string(), tree.to_string(), "{query}");
         }
     }
 

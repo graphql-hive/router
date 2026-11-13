@@ -62,11 +62,13 @@ use xxhash_rust::xxh3::Xxh3;
 use crate::query_planner::{
     ast::requires::RequiresSelectionSet,
     ast::{
-        hash::{ASTHash, SemanticShapeHashContext},
-        minification::minify_operation,
-        operation::{OperationDefinition, PlanningFetchOperation, VariableDefinition},
-        selection_item::SelectionItem,
-        selection_set::{FieldSelection, SelectionSet},
+        flat::{
+            arena::{Arena, ListId},
+            plan_document::PlanDocument,
+            Kind,
+        },
+        minification::minify,
+        operation::{PlanningFetchOperation, VariableDefinition},
         value::Value,
     },
     planner::error::QueryPlanError,
@@ -95,9 +97,10 @@ struct ShapeKey {
     run_if_hash: u64,
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+/// What decides the list a representations variable sends, next to the `requires` (compared in
+/// the arena, see `get_or_create_representations_var`).
+#[derive(Clone, PartialEq, Eq)]
 struct RepresentationsInputKey {
-    requires: SelectionSet,
     input_rewrites: Option<Vec<FetchRewrite>>,
     context: Option<Box<FetchContext>>,
     merge_paths: Vec<FlattenNodePath>,
@@ -107,28 +110,38 @@ struct RepresentationsInputKey {
 }
 
 struct BatchFetchBuilder<'a> {
+    /// Where the candidates' `requires` and `_entities` selections are.
+    arena: &'a Arena,
     merged_non_representation_variables: &'a [VariableDefinition],
     operation_variable_definitions: Vec<VariableDefinition>,
-    operation_selection_items: Vec<SelectionItem>,
+    /// The batched operation, one `_entities` alias per shape group.
+    document: PlanDocument,
     batched_aliases: Vec<EntityBatchAlias>,
     used_variable_names: HashSet<String>,
     representations_var_index: usize,
     variable_usages: BTreeSet<String>,
-    representations_var_by_input_key: HashMap<RepresentationsInputKey, String>,
+    /// The key, the `requires` list, and the variable's name.
+    // ponytail: a linear scan, there's one entry per alias and aliases are few
+    representations_vars: Vec<(RepresentationsInputKey, ListId, String)>,
     custom_scalar_paths: CustomScalarPaths,
 }
 
 impl<'a> BatchFetchBuilder<'a> {
     fn new(
+        arena: &'a Arena,
         merged_non_representation_variables: &'a [VariableDefinition],
         alias_count: usize,
     ) -> Self {
         Self {
+            arena,
             merged_non_representation_variables,
             operation_variable_definitions: Vec::with_capacity(
                 alias_count + merged_non_representation_variables.len(),
             ),
-            operation_selection_items: Vec::with_capacity(alias_count),
+            document: PlanDocument {
+                kind: Some(OperationKind::Query),
+                ..Default::default()
+            },
             batched_aliases: Vec::with_capacity(alias_count),
             used_variable_names: merged_non_representation_variables
                 .iter()
@@ -136,7 +149,7 @@ impl<'a> BatchFetchBuilder<'a> {
                 .collect(),
             representations_var_index: 0,
             variable_usages: BTreeSet::new(),
-            representations_var_by_input_key: HashMap::new(),
+            representations_vars: Vec::with_capacity(alias_count),
             custom_scalar_paths: CustomScalarPaths::default(),
         }
     }
@@ -163,25 +176,20 @@ impl<'a> BatchFetchBuilder<'a> {
         let (representations_variable_name, shared_variable) =
             self.get_or_create_representations_var(representative, &merge_paths);
 
-        self.operation_selection_items
-            .push(SelectionItem::Field(FieldSelection {
-                name: "_entities".to_string(),
-                selections: representative.entities_selection.clone(),
-                alias: Some(alias.clone()),
-                arguments: Some(
-                    (
-                        "representations".to_string(),
-                        Value::Variable(representations_variable_name.clone()),
-                    )
-                        .into(),
-                ),
-                skip_if: None,
-                include_if: None,
-                omit_from_response: false,
-            }));
+        let target = &mut self.document.arena;
+        let selections = target.copy_from(self.arena, representative.entities_selection);
+        let representations = (
+            "representations".to_string(),
+            Value::Variable(representations_variable_name.clone()),
+        )
+            .into();
+        let entities = target.new_field("_entities", Some(&alias), Some(&representations), None);
+        target.node_mut(entities).children = selections;
+        target.push(self.document.selections, entities);
 
         if let Some(alias_paths) = custom_scalar_paths_for_entities_selection(
-            &representative.entities_selection,
+            self.arena,
+            representative.entities_selection,
             supergraph,
         ) {
             self.custom_scalar_paths
@@ -205,7 +213,7 @@ impl<'a> BatchFetchBuilder<'a> {
             alias,
             representations_variable_name,
             merge_paths: merge_paths.into(),
-            requires: RequiresSelectionSet::from(&representative.requires),
+            requires: RequiresSelectionSet::from_list(self.arena, representative.requires),
             input_rewrites: representative.input_rewrites.clone(),
             output_rewrites: representative.output_rewrites.clone(),
             context: representative.context.clone(),
@@ -238,16 +246,17 @@ impl<'a> BatchFetchBuilder<'a> {
         merge_paths: &[FlattenNodePath],
     ) -> (String, bool) {
         let representations_input_key = RepresentationsInputKey {
-            requires: representative.requires.clone(),
             input_rewrites: representative.input_rewrites.clone(),
             context: representative.context.clone(),
             merge_paths: merge_paths.to_vec(),
             run_if: representative.run_if.clone(),
         };
 
-        if let Some(existing_name) = self
-            .representations_var_by_input_key
-            .get(&representations_input_key)
+        if let Some((_, _, existing_name)) =
+            self.representations_vars.iter().find(|(key, requires, _)| {
+                *key == representations_input_key
+                    && self.arena.lists_equal(*requires, representative.requires)
+            })
         {
             return (existing_name.clone(), true);
         }
@@ -274,8 +283,11 @@ impl<'a> BatchFetchBuilder<'a> {
                 default_value: None,
             });
 
-        self.representations_var_by_input_key
-            .insert(representations_input_key, name.clone());
+        self.representations_vars.push((
+            representations_input_key,
+            representative.requires,
+            name.clone(),
+        ));
 
         (name, false)
     }
@@ -289,22 +301,16 @@ impl<'a> BatchFetchBuilder<'a> {
         self.operation_variable_definitions
             .extend(self.merged_non_representation_variables.iter().cloned());
 
-        let operation_definition = OperationDefinition {
-            name: None,
-            operation_kind: Some(OperationKind::Query),
-            selection_set: SelectionSet {
-                items: self.operation_selection_items,
-            },
-            variable_definitions: Some(self.operation_variable_definitions),
-        };
+        let mut document = self.document;
+        document.variables = Some(self.operation_variable_definitions);
 
-        let document = minify_operation(operation_definition, supergraph).map_err(|error| {
+        minify(&mut document, supergraph).map_err(|error| {
             QueryPlanError::Internal(format!(
                 "Failed to minify batched entities operation: {error}"
             ))
         })?;
 
-        let mut operation = PlanningFetchOperation::from_anonymous_operation(document);
+        let mut operation = PlanningFetchOperation::from_plan_document(document);
         if self
             .batched_aliases
             .iter()
@@ -369,8 +375,10 @@ struct EntityFetch {
     service_name: String,
     flatten_path: FlattenNodePath,
     variable_usages: Option<BTreeSet<String>>,
-    requires: SelectionSet,
-    entities_selection: SelectionSet,
+    /// Both in the arena `optimize_parallel_node` keeps for its candidates, fragment spreads
+    /// inlined.
+    requires: ListId,
+    entities_selection: ListId,
     input_rewrites: Option<Vec<FetchRewrite>>,
     output_rewrites: Option<Vec<FetchRewrite>>,
     context: Option<Box<FetchContext>>,
@@ -387,17 +395,22 @@ impl EntityFetch {
     /// Exact shape comparison after hash key match.
     ///
     /// We verify all parts are identical, not only the hash value.
-    fn eq_shape(&self, right: &EntityFetch) -> bool {
+    fn eq_shape(&self, right: &EntityFetch, arena: &Arena) -> bool {
         self.shape_key == right.shape_key
-            && self.requires == right.requires
-            && self.entities_selection == right.entities_selection
+            && arena.lists_equal(self.requires, right.requires)
+            && arena.lists_equal(self.entities_selection, right.entities_selection)
             && self.input_rewrites == right.input_rewrites
             && self.output_rewrites == right.output_rewrites
             && self.context == right.context
             && self.run_if == right.run_if
     }
 
-    fn from_node(index: usize, node: &PlanNode) -> Result<Option<Self>, QueryPlanError> {
+    /// Copies the fetch's `requires` and `_entities` selections into `arena`.
+    fn from_node(
+        index: usize,
+        node: &PlanNode,
+        arena: &mut Arena,
+    ) -> Result<Option<Self>, QueryPlanError> {
         // We only batch Flatten(Fetch) as those represent the entity calls
         let PlanNode::Flatten(flatten_node) = node else {
             return Ok(None);
@@ -407,29 +420,36 @@ impl EntityFetch {
             return Ok(None);
         };
 
-        let Some(entities_field) = fetch_node
-            .operation
-            .document
-            .operation
-            .selection_set
-            .entities_field()
+        let document = &fetch_node.operation.flat;
+        let Some(entities_field) = document
+            .arena
+            .items(document.selections)
+            .iter()
+            .copied()
+            .find(|&id| {
+                let node = document.arena.node(id);
+                node.kind == Kind::Field && document.arena.str(node.name) == "_entities"
+            })
+        else {
+            return Ok(None);
+        };
+        let entities_field = document.arena.node(entities_field);
+
+        let Some(Value::Variable(representations_var)) = document
+            .arena
+            .args(entities_field.args)
+            .and_then(|args| args.get_argument("representations"))
         else {
             return Ok(None);
         };
 
-        let Some(representations_var) = entities_field.representations_variable_name() else {
+        let Some(requires) = fetch_node.planner_requires.as_deref() else {
             return Ok(None);
         };
 
-        let Some(requires) = fetch_node.planner_requires.clone() else {
-            return Ok(None);
-        };
-
-        let requires =
-            requires.inline_fragment_spreads(&fetch_node.operation.document.fragments)?;
-        let entities_selection = entities_field
-            .selections
-            .inline_fragment_spreads(&fetch_node.operation.document.fragments)?;
+        let requires = document.copy_inlined(&requires.arena, requires.selections, arena)?;
+        let entities_selection =
+            document.copy_inlined(&document.arena, entities_field.children, arena)?;
         let input_rewrites = fetch_node.input_rewrites.clone();
         let output_rewrites = fetch_node.output_rewrites.clone();
         let context = fetch_node.context.clone();
@@ -447,49 +467,24 @@ impl EntityFetch {
             // for as long as the response borrows it, which costs every batch fetch for a rare
             // case. so these stay separate fetches, they still run in parallel, and you-know-who
             // doesn't batch at all anyway...
-            if fetch_node
-                .operation
-                .document
-                .operation
-                .variable_definitions
-                .iter()
-                .flatten()
-                .any(|var| {
-                    context_variables.contains(&var.name)
-                        && matches!(var.variable_type, TypeNode::NonNull(_))
-                })
-            {
+            if document.variables.iter().flatten().any(|var| {
+                context_variables.contains(&var.name)
+                    && matches!(var.variable_type, TypeNode::NonNull(_))
+            }) {
                 return Ok(None);
             }
         }
-        let non_representations_variable_definitions = fetch_node
-            .operation
-            .document
-            .operation
-            .variable_definitions
-            .clone()
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|var| var.name != representations_var)
+        let non_representations_variable_definitions = document
+            .variables
+            .iter()
+            .flatten()
+            .filter(|var| var.name != *representations_var)
+            .cloned()
             .collect::<Vec<_>>();
 
-        let fragments = &fetch_node.operation.document.fragments;
-
-        // Compute the order-independent hash for `requires`
-        let mut hasher = Xxh3::new();
-        let shape_context = SemanticShapeHashContext::new(fragments);
-        requires.semantic_shape_hash(&mut hasher, &shape_context);
-        let requires_hash = hasher.finish();
-
-        // Compute the order-independent hash for `_entities`
-        let mut hasher = Xxh3::new();
-        let shape_context = SemanticShapeHashContext::new(fragments);
-        entities_selection.semantic_shape_hash(&mut hasher, &shape_context);
-        let entities_selection_hash = hasher.finish();
-
         let shape_key = ShapeKey {
-            requires_hash,
-            entities_selection_hash,
+            requires_hash: list_hash(arena, requires),
+            entities_selection_hash: list_hash(arena, entities_selection),
             input_rewrites_hash: fetch_rewrites_hash(input_rewrites.as_deref()),
             output_rewrites_hash: fetch_rewrites_hash(output_rewrites.as_deref()),
             context_rewrites_hash: fetch_rewrites_hash(FetchContext::rewrites(&context)),
@@ -515,6 +510,32 @@ impl EntityFetch {
             entity_reuse: fetch_node.entity_reuse.clone(),
         }))
     }
+}
+
+/// A hash of `list` that's equal for lists `Arena::lists_equal` calls equal.
+fn list_hash(arena: &Arena, list: ListId) -> u64 {
+    fn hash_list(arena: &Arena, list: ListId, hasher: &mut Xxh3) {
+        arena.items(list).len().hash(hasher);
+        for &id in arena.items(list) {
+            let node = arena.node(id);
+            std::mem::discriminant(&node.kind).hash(hasher);
+            // one arena, so equal strings are equal symbols
+            (node.name, node.alias, node.skip_if, node.include_if).hash(hasher);
+            // no arguments and empty arguments are the same
+            let has_args = arena.args(node.args).is_some_and(|args| !args.is_empty());
+            (if has_args {
+                arena.args_hash(node.args)
+            } else {
+                0
+            })
+            .hash(hasher);
+            hash_list(arena, node.children, hasher);
+        }
+    }
+
+    let mut hasher = Xxh3::new();
+    hash_list(arena, list, &mut hasher);
+    hasher.finish()
 }
 
 /// Candidates that can share non-representations variables.
@@ -633,7 +654,8 @@ fn optimize_parallel_node(
 ) -> Result<Vec<PlanNode>, QueryPlanError> {
     // Find all `Flatten(Fetch)` candidates
     // and group by subgraph.
-    let candidates_by_subgraph = partition_by_subgraph(&nodes)?;
+    let mut arena = Arena::new();
+    let candidates_by_subgraph = partition_by_subgraph(&nodes, &mut arena)?;
 
     let mut batch_node_replacements: HashMap<usize, PlanNode> = HashMap::new();
     let mut removed_indices: HashSet<usize> = HashSet::new();
@@ -650,7 +672,7 @@ fn optimize_parallel_node(
             }
 
             // Split groups by fetch shape
-            let shape_groups = partition_by_shape(variable_group.candidates);
+            let shape_groups = partition_by_shape(variable_group.candidates, &arena);
 
             let Some(first_candidate) = shape_groups.first().and_then(|group| group.first()) else {
                 continue;
@@ -684,7 +706,7 @@ fn optimize_parallel_node(
 
                 // Build one `BatchFetch` node from each final group
                 let batch_fetch_node =
-                    build_batched_fetch_node(chunk, &variables, supergraph, max_aliases)?;
+                    build_batched_fetch_node(chunk, &variables, &arena, supergraph, max_aliases)?;
 
                 batch_node_replacements.insert(
                     first_index,
@@ -760,11 +782,12 @@ fn shared_entity_reuse(shape_group: &[EntityFetch]) -> Option<std::sync::Arc<Ent
 
 fn partition_by_subgraph(
     nodes: &[PlanNode],
+    arena: &mut Arena,
 ) -> Result<HashMap<String, Vec<EntityFetch>>, QueryPlanError> {
     let mut candidates_by_subgraph: HashMap<String, Vec<EntityFetch>> = HashMap::new();
 
     for (index, node) in nodes.iter().enumerate() {
-        if let Some(candidate) = EntityFetch::from_node(index, node)? {
+        if let Some(candidate) = EntityFetch::from_node(index, node, arena)? {
             candidates_by_subgraph
                 .entry(candidate.service_name.clone())
                 .or_default()
@@ -813,7 +836,7 @@ fn next_unique_representations_var_name(
 /// This handles hash collisions safely.
 ///
 /// Group insertion order is stable, so alias naming is stable too.
-fn partition_by_shape(candidates: Vec<EntityFetch>) -> Vec<Vec<EntityFetch>> {
+fn partition_by_shape(candidates: Vec<EntityFetch>, arena: &Arena) -> Vec<Vec<EntityFetch>> {
     let mut groups: Vec<Vec<EntityFetch>> = Vec::new();
     let mut by_key: HashMap<ShapeKey, Vec<usize>> = HashMap::new();
 
@@ -822,7 +845,7 @@ fn partition_by_shape(candidates: Vec<EntityFetch>) -> Vec<Vec<EntityFetch>> {
             for &group_index in indices {
                 // Compare against the first element in the group,
                 // since all elements in a group have the same shape.
-                if groups[group_index][0].eq_shape(&candidate) {
+                if groups[group_index][0].eq_shape(&candidate, arena) {
                     groups[group_index].push(candidate);
                     continue 'candidates_loop;
                 }
@@ -959,6 +982,7 @@ fn merge_variable_definitions(
 fn build_batched_fetch_node(
     shape_groups: &[Vec<EntityFetch>],
     merged_non_representation_variables: &[VariableDefinition],
+    arena: &Arena,
     supergraph: &SupergraphState,
     max_aliases: usize,
 ) -> Result<BatchFetchNode, QueryPlanError> {
@@ -969,8 +993,11 @@ fn build_batched_fetch_node(
             QueryPlanError::Internal("Batched entities candidates were empty".to_string())
         })?;
 
-    let mut builder =
-        BatchFetchBuilder::new(merged_non_representation_variables, shape_groups.len());
+    let mut builder = BatchFetchBuilder::new(
+        arena,
+        merged_non_representation_variables,
+        shape_groups.len(),
+    );
 
     for (index, shape_group) in shape_groups.iter().enumerate() {
         builder.add_shape_group(index, shape_group, supergraph)?;
@@ -1040,10 +1067,10 @@ mod tests {
     use crate::query_planner::{
         ast::{
             document::Document,
+            flat::{plan_document::PlanDocument, Kind},
             merge_path::{FieldPathSegment, MergePath, Segment},
             operation::PlanningFetchOperation,
             requires::RequiresSelectionSet,
-            selection_item::SelectionItem,
         },
         planner::plan_nodes::planning::{
             ConditionGroup, EntityReuse, FetchId, FetchIdList, FetchNode, FetchNodePathSegment,
@@ -1553,19 +1580,19 @@ mod tests {
                     _ => panic!("optimized nodes should be entity fetches"),
                 };
                 hashes.push(operation.operation.hash);
+                let document = &operation.flat;
                 let response = Value::Object(
-                    operation
-                        .document
-                        .operation
-                        .selection_set
-                        .items
+                    document
+                        .arena
+                        .items(document.selections)
                         .iter()
-                        .map(|selection| {
-                            let SelectionItem::Field(field) = selection else {
-                                panic!("entity operations should have top-level fields");
-                            };
+                        .map(|&selection| {
+                            assert!(
+                                document.arena.node(selection).kind == Kind::Field,
+                                "entity operations should have top-level fields"
+                            );
                             (
-                                field.alias.as_deref().unwrap_or(&field.name),
+                                document.arena.response_key(selection),
                                 Value::Array(vec![Value::Object(vec![(
                                     "shippingEstimate",
                                     Value::I64(1),
@@ -1574,7 +1601,7 @@ mod tests {
                         })
                         .collect(),
                 );
-                let cost_plan = compile_actual_subgraph_cost_plan(&operation.document, &supergraph);
+                let cost_plan = compile_actual_subgraph_cost_plan(&operation.flat, &supergraph);
                 let cost = estimate_actual_subgraph_response_cost_with_compiled_plan(
                     &cost_plan,
                     &response,
@@ -1636,13 +1663,7 @@ mod tests {
             let PlanNode::BatchFetch(batch) = node else {
                 panic!("batch");
             };
-            let definitions = batch
-                .operation
-                .document
-                .operation
-                .variable_definitions
-                .as_ref()
-                .unwrap();
+            let definitions = batch.operation.flat.variables.as_ref().unwrap();
             assert_eq!(
                 definitions.iter().any(|variable| variable.name == "b"),
                 index == 1
@@ -2942,14 +2963,28 @@ mod tests {
         requires_query: &str,
         entities_query: &str,
     ) -> PlanNode {
-        let requires = parse_document(requires_query).operation.selection_set;
+        let requires = PlanDocument::from_tree(&parse_document(requires_query));
         let entities_document = parse_document(entities_query);
         let non_representation_variable_names = {
+            // the variable `_entities(representations: $var)` takes
             let representations_var = entities_document
                 .operation
                 .selection_set
-                .entities_field()
-                .and_then(|field| field.representations_variable_name())
+                .items
+                .iter()
+                .find_map(|item| match item {
+                    crate::query_planner::ast::selection_item::SelectionItem::Field(field)
+                        if field.name == "_entities" =>
+                    {
+                        match field.arguments.as_ref()?.get_argument("representations")? {
+                            crate::query_planner::ast::value::Value::Variable(name) => {
+                                Some(name.as_str())
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                })
                 .expect("entities query should define representations variable");
 
             let usages: BTreeSet<String> = entities_document
@@ -2978,7 +3013,10 @@ mod tests {
             operation_kind: Some(OperationKind::Query),
             operation,
             custom_scalar_paths: None,
-            requires: Some(RequiresSelectionSet::from(&requires)),
+            requires: Some(RequiresSelectionSet::from_list(
+                &requires.arena,
+                requires.selections,
+            )),
             planner_requires: Some(Box::new(requires)),
             input_rewrites: None,
             output_rewrites: None,

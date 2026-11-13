@@ -47,14 +47,12 @@ use hive_router::executor::executors::error::SubgraphExecutorError;
 use hive_router::executor::executors::http::build_request_body;
 use hive_router::executor::executors::map::SubgraphExecutorMap;
 use hive_router::executor::indexed::IndexedPlanCache;
-use hive_router::executor::introspection::partition::partition_operation;
 use hive_router::executor::introspection::resolve::IntrospectionContext;
 use hive_router::executor::plugin_context::PluginRequestState;
 use hive_router::executor::plugins::hooks::on_supergraph_load::Supergraph;
 use hive_router::executor::projection::plan::ProjectionPlan;
 use hive_router::executor::response::subgraph_response::SubgraphResponse;
 use hive_router::query_planner::ast::normalization::normalize_operation;
-use hive_router::query_planner::ast::operation::OperationDefinition;
 use hive_router::query_planner::planner::plan_nodes::QueryPlan;
 use hive_router::query_planner::state::supergraph_state::OperationKind;
 use hive_router::query_planner::utils::cancellation::CancellationToken;
@@ -308,7 +306,7 @@ struct Workload {
     plan: QueryPlan,
     projection_plan: Arc<ProjectionPlan>,
     root_type_name: String,
-    operation_for_plan: Arc<OperationDefinition>,
+    document_for_plan: Arc<hive_router::query_planner::ast::flat::plan_document::PlanDocument>,
     executors: Arc<SubgraphExecutorMap>,
     shared: Arc<Shared>,
     client_request: Arc<ClientRequestDetails<'static>>,
@@ -334,15 +332,16 @@ fn workload(
     let document = parse_operation(operation);
     let normalized = normalize_operation(&planner.supergraph, &document, None)
         .expect("the operation normalizes");
-    let operation = normalized.operation;
-    let (root_type_name, projection_plan) = ProjectionPlan::from_operation(&operation, &metadata);
+    let plan_operation = normalized.plan_operation.clone();
+    // no introspection fields, so the whole document is the one for the plan
+    let document_for_plan = Arc::clone(&normalized.document);
+    let (root_type_name, projection_plan) =
+        ProjectionPlan::from_operation(&normalized.document, &metadata);
     let root_type_name = root_type_name.to_string();
-    let partitioned = partition_operation(operation);
-    assert!(partitioned.introspection_operation.is_none());
-    let operation_for_plan = Arc::new(partitioned.downstream_operation);
+    assert!(normalized.document.partition_introspection().is_none());
     let plan = planner
-        .plan_from_normalized_operation(
-            &operation_for_plan,
+        .plan(
+            &plan_operation,
             Default::default(),
             &CancellationToken::new(),
         )
@@ -379,8 +378,9 @@ fn workload(
     }
 
     let method: &'static http::Method = Box::leak(Box::new(http::Method::POST));
-    let url: &'static ntex::url::Url =
-        Box::leak(Box::new(ntex::url::Url::from_static("http://localhost/graphql")));
+    let url: &'static ntex::url::Url = Box::leak(Box::new(ntex::url::Url::from_static(
+        "http://localhost/graphql",
+    )));
     let query: &'static str = Box::leak(operation_text(&document).into_boxed_str());
     let client_request = Arc::new(ClientRequestDetails {
         method,
@@ -411,7 +411,7 @@ fn workload(
         plan,
         projection_plan: Arc::new(projection_plan),
         root_type_name,
-        operation_for_plan,
+        document_for_plan,
         executors: Arc::new(executors),
         shared,
         client_request,
@@ -430,7 +430,9 @@ impl Workload {
         self.shared.rewind();
         let opts = QueryPlanExecutionOpts {
             query_plan: &self.plan,
-            operation_for_plan: Arc::clone(&self.operation_for_plan),
+            document_for_plan: Arc::clone(&self.document_for_plan),
+            document_for_introspection: None,
+            operation_for_plan: None,
             projection_plan: Arc::clone(&self.projection_plan),
             headers_plan: Default::default(),
             extensions_plan: Default::default(),

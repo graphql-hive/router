@@ -38,7 +38,7 @@ pub(super) fn usable(opts: &QueryPlanExecutionOpts<'_>) -> Option<Arc<IndexedRes
                 &opts.projection_plan,
                 &opts.introspection_context.metadata,
                 &opts.operation_type_name,
-                opts.introspection_context.query.as_deref(),
+                opts.document_for_introspection.as_deref(),
                 opts.executors.entity_reuse_enabled(),
             )
         })
@@ -60,8 +60,15 @@ pub(super) async fn execute<'exec>(
 
     // plugins' `on_execute`, like the other pipeline: they may change the data the plan starts
     // from, the errors and the extensions, answer instead, or ask to see the result
+    // the hook's tree, when `opts` came without one
+    let mut built_tree = None;
     let mut on_end_callbacks = vec![];
     if let Some(plugin_req_state) = opts.plugin_req_state.as_ref() {
+        let operation_for_plan = super::operation_tree_for_hook(
+            opts.operation_for_plan.as_deref(),
+            &opts.document_for_plan,
+            &mut built_tree,
+        );
         let mut start_payload = OnExecuteStartHookPayload {
             router_http_request: &plugin_req_state.router_http_request,
             context: &plugin_req_state.context,
@@ -69,7 +76,7 @@ pub(super) async fn execute<'exec>(
                 .request_context
                 .for_plugin::<hooks::OnExecute>(),
             query_plan: opts.query_plan,
-            operation_for_plan: &opts.operation_for_plan,
+            operation_for_plan,
             data: json,
             errors: initial_errors,
             extensions: opts.extensions.extensions,
@@ -113,7 +120,7 @@ pub(super) async fn execute<'exec>(
             &opts.projection_plan,
             &opts.introspection_context.metadata,
             &opts.operation_type_name,
-            Seed::Operation(&opts.operation_for_plan),
+            Seed::Operation(&opts.document_for_plan),
             opts.executors.entity_reuse_enabled(),
         ) {
             Ok(compiled) => Arc::new(compiled),
@@ -247,18 +254,14 @@ pub(super) async fn execute<'exec>(
         if actual > demand_control.operation.operation_max_cost {
             warn!(
                 target: targets::DEMAND_CONTROL,
-                operation_name = ?opts.operation_for_plan.name.as_deref(),
+                operation_name = ?opts.document_for_plan.name.as_deref(),
                 actual_cost = actual,
                 estimated_cost = demand_control.evaluation.estimated_cost,
                 max_cost = demand_control.operation.operation_max_cost,
                 "actual cost exceeds max cost (not enforced)"
             );
         }
-        demand_control.report_telemetry(
-            actual,
-            opts.operation_for_plan.name.as_deref(),
-            &opts.span,
-        );
+        demand_control.report_telemetry(actual, opts.document_for_plan.name.as_deref(), &opts.span);
         demand_control.apply_expose_headers(&mut ctx.response_headers_aggregator, actual);
         demand_control_cost = Some(DemandControlCost {
             estimated: demand_control.evaluation.estimated_cost,

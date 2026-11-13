@@ -19,6 +19,10 @@ use serde::{
 
 use crate::query_planner::{
     ast::{
+        flat::{
+            arena::{Arena, ListId},
+            Kind,
+        },
         selection_item::SelectionItem,
         selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
     },
@@ -211,6 +215,28 @@ impl From<&SelectionSet> for RequiresSelectionSet {
     }
 }
 
+impl RequiresSelectionSet {
+    /// The same as `From<&SelectionSet>`, from a list in an arena.
+    pub fn from_list(arena: &Arena, list: ListId) -> Self {
+        let mut builder = Builder::default();
+        let mut pending = Vec::new();
+        let roots = builder.append_list(arena, list, &mut pending);
+
+        let mut cursor = 0;
+        while let Some(&(node_index, children)) = pending.get(cursor) {
+            cursor += 1;
+            let children = builder.append_list(arena, children, &mut pending);
+            builder.nodes[node_index].set_children(children);
+        }
+
+        Self {
+            names: builder.names.into_boxed_slice(),
+            nodes: builder.nodes.into_boxed_slice(),
+            root_len: roots.len,
+        }
+    }
+}
+
 #[derive(Default)]
 struct Builder<'a> {
     names: Vec<Box<str>>,
@@ -229,6 +255,56 @@ impl<'a> Builder<'a> {
 
     fn intern_opt(&mut self, value: Option<&str>) -> Option<NameId> {
         value.map(|value| self.intern(value))
+    }
+
+    /// `append_siblings` for a list in an arena, children queued in `pending`.
+    fn append_list(
+        &mut self,
+        arena: &Arena,
+        list: ListId,
+        pending: &mut Vec<(usize, ListId)>,
+    ) -> SelectionRange {
+        let start = u32::try_from(self.nodes.len()).expect("node array outgrew u32");
+        for &id in arena.items(list) {
+            let node_index = self.nodes.len();
+            let node = arena.node(id);
+            match node.kind {
+                Kind::Field => {
+                    let name = self.intern(arena.str(node.name));
+                    let alias = self.intern_opt(arena.opt_str(node.alias));
+                    self.nodes.push(StoredSelection::Field {
+                        name,
+                        alias,
+                        children: SelectionRange::default(),
+                        omit_from_response: node.omit_from_response,
+                    });
+                    if !arena.is_empty(node.children) {
+                        pending.push((node_index, node.children));
+                    }
+                }
+                Kind::InlineFragment => {
+                    let type_condition = self.intern(arena.str(node.name));
+                    let skip_if = self.intern_opt(arena.opt_str(node.skip_if));
+                    let include_if = self.intern_opt(arena.opt_str(node.include_if));
+                    self.nodes.push(StoredSelection::InlineFragment {
+                        type_condition,
+                        skip_if,
+                        include_if,
+                        children: SelectionRange::default(),
+                    });
+                    pending.push((node_index, node.children));
+                }
+                Kind::FragmentSpread => {
+                    let name = self.intern(arena.str(node.name));
+                    self.nodes.push(StoredSelection::FragmentSpread { name });
+                }
+            }
+        }
+        let end = u32::try_from(self.nodes.len()).expect("node array outgrew u32");
+        SelectionRange {
+            start,
+            len: end - start,
+        }
     }
 
     fn append_siblings(&mut self, items: &'a [SelectionItem]) -> SelectionRange {
@@ -423,6 +499,20 @@ mod tests {
             let set = selection_set_from_str(source);
             let compact = RequiresSelectionSet::from(&set);
             assert_eq!(json(&set), json(&compact), "JSON diverged for `{source}`");
+        }
+    }
+
+    #[test]
+    fn from_list_matches_the_tree() {
+        for source in SHAPES.iter().chain(&["id ...Foo"]) {
+            let set = selection_set_from_str(source);
+            let mut arena = Arena::new();
+            let list = arena.import(&set);
+            let flat = RequiresSelectionSet::from_list(&arena, list);
+            let tree = RequiresSelectionSet::from(&set);
+            assert_eq!(flat.nodes, tree.nodes, "{source}");
+            assert_eq!(flat.names, tree.names, "{source}");
+            assert_eq!(flat.root_len, tree.root_len, "{source}");
         }
     }
 

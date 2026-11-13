@@ -9,7 +9,8 @@ use query_plan::build_query_plan_from_fetch_graph;
 use walker::{error::WalkOperationError, walk_operation};
 
 use crate::query_planner::{
-    ast::operation::{OperationDefinition, VariableDefinition},
+    ast::flat::selection_tree::PlanOperation,
+    ast::operation::VariableDefinition,
     consumer_schema::ConsumerSchema,
     graph::{edge::PlannerOverrideContext, error::GraphError, Graph},
     planner::{
@@ -128,10 +129,9 @@ impl Planner {
         })
     }
 
-    #[inline]
-    pub fn plan_from_normalized_operation(
+    pub fn plan(
         &self,
-        normalized_operation: &OperationDefinition,
+        normalized_operation: &PlanOperation,
         override_context: PlannerOverrideContext,
         cancellation_token: &CancellationToken,
     ) -> Result<QueryPlan<Planning>, PlannerError> {
@@ -153,7 +153,7 @@ impl Planner {
             &self.options,
             cancellation_token,
         )?;
-        add_variables_to_fetch_steps(&mut fetch_graph, &normalized_operation.variable_definitions)?;
+        add_variables_to_fetch_steps(&mut fetch_graph, &normalized_operation.variables)?;
         let query_plan = build_query_plan_from_fetch_graph(
             fetch_graph,
             &self.supergraph,

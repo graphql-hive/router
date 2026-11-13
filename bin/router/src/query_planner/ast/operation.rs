@@ -1,3 +1,7 @@
+use super::flat::{
+    plan_document::{PlanDocument, PrettyList},
+    Kind,
+};
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
@@ -6,7 +10,7 @@ use std::{
 
 use crate::executor::response::shaped::ResponseShape;
 use crate::query_planner::{
-    ast::{document::Document, hash::ast_hash},
+    ast::hash::ast_hash,
     planner::plan_nodes::{hash_minified_query, CustomScalarPaths},
     state::supergraph_state::{SupergraphState, TypeNode},
 };
@@ -18,7 +22,7 @@ use crate::query_planner::{
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
 
-use super::{selection_item::SelectionItem, selection_set::SelectionSet, shrink::ShrinkMemory};
+use super::{selection_set::SelectionSet, shrink::ShrinkMemory};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationDefinition {
@@ -70,6 +74,11 @@ pub struct SubgraphFetchOperation {
     context_template: Option<Box<ContextAliasTemplate>>,
     #[serde(skip)]
     pub response_shape: Option<Box<ResponseShape>>,
+    /// What's sent, before it's printed. Kept on the executable plan so the executor reads the
+    /// selections instead of parsing `document_str` again. `None` for a deserialized plan and
+    /// for the per-request copies a `ContextAliasTemplate` writes.
+    #[serde(skip)]
+    pub flat: Option<std::sync::Arc<PlanDocument>>,
 }
 
 /// An entity fetch operation cut into the parts every group of contextual argument values
@@ -161,6 +170,7 @@ impl ContextAliasTemplate {
             document_str: document.into_boxed_str(),
             context_template: None,
             response_shape: None,
+            flat: None,
         }
     }
 
@@ -542,7 +552,9 @@ fn name_write_position(document_str: &str) -> usize {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlanningFetchOperation {
-    pub document: Box<Document>,
+    /// What's sent, before it's printed.
+    #[serde(skip)]
+    pub flat: Box<PlanDocument>,
     #[serde(flatten)]
     pub operation: SubgraphFetchOperation,
 }
@@ -559,56 +571,33 @@ impl AsRef<SubgraphFetchOperation> for PlanningFetchOperation {
     }
 }
 
-/// Skips the `_entities` wrapper when printing a selection that is sent to a subgraph.
-pub(crate) fn inner_selection_set(document: &Document) -> &SelectionSet {
-    if document.operation.selection_set.items.len() == 1 {
-        if let SelectionItem::Field(field) = &document.operation.selection_set.items[0] {
-            if field.name == "_entities" && field.alias.is_none() {
-                return &field.selections;
-            }
-        }
-    }
-
-    &document.operation.selection_set
-}
-
-/// Puts `__typename` first in every selection set, so the response parser knows an object's type
-/// before reading its other fields. The router projects the final response by the client's
-/// operation, so the order of fields in a subgraph query doesn't matter.
-fn typename_first(set: &mut SelectionSet) {
-    let typename = set.items.iter().position(|item| {
-        matches!(item, SelectionItem::Field(field) if field.name == "__typename" && field.alias.is_none())
-    });
-    if let Some(index) = typename {
-        set.items[..=index].rotate_right(1);
-    }
-    for item in &mut set.items {
-        match item {
-            SelectionItem::Field(field) => typename_first(&mut field.selections),
-            SelectionItem::InlineFragment(fragment) => typename_first(&mut fragment.selections),
-            SelectionItem::FragmentSpread(_) => {}
-        }
-    }
-}
-
 impl PlanningFetchOperation {
-    pub fn from_anonymous_operation(mut document: Document) -> Self {
-        typename_first(&mut document.operation.selection_set);
-        for fragment in &mut document.fragments {
-            typename_first(&mut fragment.selection_set);
-        }
-        let document_str = document.to_string();
+    /// For tests that build the operation as a tree.
+    #[cfg(test)]
+    pub fn from_anonymous_operation(
+        document: crate::query_planner::ast::document::Document,
+    ) -> Self {
+        Self::from_plan_document(PlanDocument::from_tree(&document))
+    }
+
+    pub fn from_plan_document(mut flat: PlanDocument) -> Self {
+        // `__typename` first, so the response parser knows an object's type before reading its
+        // other fields. The router projects the final response by the client's operation, so
+        // the order of fields in a subgraph query doesn't matter.
+        flat.typename_first();
+        let document_str = flat.to_string();
         let hash = hash_minified_query(&document_str);
         let name_write_position = name_write_position(&document_str);
 
         Self {
-            document: Box::new(document),
+            flat: Box::new(flat),
             operation: SubgraphFetchOperation {
                 document_str: document_str.into_boxed_str(),
                 hash,
                 name_write_position,
                 context_template: None,
                 response_shape: None,
+                flat: None,
             },
         }
     }
@@ -619,12 +608,14 @@ impl PlanningFetchOperation {
         custom_scalar_paths: Option<&CustomScalarPaths>,
     ) -> SubgraphFetchOperation {
         let mut operation = self.operation;
+        let flat = std::sync::Arc::<PlanDocument>::from(self.flat);
         operation.response_shape = ResponseShape::new(
-            &self.document,
+            &flat,
             |name| supergraph.all_possible_types(name),
             custom_scalar_paths,
         )
         .map(Box::new);
+        operation.flat = Some(flat);
         operation
     }
 }
@@ -653,16 +644,12 @@ impl PrettyDisplay for SubgraphFetchOperation {
 impl PrettyDisplay for PlanningFetchOperation {
     fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
         let indent = get_indent(depth);
-        let document = &self.document;
+        let document = &self.flat;
         // TODO: improve
-        let has_variables = document
-            .operation
-            .variable_definitions
-            .as_ref()
-            .is_some_and(|defs| {
-                !defs.is_empty() && defs.iter().all(|v| v.variable_type.inner_type() != "_Any")
-            });
-        let kind: &str = match &document.operation.operation_kind {
+        let has_variables = document.variables.as_ref().is_some_and(|defs| {
+            !defs.is_empty() && defs.iter().all(|v| v.variable_type.inner_type() != "_Any")
+        });
+        let kind: &str = match &document.kind {
             Some(kind) => match kind {
                 OperationKind::Query => match has_variables {
                     true => "query ",
@@ -673,7 +660,7 @@ impl PrettyDisplay for PlanningFetchOperation {
             },
             None => "",
         };
-        let variables = if let Some(variables) = document.operation.variable_definitions.as_ref() {
+        let variables = if let Some(variables) = document.variables.as_ref() {
             let representationless = variables
                 .iter()
                 .filter(|v| v.variable_type.inner_type() != "_Any")
@@ -695,13 +682,29 @@ impl PrettyDisplay for PlanningFetchOperation {
             "".to_string()
         };
         writeln!(f, "{indent}  {kind}{variables}{{")?;
-        inner_selection_set(document).pretty_fmt(f, depth + 2)?;
+        let arena = &document.arena;
+        // skips the `_entities` wrapper
+        let selections = match arena.items(document.selections) {
+            &[only]
+                if arena.node(only).kind == Kind::Field
+                    && arena.str(arena.node(only).name) == "_entities"
+                    && arena.opt_str(arena.node(only).alias).is_none() =>
+            {
+                arena.node(only).children
+            }
+            _ => document.selections,
+        };
+        PrettyList(arena, selections).pretty_fmt(f, depth + 2)?;
         writeln!(f, "{indent}  }}")?;
 
-        if !document.fragments.is_empty() {
-            for fragment in &document.fragments {
-                fragment.pretty_fmt(f, depth)?;
-            }
+        for fragment in &document.fragments {
+            writeln!(
+                f,
+                "{indent}  fragment {} on {} {{",
+                fragment.name, fragment.type_condition
+            )?;
+            PrettyList(arena, fragment.selections).pretty_fmt(f, depth + 2)?;
+            writeln!(f, "{indent}  }}")?;
         }
 
         Ok(())

@@ -60,7 +60,7 @@ pub fn compute_cache_key(
     let stable_override_context =
         StableOverrideContext::new(&planner.supergraph, &request_override_context);
 
-    let operation_hash = normalized_operation.operation.hash();
+    let operation_hash = normalized_operation.document.hash();
     let cache_key = calculate_cache_key(operation_hash, &stable_override_context);
 
     Ok(cache_key.to_string())
@@ -83,8 +83,8 @@ pub fn query_plan(
         (percentage_value * (PERCENTAGE_SCALE_FACTOR as f64)) as u64,
     );
 
-    let plan = planner.plan_from_normalized_operation(
-        &normalized_operation.operation,
+    let plan = planner.plan(
+        &normalized_operation.plan_operation,
         request_override_context,
         cancellation_token,
     )?;

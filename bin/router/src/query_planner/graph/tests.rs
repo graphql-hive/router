@@ -65,7 +65,7 @@ mod context_tests {
                 &graph,
                 &supergraph,
                 &override_context,
-                query.executable_operation(),
+                &query.plan_operation,
                 &cancellation,
             )
             .unwrap();
@@ -105,7 +105,7 @@ mod context_tests {
             .find(|selection| selection.type_name == "Account")
             .unwrap();
         assert_eq!(
-            interface_selection.selection_set.to_string(),
+            interface_selection.selections.to_string(),
             "{...on User{currency}}"
         );
         assert!(argument

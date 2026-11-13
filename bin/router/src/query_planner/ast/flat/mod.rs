@@ -11,6 +11,7 @@
 pub mod arena;
 pub mod convert;
 pub mod normalize;
+pub mod plan_document;
 pub mod selection_tree;
 pub mod tree;
 

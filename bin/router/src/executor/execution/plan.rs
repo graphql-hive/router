@@ -19,6 +19,7 @@ use crate::query_planner::planner::plan_nodes::{
     ResponsePathRef,
 };
 use crate::query_planner::{
+    ast::flat::plan_document::PlanDocument,
     ast::operation::OperationDefinition,
     planner::plan_nodes::{
         EntityBatch, EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode, QueryPlan,
@@ -136,7 +137,13 @@ impl CoerceVariablesPayload {
 
 pub struct QueryPlanExecutionOpts<'exec> {
     pub query_plan: &'exec QueryPlan,
-    pub operation_for_plan: Arc<OperationDefinition>,
+    /// The operation to execute, without introspection fields
+    pub document_for_plan: Arc<PlanDocument>,
+    /// The introspection part of the operation, the indexed pipeline reads its result in first
+    pub document_for_introspection: Option<Arc<PlanDocument>>,
+    /// `document_for_plan` as a tree, for plugins' `on_execute`. Only set when plugins run,
+    /// the hook builds it from `document_for_plan` when it's missing.
+    pub operation_for_plan: Option<Arc<OperationDefinition>>,
     pub projection_plan: Arc<ProjectionPlan>,
     pub headers_plan: Arc<HeaderRulesPlan>,
     pub extensions_plan: Arc<ExtensionsPlan>,
@@ -393,6 +400,8 @@ pub async fn execute_query_plan<'exec>(
                 }
                 let opts = QueryPlanExecutionOpts {
                     query_plan: &query_plan,
+                    document_for_plan: opts.document_for_plan.clone(),
+                    document_for_introspection: opts.document_for_introspection.clone(),
                     operation_for_plan: opts.operation_for_plan.clone(),
                     projection_plan: opts.projection_plan.clone(),
                     headers_plan: opts.headers_plan.clone(),
@@ -471,6 +480,18 @@ pub(crate) enum StartData<'exec> {
     Event(SubgraphResponse<'exec>, &'exec str),
 }
 
+/// The tree `on_execute` hands to plugins: the one the opts carry, or one built into `slot`.
+pub(super) fn operation_tree_for_hook<'a>(
+    operation: Option<&'a OperationDefinition>,
+    document: &PlanDocument,
+    slot: &'a mut Option<OperationDefinition>,
+) -> &'a OperationDefinition {
+    match operation {
+        Some(operation) => operation,
+        None => slot.insert(document.operation_tree()),
+    }
+}
+
 async fn execute_query_plan_with_data<'exec>(
     start: StartData<'exec>,
     mut opts: QueryPlanExecutionOpts<'exec>,
@@ -485,6 +506,8 @@ async fn execute_query_plan_with_data<'exec>(
     // declared first so it outlives everything that borrows from it
     let aliased_requests = AliasedRequests::default();
     let mut errors = opts.initial_errors;
+    // the hook's tree, when `opts` came without one
+    let mut built_tree = None;
 
     let dedupe_subgraph_requests = opts.operation_kind.is_query();
 
@@ -492,6 +515,11 @@ async fn execute_query_plan_with_data<'exec>(
 
     // TODO: coprocessor.on_execution_request
     if let Some(plugin_req_state) = opts.plugin_req_state.as_ref() {
+        let operation_for_plan = operation_tree_for_hook(
+            opts.operation_for_plan.as_deref(),
+            &opts.document_for_plan,
+            &mut built_tree,
+        );
         let mut start_payload = OnExecuteStartHookPayload {
             router_http_request: &plugin_req_state.router_http_request,
             context: &plugin_req_state.context,
@@ -499,7 +527,7 @@ async fn execute_query_plan_with_data<'exec>(
                 .request_context
                 .for_plugin::<hooks::OnExecute>(),
             query_plan: opts.query_plan,
-            operation_for_plan: &opts.operation_for_plan,
+            operation_for_plan,
             data,
             errors,
             extensions: opts.extensions.extensions,
@@ -615,7 +643,7 @@ async fn execute_query_plan_with_data<'exec>(
         if actual > demand_control.operation.operation_max_cost {
             warn!(
                 target: targets::DEMAND_CONTROL,
-                operation_name = ?opts.operation_for_plan.name.as_deref(),
+                operation_name = ?opts.document_for_plan.name.as_deref(),
                 actual_cost = actual,
                 estimated_cost = demand_control.evaluation.estimated_cost,
                 max_cost = demand_control.operation.operation_max_cost,
@@ -623,11 +651,7 @@ async fn execute_query_plan_with_data<'exec>(
             );
         }
 
-        demand_control.report_telemetry(
-            actual,
-            opts.operation_for_plan.name.as_deref(),
-            &opts.span,
-        );
+        demand_control.report_telemetry(actual, opts.document_for_plan.name.as_deref(), &opts.span);
         demand_control.apply_expose_headers(&mut exec_ctx.response_headers_aggregator, actual);
     }
 
@@ -2025,7 +2049,7 @@ impl<'exec> Executor<'exec> {
         };
         let data = SubgraphData::from_value(
             std::mem::take(&mut response.data),
-            &operation.document_str,
+            operation,
             self.schema_metadata,
             operation_kind.unwrap_or(&OperationKind::Query),
         );

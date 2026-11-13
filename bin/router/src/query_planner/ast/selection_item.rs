@@ -138,47 +138,12 @@ impl SelectionItem {
         }
     }
 
-    pub fn cost(&self) -> u64 {
-        let mut cost = 1;
-
-        if let Some(child_selections) = self.selections() {
-            for node in child_selections {
-                cost += node.cost();
-            }
-        }
-
-        cost
-    }
-
     pub fn is_fragment(&self) -> bool {
         matches!(self, SelectionItem::InlineFragment(_))
     }
 
     pub fn is_field(&self) -> bool {
         matches!(self, SelectionItem::Field(_))
-    }
-
-    pub fn strip_for_plan_input(&self) -> Self {
-        match self {
-            SelectionItem::Field(field_selection) => SelectionItem::Field(FieldSelection {
-                name: field_selection.name.clone(),
-                selections: field_selection.selections.strip_for_plan_input(),
-                alias: field_selection.alias.clone(),
-                arguments: None,
-                include_if: None,
-                skip_if: None,
-                omit_from_response: field_selection.omit_from_response,
-            }),
-            SelectionItem::InlineFragment(fragment_selection) => {
-                SelectionItem::InlineFragment(InlineFragmentSelection {
-                    type_condition: fragment_selection.type_condition.clone(),
-                    selections: fragment_selection.selections.strip_for_plan_input(),
-                    skip_if: fragment_selection.skip_if.clone(),
-                    include_if: fragment_selection.include_if.clone(),
-                })
-            }
-            SelectionItem::FragmentSpread(name) => SelectionItem::FragmentSpread(name.clone()),
-        }
     }
 }
 

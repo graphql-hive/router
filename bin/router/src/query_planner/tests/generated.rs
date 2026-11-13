@@ -52,8 +52,8 @@ fn plan(planner: &Planner, operation: &str) -> Result<String, String> {
     let normalized = normalize_operation(&planner.supergraph, &document, None)
         .map_err(|err| format!("normalization: {err}"))?;
     planner
-        .plan_from_normalized_operation(
-            normalized.executable_operation(),
+        .plan(
+            &normalized.plan_operation,
             PlannerOverrideContext::default(),
             &CancellationToken::new(),
         )

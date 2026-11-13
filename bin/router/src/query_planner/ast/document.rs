@@ -9,19 +9,26 @@ use super::shrink::ShrinkMemory;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NormalizedDocument {
-    pub operation: OperationDefinition,
     pub operation_name: Option<String>,
+    /// The same operation, flat, for the planner.
+    #[serde(skip)]
+    pub plan_operation: std::sync::Arc<super::flat::selection_tree::PlanOperation>,
+    /// The normalized operation, flat.
+    #[serde(skip)]
+    pub document: std::sync::Arc<super::flat::plan_document::PlanDocument>,
 }
 
 impl NormalizedDocument {
-    pub fn executable_operation(&self) -> &OperationDefinition {
-        &self.operation
+    /// The operation as a tree, exported from the flat document. For tools and tests, the
+    /// request path never builds one.
+    pub fn operation_tree(&self) -> OperationDefinition {
+        self.document.operation_tree()
     }
 }
 
 impl Display for NormalizedDocument {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{}", self.operation)?;
+        writeln!(f, "{}", self.document)?;
 
         Ok(())
     }

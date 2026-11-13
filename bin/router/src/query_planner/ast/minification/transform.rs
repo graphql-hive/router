@@ -1,299 +1,168 @@
 use ahash::{HashMap, HashMapExt};
-use std::mem::take;
 
-use crate::query_planner::ast::document::Document;
-use crate::query_planner::ast::fragment::FragmentDefinition;
+use crate::query_planner::ast::flat::arena::{Arena, ListId, NodeId};
+use crate::query_planner::ast::flat::plan_document::{PlanDocument, PlanFragment};
+use crate::query_planner::ast::flat::Kind;
 use crate::query_planner::ast::minification::error::MinificationError;
 use crate::query_planner::ast::minification::selection_id::{generate_selection_id, SelectionId};
 use crate::query_planner::ast::minification::stats::Stats;
-use crate::query_planner::ast::operation::OperationDefinition;
-use crate::query_planner::ast::selection_item::SelectionItem;
-use crate::query_planner::ast::selection_set::{
-    FieldSelection, InlineFragmentSelection, SelectionSet,
-};
 use crate::query_planner::state::supergraph_state::SupergraphState;
 
-type Fragments = HashMap<SelectionId, FragmentDefinition>;
-
+/// Swaps every repeated selection set for a spread of a fragment, in place. Every list of
+/// `document` has to be its own, nothing shared.
 pub fn transform_operation(
     supergraph: &SupergraphState,
     stats: Stats,
     root_type_name: &str,
-    operation: OperationDefinition,
-) -> Result<Document, MinificationError> {
+    document: &mut PlanDocument,
+) -> Result<(), MinificationError> {
     if !stats.has_duplicates() {
-        return Ok(Document {
-            operation,
-            fragments: vec![],
-        });
+        return Ok(());
     }
 
-    let mut fragments = Fragments::new();
-    let mut next_fragment_name_idx = 0;
-    let mut operation = operation;
-
-    let new_selection_set = transform_selection_set(
+    let mut transform = Transform {
         supergraph,
-        &stats,
-        &mut fragments,
-        &mut next_fragment_name_idx,
-        &mut operation.selection_set,
-        root_type_name,
-    )?;
-
-    let mut fragments_vec: Vec<FragmentDefinition> = fragments.into_values().collect();
-    fragments_vec.sort();
-
-    Ok(Document {
-        operation: OperationDefinition {
-            name: operation.name,
-            operation_kind: operation.operation_kind,
-            selection_set: new_selection_set,
-            variable_definitions: operation.variable_definitions,
-        },
-        fragments: fragments_vec,
-    })
-}
-
-fn transform_selection_set(
-    supergraph: &SupergraphState,
-    stats: &Stats,
-    fragments: &mut Fragments,
-    next_fragment_name_idx: &mut usize,
-    selection_set: &mut SelectionSet,
-    type_name: &str,
-) -> Result<SelectionSet, MinificationError> {
-    let id = generate_selection_id(type_name, selection_set);
-    if stats.is_duplicated(&id) {
-        // This is a duplicate, so replace it with a fragment spread
-        let fragment_name = get_or_create_fragment(
-            supergraph,
-            stats,
-            fragments,
-            next_fragment_name_idx,
-            &id,
-            type_name,
-            selection_set,
-        )?;
-        Ok(SelectionSet {
-            items: vec![SelectionItem::FragmentSpread(fragment_name)],
-        })
-    } else {
-        let new_items = transform_selection_set_items(
-            supergraph,
-            stats,
-            fragments,
-            next_fragment_name_idx,
-            selection_set,
-            type_name,
-        )?;
-
-        Ok(SelectionSet { items: new_items })
-    }
-}
-
-fn transform_selection_set_items(
-    supergraph: &SupergraphState,
-    stats: &Stats,
-    fragments: &mut Fragments,
-    next_fragment_name_idx: &mut usize,
-    selection_set: &mut SelectionSet,
-    type_name: &str,
-) -> Result<Vec<SelectionItem>, MinificationError> {
-    let mut new_items: Vec<SelectionItem> = Vec::with_capacity(selection_set.items.len());
-
-    for item in &mut selection_set.items {
-        match item {
-            SelectionItem::Field(field) => {
-                new_items.push(transform_field(
-                    supergraph,
-                    stats,
-                    fragments,
-                    next_fragment_name_idx,
-                    field,
-                    type_name,
-                )?);
-            }
-            SelectionItem::InlineFragment(fragment) => {
-                new_items.push(transform_inline_fragment(
-                    supergraph,
-                    stats,
-                    fragments,
-                    next_fragment_name_idx,
-                    fragment,
-                )?);
-            }
-            SelectionItem::FragmentSpread(spread) => {
-                // pass it through
-                new_items.push(SelectionItem::FragmentSpread(take(spread)));
-            }
-        }
-    }
-
-    Ok(new_items)
-}
-
-fn transform_inline_fragment(
-    supergraph: &SupergraphState,
-    stats: &Stats,
-    fragments: &mut Fragments,
-    next_fragment_name_idx: &mut usize,
-    fragment: &mut InlineFragmentSelection,
-) -> Result<SelectionItem, MinificationError> {
-    let new_selections = transform_selection_set(
-        supergraph,
-        stats,
-        fragments,
-        next_fragment_name_idx,
-        &mut fragment.selections,
-        &fragment.type_condition,
-    )?;
-
-    Ok(SelectionItem::InlineFragment(InlineFragmentSelection {
-        type_condition: fragment.type_condition.clone(),
-        selections: new_selections,
-        skip_if: fragment.skip_if.take(),
-        include_if: fragment.include_if.take(),
-    }))
-}
-
-fn transform_field(
-    supergraph: &SupergraphState,
-    stats: &Stats,
-    fragments: &mut Fragments,
-    next_fragment_name_idx: &mut usize,
-    field: &mut FieldSelection,
-    type_name: &str,
-) -> Result<SelectionItem, MinificationError> {
-    if field.is_introspection_field() {
-        return Ok(SelectionItem::Field(field.clone()));
-    }
-
-    // Special case where _entities is used,
-    // and as you know, Query._entities is not part of the schema,
-    // so we need to handle it specially.
-    // The content of _entities is a list of inline fragments.
-    // We can extract the type condition and pass it as the type of the selection set.
-    // This way we don't lookup the type in the schema.
-    if field.name == "_entities" {
-        let mut new_entities: Vec<SelectionItem> = Vec::with_capacity(field.selections.items.len());
-
-        for item in &mut field.selections.items {
-            match item {
-                SelectionItem::Field(field) => {
-                    if field.is_introspection_field() {
-                        new_entities.push(SelectionItem::Field(take(field)));
-                        continue;
-                    }
-
-                    return Err(MinificationError::UnsupportedFieldInEntities(
-                        type_name.to_string(),
-                        field.name.clone(),
-                    ));
-                }
-                SelectionItem::InlineFragment(fragment) => {
-                    let new_selections = transform_selection_set(
-                        supergraph,
-                        stats,
-                        fragments,
-                        next_fragment_name_idx,
-                        &mut fragment.selections,
-                        &fragment.type_condition,
-                    )?;
-
-                    new_entities.push(SelectionItem::InlineFragment(InlineFragmentSelection {
-                        type_condition: fragment.type_condition.clone(),
-                        selections: new_selections,
-                        skip_if: fragment.skip_if.take(),
-                        include_if: fragment.include_if.take(),
-                    }));
-                }
-                SelectionItem::FragmentSpread(spread) => {
-                    new_entities.push(SelectionItem::FragmentSpread(take(spread)));
-                }
-            }
-        }
-
-        return Ok(SelectionItem::Field(FieldSelection {
-            name: take(&mut field.name),
-            alias: field.alias.take(),
-            arguments: field.arguments.take(),
-            selections: SelectionSet {
-                items: new_entities,
-            },
-            skip_if: field.skip_if.take(),
-            include_if: field.include_if.take(),
-            omit_from_response: field.omit_from_response,
-        }));
-    }
-
-    let child_type_name = supergraph
-        .definitions
-        .get(type_name)
-        .and_then(|t| t.fields().get(&field.name))
-        .ok_or_else(|| MinificationError::FieldNotFound(field.name.clone(), type_name.to_string()))?
-        .field_type
-        .inner_type();
-    let new_selections = transform_selection_set(
-        supergraph,
-        stats,
-        fragments,
-        next_fragment_name_idx,
-        &mut field.selections,
-        child_type_name,
-    )?;
-    Ok(SelectionItem::Field(FieldSelection {
-        alias: field.alias.take(),
-        name: take(&mut field.name),
-        arguments: field.arguments.take(),
-        selections: new_selections,
-        skip_if: field.skip_if.take(),
-        include_if: field.include_if.take(),
-        omit_from_response: field.omit_from_response,
-    }))
-}
-
-pub fn get_or_create_fragment(
-    supergraph: &SupergraphState,
-    stats: &Stats,
-    fragments: &mut Fragments,
-    next_fragment_name_idx: &mut usize,
-    id: &SelectionId,
-    type_name: &str,
-    selection_set: &mut SelectionSet,
-) -> Result<String, MinificationError> {
-    if let Some(existing_frag) = fragments.get(id) {
-        return Ok(existing_frag.name.clone());
-    }
-
-    let fragment_name = generate_fragment_name(next_fragment_name_idx);
-    let placeholder = FragmentDefinition {
-        name: fragment_name.clone(),
-        type_condition: type_name.to_string(),
-        selection_set: SelectionSet::default(),
+        stats: &stats,
+        by_id: HashMap::new(),
+        fragments: vec![],
+        next_fragment_name_idx: 0,
     };
-    fragments.insert(*id, placeholder);
+    transform.selection_set(&mut document.arena, document.selections, root_type_name)?;
 
-    let new_items = transform_selection_set_items(
-        supergraph,
-        stats,
-        fragments,
-        next_fragment_name_idx,
-        selection_set,
-        type_name,
-    )?;
+    let mut fragments = transform.fragments;
+    fragments.sort_by(|a, b| a.name.cmp(&b.name));
+    document.fragments.extend(fragments);
+    Ok(())
+}
 
-    // Replace the placeholder with the final fragment
-    fragments.insert(
-        *id,
-        FragmentDefinition {
-            name: fragment_name.clone(),
+struct Transform<'a> {
+    supergraph: &'a SupergraphState,
+    stats: &'a Stats,
+    /// Into `fragments`
+    by_id: HashMap<SelectionId, usize>,
+    fragments: Vec<PlanFragment>,
+    next_fragment_name_idx: usize,
+}
+
+impl Transform<'_> {
+    fn selection_set(
+        &mut self,
+        arena: &mut Arena,
+        list: ListId,
+        type_name: &str,
+    ) -> Result<(), MinificationError> {
+        let id = generate_selection_id(arena, type_name, list);
+        if self.stats.is_duplicated(&id) {
+            let fragment_name = self.get_or_create_fragment(arena, id, list, type_name)?;
+            let spread = arena.new_spread(&fragment_name);
+            arena.set_items(list, &[spread]);
+            Ok(())
+        } else {
+            self.items(arena, list, type_name)
+        }
+    }
+
+    fn items(
+        &mut self,
+        arena: &mut Arena,
+        list: ListId,
+        type_name: &str,
+    ) -> Result<(), MinificationError> {
+        // what's below changes, `list` itself doesn't
+        for index in 0..arena.items(list).len() {
+            let id = arena.items(list)[index];
+            let node = *arena.node(id);
+            match node.kind {
+                Kind::Field => self.field(arena, id, type_name)?,
+                Kind::InlineFragment => {
+                    let type_condition = arena.str(node.name).to_string();
+                    self.selection_set(arena, node.children, &type_condition)?;
+                }
+                Kind::FragmentSpread => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn field(
+        &mut self,
+        arena: &mut Arena,
+        id: NodeId,
+        type_name: &str,
+    ) -> Result<(), MinificationError> {
+        let node = *arena.node(id);
+        let name = arena.str(node.name);
+        if name.starts_with("__") {
+            return Ok(());
+        }
+
+        // `Query._entities` isn't in the schema. What's under it is an inline fragment per
+        // entity type, so their type conditions give the types.
+        if name == "_entities" {
+            for index in 0..arena.items(node.children).len() {
+                let entity = *arena.node(arena.items(node.children)[index]);
+                match entity.kind {
+                    Kind::Field => {
+                        let entity_field = arena.str(entity.name);
+                        if !entity_field.starts_with("__") {
+                            return Err(MinificationError::UnsupportedFieldInEntities(
+                                type_name.to_string(),
+                                entity_field.to_string(),
+                            ));
+                        }
+                    }
+                    Kind::InlineFragment => {
+                        let type_condition = arena.str(entity.name).to_string();
+                        self.selection_set(arena, entity.children, &type_condition)?;
+                    }
+                    Kind::FragmentSpread => {}
+                }
+            }
+            return Ok(());
+        }
+
+        let supergraph = self.supergraph;
+        let child_type_name = supergraph
+            .definitions
+            .get(type_name)
+            .and_then(|t| t.fields().get(name))
+            .ok_or_else(|| {
+                MinificationError::FieldNotFound(name.to_string(), type_name.to_string())
+            })?
+            .field_type
+            .inner_type();
+        self.selection_set(arena, node.children, child_type_name)
+    }
+
+    /// The fragment's name. A new fragment takes the items of `list`, minified.
+    fn get_or_create_fragment(
+        &mut self,
+        arena: &mut Arena,
+        id: SelectionId,
+        list: ListId,
+        type_name: &str,
+    ) -> Result<String, MinificationError> {
+        if let Some(&index) = self.by_id.get(&id) {
+            return Ok(self.fragments[index].name.clone());
+        }
+
+        let name = generate_fragment_name(&mut self.next_fragment_name_idx);
+        let selections = arena.new_list();
+        // in before what's below it, so the names go in the order the tree walk meets them
+        self.by_id.insert(id, self.fragments.len());
+        self.fragments.push(PlanFragment {
+            name: name.clone(),
             type_condition: type_name.to_string(),
-            selection_set: SelectionSet { items: new_items },
-        },
-    );
+            selections,
+        });
 
-    Ok(fragment_name)
+        self.items(arena, list, type_name)?;
+        // a list of its own: `list` becomes the spread right after
+        let items = arena.items(list).to_vec();
+        arena.set_items(selections, &items);
+
+        Ok(name)
+    }
 }
 
 pub const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";

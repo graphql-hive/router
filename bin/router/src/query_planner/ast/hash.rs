@@ -1,9 +1,7 @@
-use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
-use std::cell::RefCell;
+use rustc_hash::FxBuildHasher;
 use std::hash::{BuildHasher, Hash, Hasher};
 
 use crate::query_planner::ast::arguments::ArgumentsMap;
-use crate::query_planner::ast::fragment::FragmentDefinition;
 use crate::query_planner::ast::operation::{OperationDefinition, VariableDefinition};
 use crate::query_planner::ast::selection_item::SelectionItem;
 use crate::query_planner::ast::selection_set::{
@@ -13,46 +11,8 @@ use crate::query_planner::ast::value::Value;
 use crate::query_planner::state::supergraph_state::{self, OperationKind, TypeNode};
 
 /// A trait for hashing AST nodes, with support for both order-dependent and order-independent hashing.
-pub struct SemanticShapeHashContext<'a> {
-    fragments: &'a [FragmentDefinition],
-    fragment_indices_by_name: FxHashMap<&'a str, usize>,
-    visiting_fragments: RefCell<FxHashSet<usize>>,
-}
-
-impl<'a> SemanticShapeHashContext<'a> {
-    pub fn new(fragments: &'a [FragmentDefinition]) -> Self {
-        let mut fragment_indices_by_name = FxHashMap::default();
-        for (index, fragment) in fragments.iter().enumerate() {
-            fragment_indices_by_name.insert(fragment.name.as_str(), index);
-        }
-
-        Self {
-            fragments,
-            fragment_indices_by_name,
-            visiting_fragments: RefCell::new(FxHashSet::default()),
-        }
-    }
-
-    fn mark_visiting(&self, name: &str) -> Option<usize> {
-        let fragment_index = *self.fragment_indices_by_name.get(name)?;
-        self.visiting_fragments
-            .borrow_mut()
-            .insert(fragment_index)
-            .then_some(fragment_index)
-    }
-
-    fn unmark_visiting(&self, fragment_index: usize) {
-        self.visiting_fragments.borrow_mut().remove(&fragment_index);
-    }
-}
-
 pub trait ASTHash {
     fn ast_hash<H: Hasher, const ORDER_INDEPENDENT: bool>(&self, hasher: &mut H);
-
-    /// Order-independent hashing with fragment spreads inlined
-    fn semantic_shape_hash<H: Hasher>(&self, hasher: &mut H, _ctx: &SemanticShapeHashContext<'_>) {
-        self.ast_hash::<_, true>(hasher);
-    }
 }
 
 /// Computes the collision-resistant identity hash of an operation.
@@ -156,26 +116,6 @@ impl ASTHash for SelectionSet {
             }
         }
     }
-
-    fn semantic_shape_hash<H: Hasher>(&self, hasher: &mut H, ctx: &SemanticShapeHashContext<'_>) {
-        // Use xor + sum + count to avoid collisions like {a b a a} vs {a b c c}
-        let mut xor = 0u64;
-        let mut sum = 0u64;
-        let mut count = 0u64;
-
-        for item in &self.items {
-            let mut item_hasher = FxHasher::default();
-            item.semantic_shape_hash(&mut item_hasher, ctx);
-            let value = item_hasher.finish();
-            xor ^= value;
-            sum = sum.wrapping_add(value);
-            count = count.wrapping_add(1);
-        }
-
-        xor.hash(hasher);
-        sum.hash(hasher);
-        count.hash(hasher);
-    }
 }
 
 impl ASTHash for SelectionItem {
@@ -194,23 +134,6 @@ impl ASTHash for SelectionItem {
             SelectionItem::FragmentSpread(name) => {
                 hasher.write_u8(2);
                 name.hash(hasher);
-            }
-        }
-    }
-
-    fn semantic_shape_hash<H: Hasher>(&self, hasher: &mut H, ctx: &SemanticShapeHashContext<'_>) {
-        match self {
-            SelectionItem::Field(field) => field.semantic_shape_hash(hasher, ctx),
-            SelectionItem::InlineFragment(inline) => inline.semantic_shape_hash(hasher, ctx),
-            SelectionItem::FragmentSpread(name) => {
-                let Some(fragment_index) = ctx.mark_visiting(name) else {
-                    // Cycle detected - hash nothing (unique marker)
-                    return;
-                };
-                if let Some(fragment) = ctx.fragments.get(fragment_index) {
-                    fragment.selection_set.semantic_shape_hash(hasher, ctx);
-                }
-                ctx.unmark_visiting(fragment_index);
             }
         }
     }
@@ -237,48 +160,12 @@ impl ASTHash for &FieldSelection {
 
         self.omit_from_response.hash(hasher);
     }
-
-    fn semantic_shape_hash<H: Hasher>(&self, hasher: &mut H, ctx: &SemanticShapeHashContext<'_>) {
-        self.name.hash(hasher);
-        self.alias.hash(hasher);
-        self.selections.semantic_shape_hash(hasher, ctx);
-
-        if let Some(args) = &self.arguments {
-            args.ast_hash::<_, true>(hasher);
-        }
-
-        if let Some(var_name) = self.include_if.as_ref() {
-            "@include".hash(hasher);
-            var_name.hash(hasher);
-        }
-        if let Some(var_name) = self.skip_if.as_ref() {
-            "@skip".hash(hasher);
-            var_name.hash(hasher);
-        }
-
-        self.omit_from_response.hash(hasher);
-    }
 }
 
 impl ASTHash for &InlineFragmentSelection {
     fn ast_hash<H: Hasher, const ORDER_INDEPENDENT: bool>(&self, hasher: &mut H) {
         self.type_condition.hash(hasher);
         self.selections.ast_hash::<_, ORDER_INDEPENDENT>(hasher);
-        if let Some(var_name) = self.include_if.as_ref() {
-            "@include".hash(hasher);
-            var_name.hash(hasher);
-        }
-        if let Some(var_name) = self.skip_if.as_ref() {
-            "@skip".hash(hasher);
-            var_name.hash(hasher);
-        }
-    }
-
-    fn semantic_shape_hash<H: Hasher>(&self, hasher: &mut H, ctx: &SemanticShapeHashContext<'_>) {
-        // Include type_condition (key for "... on Product" vs "... on User")
-        self.type_condition.hash(hasher);
-        self.selections.semantic_shape_hash(hasher, ctx);
-
         if let Some(var_name) = self.include_if.as_ref() {
             "@include".hash(hasher);
             var_name.hash(hasher);
@@ -403,9 +290,81 @@ impl ASTHash for Value {
     }
 }
 
+impl crate::query_planner::ast::flat::plan_document::PlanDocument {
+    /// `OperationDefinition::hash` on the flat document, byte for byte the same stream, so a
+    /// document and its tree twin hash the same. Fragments aren't hashed, the operation has none.
+    pub fn hash(&self) -> u128 {
+        use crate::query_planner::ast::flat::{
+            arena::{Arena, ListId},
+            Kind,
+        };
+
+        fn list<H: Hasher>(arena: &Arena, list_id: ListId, hasher: &mut H) {
+            let items = arena.items(list_id);
+            hasher.write_usize(items.len());
+            for &id in items {
+                let node = arena.node(id);
+                let conditions = |hasher: &mut H| {
+                    if let Some(var_name) = arena.opt_str(node.include_if) {
+                        "@include".hash(hasher);
+                        var_name.hash(hasher);
+                    }
+                    if let Some(var_name) = arena.opt_str(node.skip_if) {
+                        "@skip".hash(hasher);
+                        var_name.hash(hasher);
+                    }
+                };
+                match node.kind {
+                    Kind::Field => {
+                        hasher.write_u8(0);
+                        arena.str(node.name).hash(hasher);
+                        arena.opt_str(node.alias).hash(hasher);
+                        list(arena, node.children, hasher);
+                        if let Some(args) = arena.args(node.args) {
+                            args.ast_hash::<_, false>(hasher);
+                        }
+                        conditions(hasher);
+                        node.omit_from_response.hash(hasher);
+                    }
+                    Kind::InlineFragment => {
+                        hasher.write_u8(1);
+                        arena.str(node.name).hash(hasher);
+                        list(arena, node.children, hasher);
+                        conditions(hasher);
+                    }
+                    Kind::FragmentSpread => {
+                        hasher.write_u8(2);
+                        arena.str(node.name).hash(hasher);
+                    }
+                }
+            }
+        }
+
+        let mut hasher = Blake3Hasher::default();
+        self.kind
+            .as_ref()
+            .or(Some(&OperationKind::Query))
+            .ast_hash::<_, false>(&mut hasher);
+        list(&self.arena, self.selections, &mut hasher);
+        self.variables.ast_hash::<_, false>(&mut hasher);
+        hasher.finish_u128()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plan_document_hash_matches_the_tree() {
+        use crate::query_planner::ast::{document::Document, flat::plan_document::PlanDocument};
+        let operation = create_test_operation();
+        let flat = PlanDocument::from_tree(&Document {
+            operation: operation.clone(),
+            fragments: vec![],
+        });
+        assert_eq!(flat.hash(), operation.hash());
+    }
     use crate::query_planner::ast::arguments::ArgumentsMap;
     use crate::query_planner::ast::operation::{OperationDefinition, VariableDefinition};
     use crate::query_planner::ast::selection_item::SelectionItem;
@@ -414,6 +373,7 @@ mod tests {
     };
     use crate::query_planner::ast::value::Value;
     use crate::query_planner::state::supergraph_state::{OperationKind, TypeNode};
+    use rustc_hash::FxHasher;
     use std::collections::BTreeMap;
 
     fn create_test_operation() -> OperationDefinition {
@@ -607,7 +567,7 @@ mod tests {
                 None,
             )
             .expect("to normalize")
-            .operation
+            .operation_tree()
         };
 
         let name_inside = normalize("{ node { ... on User { id name } } }");

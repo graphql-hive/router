@@ -287,7 +287,7 @@ impl<'graph> Edge<'graph> {
         };
 
         let requirement_cost = match self.requirements() {
-            Some(selection) => selection.selection_set.cost(),
+            Some(selection) => selection.selections.cost(),
             None => 0,
         };
 
@@ -311,7 +311,7 @@ impl Display for Edge<'_> {
         }?;
 
         if let Some(reqs) = self.requirements() {
-            write!(f, "🧩{}", reqs.selection_set)?
+            write!(f, "🧩{}", reqs.selections)?
         };
 
         Ok(())

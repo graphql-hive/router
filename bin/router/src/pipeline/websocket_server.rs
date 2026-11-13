@@ -598,7 +598,7 @@ async fn handle_text_frame(
                   };
 
                   let is_subscription = matches!(
-                      normalize_payload.operation_for_plan.operation_kind,
+                      normalize_payload.document_for_plan.kind,
                       Some(OperationKind::Subscription)
                   );
 
@@ -622,7 +622,7 @@ async fn handle_text_frame(
 
                   let fingerprint = if request_dedupe_enabled
                       && matches!(
-                          normalize_payload.operation_for_plan.operation_kind,
+                          normalize_payload.document_for_plan.kind,
                           // same deduplication applies for queries and subscriptions
                           None | Some(OperationKind::Query) | Some(OperationKind::Subscription)
                       ) {
@@ -760,8 +760,8 @@ async fn handle_text_frame(
                           started_at.elapsed(),
                           client_name,
                           client_version,
-                          normalize_payload.operation_for_plan.name.as_deref(),
-                          normalize_payload.operation_for_plan.operation_kind.as_ref(),
+                          normalize_payload.document_for_plan.name.as_deref(),
+                          normalize_payload.document_for_plan.kind.as_ref(),
                           &parser_payload.minified_document,
                           hive_usage_agent,
                           shared_response.error_count(),

@@ -8,12 +8,12 @@ use graphql_tools::static_graphql::schema::{
     TypeDefinition,
 };
 
-use crate::query_planner::ast::{
-    operation::OperationDefinition,
-    selection_item::SelectionItem,
-    selection_set::{FieldSelection, SelectionSet},
-    value::Value as AstValue,
+use crate::query_planner::ast::flat::{
+    arena::{Arena, ListId, NodeId},
+    plan_document::PlanDocument,
+    Kind,
 };
+use crate::query_planner::ast::value::Value as AstValue;
 use sonic_rs::JsonValueTrait;
 
 use crate::executor::execution::plan::CoerceVariablesPayload;
@@ -21,10 +21,18 @@ use crate::executor::introspection::schema::SchemaMetadata;
 use crate::executor::json_writer::write_and_escape_string;
 
 pub struct IntrospectionContext {
-    pub query: Option<Arc<OperationDefinition>>,
+    pub query: Option<Arc<PlanDocument>>,
     pub schema: Arc<Document>,
     pub metadata: Arc<SchemaMetadata>,
     pub variables: Arc<CoerceVariablesPayload>,
+}
+
+/// What the resolver reads: the context, plus the arena the selections live in
+struct Ctx<'a> {
+    arena: &'a Arena,
+    schema: &'a Document,
+    metadata: &'a SchemaMetadata,
+    variables: &'a Arc<CoerceVariablesPayload>,
 }
 
 fn resolve_boolean_variable(
@@ -162,124 +170,124 @@ impl Out {
     }
 }
 
-/// Whether `includeDeprecated` is true on `field`
-fn include_deprecated(field: &FieldSelection, ctx: &IntrospectionContext) -> bool {
-    field
-        .arguments
-        .as_ref()
+/// Whether `includeDeprecated` is true on the field `id`
+fn include_deprecated(id: NodeId, ctx: &Ctx) -> bool {
+    ctx.arena
+        .args(ctx.arena.node(id).args)
         .and_then(|a| a.get_argument("includeDeprecated"))
         .and_then(|v| match v {
             AstValue::Boolean(b) => Some(*b),
             AstValue::Variable(var_name) => {
-                resolve_boolean_variable(var_name.as_str(), &ctx.variables)
+                resolve_boolean_variable(var_name.as_str(), ctx.variables)
             }
             _ => None,
         })
         .unwrap_or(false)
 }
 
-fn resolve_input_value(
-    out: &mut Out,
-    iv: &InputValue,
-    selections: &SelectionSet,
-    ctx: &IntrospectionContext,
-) {
-    out.object(|out, first| resolve_input_value_selections(out, first, iv, &selections.items, ctx));
+fn resolve_input_value(out: &mut Out, iv: &InputValue, selections: ListId, ctx: &Ctx) {
+    out.object(|out, first| resolve_input_value_selections(out, first, iv, selections, ctx));
 }
 
 fn resolve_input_value_selections(
     out: &mut Out,
     first: &mut bool,
     iv: &InputValue,
-    selection_items: &[SelectionItem],
-    ctx: &IntrospectionContext,
+    selections: ListId,
+    ctx: &Ctx,
 ) {
-    for item in selection_items {
-        if let SelectionItem::Field(field) = item {
-            out.key(first, field.selection_identifier());
-            match field.name.as_str() {
-                "name" => out.string(&iv.name),
-                "description" => out.maybe_string(iv.description.as_deref()),
-                "type" => resolve_type(out, &iv.value_type, &field.selections, ctx),
-                // TODO: support default values
-                "defaultValue" => match &iv.default_value {
-                    Some(ast) => out.string(&ast.to_string()),
-                    None => out.null(),
-                },
-                "isDeprecated" => out.bool(is_deprecated(&iv.directives)),
-                "deprecationReason" => out.maybe_string(get_deprecation_reason(&iv.directives)),
-                "__typename" => out.string("__InputValue"),
-                _ => out.null(),
+    for &id in ctx.arena.items(selections) {
+        let field = ctx.arena.node(id);
+        match field.kind {
+            Kind::Field => {
+                out.key(first, ctx.arena.response_key(id));
+                match ctx.arena.str(field.name) {
+                    "name" => out.string(&iv.name),
+                    "description" => out.maybe_string(iv.description.as_deref()),
+                    "type" => resolve_type(out, &iv.value_type, field.children, ctx),
+                    // TODO: support default values
+                    "defaultValue" => match &iv.default_value {
+                        Some(ast) => out.string(&ast.to_string()),
+                        None => out.null(),
+                    },
+                    "isDeprecated" => out.bool(is_deprecated(&iv.directives)),
+                    "deprecationReason" => out.maybe_string(get_deprecation_reason(&iv.directives)),
+                    "__typename" => out.string("__InputValue"),
+                    _ => out.null(),
+                }
             }
-        } else if let Some(selection_items) = inline_selections(item) {
-            resolve_input_value_selections(out, first, iv, selection_items, ctx);
+            Kind::InlineFragment => {
+                resolve_input_value_selections(out, first, iv, field.children, ctx)
+            }
+            Kind::FragmentSpread => {}
         }
     }
 }
 
-/// The selections of an inline fragment
-fn inline_selections(item: &SelectionItem) -> Option<&Vec<SelectionItem>> {
-    match item {
-        SelectionItem::InlineFragment(_) => item.selections(),
-        _ => None,
-    }
-}
-
-fn resolve_field(out: &mut Out, f: &Field, selections: &SelectionSet, ctx: &IntrospectionContext) {
-    out.object(|out, first| resolve_field_selections(out, first, f, &selections.items, ctx));
+fn resolve_field(out: &mut Out, f: &Field, selections: ListId, ctx: &Ctx) {
+    out.object(|out, first| resolve_field_selections(out, first, f, selections, ctx));
 }
 
 fn resolve_field_selections(
     out: &mut Out,
     first: &mut bool,
     f: &Field,
-    selection_items: &[SelectionItem],
-    ctx: &IntrospectionContext,
+    selections: ListId,
+    ctx: &Ctx,
 ) {
-    for item in selection_items {
-        if let SelectionItem::Field(field) = item {
-            out.key(first, field.selection_identifier());
-            match field.name.as_str() {
-                "name" => out.string(&f.name),
-                "description" => out.maybe_string(f.description.as_deref()),
-                "args" => out.list(&f.arguments, |out, arg| {
-                    resolve_input_value(out, arg, &field.selections, ctx)
-                }),
-                "type" => resolve_type(out, &f.field_type, &field.selections, ctx),
-                "isDeprecated" => out.bool(is_deprecated(&f.directives)),
-                "deprecationReason" => out.maybe_string(get_deprecation_reason(&f.directives)),
-                "__typename" => out.string("__Field"),
-                _ => out.null(),
+    for &id in ctx.arena.items(selections) {
+        let field = ctx.arena.node(id);
+        match field.kind {
+            Kind::Field => {
+                out.key(first, ctx.arena.response_key(id));
+                match ctx.arena.str(field.name) {
+                    "name" => out.string(&f.name),
+                    "description" => out.maybe_string(f.description.as_deref()),
+                    "args" => out.list(&f.arguments, |out, arg| {
+                        resolve_input_value(out, arg, field.children, ctx)
+                    }),
+                    "type" => resolve_type(out, &f.field_type, field.children, ctx),
+                    "isDeprecated" => out.bool(is_deprecated(&f.directives)),
+                    "deprecationReason" => out.maybe_string(get_deprecation_reason(&f.directives)),
+                    "__typename" => out.string("__Field"),
+                    _ => out.null(),
+                }
             }
-        } else if let Some(selection_items) = inline_selections(item) {
-            resolve_field_selections(out, first, f, selection_items, ctx);
+            Kind::InlineFragment => resolve_field_selections(out, first, f, field.children, ctx),
+            Kind::FragmentSpread => {}
         }
     }
 }
 
-fn resolve_enum_value(out: &mut Out, ev: &EnumValue, selections: &SelectionSet) {
-    out.object(|out, first| resolve_enum_value_selections(out, first, ev, &selections.items));
+fn resolve_enum_value(out: &mut Out, ev: &EnumValue, selections: ListId, ctx: &Ctx) {
+    out.object(|out, first| resolve_enum_value_selections(out, first, ev, selections, ctx));
 }
 
 fn resolve_enum_value_selections(
     out: &mut Out,
     first: &mut bool,
     ev: &EnumValue,
-    selection_items: &[SelectionItem],
+    selections: ListId,
+    ctx: &Ctx,
 ) {
-    for item in selection_items {
-        if let SelectionItem::Field(field) = item {
-            out.key(first, field.selection_identifier());
-            match field.name.as_str() {
-                "name" => out.string(&ev.name),
-                "description" => out.maybe_string(ev.description.as_deref()),
-                "isDeprecated" => out.bool(is_deprecated_enum(ev)),
-                "deprecationReason" => out.maybe_string(get_deprecation_reason(&ev.directives)),
-                "__typename" => out.string("__EnumValue"),
-                _ => out.null(),
+    for &id in ctx.arena.items(selections) {
+        let field = ctx.arena.node(id);
+        match field.kind {
+            Kind::Field => {
+                out.key(first, ctx.arena.response_key(id));
+                match ctx.arena.str(field.name) {
+                    "name" => out.string(&ev.name),
+                    "description" => out.maybe_string(ev.description.as_deref()),
+                    "isDeprecated" => out.bool(is_deprecated_enum(ev)),
+                    "deprecationReason" => out.maybe_string(get_deprecation_reason(&ev.directives)),
+                    "__typename" => out.string("__EnumValue"),
+                    _ => out.null(),
+                }
             }
-        } else if let Some(selection_items) = inline_selections(item) {
-            resolve_enum_value_selections(out, first, ev, selection_items);
+            Kind::InlineFragment => {
+                resolve_enum_value_selections(out, first, ev, field.children, ctx)
+            }
+            Kind::FragmentSpread => {}
         }
     }
 }
@@ -287,11 +295,11 @@ fn resolve_enum_value_selections(
 fn resolve_type_definition(
     out: &mut Out,
     type_def: &TypeDefinition,
-    selections: &SelectionSet,
-    ctx: &IntrospectionContext,
+    selections: ListId,
+    ctx: &Ctx,
 ) {
     out.object(|out, first| {
-        resolve_type_definition_selections(out, first, type_def, &selections.items, ctx)
+        resolve_type_definition_selections(out, first, type_def, selections, ctx)
     });
 }
 
@@ -299,98 +307,102 @@ fn resolve_type_definition_selections(
     out: &mut Out,
     first: &mut bool,
     type_def: &TypeDefinition,
-    selection_items: &[SelectionItem],
-    ctx: &IntrospectionContext,
+    selections: ListId,
+    ctx: &Ctx,
 ) {
-    for item in selection_items {
-        if let SelectionItem::Field(field) = item {
-            out.key(first, field.selection_identifier());
-            match field.name.as_str() {
-                "kind" => out.string(&kind_to_str(type_def)),
-                "name" => out.string(type_def.name()),
-                "description" => out.maybe_string(
-                    match type_def {
-                        TypeDefinition::Scalar(s) => s.description.as_ref(),
-                        TypeDefinition::Object(o) => o.description.as_ref(),
-                        TypeDefinition::Interface(i) => i.description.as_ref(),
-                        TypeDefinition::Union(u) => u.description.as_ref(),
-                        TypeDefinition::Enum(e) => e.description.as_ref(),
-                        TypeDefinition::InputObject(io) => io.description.as_ref(),
-                    }
-                    .map(String::as_str),
-                ),
-                "specifiedByURL" => match type_def {
-                    TypeDefinition::Scalar(scalar) => {
-                        out.maybe_string(get_specified_by_url(&scalar.directives))
-                    }
-                    _ => out.null(),
-                },
-                "isOneOf" => match type_def {
-                    TypeDefinition::InputObject(type_def) => {
-                        out.bool(is_one_of(&type_def.directives))
-                    }
-                    _ => out.null(),
-                },
-                "fields" => match type_def {
-                    TypeDefinition::Object(TypeDefinitionObject { fields, .. })
-                    | TypeDefinition::Interface(TypeDefinitionInterface { fields, .. }) => {
-                        let include_deprecated = include_deprecated(field, ctx);
-                        out.list(
-                            fields.iter().filter(|f| {
-                                !f.name.starts_with("__")
-                                    && (include_deprecated || !is_deprecated(&f.directives))
-                            }),
-                            |out, f| resolve_field(out, f, &field.selections, ctx),
-                        )
-                    }
-                    _ => out.null(),
-                },
-                "interfaces" => match type_def {
-                    TypeDefinition::Object(obj) => out.list(
-                        obj.implements_interfaces
-                            .iter()
-                            .filter_map(|iface_name| ctx.schema.type_by_name(iface_name)),
-                        |out, t| resolve_type_definition(out, t, &field.selections, ctx),
-                    ),
-                    _ => out.null(),
-                },
-                "possibleTypes" => match type_def {
-                    TypeDefinition::Interface(_) | TypeDefinition::Union(_) => out.list(
-                        ctx.metadata
-                            .possible_types
-                            .get_possible_types(type_def.name())
-                            .into_iter()
-                            .filter(|v| v != type_def.name())
-                            .filter_map(|name| ctx.schema.type_by_name(name.as_str())),
-                        |out, t| resolve_type_definition(out, t, &field.selections, ctx),
-                    ),
-                    _ => out.null(),
-                },
-                "enumValues" => match type_def {
-                    TypeDefinition::Enum(enum_type) => {
-                        let include_deprecated = include_deprecated(field, ctx);
-                        out.list(
-                            enum_type
-                                .values
-                                .iter()
-                                .filter(|v| include_deprecated || !is_deprecated_enum(v)),
-                            |out, v| resolve_enum_value(out, v, &field.selections),
-                        )
-                    }
-                    _ => out.null(),
-                },
-                "inputFields" => match type_def {
-                    TypeDefinition::InputObject(io) => out.list(&io.fields, |out, f| {
-                        resolve_input_value(out, f, &field.selections, ctx)
-                    }),
-                    _ => out.null(),
-                },
-                "__typename" => out.string("__Type"),
-                // "ofType" of a named type, and anything else
-                _ => out.null(),
+    for &id in ctx.arena.items(selections) {
+        let field = ctx.arena.node(id);
+        match field.kind {
+            Kind::Field => {}
+            Kind::InlineFragment => {
+                resolve_type_definition_selections(out, first, type_def, field.children, ctx);
+                continue;
             }
-        } else if let Some(selection_items) = inline_selections(item) {
-            resolve_type_definition_selections(out, first, type_def, selection_items, ctx);
+            Kind::FragmentSpread => continue,
+        }
+        out.key(first, ctx.arena.response_key(id));
+        let children = field.children;
+        match ctx.arena.str(field.name) {
+            "kind" => out.string(&kind_to_str(type_def)),
+            "name" => out.string(type_def.name()),
+            "description" => out.maybe_string(
+                match type_def {
+                    TypeDefinition::Scalar(s) => s.description.as_ref(),
+                    TypeDefinition::Object(o) => o.description.as_ref(),
+                    TypeDefinition::Interface(i) => i.description.as_ref(),
+                    TypeDefinition::Union(u) => u.description.as_ref(),
+                    TypeDefinition::Enum(e) => e.description.as_ref(),
+                    TypeDefinition::InputObject(io) => io.description.as_ref(),
+                }
+                .map(String::as_str),
+            ),
+            "specifiedByURL" => match type_def {
+                TypeDefinition::Scalar(scalar) => {
+                    out.maybe_string(get_specified_by_url(&scalar.directives))
+                }
+                _ => out.null(),
+            },
+            "isOneOf" => match type_def {
+                TypeDefinition::InputObject(type_def) => out.bool(is_one_of(&type_def.directives)),
+                _ => out.null(),
+            },
+            "fields" => match type_def {
+                TypeDefinition::Object(TypeDefinitionObject { fields, .. })
+                | TypeDefinition::Interface(TypeDefinitionInterface { fields, .. }) => {
+                    let include_deprecated = include_deprecated(id, ctx);
+                    out.list(
+                        fields.iter().filter(|f| {
+                            !f.name.starts_with("__")
+                                && (include_deprecated || !is_deprecated(&f.directives))
+                        }),
+                        |out, f| resolve_field(out, f, children, ctx),
+                    )
+                }
+                _ => out.null(),
+            },
+            "interfaces" => match type_def {
+                TypeDefinition::Object(obj) => out.list(
+                    obj.implements_interfaces
+                        .iter()
+                        .filter_map(|iface_name| ctx.schema.type_by_name(iface_name)),
+                    |out, t| resolve_type_definition(out, t, children, ctx),
+                ),
+                _ => out.null(),
+            },
+            "possibleTypes" => match type_def {
+                TypeDefinition::Interface(_) | TypeDefinition::Union(_) => out.list(
+                    ctx.metadata
+                        .possible_types
+                        .get_possible_types(type_def.name())
+                        .into_iter()
+                        .filter(|v| v != type_def.name())
+                        .filter_map(|name| ctx.schema.type_by_name(name.as_str())),
+                    |out, t| resolve_type_definition(out, t, children, ctx),
+                ),
+                _ => out.null(),
+            },
+            "enumValues" => match type_def {
+                TypeDefinition::Enum(enum_type) => {
+                    let include_deprecated = include_deprecated(id, ctx);
+                    out.list(
+                        enum_type
+                            .values
+                            .iter()
+                            .filter(|v| include_deprecated || !is_deprecated_enum(v)),
+                        |out, v| resolve_enum_value(out, v, children, ctx),
+                    )
+                }
+                _ => out.null(),
+            },
+            "inputFields" => match type_def {
+                TypeDefinition::InputObject(io) => out.list(&io.fields, |out, f| {
+                    resolve_input_value(out, f, children, ctx)
+                }),
+                _ => out.null(),
+            },
+            "__typename" => out.string("__Type"),
+            // "ofType" of a named type, and anything else
+            _ => out.null(),
         }
     }
 }
@@ -399,11 +411,11 @@ fn resolve_wrapper_type(
     out: &mut Out,
     kind: &str,
     inner_type: &Type,
-    selections: &SelectionSet,
-    ctx: &IntrospectionContext,
+    selections: ListId,
+    ctx: &Ctx,
 ) {
     out.object(|out, first| {
-        resolve_wrapper_type_selections(out, first, kind, inner_type, &selections.items, ctx)
+        resolve_wrapper_type_selections(out, first, kind, inner_type, selections, ctx)
     });
 }
 
@@ -412,26 +424,31 @@ fn resolve_wrapper_type_selections(
     first: &mut bool,
     kind: &str,
     inner_type: &Type,
-    selection_items: &[SelectionItem],
-    ctx: &IntrospectionContext,
+    selections: ListId,
+    ctx: &Ctx,
 ) {
-    for item in selection_items {
-        if let SelectionItem::Field(field) = item {
-            out.key(first, field.selection_identifier());
-            match field.name.as_str() {
-                "kind" => out.string(kind),
-                "ofType" => resolve_type(out, inner_type, &field.selections, ctx),
-                "__typename" => out.string("__Type"),
-                // "name" of a wrapper type, and anything else
-                _ => out.null(),
+    for &id in ctx.arena.items(selections) {
+        let field = ctx.arena.node(id);
+        match field.kind {
+            Kind::Field => {
+                out.key(first, ctx.arena.response_key(id));
+                match ctx.arena.str(field.name) {
+                    "kind" => out.string(kind),
+                    "ofType" => resolve_type(out, inner_type, field.children, ctx),
+                    "__typename" => out.string("__Type"),
+                    // "name" of a wrapper type, and anything else
+                    _ => out.null(),
+                }
             }
-        } else if let Some(selection_items) = inline_selections(item) {
-            resolve_wrapper_type_selections(out, first, kind, inner_type, selection_items, ctx);
+            Kind::InlineFragment => {
+                resolve_wrapper_type_selections(out, first, kind, inner_type, field.children, ctx)
+            }
+            Kind::FragmentSpread => {}
         }
     }
 }
 
-fn resolve_type(out: &mut Out, t: &Type, selections: &SelectionSet, ctx: &IntrospectionContext) {
+fn resolve_type(out: &mut Out, t: &Type, selections: ListId, ctx: &Ctx) {
     match t {
         Type::NamedType(name) => {
             let type_def = ctx.schema.type_by_name(name).unwrap_or_else(|| {
@@ -449,119 +466,108 @@ fn resolve_type(out: &mut Out, t: &Type, selections: &SelectionSet, ctx: &Intros
     }
 }
 
-fn resolve_directive(
-    out: &mut Out,
-    d: &DirectiveDefinition,
-    selections: &SelectionSet,
-    ctx: &IntrospectionContext,
-) {
-    out.object(|out, first| resolve_directive_selections(out, first, d, &selections.items, ctx));
+fn resolve_directive(out: &mut Out, d: &DirectiveDefinition, selections: ListId, ctx: &Ctx) {
+    out.object(|out, first| resolve_directive_selections(out, first, d, selections, ctx));
 }
 
 fn resolve_directive_selections(
     out: &mut Out,
     first: &mut bool,
     d: &DirectiveDefinition,
-    selection_items: &[SelectionItem],
-    ctx: &IntrospectionContext,
+    selections: ListId,
+    ctx: &Ctx,
 ) {
-    for item in selection_items {
-        if let SelectionItem::Field(field) = item {
-            out.key(first, field.selection_identifier());
-            match field.name.as_str() {
-                "name" => out.string(&d.name),
-                "description" => out.maybe_string(d.description.as_deref()),
-                "locations" => out.list(&d.locations, |out, l| out.string(l.as_str())),
-                "args" => out.list(&d.arguments, |out, arg| {
-                    resolve_input_value(out, arg, &field.selections, ctx)
-                }),
-                "isRepeatable" => out.bool(d.repeatable),
-                "__typename" => out.string("__Directive"),
-                _ => out.null(),
+    for &id in ctx.arena.items(selections) {
+        let field = ctx.arena.node(id);
+        match field.kind {
+            Kind::Field => {
+                out.key(first, ctx.arena.response_key(id));
+                match ctx.arena.str(field.name) {
+                    "name" => out.string(&d.name),
+                    "description" => out.maybe_string(d.description.as_deref()),
+                    "locations" => out.list(&d.locations, |out, l| out.string(l.as_str())),
+                    "args" => out.list(&d.arguments, |out, arg| {
+                        resolve_input_value(out, arg, field.children, ctx)
+                    }),
+                    "isRepeatable" => out.bool(d.repeatable),
+                    "__typename" => out.string("__Directive"),
+                    _ => out.null(),
+                }
             }
-        } else if let Some(selection_items) = inline_selections(item) {
-            resolve_directive_selections(out, first, d, selection_items, ctx);
+            Kind::InlineFragment => {
+                resolve_directive_selections(out, first, d, field.children, ctx)
+            }
+            Kind::FragmentSpread => {}
         }
     }
 }
 
-fn resolve_schema_selections(
-    out: &mut Out,
-    first: &mut bool,
-    items: &[SelectionItem],
-    ctx: &IntrospectionContext,
-) {
-    for item in items {
-        if let SelectionItem::Field(inner_field) = item {
-            out.key(first, inner_field.selection_identifier());
-            let selections = &inner_field.selections;
-            match inner_field.name.as_str() {
-                "types" => out.list(ctx.schema.type_map().values(), |out, t| {
-                    resolve_type_definition(out, t, selections, ctx)
+fn resolve_schema_selections(out: &mut Out, first: &mut bool, selections: ListId, ctx: &Ctx) {
+    for &id in ctx.arena.items(selections) {
+        let field = ctx.arena.node(id);
+        // only fields here, like it always was: a fragment right under `__schema` is skipped
+        if field.kind != Kind::Field {
+            continue;
+        }
+        out.key(first, ctx.arena.response_key(id));
+        let selections = field.children;
+        match ctx.arena.str(field.name) {
+            "types" => out.list(ctx.schema.type_map().values(), |out, t| {
+                resolve_type_definition(out, t, selections, ctx)
+            }),
+            "queryType" => {
+                let query_type = ctx
+                    .metadata
+                    .query_type_name
+                    .as_ref()
+                    .and_then(|name| ctx.schema.type_by_name(name))
+                    // SAFETY: The query type is guaranteed to exist,
+                    // every schema has a query type.
+                    .expect("invariant violation: query type is guaranteed to exist because every schema must have a query type");
+                resolve_type_definition(out, query_type, selections, ctx)
+            }
+            "mutationType" => match ctx
+                .schema
+                .mutation_type_name()
+                .and_then(|name| ctx.schema.type_by_name(name))
+            {
+                Some(t) => resolve_type_definition(out, t, selections, ctx),
+                None => out.null(),
+            },
+            "subscriptionType" => match ctx
+                .schema
+                .subscription_type_name()
+                .and_then(|name| ctx.schema.type_by_name(name))
+            {
+                Some(t) => resolve_type_definition(out, t, selections, ctx),
+                None => out.null(),
+            },
+            "directives" => out.list(
+                ctx.schema.definitions.iter().filter_map(|d| match d {
+                    Definition::DirectiveDefinition(d) => Some(d),
+                    _ => None,
                 }),
-                "queryType" => {
-                    let query_type = ctx
-                        .metadata
-                        .query_type_name
-                        .as_ref()
-                        .and_then(|name| ctx.schema.type_by_name(name))
-                        // SAFETY: The query type is guaranteed to exist,
-                        // every schema has a query type.
-                        .expect("invariant violation: query type is guaranteed to exist because every schema must have a query type");
-                    resolve_type_definition(out, query_type, selections, ctx)
-                }
-                "mutationType" => match ctx
-                    .schema
-                    .mutation_type_name()
-                    .and_then(|name| ctx.schema.type_by_name(name))
-                {
-                    Some(t) => resolve_type_definition(out, t, selections, ctx),
-                    None => out.null(),
-                },
-                "subscriptionType" => match ctx
-                    .schema
-                    .subscription_type_name()
-                    .and_then(|name| ctx.schema.type_by_name(name))
-                {
-                    Some(t) => resolve_type_definition(out, t, selections, ctx),
-                    None => out.null(),
-                },
-                "directives" => out.list(
-                    ctx.schema.definitions.iter().filter_map(|d| match d {
-                        Definition::DirectiveDefinition(d) => Some(d),
-                        _ => None,
-                    }),
-                    |out, d| resolve_directive(out, d, selections, ctx),
-                ),
-                "__typename" => out.string("__Schema"),
-                // "description", and anything else
-                _ => out.null(),
-            }
-        } else if let SelectionItem::FragmentSpread(_) = item {
-            if let Some(selection_items) = item.selections() {
-                resolve_schema_selections(out, first, selection_items, ctx);
-            }
+                |out, d| resolve_directive(out, d, selections, ctx),
+            ),
+            "__typename" => out.string("__Schema"),
+            // "description", and anything else
+            _ => out.null(),
         }
     }
 }
 
 /// The introspection part of an operation, as the JSON object of its `data`
-pub fn resolve_introspection(
-    operation_definition: &OperationDefinition,
-    ctx: &IntrospectionContext,
-) -> Vec<u8> {
-    let root_type_name = ctx
-        .metadata
-        .expect_root_type_name(operation_definition.operation_kind.as_ref());
+pub fn resolve_introspection(document: &PlanDocument, context: &IntrospectionContext) -> Vec<u8> {
+    let ctx = Ctx {
+        arena: &document.arena,
+        schema: &context.schema,
+        metadata: &context.metadata,
+        variables: &context.variables,
+    };
+    let root_type_name = ctx.metadata.expect_root_type_name(document.kind.as_ref());
     let mut out = Out { buffer: Vec::new() };
     out.object(|out, first| {
-        resolve_root_introspection_selections(
-            out,
-            first,
-            root_type_name,
-            &operation_definition.selection_set.items,
-            ctx,
-        )
+        resolve_root_introspection_selections(out, first, root_type_name, document.selections, &ctx)
     });
     out.buffer
 }
@@ -570,38 +576,49 @@ fn resolve_root_introspection_selections(
     out: &mut Out,
     first: &mut bool,
     root_type_name: &str,
-    items: &[SelectionItem],
-    ctx: &IntrospectionContext,
+    selections: ListId,
+    ctx: &Ctx,
 ) {
-    for item in items {
-        if let SelectionItem::Field(field) = item {
-            out.key(first, field.selection_identifier());
-            match field.name.as_str() {
-                "__schema" => out.object(|out, first| {
-                    resolve_schema_selections(out, first, &field.selections.items, ctx)
-                }),
-                "__type" => {
-                    let type_name = match field
-                        .arguments
-                        .as_ref()
-                        .and_then(|args| args.get_argument("name"))
-                    {
-                        Some(AstValue::String(type_name)) => Some(type_name.as_str()),
-                        Some(AstValue::Variable(var_name)) => {
-                            resolve_str_variable(var_name.as_str(), &ctx.variables)
-                        }
-                        _ => None,
-                    };
-                    match type_name.and_then(|name| ctx.schema.type_by_name(name)) {
-                        Some(t) => resolve_type_definition(out, t, &field.selections, ctx),
-                        None => out.null(),
-                    }
-                }
-                "__typename" => out.string(root_type_name),
-                _ => out.null(),
+    for &id in ctx.arena.items(selections) {
+        let field = ctx.arena.node(id);
+        match field.kind {
+            Kind::Field => {}
+            Kind::InlineFragment => {
+                resolve_root_introspection_selections(
+                    out,
+                    first,
+                    root_type_name,
+                    field.children,
+                    ctx,
+                );
+                continue;
             }
-        } else if let Some(selection_items) = inline_selections(item) {
-            resolve_root_introspection_selections(out, first, root_type_name, selection_items, ctx);
+            Kind::FragmentSpread => continue,
+        }
+        out.key(first, ctx.arena.response_key(id));
+        match ctx.arena.str(field.name) {
+            "__schema" => {
+                out.object(|out, first| resolve_schema_selections(out, first, field.children, ctx))
+            }
+            "__type" => {
+                let type_name = match ctx
+                    .arena
+                    .args(field.args)
+                    .and_then(|args| args.get_argument("name"))
+                {
+                    Some(AstValue::String(type_name)) => Some(type_name.as_str()),
+                    Some(AstValue::Variable(var_name)) => {
+                        resolve_str_variable(var_name.as_str(), ctx.variables)
+                    }
+                    _ => None,
+                };
+                match type_name.and_then(|name| ctx.schema.type_by_name(name)) {
+                    Some(t) => resolve_type_definition(out, t, field.children, ctx),
+                    None => out.null(),
+                }
+            }
+            "__typename" => out.string(root_type_name),
+            _ => out.null(),
         }
     }
 }
