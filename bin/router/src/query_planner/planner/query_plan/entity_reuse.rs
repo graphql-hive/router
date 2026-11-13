@@ -28,7 +28,7 @@ use crate::query_planner::{
             planning::PlanNode, EntityReuse, FlattenNodePath, PathSegment, TypeCondition,
         },
     },
-    state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
+    state::supergraph_state::{OperationKind, SupergraphField, SupergraphState, TypeNode},
 };
 
 type Step = FetchStepData<MultiTypeFetchStep>;
@@ -60,8 +60,12 @@ struct Positions<'a> {
 }
 
 struct Position<'a> {
-    path: usize,
+    /// index into [`Positions::paths`]. `u32` keeps a position at 24 bytes, `find` goes over
+    /// all of them
+    path: u32,
     selections: &'a SelectionSet,
+    /// the subgraph that filled it, see [`resolved_by`]
+    subgraph: u16,
     /// see [`key_mask`]
     keys: u64,
 }
@@ -180,6 +184,9 @@ impl<'a> EntityReuseIndex<'a> {
         if self.positions.is_empty() || has_context(step) {
             return;
         }
+        let Some(subgraph) = self.supergraph.subgraph_index(&step.service_name.0) else {
+            return;
+        };
         self.found.clear();
         // most steps hold no position, so the start is only built for the first one
         let mut start = LazyStart {
@@ -188,7 +195,7 @@ impl<'a> EntityReuseIndex<'a> {
         };
         let mut path = Vec::new();
         for (definition_name, selections) in step.output.iter_selections() {
-            self.walk(&mut start, &mut path, selections, definition_name);
+            self.walk(&mut start, &mut path, selections, definition_name, subgraph);
         }
     }
 
@@ -220,6 +227,7 @@ impl<'a> EntityReuseIndex<'a> {
             return found.reuse.clone();
         }
         let reuse = find_in(
+            self.supergraph,
             positions,
             type_name,
             needed,
@@ -242,9 +250,10 @@ impl<'a> EntityReuseIndex<'a> {
         path: &mut Vec<Segment<'a>>,
         selections: &'a SelectionSet,
         current_type: &'a str,
+        subgraph: u16,
     ) {
         if let Some(positions) = self.positions.get_mut(current_type) {
-            positions.add(start.get(), path, selections);
+            positions.add(start.get(), path, selections, subgraph);
         }
 
         for item in &selections.items {
@@ -266,13 +275,15 @@ impl<'a> EntityReuseIndex<'a> {
                     for _ in 0..list_depth(field_type) {
                         path.push(Segment::List);
                     }
-                    self.walk(start, path, &field.selections, field_type.inner_type());
+                    let field_type = field_type.inner_type();
+                    self.walk(start, path, &field.selections, field_type, subgraph);
                 }
                 SelectionItem::InlineFragment(fragment) => {
                     if fragment.type_condition != current_type {
                         path.push(Segment::TypeCondition(&fragment.type_condition));
                     }
-                    self.walk(start, path, &fragment.selections, &fragment.type_condition);
+                    let condition = &fragment.type_condition;
+                    self.walk(start, path, &fragment.selections, condition, subgraph);
                 }
                 _ => {}
             }
@@ -282,7 +293,13 @@ impl<'a> EntityReuseIndex<'a> {
 }
 
 impl<'a> Positions<'a> {
-    fn add(&mut self, start: &Start, path: &[Segment<'_>], selections: &'a SelectionSet) {
+    fn add(
+        &mut self,
+        start: &Start,
+        path: &[Segment<'_>],
+        selections: &'a SelectionSet,
+        subgraph: u16,
+    ) {
         let mut hasher = start.hasher.clone();
         for segment in path {
             segment.hash(&mut hasher);
@@ -321,14 +338,16 @@ impl<'a> Positions<'a> {
             },
         };
         self.list.push(Position {
-            path: id,
+            path: id as u32,
             selections,
+            subgraph,
             keys: key_mask(selections, |_| true),
         });
     }
 }
 
 fn find_in(
+    supergraph: &SupergraphState,
     positions: &Positions<'_>,
     type_name: &str,
     needed: &SelectionSet,
@@ -339,14 +358,19 @@ fn find_in(
     // a plan can have thousands of positions, so the masks rule most of them out before the
     // real checks
     let mut is_source = vec![false; positions.paths.len()];
+    // depends only on the subgraph, and a plan has a few of them
+    let mut resolves_all: HashMap<u16, bool> = HashMap::default();
     let mut sources = Vec::new();
     for position in &positions.list {
         if position.keys & needed_keys == needed_keys
-            && !is_source[position.path]
+            && !is_source[position.path as usize]
+            && *resolves_all.entry(position.subgraph).or_insert_with(|| {
+                resolves_every_field(supergraph, type_name, needed, position.subgraph)
+            })
             && covers(position.selections, needed)
         {
-            is_source[position.path] = true;
-            sources.push(position.path);
+            is_source[position.path as usize] = true;
+            sources.push(position.path as usize);
         }
     }
     if sources.is_empty() {
@@ -357,10 +381,10 @@ fn find_in(
     // another field under a key of the representation rules out its path.
     for position in &positions.list {
         if position.keys & representation_keys != 0
-            && is_source[position.path]
+            && is_source[position.path as usize]
             && conflicts_with(position.selections, representation)
         {
-            is_source[position.path] = false;
+            is_source[position.path as usize] = false;
         }
     }
     sources.retain(|&path| is_source[path]);
@@ -442,6 +466,62 @@ fn covers(source: &SelectionSet, needed: &SelectionSet) -> bool {
     })
 }
 
+/// Does `subgraph` resolve every field of `type_name` in `needed` itself, all the way down? Only
+/// then is what it put in the response what the fetch would get.
+fn resolves_every_field(
+    supergraph: &SupergraphState,
+    type_name: &str,
+    needed: &SelectionSet,
+    subgraph: u16,
+) -> bool {
+    needed.items.iter().all(|item| match item {
+        SelectionItem::Field(field) if field.name == "__typename" => true,
+        SelectionItem::Field(field) => resolved_by(supergraph, type_name, &field.name, subgraph)
+            .is_some_and(|definition| {
+                resolves_every_field(
+                    supergraph,
+                    definition.field_type.inner_type(),
+                    &field.selections,
+                    subgraph,
+                )
+            }),
+        _ => false,
+    })
+}
+
+/// The field, if `subgraph` resolves it itself. Where the field is `@external` in `subgraph`,
+/// it only has it through `@provides`: another subgraph's data, as `subgraph` last saw it.
+///
+/// `resolvable_in` leaves out the subgraphs of a labelled `@override` too, since which of them
+/// answers depends on the request. Within one plan it's always the same one, so a value one of
+/// them put in the response is what a fetch to it would give again.
+fn resolved_by<'s>(
+    supergraph: &'s SupergraphState,
+    type_name: &str,
+    field_name: &str,
+    subgraph: u16,
+) -> Option<&'s SupergraphField> {
+    let field = supergraph
+        .definitions
+        .get(type_name)?
+        .fields()
+        .get(field_name)?;
+    let labelled_in_subgraph = || {
+        field.join_field.iter().any(|join_field| {
+            join_field.override_label.is_some()
+                && !join_field.external
+                && join_field
+                    .graph_id
+                    .as_deref()
+                    .and_then(|graph_id| supergraph.known_subgraphs.get(graph_id))
+                    .and_then(|name| supergraph.subgraph_index(name))
+                    == Some(subgraph)
+        })
+    };
+    (field.resolvable_in.binary_search(&subgraph).is_ok() || labelled_in_subgraph())
+        .then_some(field)
+}
+
 /// Does `selections` put a different field (or arguments) under a response key `representation`
 /// reads?
 fn conflicts_with(selections: &SelectionSet, representation: &SelectionSet) -> bool {
@@ -492,25 +572,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn copies_only_what_the_source_subgraph_resolves_itself() {
+        use crate::query_planner::tests::testkit::read_supergraph_state;
+        let resolves = |fixture: &str, type_name: &str, field: &str, subgraph: &str| {
+            let supergraph = read_supergraph_state(fixture);
+            let subgraph = supergraph.subgraph_index(subgraph).expect("a subgraph");
+            resolved_by(&supergraph, type_name, field, subgraph).is_some()
+        };
+        // `social` only has `User.name` through `@provides`, `names` owns it
+        let provides = "fixture/tests/provides-copies.supergraph.graphql";
+        assert!(!resolves(provides, "User", "name", "social"));
+        assert!(resolves(provides, "User", "name", "names"));
+        // both sides of a labelled `@override` count, the plan picks one of them
+        let overrides = "fixture/tests/simple-progressive-overrides.supergraph.graphql";
+        assert!(resolves(overrides, "Post", "createdAt", "a"));
+        assert!(resolves(overrides, "Post", "createdAt", "b"));
+    }
+
+    #[test]
     fn a_path_gets_one_id_wherever_its_step_starts() {
         let selections = SelectionSet::default();
         let mut positions = Positions::default();
         let top = || PathSegment::Field("top".into());
         let start = |path: Vec<PathSegment>| Start::new(FlattenNodePath::from(path));
 
-        positions.add(&start(vec![top()]), &[Segment::List], &selections);
-        positions.add(&start(vec![top(), PathSegment::List]), &[], &selections);
+        positions.add(&start(vec![top()]), &[Segment::List], &selections, 0);
+        positions.add(&start(vec![top(), PathSegment::List]), &[], &selections, 0);
         positions.add(
             &start(vec![]),
             &[Segment::Field("top"), Segment::List],
             &selections,
+            0,
         );
-        positions.add(&start(vec![top()]), &[], &selections);
+        positions.add(&start(vec![top()]), &[], &selections, 0);
 
         let ids: Vec<usize> = positions
             .list
             .iter()
-            .map(|position| position.path)
+            .map(|position| position.path as usize)
             .collect();
         assert_eq!(ids, [0, 0, 0, 1]);
         assert_eq!(positions.paths.len(), 2);
