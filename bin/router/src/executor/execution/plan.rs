@@ -16,7 +16,6 @@ use crate::query_planner::{
     ast::operation::OperationDefinition,
     planner::plan_nodes::{
         EntityBatch, EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode, QueryPlan,
-        SequenceNode,
     },
     state::supergraph_state::OperationKind,
 };
@@ -242,49 +241,15 @@ fn log_plan_execution_error(error: &PlanExecutionError) {
 pub async fn execute_query_plan<'exec>(
     opts: QueryPlanExecutionOpts<'exec>,
 ) -> Result<QueryPlanExecutionResult, PlanExecutionError> {
-    let (subscription_node, remaining_nodes) = match &opts.query_plan.node {
-        // a subscription to a subgraph that contains all data and doesn't need entity resolution
-        Some(PlanNode::Subscription(sub)) => (Some(sub), None),
-        // a subscription that needs entity resolution. after emitting, it needs to execute the
-        // remaining plan nodes in the sequence
-        Some(PlanNode::Sequence(seq)) => match seq.nodes.first() {
-            Some(PlanNode::Subscription(sub)) => {
-                let remaining = if seq.nodes.len() > 1 {
-                    // TODO: why to_vec()? is it wasteful? it's actually a slice, we dont need it as Vec
-                    Some(seq.nodes[1..].to_vec())
-                } else {
-                    None
-                };
-                (Some(sub), remaining)
-            }
-            _ => (None, None),
-        },
-        _ => (None, None),
-    };
-
     // subscription
-    if let Some(sub) = subscription_node {
-        // subscription
-
+    if let Some((sub, query_plan)) = opts.query_plan.split_subscription() {
         // the primary (fetch node) of the subscription is the
         // subscription destination, we execute it first and it
         // would give us back a stream of results
         let fetch_node = &sub.primary;
 
-        // we assemble a synthetic query plan for entity resolution from remaining nodes
-        // because we might need entity resolution after receiving each subscription event
-        // the same fetches minus the subscription one, which comes first, so the plan's schedule
-        // holds without it
-        let query_plan: Arc<QueryPlan> = Arc::new(QueryPlan::with_schedule(
-            remaining_nodes.map(|nodes| {
-                if nodes.len() == 1 {
-                    nodes.into_iter().next().unwrap()
-                } else {
-                    PlanNode::Sequence(SequenceNode { nodes })
-                }
-            }),
-            opts.query_plan.schedule().after_first_fetch(),
-        ));
+        // the rest of the plan, for entity resolution after each subscription event
+        let query_plan: Arc<QueryPlan> = Arc::new(query_plan);
 
         // we perform a regular subgraph request to the subscription subgraph
         // the only difference is that we get back a stream of results
@@ -918,7 +883,7 @@ impl<'exec> Executor<'exec> {
     /// plan's schedule says which). Results are merged as they come in, and every fetch that's
     /// done lets go of the ones waiting for it.
     async fn execute_plan(&self, ctx: &mut ExecutionContext<'exec>, plan: &'exec QueryPlan) {
-        let Some(root) = &plan.node else {
+        let Some(root) = plan.node() else {
             return;
         };
         let fetches = plan_fetches(root);
@@ -2432,7 +2397,7 @@ mod tests {
             .create();
 
         // two root fetches, neither waits for the other
-        let plan = crate::query_planner::planner::plan_nodes::QueryPlan::with_schedule(
+        let plan = crate::query_planner::planner::plan_nodes::QueryPlan::with_schedule_for_tests(
             Some(PlanNode::Parallel(ParallelNode {
                 nodes: vec![
                     PlanNode::Fetch(Box::new(FetchNode {

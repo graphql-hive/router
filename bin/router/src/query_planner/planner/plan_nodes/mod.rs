@@ -85,10 +85,10 @@ use xxhash_rust::xxh3::Xxh3;
 #[serde(bound = "")]
 pub struct QueryPlan<S: PlanState = Executable> {
     pub kind: &'static str, // "QueryPlan"
+    /// Private like `schedule`: a plan is only made in this module, so the two always match.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub node: Option<PlanNode<S>>,
-    /// What each fetch of `node` waits for, worked out once with the plan. Private, so a plan is
-    /// only made with [`QueryPlan::new`] and its schedule always matches its nodes.
+    node: Option<PlanNode<S>>,
+    /// What each fetch of `node` waits for, worked out once with the plan.
     #[serde(skip)]
     schedule: PlanSchedule,
 }
@@ -108,8 +108,9 @@ impl<S: PlanState> QueryPlan<S> {
         Self::with_schedule(None, PlanSchedule::default())
     }
 
-    /// A plan with a schedule that's already worked out for `node`.
-    pub(crate) fn with_schedule(node: Option<PlanNode<S>>, schedule: PlanSchedule) -> Self {
+    /// A plan with a schedule that's already worked out for `node`. Private, anything outside
+    /// this module could hand it a schedule that doesn't fit.
+    fn with_schedule(node: Option<PlanNode<S>>, schedule: PlanSchedule) -> Self {
         Self {
             kind: QUERY_PLAN_KIND,
             node,
@@ -117,10 +118,49 @@ impl<S: PlanState> QueryPlan<S> {
         }
     }
 
+    /// A plan for tests, with a schedule made by hand.
+    #[cfg(test)]
+    pub(crate) fn with_schedule_for_tests(
+        node: Option<PlanNode<S>>,
+        schedule: PlanSchedule,
+    ) -> Self {
+        Self::with_schedule(node, schedule)
+    }
+
+    pub fn node(&self) -> Option<&PlanNode<S>> {
+        self.node.as_ref()
+    }
+
+    pub fn into_node(self) -> Option<PlanNode<S>> {
+        self.node
+    }
+
     /// What each fetch of the plan waits for, the fetches counted in the order
     /// [`dependencies::plan_fetches`] lists them.
     pub fn schedule(&self) -> &PlanSchedule {
         &self.schedule
+    }
+
+    /// For a subscription plan, its subscription fetch and the plan that runs on each event: the
+    /// fetches after the subscription one, which comes first, so they keep their schedule.
+    pub fn split_subscription(&self) -> Option<(&SubscriptionNode<S>, QueryPlan<S>)> {
+        let (subscription, rest) = match self.node.as_ref()? {
+            PlanNode::Subscription(subscription) => (subscription, &[][..]),
+            PlanNode::Sequence(sequence) => match sequence.nodes.split_first()? {
+                (PlanNode::Subscription(subscription), rest) => (subscription, rest),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let node = match rest {
+            [] => None,
+            [node] => Some(node.clone()),
+            nodes => Some(PlanNode::Sequence(SequenceNode {
+                nodes: nodes.to_vec(),
+            })),
+        };
+        let rest = Self::with_schedule(node, self.schedule.after_first_fetch());
+        Some((subscription.as_ref(), rest))
     }
 }
 

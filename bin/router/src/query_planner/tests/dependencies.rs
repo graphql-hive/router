@@ -14,7 +14,7 @@ type Waits = Vec<(String, Vec<String>)>;
 fn waits(fixture: &str, query: &str) -> Result<Waits, Box<dyn Error>> {
     init_logger();
     let plan = build_query_plan_with_defaults(fixture, parse_operation(query))?;
-    let fetches = plan_fetches(plan.node.as_ref().ok_or("an empty plan")?);
+    let fetches = plan_fetches(plan.node().ok_or("an empty plan")?);
     let name = |node: &PlanNode| -> String {
         match node {
             PlanNode::Fetch(fetch) => fetch.service_name.clone(),
@@ -80,30 +80,31 @@ fn mutation_fields_depend_on_the_one_before() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn fetch_mut<'p>(node: &'p mut PlanNode, service: &str) -> Option<&'p mut FetchNode<Planning>> {
+    match node {
+        PlanNode::Sequence(sequence) => sequence
+            .nodes
+            .iter_mut()
+            .find_map(|node| fetch_mut(node, service)),
+        PlanNode::Parallel(parallel) => parallel
+            .nodes
+            .iter_mut()
+            .find_map(|node| fetch_mut(node, service)),
+        PlanNode::Flatten(flatten) => fetch_mut(&mut flatten.node, service),
+        PlanNode::Fetch(fetch) if fetch.service_name == service => Some(fetch),
+        _ => None,
+    }
+}
+
 /// A fetch that depends on one that comes after it can't be scheduled, so the plan isn't made.
 #[test]
 fn a_plan_with_a_dependency_that_comes_later_is_refused() -> Result<(), Box<dyn Error>> {
-    fn fetch_mut<'p>(node: &'p mut PlanNode, service: &str) -> Option<&'p mut FetchNode<Planning>> {
-        match node {
-            PlanNode::Sequence(sequence) => sequence
-                .nodes
-                .iter_mut()
-                .find_map(|node| fetch_mut(node, service)),
-            PlanNode::Parallel(parallel) => parallel
-                .nodes
-                .iter_mut()
-                .find_map(|node| fetch_mut(node, service)),
-            PlanNode::Flatten(flatten) => fetch_mut(&mut flatten.node, service),
-            PlanNode::Fetch(fetch) if fetch.service_name == service => Some(fetch),
-            _ => None,
-        }
-    }
     init_logger();
     let plan = build_query_plan_with_defaults(
         "fixture/products-example.supergraph.graphql",
         parse_operation("{ topProducts { upc inStock reviews { author { name } } } }"),
     )?;
-    let mut node = plan.node.ok_or("an empty plan")?;
+    let mut node = plan.into_node().ok_or("an empty plan")?;
     // the authors come last, the reviews can't wait for them
     let accounts = fetch_mut(&mut node, "accounts")
         .ok_or("an accounts fetch")?
@@ -116,6 +117,30 @@ fn a_plan_with_a_dependency_that_comes_later_is_refused() -> Result<(), Box<dyn 
         error
             .to_string()
             .contains(&format!("depends on fetch {accounts},")),
+        "{error}"
+    );
+    Ok(())
+}
+
+/// Two fetches with one id can't be told apart in `depends_on`, so the plan isn't made.
+#[test]
+fn a_plan_with_two_fetches_with_one_id_is_refused() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let plan = build_query_plan_with_defaults(
+        "fixture/products-example.supergraph.graphql",
+        parse_operation("{ topProducts { upc inStock reviews { author { name } } } }"),
+    )?;
+    let mut node = plan.into_node().ok_or("an empty plan")?;
+    let reviews = fetch_mut(&mut node, "reviews").ok_or("a reviews fetch")?.id;
+    // the authors wait for the reviews, and would wait for the inventory call instead
+    fetch_mut(&mut node, "inventory")
+        .ok_or("an inventory fetch")?
+        .id = reviews;
+    let error = QueryPlan::new(Some(node)).expect_err("a plan with a duplicate id");
+    assert!(
+        error
+            .to_string()
+            .contains(&format!("Two fetches have id {reviews}")),
         "{error}"
     );
     Ok(())

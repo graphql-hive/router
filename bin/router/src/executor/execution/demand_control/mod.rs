@@ -819,7 +819,7 @@ mod tests {
         );
 
         let query_plan = build_query_plan_with_defaults(FIXTURE, parse_operation(query)).unwrap();
-        let Some(PlanNode::Fetch(fetch)) = &query_plan.node else {
+        let Some(PlanNode::Fetch(fetch)) = query_plan.node() else {
             panic!("expected a single fetch, got {query_plan}");
         };
         let plan = compile_actual_subgraph_cost_plan(&fetch.operation.document, &supergraph);

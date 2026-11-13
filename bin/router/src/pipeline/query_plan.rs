@@ -32,10 +32,6 @@ pub struct PlannedQuery {
     pub demand_control: Option<Arc<DemandControlFormulaPlan>>,
 }
 
-fn empty_planning_plan() -> QueryPlan<Planning> {
-    QueryPlan::empty()
-}
-
 static EMPTY_QUERY_PLAN: LazyLock<Arc<QueryPlan>> = LazyLock::new(|| Arc::new(QueryPlan::empty()));
 
 #[inline]
@@ -133,7 +129,7 @@ pub async fn plan_operation_with_cache(
                 if is_pure_introspection {
                     return Ok(PlannedQuery {
                         plan: EMPTY_QUERY_PLAN.clone(),
-                        demand_control: compile_demand_control(&empty_planning_plan()),
+                        demand_control: compile_demand_control(&QueryPlan::<Planning>::empty()),
                     });
                 }
 
@@ -156,7 +152,7 @@ pub async fn plan_operation_with_cache(
                 if is_plan_operation_empty && (!is_projection_plan_empty || !is_subscription) {
                     return Ok(PlannedQuery {
                         plan: EMPTY_QUERY_PLAN.clone(),
-                        demand_control: compile_demand_control(&empty_planning_plan()),
+                        demand_control: compile_demand_control(&QueryPlan::<Planning>::empty()),
                     });
                 }
 

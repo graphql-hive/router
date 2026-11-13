@@ -1616,8 +1616,6 @@ mod tests {
         assert_eq!(batch.entity_batch.aliases.len(), 20);
     }
 
-    /// A batch with more aliases than `max_aliases_per_request` is split into several batches,
-    /// and a leftover single fetch stays a plain fetch.
     fn with_depends_on(mut node: PlanNode, depends_on: Vec<u32>) -> PlanNode {
         if let PlanNode::Flatten(flatten) = &mut node {
             if let PlanNode::Fetch(fetch) = flatten.node.as_mut() {
@@ -1740,6 +1738,8 @@ mod tests {
         assert_eq!(all, [1, 2, 3, 4]);
     }
 
+    /// A batch with more aliases than `max_aliases_per_request` is split into several batches,
+    /// and a leftover single fetch stays a plain fetch.
     #[test]
     fn optimize_parallel_node_splits_batches_over_max_aliases_per_request() {
         let supergraph = test_supergraph_state();

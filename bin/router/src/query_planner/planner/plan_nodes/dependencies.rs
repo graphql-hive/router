@@ -26,7 +26,7 @@ impl PlanSchedule {
     /// the plan, so a schedule never has a cycle.
     pub fn new(node: Option<&PlanNode<Planning>>) -> Result<Self, QueryPlanError> {
         let fetches = node.map(plan_fetches).unwrap_or_default();
-        let position = positions_by_id(&fetches);
+        let position = positions_by_id(&fetches)?;
         let mut dependencies: Vec<(u32, u32)> = Vec::new();
         for (index, fetch) in fetches.iter().enumerate() {
             let Some((id, depends_on)) = id_and_depends_on(fetch) else {
@@ -92,7 +92,7 @@ impl PlanSchedule {
 
     /// The schedule without the first fetch, for the rest of a subscription's plan that runs on
     /// every event: the subscription fetch is done by then.
-    pub fn after_first_fetch(&self) -> Self {
+    pub(super) fn after_first_fetch(&self) -> Self {
         let dependencies = (1..self.fetch_count())
             .flat_map(|dependency| {
                 self.dependents(dependency)
@@ -129,8 +129,9 @@ fn push_fetches<'p, S: PlanState>(
 }
 
 /// Each fetch's position, by id. Fetch ids count up from one, so a flat array holds them.
-/// `u32::MAX` where no fetch has that id.
-fn positions_by_id(fetches: &[&PlanNode<Planning>]) -> Vec<u32> {
+/// `u32::MAX` where no fetch has that id. Fails when two fetches have one id, a dependency on it
+/// would pick one of them.
+fn positions_by_id(fetches: &[&PlanNode<Planning>]) -> Result<Vec<u32>, QueryPlanError> {
     let ids = |fetch| {
         id_and_depends_on(fetch)
             .map(|(id, _)| id)
@@ -146,11 +147,17 @@ fn positions_by_id(fetches: &[&PlanNode<Planning>]) -> Vec<u32> {
         .unwrap_or(0);
     let mut position = vec![u32::MAX; id_bound];
     for (index, fetch) in fetches.iter().enumerate() {
+        let index = index as u32;
         for id in ids(fetch) {
-            position[id.index()] = index as u32;
+            // a batch has its own id in `completes` too
+            match position[id.index()] {
+                u32::MAX => position[id.index()] = index,
+                other if other == index => {}
+                _ => return Err(QueryPlanError::DuplicateFetchId { id }),
+            }
         }
     }
-    position
+    Ok(position)
 }
 
 /// A fetch's id and the fetches it depends on, `None` for a node that isn't a fetch.

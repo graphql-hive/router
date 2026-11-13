@@ -612,8 +612,8 @@ mod tests {
         "#);
 
         let plan = plan.into_executable(&planner.supergraph);
-        let custom_scalar_paths = find_fetch_custom_scalar_paths(plan.node.as_ref(), "test")
-            .expect("custom scalar paths");
+        let custom_scalar_paths =
+            find_fetch_custom_scalar_paths(plan.node(), "test").expect("custom scalar paths");
 
         let interface_paths = custom_scalar_paths
             .children

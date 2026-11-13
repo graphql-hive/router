@@ -21,6 +21,8 @@ pub enum QueryPlanError {
     Internal(String),
     #[error("Fetch {fetch} depends on fetch {dependency}, which doesn't come before it")]
     DependsOnLaterFetch { fetch: FetchId, dependency: FetchId },
+    #[error("Two fetches have id {id}")]
+    DuplicateFetchId { id: FetchId },
     #[error("Fragment expansion error: {0}")]
     FragmentExpansionFailure(#[from] FragmentExpansionError),
     #[error(transparent)]
