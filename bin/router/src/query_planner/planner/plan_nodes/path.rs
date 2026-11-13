@@ -62,6 +62,35 @@ impl FlattenNodePath {
     pub fn len(&self) -> usize {
         self.0.len()
     }
+
+    /// Swaps every name and type condition for the one in `shared`, so all the paths of a plan
+    /// point at one copy of it.
+    pub(crate) fn share_steps(&mut self, shared: &mut SharedSteps) {
+        for segment in self.0.iter_mut() {
+            match segment {
+                PathSegment::Field(name) => share(&mut shared.names, name),
+                PathSegment::TypeCondition(condition) => share(&mut shared.conditions, condition),
+                PathSegment::List => {}
+            }
+        }
+    }
+}
+
+/// One copy of every field name and type condition, for all the paths of a plan. A big plan has
+/// thousands of paths over a few dozen names.
+#[derive(Default)]
+pub(crate) struct SharedSteps {
+    names: ahash::HashSet<Arc<str>>,
+    conditions: ahash::HashSet<Arc<TypeCondition>>,
+}
+
+fn share<T: Eq + std::hash::Hash + ?Sized>(shared: &mut ahash::HashSet<Arc<T>>, item: &mut Arc<T>) {
+    match shared.get(item) {
+        Some(existing) => *item = Arc::clone(existing),
+        None => {
+            shared.insert(Arc::clone(item));
+        }
+    }
 }
 
 impl From<Vec<PathSegment>> for FlattenNodePath {
@@ -85,6 +114,13 @@ impl MergePaths {
 
     pub fn iter(&self) -> impl Iterator<Item = ResponsePathRef<'_>> + '_ {
         self.0.iter().map(FlattenNodePath::as_ref)
+    }
+
+    /// See [`FlattenNodePath::share_steps`]
+    pub(crate) fn share_steps(&mut self, shared: &mut SharedSteps) {
+        for path in self.0.iter_mut() {
+            path.share_steps(shared);
+        }
     }
 }
 

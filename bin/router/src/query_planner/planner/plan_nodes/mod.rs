@@ -324,6 +324,7 @@ impl FetchContext {
 /// of those objects gets the `copy` fields copied from it, instead of going to the subgraph.
 #[derive(Debug, Clone)]
 pub struct EntityReuse {
+    /// Empty in an executable plan, `trie` has them
     pub sources: Vec<FlattenNodePath>,
     pub copy: RequiresSelectionSet,
     /// `sources` as a trie. Built once, even when fetches share this.

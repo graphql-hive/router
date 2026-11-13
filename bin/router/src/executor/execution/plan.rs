@@ -1776,7 +1776,7 @@ impl<'exec> Executor<'exec> {
                 error_path,
                 &mut |node, target_data, error_path| {
                     for &path in trie.paths_ending_at(node) {
-                        let Some(cursor) = &mut cursors[path] else {
+                        let Some(cursor) = &mut cursors[path as usize] else {
                             continue;
                         };
                         let target = cursor.targets.next().copied().flatten();

@@ -350,10 +350,12 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
     let mut copies = Vec::new();
     let mut targets = TargetEntities::default();
     for path in paths.clone() {
-        let end = trie.ends()[path];
+        let end = trie.ends()[path] as usize;
         // identical paths end at the same node, the first of them is collected for all
         let ending_here = trie.paths_ending_at(end);
-        let first = ending_here[ending_here.partition_point(|&other| other < paths.start)];
+        let first = ending_here
+            [ending_here.partition_point(|&other| (other as usize) < paths.start)]
+            as usize;
         if first != path {
             let shared = targets.paths[first - paths.start].clone();
             targets.paths.push(shared);
