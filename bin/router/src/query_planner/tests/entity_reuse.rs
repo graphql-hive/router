@@ -119,3 +119,19 @@ fn mutation_fields_never_copy_from_each_other() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+#[test]
+fn copies_a_field_under_a_labelled_override_from_the_subgraph_the_plan_uses(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // the plan gets `createdAt` from `b`, and `bFeed` already holds it from `b`
+    let document = parse_operation("{ aFeed { createdAt } bFeed { createdAt } }");
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/simple-progressive-overrides.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(describe(&query_plan), @"b at aFeed.@ <- bFeed.@");
+
+    Ok(())
+}
