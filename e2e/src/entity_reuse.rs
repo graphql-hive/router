@@ -209,4 +209,53 @@ mod entity_reuse_e2e_tests {
             "only the deep fetch should call inventory"
         );
     }
+
+    // The shallow fetch gets product 1's `inStock` as `null` with an error, the rest as usual.
+    // Copying that `null` would give the deep product 1 a `null` with no error at its path, so
+    // once an error came back we stop copying and the deep fetch asks `inventory`.
+    #[ntex::test]
+    async fn deep_fetch_asks_subgraph_when_shallow_field_is_null_from_an_error() {
+        let inventory_calls = Arc::new(AtomicUsize::new(0));
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request({
+                let inventory_calls = inventory_calls.clone();
+                move |req| {
+                    if req.path == "/inventory"
+                        && inventory_calls.fetch_add(1, Ordering::SeqCst) == 0
+                    {
+                        return Some(ResponseLike::new(
+                            StatusCode::OK,
+                            Some(
+                                r#"{"data":{"_entities":[{"inStock":null},{"inStock":false},{"inStock":true},{"inStock":false},{"inStock":true}]},"errors":[{"message":"stock lookup failed","path":["_entities",0,"inStock"]}]}"#
+                                    .to_string(),
+                            ),
+                            some_header_map! { http::header::CONTENT_TYPE => "application/json" },
+                        ));
+                    }
+                    None
+                }
+            })
+            .build()
+            .start()
+            .await;
+        let body = send_shallow_and_deep_inventory(&subgraphs).await;
+
+        insta::assert_snapshot!(body["data"]["topProducts"].to_string(), @r#"[{"upc":"1","inStock":null},{"upc":"2","inStock":false},{"upc":"3","inStock":true},{"upc":"4","inStock":false},{"upc":"5","inStock":true}]"#);
+        insta::assert_snapshot!(body["errors"].to_string(), @r#"[{"message":"Unexpected error","path":["topProducts",0,"inStock"],"extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","service":"inventory","affectedPath":"topProducts.@"}}]"#);
+        insta::assert_snapshot!(deep_in_stock(&body).join("\n"), @"
+        1: true
+        1: true
+        1: true
+        1: true
+        1: true
+        1: true
+        1: true
+        1: true
+        1: true
+        1: true
+        1: true
+        1: true
+        ");
+        assert_eq!(inventory_calls.load(Ordering::SeqCst), 2);
+    }
 }
