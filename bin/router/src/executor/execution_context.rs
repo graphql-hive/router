@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-use crate::query_planner::planner::plan_nodes::ResponsePathRef;
-
 use crate::executor::{
     execution::demand_control::subgraph_response_tracker::SubgraphResponseCostTracker,
     extensions::aggregator::ExtensionsAggregator,
@@ -47,7 +45,7 @@ impl<'a> ExecutionContext<'a> {
     pub fn handle_errors(
         &mut self,
         subgraph_name: &str,
-        affected_path: Option<ResponsePathRef<'_>>,
+        affected_path: Option<impl std::fmt::Display>,
         errors: Option<Vec<GraphQLError>>,
         entity_index_error_map: Option<HashMap<usize, Vec<GraphQLErrorPath>>>,
     ) {

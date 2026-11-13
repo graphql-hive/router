@@ -2,7 +2,11 @@ use std::collections::BTreeSet;
 use std::fmt::Display;
 use std::sync::Arc;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::{borrow::Cow, ops::Range};
+
+use super::state::PathList;
+use crate::executor::utils::traverse::PathTrie;
 
 use crate::query_planner::ast::merge_path::{MergePath, Segment};
 
@@ -62,18 +66,6 @@ impl FlattenNodePath {
     pub fn len(&self) -> usize {
         self.0.len()
     }
-
-    /// Swaps every name and type condition for the one in `shared`, so all the paths of a plan
-    /// point at one copy of it.
-    pub(crate) fn share_steps(&mut self, shared: &mut SharedSteps) {
-        for segment in self.0.iter_mut() {
-            match segment {
-                PathSegment::Field(name) => share(&mut shared.names, name),
-                PathSegment::TypeCondition(condition) => share(&mut shared.conditions, condition),
-                PathSegment::List => {}
-            }
-        }
-    }
 }
 
 /// One copy of every field name and type condition, for all the paths of a plan. A big plan has
@@ -129,18 +121,145 @@ impl MergePaths {
     pub fn iter(&self) -> impl Iterator<Item = ResponsePathRef<'_>> + '_ {
         self.0.iter().map(FlattenNodePath::as_ref)
     }
-
-    /// See [`FlattenNodePath::share_steps`]
-    pub(crate) fn share_steps(&mut self, shared: &mut SharedSteps) {
-        for path in self.0.iter_mut() {
-            path.share_steps(shared);
-        }
-    }
 }
 
 impl From<Vec<FlattenNodePath>> for MergePaths {
     fn from(paths: Vec<FlattenNodePath>) -> Self {
         Self(paths.into_boxed_slice())
+    }
+}
+
+impl PathList for MergePaths {
+    fn len(&self) -> usize {
+        MergePaths::len(self)
+    }
+
+    fn to_paths(&self) -> Cow<'_, [FlattenNodePath]> {
+        Cow::Borrowed(&self.0)
+    }
+}
+
+/// A flatten node's path in an executable plan. Plans stay in the cache, so only the trie of it
+/// is kept, and the path is told again from it to show a plan or an error.
+#[derive(Debug, Clone)]
+pub struct TriePath(Box<PathTrie>);
+
+impl TriePath {
+    pub(crate) fn new(path: &[PathSegment], shared: &mut SharedSteps) -> Self {
+        Self(Box::new(PathTrie::sharing([path], shared)))
+    }
+
+    pub fn trie(&self) -> &PathTrie {
+        &self.0
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.path_len(0)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn to_path(&self) -> FlattenNodePath {
+        self.0.path(0).into()
+    }
+}
+
+impl Display for TriePath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.to_path().fmt(f)
+    }
+}
+
+impl Serialize for TriePath {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.to_path().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for TriePath {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let path = FlattenNodePath::deserialize(deserializer)?;
+        Ok(Self(Box::new(PathTrie::new([path.as_slice()]))))
+    }
+}
+
+/// A batch alias's merge paths in an executable plan: its run of the paths of the trie the whole
+/// batch shares, see [`super::EntityBatch::trie`]
+#[derive(Debug, Clone)]
+pub struct TriePaths {
+    trie: Arc<PathTrie>,
+    start: u32,
+    len: u32,
+}
+
+impl TriePaths {
+    pub(crate) fn new(trie: Arc<PathTrie>, paths: Range<usize>) -> Self {
+        Self {
+            trie,
+            start: paths.start as u32,
+            len: paths.len() as u32,
+        }
+    }
+
+    pub fn trie(&self) -> &Arc<PathTrie> {
+        &self.trie
+    }
+
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// The alias's paths among the ones of [`Self::trie`]
+    pub fn range(&self) -> Range<usize> {
+        self.start as usize..(self.start + self.len) as usize
+    }
+
+    /// The alias's path `index`
+    pub fn path(&self, index: usize) -> FlattenNodePath {
+        self.trie.path(self.range().start + index).into()
+    }
+
+    /// How many steps the alias's path `index` has
+    pub fn path_len(&self, index: usize) -> usize {
+        self.trie.path_len(self.range().start + index)
+    }
+}
+
+impl PathList for TriePaths {
+    fn len(&self) -> usize {
+        TriePaths::len(self)
+    }
+
+    fn to_paths(&self) -> Cow<'_, [FlattenNodePath]> {
+        Cow::Owned((0..self.len()).map(|index| self.path(index)).collect())
+    }
+}
+
+impl Serialize for TriePaths {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.to_paths().serialize(serializer)
+    }
+}
+
+impl From<Vec<FlattenNodePath>> for TriePaths {
+    /// A trie of their own, [`super::EntityBatch::build_tries`] puts an alias's together with
+    /// the other ones of its batch
+    fn from(paths: Vec<FlattenNodePath>) -> Self {
+        let trie = PathTrie::new(paths.iter().map(FlattenNodePath::as_slice));
+        Self::new(Arc::new(trie), 0..paths.len())
+    }
+}
+
+/// Gives the alias a trie of its own. [`super::EntityBatch::build_tries`] puts them together.
+impl<'de> Deserialize<'de> for TriePaths {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Vec::<FlattenNodePath>::deserialize(deserializer)?.into())
     }
 }
 
