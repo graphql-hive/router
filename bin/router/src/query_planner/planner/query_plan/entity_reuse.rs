@@ -6,6 +6,7 @@
 //! The one exception: an entity fetch that asks a subgraph what an earlier one asked it
 //! (the same field deeper in the query, say) waits for that one too, if that lets it copy more.
 //! The earlier one was sent first, so the wait is usually short, and it saves a subgraph call.
+//! [`WAIT_FOR_SAME_FETCH`] turns it off.
 //!
 //! Fields are matched by name, arguments and response key, not by subgraph.
 //! A field resolved by two subgraphs is `@shareable`, which promises the same data.
@@ -43,6 +44,11 @@ use crate::query_planner::{
 };
 
 type Step = FetchStepData<MultiTypeFetchStep>;
+
+/// Whether an entity fetch may wait for the same fetch earlier on, see the module docs. It trades
+/// a subgraph call for a wait, which is usually short but not always, so it can be turned off
+/// here. Not a config option (yet).
+const WAIT_FOR_SAME_FETCH: bool = true;
 
 /// The positions earlier waves filled, by type. Each step is walked once, when its wave is done,
 /// and only types some entity fetch of the plan could copy are kept, so a plan without one
@@ -224,7 +230,8 @@ impl<'a> EntityReuseIndex<'a> {
             self.subgraphs.resize(index.index() + 1, 0);
         }
         self.subgraphs[index.index()] = subgraph;
-        if let Some((type_name, needed)) = wanted(step) {
+        // without any, a fetch never waits for one
+        if let Some((type_name, needed)) = wanted(step).filter(|_| WAIT_FOR_SAME_FETCH) {
             self.lookups.push(Lookup {
                 index,
                 id: step.id,
