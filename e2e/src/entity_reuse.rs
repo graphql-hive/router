@@ -1,10 +1,6 @@
 #[cfg(test)]
 mod entity_reuse_e2e_tests {
     use std::collections::BTreeMap;
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    };
 
     use ntex::http;
     use reqwest::StatusCode;
@@ -14,9 +10,9 @@ mod entity_reuse_e2e_tests {
         some_header_map, ClientResponseExt, ResponseLike, Started, TestRouter, TestSubgraphs,
     };
 
-    // In the bench operation, every product, user and inventory entity the last two waves ask
-    // for was already fetched by `topProducts`, `users` and the first inventory fetch.
-    // With reuse on, those fetches copy them instead of calling the subgraphs again.
+    // In the bench operation, every product and user entity the deep calls ask for was already
+    // fetched by `topProducts` and `users`, which they wait for. With reuse on, those calls copy
+    // them instead of calling the subgraphs again.
     #[ntex::test]
     async fn bench_operation_copies_entities_it_already_has() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
@@ -59,13 +55,14 @@ mod entity_reuse_e2e_tests {
             subgraph_request_counts.insert(subgraph, request_count);
         }
 
-        // Without reuse: accounts 2, inventory 2, products 2, reviews 1.
+        // Without reuse: accounts 2, inventory 2, products 2, reviews 1. The deep `inventory` call
+        // doesn't wait for the one at `topProducts`, so it never copies from it.
         insta::assert_snapshot!(
             sonic_rs::to_string_pretty(&subgraph_request_counts).unwrap(),
             @r#"
         {
           "accounts": 1,
-          "inventory": 1,
+          "inventory": 2,
           "products": 1,
           "reviews": 1
         }
@@ -73,14 +70,12 @@ mod entity_reuse_e2e_tests {
         );
     }
 
-    // `inventory` at `users.@.reviews.@.product` copies from `inventory` at `topProducts.@`.
-    // Reviews only point at products 1-4 and `topProducts` has 1-5, so all of them are there.
-    const SHALLOW_AND_DEEP_INVENTORY: &str =
-        "{ topProducts { upc inStock } users { reviews { product { upc inStock } } } }";
+    // The deep `products` call goes after `reviews`, which goes after `topProducts`, so it
+    // copies names from `topProducts`.
+    const SHALLOW_AND_DEEP_PRODUCTS: &str =
+        "{ topProducts { upc name reviews { author { reviews { product { upc name } } } } } }";
 
-    async fn send_shallow_and_deep_inventory(
-        subgraphs: &TestSubgraphs<Started>,
-    ) -> sonic_rs::Value {
+    async fn send(subgraphs: &TestSubgraphs<Started>, query: &str) -> sonic_rs::Value {
         let router = TestRouter::builder()
             .with_subgraphs(subgraphs)
             .inline_config(
@@ -98,75 +93,55 @@ mod entity_reuse_e2e_tests {
             .start()
             .await;
 
-        let res = router
-            .send_graphql_request(SHALLOW_AND_DEEP_INVENTORY, None, None)
-            .await;
+        let res = router.send_graphql_request(query, None, None).await;
         assert!(res.status().is_success(), "Expected 200 OK");
         res.json_body().await
     }
 
-    fn deep_in_stock(body: &sonic_rs::Value) -> Vec<String> {
-        let mut values = Vec::new();
-        for user in body["data"]["users"].as_array().unwrap().iter() {
-            for review in user["reviews"].as_array().unwrap().iter() {
-                let product = &review["product"];
-                values.push(format!(
-                    "{}: {}",
-                    product["upc"].as_str().unwrap(),
-                    product["inStock"]
-                ));
+    fn deep_names(body: &sonic_rs::Value) -> Vec<String> {
+        let mut names = Vec::new();
+        for product in body["data"]["topProducts"].as_array().unwrap().iter() {
+            for review in product["reviews"].as_array().unwrap().iter() {
+                for review in review["author"]["reviews"].as_array().unwrap().iter() {
+                    let product = &review["product"];
+                    names.push(format!(
+                        "{}: {}",
+                        product["upc"].as_str().unwrap(),
+                        product["name"]
+                    ));
+                }
             }
         }
-        values
+        names
     }
 
-    // Once a fetch fails we stop copying. The failed fetch also leaves `inStock` out of the
-    // response, so there'd be nothing to copy anyway. Either way, the deep fetch asks `inventory`.
-    #[ntex::test]
-    async fn deep_fetch_asks_subgraph_when_shallow_request_fails() {
-        let inventory_calls = Arc::new(AtomicUsize::new(0));
-        let subgraphs = TestSubgraphs::builder()
-            .with_on_request({
-                let inventory_calls = inventory_calls.clone();
-                move |req| {
-                    if req.path == "/inventory"
-                        && inventory_calls.fetch_add(1, Ordering::SeqCst) == 0
-                    {
-                        return Some(ResponseLike::new(
-                            StatusCode::OK,
-                            Some(r#"{"errors":[{"message":"inventory is down"}]}"#.to_string()),
-                            some_header_map! { http::header::CONTENT_TYPE => "application/json" },
-                        ));
-                    }
-                    None
-                }
-            })
-            .build()
-            .start()
-            .await;
-        let body = send_shallow_and_deep_inventory(&subgraphs).await;
-
-        insta::assert_snapshot!(body["data"]["topProducts"].to_string(), @r#"[{"upc":"1","inStock":null},{"upc":"2","inStock":null},{"upc":"3","inStock":null},{"upc":"4","inStock":null},{"upc":"5","inStock":null}]"#);
-        insta::assert_snapshot!(deep_in_stock(&body).join("\n"), @r"
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        ");
-        assert_eq!(inventory_calls.load(Ordering::SeqCst), 2);
+    fn products_requests(subgraphs: &TestSubgraphs<Started>) -> usize {
+        subgraphs
+            .get_requests_log("products")
+            .map_or(0, |requests| requests.len())
     }
 
-    // With `topProducts` null there's nothing to copy from, so the deep fetch asks `inventory`.
+    // Every review in the test data is of product 1, and `topProducts` has it.
     #[ntex::test]
-    async fn deep_fetch_asks_subgraph_when_shallow_target_is_null() {
+    async fn deep_fetch_copies_what_it_already_has() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let body = send(&subgraphs, SHALLOW_AND_DEEP_PRODUCTS).await;
+
+        assert!(body.get("errors").is_none(), "unexpected errors: {body}");
+        let names = deep_names(&body);
+        assert!(!names.is_empty());
+        assert!(
+            names.iter().all(|name| name == r#"1: "Table""#),
+            "{names:?}"
+        );
+        assert_eq!(products_requests(&subgraphs), 1, "only `topProducts` asks");
+    }
+
+    // `topProducts` gets product 1's `name` as `null` with an error. Copying that `null` would
+    // give the deep product 1 a `null` with no error at its path, so once an error came back we
+    // stop copying and the deep call asks `products`.
+    #[ntex::test]
+    async fn deep_fetch_asks_subgraph_when_a_field_is_null_from_an_error() {
         let subgraphs = TestSubgraphs::builder()
             .with_on_request(|req| {
                 let asks_for_top_products = req
@@ -176,7 +151,10 @@ mod entity_reuse_e2e_tests {
                 if req.path == "/products" && asks_for_top_products {
                     return Some(ResponseLike::new(
                         StatusCode::OK,
-                        Some(r#"{"data":{"topProducts":null}}"#.to_string()),
+                        Some(
+                            r#"{"data":{"topProducts":[{"__typename":"Product","upc":"1","name":null},{"__typename":"Product","upc":"2","name":"Couch"}]},"errors":[{"message":"name lookup failed","path":["topProducts",0,"name"]}]}"#
+                                .to_string(),
+                        ),
                         some_header_map! { http::header::CONTENT_TYPE => "application/json" },
                     ));
                 }
@@ -185,77 +163,15 @@ mod entity_reuse_e2e_tests {
             .build()
             .start()
             .await;
-        let body = send_shallow_and_deep_inventory(&subgraphs).await;
+        let body = send(&subgraphs, SHALLOW_AND_DEEP_PRODUCTS).await;
 
-        assert!(body.get("errors").is_none(), "unexpected errors: {body}");
-        assert!(body["data"]["topProducts"].is_null());
-        insta::assert_snapshot!(deep_in_stock(&body).join("\n"), @r"
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        ");
-        assert_eq!(
-            subgraphs.get_requests_log("inventory").unwrap().len(),
-            1,
-            "only the deep fetch should call inventory"
+        insta::assert_snapshot!(body["errors"].to_string(), @r#"[{"message":"Unexpected error","path":["topProducts",0,"name"],"extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","service":"products"}}]"#);
+        let names = deep_names(&body);
+        assert!(!names.is_empty());
+        assert!(
+            names.iter().all(|name| name == r#"1: "Table""#),
+            "{names:?}"
         );
-    }
-
-    // The shallow fetch gets product 1's `inStock` as `null` with an error, the rest as usual.
-    // Copying that `null` would give the deep product 1 a `null` with no error at its path, so
-    // once an error came back we stop copying and the deep fetch asks `inventory`.
-    #[ntex::test]
-    async fn deep_fetch_asks_subgraph_when_shallow_field_is_null_from_an_error() {
-        let inventory_calls = Arc::new(AtomicUsize::new(0));
-        let subgraphs = TestSubgraphs::builder()
-            .with_on_request({
-                let inventory_calls = inventory_calls.clone();
-                move |req| {
-                    if req.path == "/inventory"
-                        && inventory_calls.fetch_add(1, Ordering::SeqCst) == 0
-                    {
-                        return Some(ResponseLike::new(
-                            StatusCode::OK,
-                            Some(
-                                r#"{"data":{"_entities":[{"inStock":null},{"inStock":false},{"inStock":true},{"inStock":false},{"inStock":true}]},"errors":[{"message":"stock lookup failed","path":["_entities",0,"inStock"]}]}"#
-                                    .to_string(),
-                            ),
-                            some_header_map! { http::header::CONTENT_TYPE => "application/json" },
-                        ));
-                    }
-                    None
-                }
-            })
-            .build()
-            .start()
-            .await;
-        let body = send_shallow_and_deep_inventory(&subgraphs).await;
-
-        insta::assert_snapshot!(body["data"]["topProducts"].to_string(), @r#"[{"upc":"1","inStock":null},{"upc":"2","inStock":false},{"upc":"3","inStock":true},{"upc":"4","inStock":false},{"upc":"5","inStock":true}]"#);
-        insta::assert_snapshot!(body["errors"].to_string(), @r#"[{"message":"Unexpected error","path":["topProducts",0,"inStock"],"extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","service":"inventory","affectedPath":"topProducts.@"}}]"#);
-        insta::assert_snapshot!(deep_in_stock(&body).join("\n"), @"
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        ");
-        assert_eq!(inventory_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(products_requests(&subgraphs), 2);
     }
 }

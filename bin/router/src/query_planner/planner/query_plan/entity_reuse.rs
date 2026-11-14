@@ -1,5 +1,7 @@
 //! Finds where an entity fetch could take its data from the response instead of the subgraph:
-//! every position an earlier fetch filled with the same type and (at least) the same fields.
+//! every position filled with the same type and (at least) the same fields by a fetch it depends
+//! on, directly or through other fetches. A fetch runs once those are done, so only they are sure
+//! to be in the response by then, another one might still be on its way.
 //!
 //! Fields are matched by name, arguments and response key, not by subgraph.
 //! A field resolved by two subgraphs is `@shareable`, which promises the same data.
@@ -10,6 +12,10 @@
 use std::{hash::Hasher, sync::Arc};
 
 use ahash::{AHasher, HashMap};
+use petgraph::{
+    graph::NodeIndex,
+    visit::{EdgeRef, NodeIndexable},
+};
 
 use crate::query_planner::{
     ast::{
@@ -35,10 +41,13 @@ type Step = FetchStepData<MultiTypeFetchStep>;
 
 /// The positions earlier waves filled, by type. Each step is walked once, when its wave is done,
 /// and only types some entity fetch of the plan could copy are kept, so a plan without one
-/// walks nothing.
+/// walks nothing. A fetch's dependencies are always in earlier waves.
 pub(super) struct EntityReuseIndex<'a> {
+    fetch_graph: &'a FetchGraph<MultiTypeFetchStep>,
     supergraph: &'a SupergraphState,
     positions: HashMap<&'a str, Positions<'a>>,
+    /// the subgraph of each step that filled a position, by step index, see [`resolved_by`]
+    subgraphs: Vec<u16>,
     /// what `find` answered since the last wave, by type and key masks. Fetches in one wave
     /// often ask for the same thing, and the positions don't change until the wave is done.
     found: HashMap<(&'a str, u64, u64), Vec<Found<'a>>>,
@@ -47,6 +56,8 @@ pub(super) struct EntityReuseIndex<'a> {
 struct Found<'a> {
     needed: &'a SelectionSet,
     representation: &'a SelectionSet,
+    /// the steps with positions of the type the fetch depends on, all that `find_in` looks at
+    sources: Vec<u32>,
     reuse: Option<Arc<EntityReuse>>,
 }
 
@@ -57,15 +68,17 @@ struct Positions<'a> {
     /// path ids by the hash of the path. A collision falls back to a scan of `paths`.
     ids: HashMap<u64, usize>,
     list: Vec<Position<'a>>,
+    /// the steps that filled a position, each once, in the order they did
+    steps: Vec<u32>,
 }
 
 struct Position<'a> {
-    /// index into [`Positions::paths`]. `u32` keeps a position at 24 bytes, `find` goes over
+    /// index into [`Positions::paths`]. `u32`s keep a position at 24 bytes, `find` goes over
     /// all of them
     path: u32,
+    /// the index of the step that filled it
+    step: u32,
     selections: &'a SelectionSet,
-    /// the subgraph that filled it, see [`resolved_by`]
-    subgraph: u16,
     /// see [`key_mask`]
     keys: u64,
 }
@@ -174,20 +187,27 @@ impl<'a> EntityReuseIndex<'a> {
             }
         }
         Self {
+            fetch_graph,
             supergraph,
             positions,
+            subgraphs: Vec::new(),
             found: HashMap::default(),
         }
     }
 
     /// Adds the positions `step` fills. Call it once the step's wave is planned.
-    pub(super) fn add_step(&mut self, step: &'a Step) {
+    pub(super) fn add_step(&mut self, index: NodeIndex, step: &'a Step) {
         if self.positions.is_empty() || has_context(step) {
             return;
         }
         let Some(subgraph) = self.supergraph.subgraph_index(&step.service_name.0) else {
             return;
         };
+        if self.subgraphs.len() <= index.index() {
+            self.subgraphs.resize(index.index() + 1, 0);
+        }
+        self.subgraphs[index.index()] = subgraph;
+        let step_index = index.index() as u32;
         self.found.clear();
         // most steps hold no position, so the start is only built for the first one
         let mut start = LazyStart {
@@ -196,40 +216,63 @@ impl<'a> EntityReuseIndex<'a> {
         };
         let mut path = Vec::new();
         for (definition_name, selections) in step.output.iter_selections() {
-            self.walk(&mut start, &mut path, selections, definition_name, subgraph);
+            self.walk(
+                &mut start,
+                &mut path,
+                selections,
+                definition_name,
+                step_index,
+            );
         }
     }
 
-    /// Tells the entity fetch in `node` where earlier waves already put what it asks for.
-    pub(super) fn attach(&mut self, node: &mut PlanNode, step: &'a Step) {
+    /// Tells the entity fetch in `node` where the fetches it depends on already put what it
+    /// asks for.
+    pub(super) fn attach(&mut self, node: &mut PlanNode, index: NodeIndex, step: &'a Step) {
         let PlanNode::Flatten(flatten) = node else {
             return;
         };
         let PlanNode::Fetch(fetch) = flatten.node.as_mut() else {
             return;
         };
-        fetch.entity_reuse = self.find(step);
+        fetch.entity_reuse = self.find(index, step);
     }
 
-    fn find(&mut self, step: &'a Step) -> Option<Arc<EntityReuse>> {
+    fn find(&mut self, index: NodeIndex, step: &'a Step) -> Option<Arc<EntityReuse>> {
         let (type_name, needed) = wanted(step)?;
-        let positions = self.positions.get_mut(type_name)?;
+        let positions = self.positions.get(type_name)?;
+        if positions.steps.is_empty() {
+            return None;
+        }
         let representation = step.input.selections_for_definition(type_name)?;
+        let depends_on = depends_on(self.fetch_graph, index);
+        let sources: Vec<u32> = positions
+            .steps
+            .iter()
+            .copied()
+            .filter(|&step| depends_on[step as usize])
+            .collect();
+        if sources.is_empty() {
+            return None;
+        }
         let needed_keys = key_mask(needed, |field| field.name != "__typename");
         let representation_keys = key_mask(representation, |_| true);
         let found = self
             .found
             .entry((type_name, needed_keys, representation_keys))
             .or_default();
-        if let Some(found) = found
-            .iter()
-            .find(|found| found.needed == needed && found.representation == representation)
-        {
+        if let Some(found) = found.iter().find(|found| {
+            found.needed == needed
+                && found.representation == representation
+                && found.sources == sources
+        }) {
             return found.reuse.clone();
         }
         let reuse = find_in(
             self.supergraph,
             positions,
+            &depends_on,
+            &self.subgraphs,
             type_name,
             needed,
             needed_keys,
@@ -240,6 +283,7 @@ impl<'a> EntityReuseIndex<'a> {
         found.push(Found {
             needed,
             representation,
+            sources,
             reuse: reuse.clone(),
         });
         reuse
@@ -251,10 +295,10 @@ impl<'a> EntityReuseIndex<'a> {
         path: &mut Vec<Segment<'a>>,
         selections: &'a SelectionSet,
         current_type: &'a str,
-        subgraph: u16,
+        step: u32,
     ) {
         if let Some(positions) = self.positions.get_mut(current_type) {
-            positions.add(start.get(), path, selections, subgraph);
+            positions.add(start.get(), path, selections, step);
         }
 
         for item in &selections.items {
@@ -277,14 +321,14 @@ impl<'a> EntityReuseIndex<'a> {
                         path.push(Segment::List);
                     }
                     let field_type = field_type.inner_type();
-                    self.walk(start, path, &field.selections, field_type, subgraph);
+                    self.walk(start, path, &field.selections, field_type, step);
                 }
                 SelectionItem::InlineFragment(fragment) => {
                     if fragment.type_condition != current_type {
                         path.push(Segment::TypeCondition(&fragment.type_condition));
                     }
                     let condition = &fragment.type_condition;
-                    self.walk(start, path, &fragment.selections, condition, subgraph);
+                    self.walk(start, path, &fragment.selections, condition, step);
                 }
                 _ => {}
             }
@@ -299,8 +343,11 @@ impl<'a> Positions<'a> {
         start: &Start,
         path: &[Segment<'_>],
         selections: &'a SelectionSet,
-        subgraph: u16,
+        step: u32,
     ) {
+        if self.steps.last() != Some(&step) {
+            self.steps.push(step);
+        }
         let mut hasher = start.hasher.clone();
         for segment in path {
             segment.hash(&mut hasher);
@@ -340,16 +387,34 @@ impl<'a> Positions<'a> {
         };
         self.list.push(Position {
             path: id as u32,
+            step,
             selections,
-            subgraph,
             keys: key_mask(selections, |_| true),
         });
     }
 }
 
+/// Which steps `index` depends on, directly or through other steps, by step index
+fn depends_on(fetch_graph: &FetchGraph<MultiTypeFetchStep>, index: NodeIndex) -> Vec<bool> {
+    let mut depends_on = vec![false; fetch_graph.graph.node_bound()];
+    let mut stack = vec![index];
+    while let Some(step) = stack.pop() {
+        for edge in fetch_graph.parents_of(step) {
+            let parent = edge.source();
+            if !std::mem::replace(&mut depends_on[parent.index()], true) {
+                stack.push(parent);
+            }
+        }
+    }
+    depends_on
+}
+
+#[allow(clippy::too_many_arguments)]
 fn find_in(
     supergraph: &SupergraphState,
     positions: &Positions<'_>,
+    depends_on: &[bool],
+    subgraphs: &[u16],
     type_name: &str,
     needed: &SelectionSet,
     needed_keys: u64,
@@ -365,9 +430,13 @@ fn find_in(
     for position in &positions.list {
         if position.keys & needed_keys == needed_keys
             && !is_source[position.path as usize]
-            && *resolves_all.entry(position.subgraph).or_insert_with(|| {
-                resolves_every_field(supergraph, type_name, needed, position.subgraph)
-            })
+            && depends_on[position.step as usize]
+            && *resolves_all
+                .entry(subgraphs[position.step as usize])
+                .or_insert_with(|| {
+                    let subgraph = subgraphs[position.step as usize];
+                    resolves_every_field(supergraph, type_name, needed, subgraph)
+                })
             && covers(position.selections, needed)
         {
             is_source[position.path as usize] = true;

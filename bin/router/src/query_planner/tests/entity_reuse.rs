@@ -88,13 +88,14 @@ fn bench_operation_entities_can_come_from_earlier_fetches() -> Result<(), Box<dy
     );
     let query_plan = plan_with_reuse("../../bench/supergraph.graphql", document)?;
 
+    // the deep `inventory` call doesn't wait for the one at `topProducts`, so it can't copy
     insta::assert_snapshot!(describe(&query_plan), @r"
     inventory at topProducts.@ <- -
     reviews at topProducts.@ <- -
     reviews at users.@ <- -
     products at topProducts.@.reviews.@.author.reviews.@.product + users.@.reviews.@.product + users.@.reviews.@.product.reviews.@.author.reviews.@.product <- topProducts.@
     accounts at topProducts.@.reviews.@.author + users.@.reviews.@.product.reviews.@.author <- users.@
-    inventory at topProducts.@.reviews.@.author.reviews.@.product + users.@.reviews.@.product + users.@.reviews.@.product.reviews.@.author.reviews.@.product <- topProducts.@
+    inventory at topProducts.@.reviews.@.author.reviews.@.product + users.@.reviews.@.product + users.@.reviews.@.product.reviews.@.author.reviews.@.product <- -
     ");
 
     Ok(())
@@ -154,17 +155,17 @@ fn mutation_fields_never_copy_from_each_other() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn copies_a_field_under_a_labelled_override_from_the_subgraph_the_plan_uses(
-) -> Result<(), Box<dyn Error>> {
+fn never_copies_from_a_fetch_it_does_not_depend_on() -> Result<(), Box<dyn Error>> {
     init_logger();
-    // the plan gets `createdAt` from `b`, and `bFeed` already holds it from `b`
+    // `bFeed` has `createdAt` from `b`, the subgraph the plan asks for it at `aFeed`. But the
+    // `aFeed` call only waits for `aFeed`, so `bFeed` might not be in yet when it runs
     let document = parse_operation("{ aFeed { createdAt } bFeed { createdAt } }");
     let query_plan = plan_with_reuse(
         "fixture/tests/simple-progressive-overrides.supergraph.graphql",
         document,
     )?;
 
-    insta::assert_snapshot!(describe(&query_plan), @"b at aFeed.@ <- bFeed.@");
+    insta::assert_snapshot!(describe(&query_plan), @"b at aFeed.@ <- -");
 
     Ok(())
 }

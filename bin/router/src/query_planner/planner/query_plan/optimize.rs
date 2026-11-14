@@ -191,7 +191,7 @@ impl<'a> BatchFetchBuilder<'a> {
 
         // Aliases that send the same list share one variable, and only the first one's list
         // goes out. Copying could leave different entities out of each, so none of them copy.
-        let mut entity_reuse = representative.entity_reuse.clone();
+        let mut entity_reuse = shared_entity_reuse(shape_group);
         for earlier in self.batched_aliases.iter_mut().filter(|earlier| {
             earlier.representations_variable_name == representations_variable_name
         }) {
@@ -720,6 +720,26 @@ fn optimize_parallel_node(
     }
 
     Ok(optimized_nodes)
+}
+
+/// What the fetches of one alias may copy from: the sources of each of them. Each fetch only
+/// copies from fetches it depends on, and the batch waits for what any of them waits for.
+fn shared_entity_reuse(shape_group: &[EntityFetch]) -> Option<std::sync::Arc<EntityReuse>> {
+    let mut reuses = shape_group
+        .iter()
+        .filter_map(|fetch| fetch.entity_reuse.as_ref());
+    let first = reuses.next()?;
+    let mut shared: Option<EntityReuse> = None;
+    // the same shape asks for the same fields, so `copy` is the same
+    for reuse in reuses.filter(|reuse| !std::sync::Arc::ptr_eq(reuse, first)) {
+        let shared = shared.get_or_insert_with(|| first.as_ref().clone());
+        for source in &reuse.sources {
+            if !shared.sources.contains(source) {
+                shared.sources.push(source.clone());
+            }
+        }
+    }
+    Some(shared.map_or_else(|| first.clone(), std::sync::Arc::new))
 }
 
 fn partition_by_subgraph(
