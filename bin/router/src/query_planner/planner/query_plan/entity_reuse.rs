@@ -3,6 +3,10 @@
 //! on, directly or through other fetches. A fetch runs once those are done, so only they are sure
 //! to be in the response by then, another one might still be on its way.
 //!
+//! The one exception: an entity fetch that asks a subgraph what an earlier one asked it
+//! (the same field deeper in the query, say) waits for that one too, if that lets it copy more.
+//! The earlier one was sent first, so the wait is usually short, and it saves a subgraph call.
+//!
 //! Fields are matched by name, arguments and response key, not by subgraph.
 //! A field resolved by two subgraphs is `@shareable`, which promises the same data.
 //!
@@ -31,7 +35,8 @@ use crate::query_planner::{
             state::MultiTypeFetchStep,
         },
         plan_nodes::{
-            planning::PlanNode, EntityReuse, FlattenNodePath, PathSegment, TypeCondition,
+            planning::PlanNode, EntityReuse, FetchId, FetchIdList, FlattenNodePath, PathSegment,
+            TypeCondition,
         },
     },
     state::supergraph_state::{OperationKind, SupergraphField, SupergraphState, TypeNode},
@@ -51,6 +56,17 @@ pub(super) struct EntityReuseIndex<'a> {
     /// what `find` answered since the last wave, by type and key masks. Fetches in one wave
     /// often ask for the same thing, and the positions don't change until the wave is done.
     found: HashMap<(&'a str, u64, u64), Vec<Found<'a>>>,
+    /// the entity fetches of earlier waves that could copy, a later fetch asking the same may
+    /// wait for one of them
+    lookups: Vec<Lookup<'a>>,
+}
+
+struct Lookup<'a> {
+    index: NodeIndex,
+    id: FetchId,
+    service: &'a str,
+    type_name: &'a str,
+    needed: &'a SelectionSet,
 }
 
 struct Found<'a> {
@@ -192,6 +208,7 @@ impl<'a> EntityReuseIndex<'a> {
             positions,
             subgraphs: Vec::new(),
             found: HashMap::default(),
+            lookups: Vec::new(),
         }
     }
 
@@ -207,6 +224,15 @@ impl<'a> EntityReuseIndex<'a> {
             self.subgraphs.resize(index.index() + 1, 0);
         }
         self.subgraphs[index.index()] = subgraph;
+        if let Some((type_name, needed)) = wanted(step) {
+            self.lookups.push(Lookup {
+                index,
+                id: step.id,
+                service: &step.service_name.0,
+                type_name,
+                needed,
+            });
+        }
         let step_index = index.index() as u32;
         self.found.clear();
         // most steps hold no position, so the start is only built for the first one
@@ -235,17 +261,64 @@ impl<'a> EntityReuseIndex<'a> {
         let PlanNode::Fetch(fetch) = flatten.node.as_mut() else {
             return;
         };
-        fetch.entity_reuse = self.find(index, step);
+        let Some((reuse, waits)) = self.find(index, step) else {
+            return;
+        };
+        fetch.entity_reuse = Some(reuse);
+        if !waits.is_empty() {
+            fetch.depends_on.extend(waits);
+            fetch.depends_on.sort_unstable();
+            fetch.depends_on.dedup();
+        }
     }
 
-    fn find(&mut self, index: NodeIndex, step: &'a Step) -> Option<Arc<EntityReuse>> {
+    /// Where the fetch can copy from, and the fetches it has to wait for to do it, on top of
+    /// the ones it already does
+    fn find(
+        &mut self,
+        index: NodeIndex,
+        step: &'a Step,
+    ) -> Option<(Arc<EntityReuse>, FetchIdList)> {
         let (type_name, needed) = wanted(step)?;
-        let positions = self.positions.get(type_name)?;
-        if positions.steps.is_empty() {
-            return None;
-        }
         let representation = step.input.selections_for_definition(type_name)?;
-        let depends_on = depends_on(self.fetch_graph, index);
+        let mut depends_on = vec![false; self.fetch_graph.graph.node_bound()];
+        mark_dependencies(self.fetch_graph, index, &mut depends_on);
+        let reuse = self.find_in_dependencies(&depends_on, type_name, needed, representation);
+
+        // an earlier fetch to the same subgraph that asked for (at least) the same. Waiting for
+        // it only pays off if it adds something to copy.
+        let mut waits = FetchIdList::new();
+        for lookup in &self.lookups {
+            if !depends_on[lookup.index.index()]
+                && lookup.service == step.service_name.0
+                && lookup.type_name == type_name
+                && covers(lookup.needed, needed)
+            {
+                depends_on[lookup.index.index()] = true;
+                mark_dependencies(self.fetch_graph, lookup.index, &mut depends_on);
+                waits.push(lookup.id);
+            }
+        }
+        if !waits.is_empty() {
+            let waited = self.find_in_dependencies(&depends_on, type_name, needed, representation);
+            let copies = |reuse: &Option<Arc<EntityReuse>>| {
+                reuse.as_ref().map_or(0, |reuse| reuse.sources.len())
+            };
+            if copies(&waited) > copies(&reuse) {
+                return waited.map(|reuse| (reuse, waits));
+            }
+        }
+        reuse.map(|reuse| (reuse, FetchIdList::new()))
+    }
+
+    fn find_in_dependencies(
+        &mut self,
+        depends_on: &[bool],
+        type_name: &'a str,
+        needed: &'a SelectionSet,
+        representation: &'a SelectionSet,
+    ) -> Option<Arc<EntityReuse>> {
+        let positions = self.positions.get(type_name)?;
         let sources: Vec<u32> = positions
             .steps
             .iter()
@@ -271,7 +344,7 @@ impl<'a> EntityReuseIndex<'a> {
         let reuse = find_in(
             self.supergraph,
             positions,
-            &depends_on,
+            depends_on,
             &self.subgraphs,
             type_name,
             needed,
@@ -394,9 +467,12 @@ impl<'a> Positions<'a> {
     }
 }
 
-/// Which steps `index` depends on, directly or through other steps, by step index
-fn depends_on(fetch_graph: &FetchGraph<MultiTypeFetchStep>, index: NodeIndex) -> Vec<bool> {
-    let mut depends_on = vec![false; fetch_graph.graph.node_bound()];
+/// Marks the steps `index` depends on, directly or through other steps, by step index
+fn mark_dependencies(
+    fetch_graph: &FetchGraph<MultiTypeFetchStep>,
+    index: NodeIndex,
+    depends_on: &mut [bool],
+) {
     let mut stack = vec![index];
     while let Some(step) = stack.pop() {
         for edge in fetch_graph.parents_of(step) {
@@ -406,7 +482,6 @@ fn depends_on(fetch_graph: &FetchGraph<MultiTypeFetchStep>, index: NodeIndex) ->
             }
         }
     }
-    depends_on
 }
 
 #[allow(clippy::too_many_arguments)]

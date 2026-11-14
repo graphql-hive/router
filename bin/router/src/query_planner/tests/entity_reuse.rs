@@ -1,6 +1,9 @@
 use crate::query_planner::{
     planner::{
-        plan_nodes::planning::{PlanNode, QueryPlan},
+        plan_nodes::{
+            planning::{PlanNode, QueryPlan},
+            FetchId,
+        },
         QueryPlannerOptions,
     },
     tests::testkit::{build_query_plan, build_query_plan_with_defaults, init_logger},
@@ -88,15 +91,54 @@ fn bench_operation_entities_can_come_from_earlier_fetches() -> Result<(), Box<dy
     );
     let query_plan = plan_with_reuse("../../bench/supergraph.graphql", document)?;
 
-    // the deep `inventory` call doesn't wait for the one at `topProducts`, so it can't copy
+    // the deep `inventory` call asks what the one at `topProducts` asked, so it waits for it
+    // and copies
     insta::assert_snapshot!(describe(&query_plan), @r"
     inventory at topProducts.@ <- -
     reviews at topProducts.@ <- -
     reviews at users.@ <- -
     products at topProducts.@.reviews.@.author.reviews.@.product + users.@.reviews.@.product + users.@.reviews.@.product.reviews.@.author.reviews.@.product <- topProducts.@
     accounts at topProducts.@.reviews.@.author + users.@.reviews.@.product.reviews.@.author <- users.@
-    inventory at topProducts.@.reviews.@.author.reviews.@.product + users.@.reviews.@.product + users.@.reviews.@.product.reviews.@.author.reviews.@.product <- -
+    inventory at topProducts.@.reviews.@.author.reviews.@.product + users.@.reviews.@.product + users.@.reviews.@.product.reviews.@.author.reviews.@.product <- topProducts.@
     ");
+
+    // without the wait the copy would be a race the deep call loses
+    let mut shallow = None;
+    let mut deep_depends_on = None;
+    fn walk<'p>(
+        node: &'p PlanNode,
+        shallow: &mut Option<FetchId>,
+        deep_depends_on: &mut Option<&'p [FetchId]>,
+    ) {
+        match node {
+            PlanNode::Sequence(s) => s
+                .nodes
+                .iter()
+                .for_each(|n| walk(n, shallow, deep_depends_on)),
+            PlanNode::Parallel(p) => p
+                .nodes
+                .iter()
+                .for_each(|n| walk(n, shallow, deep_depends_on)),
+            PlanNode::Flatten(flatten) => match flatten.node.as_ref() {
+                PlanNode::Fetch(fetch) if fetch.service_name == "inventory" => {
+                    *shallow = Some(fetch.id)
+                }
+                _ => {}
+            },
+            PlanNode::BatchFetch(batch) if batch.service_name == "inventory" => {
+                *deep_depends_on = Some(&batch.depends_on)
+            }
+            _ => {}
+        }
+    }
+    walk(
+        query_plan.node().expect("a plan"),
+        &mut shallow,
+        &mut deep_depends_on,
+    );
+    assert!(deep_depends_on
+        .expect("the deep inventory batch")
+        .contains(&shallow.expect("the inventory call at topProducts")));
 
     Ok(())
 }

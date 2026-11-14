@@ -56,13 +56,13 @@ mod entity_reuse_e2e_tests {
         }
 
         // Without reuse: accounts 2, inventory 2, products 2, reviews 1. The deep `inventory` call
-        // doesn't wait for the one at `topProducts`, so it never copies from it.
+        // waits for the one at `topProducts` and copies everything from it.
         insta::assert_snapshot!(
             sonic_rs::to_string_pretty(&subgraph_request_counts).unwrap(),
             @r#"
         {
           "accounts": 1,
-          "inventory": 2,
+          "inventory": 1,
           "products": 1,
           "reviews": 1
         }
