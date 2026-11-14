@@ -80,7 +80,10 @@ struct Found<'a> {
     representation: &'a SelectionSet,
     /// the steps with positions of the type the fetch depends on, all that `find_in` looks at
     sources: Vec<u32>,
-    reuse: Option<Arc<EntityReuse>>,
+    /// the same without the steps waits add, when the fetch has any
+    sources_without_waits: Option<Vec<u32>>,
+    /// and whether it needs the waits
+    reuse: Option<(Arc<EntityReuse>, bool)>,
 }
 
 #[derive(Default)]
@@ -294,51 +297,67 @@ impl<'a> EntityReuseIndex<'a> {
         let representation = step.input.selections_for_definition(type_name)?;
         let mut depends_on = vec![false; self.fetch_graph.graph.node_bound()];
         mark_dependencies(self.fetch_graph, index, &mut depends_on);
-        let reuse = self.find_in_dependencies(&depends_on, type_name, needed, representation);
 
-        // an earlier fetch to the same subgraph that asked for (at least) the same. Waiting for
-        // it only pays off if it adds something to copy.
+        // an earlier fetch to the same subgraph that asked for (at least) the same. `waited` is
+        // what the fetch would depend on if it waited for them too.
         let mut waits = FetchIdList::new();
+        let mut waited: Option<Vec<bool>> = None;
         for lookup in &self.lookups {
-            if !depends_on[lookup.index.index()]
+            let marks = waited.as_deref().unwrap_or(&depends_on);
+            if !marks[lookup.index.index()]
                 && lookup.service == step.service_name.0
                 && lookup.type_name == type_name
                 && covers(lookup.needed, needed)
             {
-                depends_on[lookup.index.index()] = true;
-                mark_dependencies(self.fetch_graph, lookup.index, &mut depends_on);
+                let marks = waited.get_or_insert_with(|| depends_on.clone());
+                marks[lookup.index.index()] = true;
+                mark_dependencies(self.fetch_graph, lookup.index, marks);
                 waits.push(lookup.id);
             }
         }
-        if !waits.is_empty() {
-            let waited = self.find_in_dependencies(&depends_on, type_name, needed, representation);
-            let copies = |reuse: &Option<Arc<EntityReuse>>| {
-                reuse.as_ref().map_or(0, |reuse| reuse.sources.len())
-            };
-            if copies(&waited) > copies(&reuse) {
-                return waited.map(|reuse| (reuse, waits));
+        let (reuse, needs_waits) = match &waited {
+            Some(waited) => self.find_in_dependencies(
+                waited,
+                Some(&depends_on),
+                type_name,
+                needed,
+                representation,
+            )?,
+            None => {
+                self.find_in_dependencies(&depends_on, None, type_name, needed, representation)?
             }
+        };
+        // waiting only pays off if it adds something to copy
+        if !needs_waits {
+            waits.clear();
         }
-        reuse.map(|reuse| (reuse, FetchIdList::new()))
+        Some((reuse, waits))
     }
 
+    /// Like [`find_in`], cached per wave. With `without_waits`, also says whether any source
+    /// needs the fetches `depends_on` has on top of those.
     fn find_in_dependencies(
         &mut self,
         depends_on: &[bool],
+        without_waits: Option<&[bool]>,
         type_name: &'a str,
         needed: &'a SelectionSet,
         representation: &'a SelectionSet,
-    ) -> Option<Arc<EntityReuse>> {
+    ) -> Option<(Arc<EntityReuse>, bool)> {
         let positions = self.positions.get(type_name)?;
-        let sources: Vec<u32> = positions
-            .steps
-            .iter()
-            .copied()
-            .filter(|&step| depends_on[step as usize])
-            .collect();
+        let steps_in = |depends_on: &[bool]| -> Vec<u32> {
+            positions
+                .steps
+                .iter()
+                .copied()
+                .filter(|&step| depends_on[step as usize])
+                .collect()
+        };
+        let sources = steps_in(depends_on);
         if sources.is_empty() {
             return None;
         }
+        let sources_without_waits = without_waits.map(steps_in);
         let needed_keys = key_mask(needed, |field| field.name != "__typename");
         let representation_keys = key_mask(representation, |_| true);
         let found = self
@@ -350,6 +369,7 @@ impl<'a> EntityReuseIndex<'a> {
         let same = |a: &SelectionSet, b: &SelectionSet| std::ptr::eq(a, b) || a == b;
         if let Some(found) = found.iter().find(|found| {
             found.sources == sources
+                && found.sources_without_waits == sources_without_waits
                 && same(found.needed, needed)
                 && same(found.representation, representation)
         }) {
@@ -359,6 +379,7 @@ impl<'a> EntityReuseIndex<'a> {
             self.supergraph,
             positions,
             depends_on,
+            without_waits,
             &self.subgraphs,
             type_name,
             needed,
@@ -366,11 +387,12 @@ impl<'a> EntityReuseIndex<'a> {
             representation,
             representation_keys,
         )
-        .map(Arc::new);
+        .map(|(reuse, needs_waits)| (Arc::new(reuse), needs_waits));
         found.push(Found {
             needed,
             representation,
             sources,
+            sources_without_waits,
             reuse: reuse.clone(),
         });
         reuse
@@ -499,26 +521,34 @@ fn mark_dependencies(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// The sources among the positions filled by steps in `depends_on`, and with `without_waits`,
+/// whether any of them is only there through steps that aren't in it
 fn find_in(
     supergraph: &SupergraphState,
     positions: &Positions<'_>,
     depends_on: &[bool],
+    without_waits: Option<&[bool]>,
     subgraphs: &[u16],
     type_name: &str,
     needed: &SelectionSet,
     needed_keys: u64,
     representation: &SelectionSet,
     representation_keys: u64,
-) -> Option<EntityReuse> {
+) -> Option<(EntityReuse, bool)> {
     // a plan can have thousands of positions, so the masks rule most of them out before the
     // real checks
     let mut is_source = vec![false; positions.paths.len()];
+    // paths a position of a step in `without_waits` is a source for
+    let mut is_source_without_waits =
+        vec![false; without_waits.map_or(0, |_| positions.paths.len())];
     // depends only on the subgraph, and a plan has a few of them
     let mut resolves_all: HashMap<u16, bool> = HashMap::default();
     let mut sources = Vec::new();
     for position in &positions.list {
+        let filled_without_waits = without_waits.is_some_and(|marks| marks[position.step as usize]);
         if position.keys & needed_keys == needed_keys
-            && !is_source[position.path as usize]
+            && (!is_source[position.path as usize]
+                || filled_without_waits && !is_source_without_waits[position.path as usize])
             && depends_on[position.step as usize]
             && *resolves_all
                 .entry(subgraphs[position.step as usize])
@@ -528,8 +558,12 @@ fn find_in(
                 })
             && covers(position.selections, needed)
         {
-            is_source[position.path as usize] = true;
-            sources.push(position.path as usize);
+            if !std::mem::replace(&mut is_source[position.path as usize], true) {
+                sources.push(position.path as usize);
+            }
+            if filled_without_waits {
+                is_source_without_waits[position.path as usize] = true;
+            }
         }
     }
     if sources.is_empty() {
@@ -550,6 +584,8 @@ fn find_in(
     if sources.is_empty() {
         return None;
     }
+    let needs_waits =
+        without_waits.is_some() && sources.iter().any(|&path| !is_source_without_waits[path]);
 
     let copy = SelectionSet {
         items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
@@ -560,13 +596,14 @@ fn find_in(
         })],
     };
 
-    Some(EntityReuse {
+    let reuse = EntityReuse {
         sources: sources
             .into_iter()
             .map(|path| positions.paths[path].clone())
             .collect(),
         copy: RequiresSelectionSet::from(&copy),
-    })
+    };
+    Some((reuse, needs_waits))
 }
 
 /// The type and fields an entity fetch could copy from the response, if it could copy at all
