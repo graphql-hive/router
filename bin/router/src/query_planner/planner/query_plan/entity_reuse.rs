@@ -287,6 +287,10 @@ impl<'a> EntityReuseIndex<'a> {
         step: &'a Step,
     ) -> Option<(Arc<EntityReuse>, FetchIdList)> {
         let (type_name, needed) = wanted(step)?;
+        // nothing of the type in the response yet, not even from the same fetch earlier on
+        if self.positions.get(type_name)?.steps.is_empty() {
+            return None;
+        }
         let representation = step.input.selections_for_definition(type_name)?;
         let mut depends_on = vec![false; self.fetch_graph.graph.node_bound()];
         mark_dependencies(self.fetch_graph, index, &mut depends_on);
