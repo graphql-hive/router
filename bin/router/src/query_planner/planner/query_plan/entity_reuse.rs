@@ -122,7 +122,7 @@ impl Segment<'_> {
             Segment::Field(name) => PathSegment::Field(name.into()),
             Segment::List => PathSegment::List,
             Segment::TypeCondition(name) => {
-                PathSegment::TypeCondition(Box::new(TypeCondition::from_names([name])))
+                PathSegment::TypeCondition(Arc::new(TypeCondition::from_names([name])))
             }
         }
     }
@@ -602,6 +602,7 @@ fn find_in(
             .map(|path| positions.paths[path].clone())
             .collect(),
         copy: RequiresSelectionSet::from(&copy),
+        trie: Default::default(),
     };
     Some((reuse, needs_waits))
 }

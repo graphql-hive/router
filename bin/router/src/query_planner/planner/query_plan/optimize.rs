@@ -2080,6 +2080,7 @@ mod tests {
                             PathSegment::List,
                         ])],
                         copy: Default::default(),
+                        trie: Default::default(),
                     }));
                 }
             }
