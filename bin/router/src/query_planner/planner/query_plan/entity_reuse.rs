@@ -345,10 +345,13 @@ impl<'a> EntityReuseIndex<'a> {
             .found
             .entry((type_name, needed_keys, representation_keys))
             .or_default();
+        // fetches waiting for different ones leave many entries apart only by `sources`, so
+        // those go first, they're cheap to compare
+        let same = |a: &SelectionSet, b: &SelectionSet| std::ptr::eq(a, b) || a == b;
         if let Some(found) = found.iter().find(|found| {
-            found.needed == needed
-                && found.representation == representation
-                && found.sources == sources
+            found.sources == sources
+                && same(found.needed, needed)
+                && same(found.representation, representation)
         }) {
             return found.reuse.clone();
         }
