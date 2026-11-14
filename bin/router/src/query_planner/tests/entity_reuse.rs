@@ -1,0 +1,213 @@
+use crate::query_planner::{
+    planner::{
+        plan_nodes::{
+            planning::{PlanNode, QueryPlan},
+            FetchId,
+        },
+        QueryPlannerOptions,
+    },
+    tests::testkit::{build_query_plan, build_query_plan_with_defaults, init_logger},
+    utils::parsing::parse_operation,
+};
+use std::error::Error;
+
+/// Plans with entity reuse on, it's off by default
+fn plan_with_reuse(
+    fixture_path: &str,
+    document: graphql_tools::parser::query::Document<'static, String>,
+) -> Result<QueryPlan, Box<dyn Error>> {
+    build_query_plan(
+        fixture_path,
+        document,
+        Default::default(),
+        QueryPlannerOptions {
+            experimental_entity_reuse: true,
+            ..Default::default()
+        },
+    )
+}
+
+/// One line per entity fetch (or batch alias): where it merges, and where it may copy from.
+fn describe(plan: &QueryPlan) -> String {
+    fn walk(node: &PlanNode, out: &mut String) {
+        match node {
+            PlanNode::Sequence(s) => s.nodes.iter().for_each(|n| walk(n, out)),
+            PlanNode::Parallel(p) => p.nodes.iter().for_each(|n| walk(n, out)),
+            PlanNode::Flatten(flatten) => {
+                if let PlanNode::Fetch(fetch) = flatten.node.as_ref() {
+                    line(
+                        out,
+                        &fetch.service_name,
+                        &flatten.path.to_string(),
+                        fetch.entity_reuse.as_deref(),
+                    );
+                }
+            }
+            PlanNode::BatchFetch(batch) => {
+                for alias in &batch.entity_batch.aliases {
+                    let paths: Vec<String> =
+                        alias.merge_paths.iter().map(|p| p.to_string()).collect();
+                    line(
+                        out,
+                        &batch.service_name,
+                        &paths.join(" + "),
+                        alias.entity_reuse.as_deref(),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    fn line(
+        out: &mut String,
+        service: &str,
+        path: &str,
+        reuse: Option<&crate::query_planner::planner::plan_nodes::EntityReuse>,
+    ) {
+        let sources = match reuse {
+            Some(reuse) => reuse
+                .sources
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+            None => "-".to_string(),
+        };
+        out.push_str(&format!("{service} at {path} <- {sources}\n"));
+    }
+    let mut out = String::new();
+    if let Some(node) = plan.node() {
+        walk(node, &mut out);
+    }
+    out
+}
+
+#[test]
+fn bench_operation_entities_can_come_from_earlier_fetches() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        &std::fs::read_to_string("../../bench/operation.graphql")
+            .expect("Unable to read input file"),
+    );
+    let query_plan = plan_with_reuse("../../bench/supergraph.graphql", document)?;
+
+    // the deep `inventory` call asks what the one at `topProducts` asked, so it waits for it
+    // and copies
+    insta::assert_snapshot!(describe(&query_plan), @r"
+    inventory at topProducts.@ <- -
+    reviews at topProducts.@ <- -
+    reviews at users.@ <- -
+    products at topProducts.@.reviews.@.author.reviews.@.product + users.@.reviews.@.product + users.@.reviews.@.product.reviews.@.author.reviews.@.product <- topProducts.@
+    accounts at topProducts.@.reviews.@.author + users.@.reviews.@.product.reviews.@.author <- users.@
+    inventory at topProducts.@.reviews.@.author.reviews.@.product + users.@.reviews.@.product + users.@.reviews.@.product.reviews.@.author.reviews.@.product <- topProducts.@
+    ");
+
+    // without the wait the copy would be a race the deep call loses
+    let mut shallow = None;
+    let mut deep_depends_on = None;
+    fn walk<'p>(
+        node: &'p PlanNode,
+        shallow: &mut Option<FetchId>,
+        deep_depends_on: &mut Option<&'p [FetchId]>,
+    ) {
+        match node {
+            PlanNode::Sequence(s) => s
+                .nodes
+                .iter()
+                .for_each(|n| walk(n, shallow, deep_depends_on)),
+            PlanNode::Parallel(p) => p
+                .nodes
+                .iter()
+                .for_each(|n| walk(n, shallow, deep_depends_on)),
+            PlanNode::Flatten(flatten) => match flatten.node.as_ref() {
+                PlanNode::Fetch(fetch) if fetch.service_name == "inventory" => {
+                    *shallow = Some(fetch.id)
+                }
+                _ => {}
+            },
+            PlanNode::BatchFetch(batch) if batch.service_name == "inventory" => {
+                *deep_depends_on = Some(&batch.depends_on)
+            }
+            _ => {}
+        }
+    }
+    walk(
+        query_plan.node().expect("a plan"),
+        &mut shallow,
+        &mut deep_depends_on,
+    );
+    assert!(deep_depends_on
+        .expect("the deep inventory batch")
+        .contains(&shallow.expect("the inventory call at topProducts")));
+
+    Ok(())
+}
+
+#[test]
+fn nothing_is_planned_with_entity_reuse_off() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        &std::fs::read_to_string("../../bench/operation.graphql")
+            .expect("Unable to read input file"),
+    );
+    let query_plan = build_query_plan_with_defaults("../../bench/supergraph.graphql", document)?;
+
+    assert!(!describe(&query_plan).contains("<- topProducts"));
+    assert!(!describe(&query_plan).contains("<- users"));
+
+    Ok(())
+}
+
+#[test]
+fn source_with_an_aliased_key_is_left_out() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // `id` on users is the username, the executor would match authors by it
+    let document =
+        parse_operation(r#"{ users { id: username name reviews { author { name } } } }"#);
+    let query_plan = plan_with_reuse("../../bench/supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(describe(&query_plan), @r"
+    reviews at users.@ <- -
+    accounts at users.@.reviews.@.author <- -
+    ");
+
+    Ok(())
+}
+
+#[test]
+fn mutation_fields_never_copy_from_each_other() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // `add` keeps the two products in separate waves. A mutation can change what an earlier one
+    // returned, so `second` can't copy from `first`.
+    let document = parse_operation(
+        r#"mutation {
+          first: addProduct(input: { name: "a", price: 1 }) { id isAvailable }
+          add(num: 1)
+          second: addProduct(input: { name: "b", price: 2 }) { id isAvailable }
+        }"#,
+    );
+    let query_plan = plan_with_reuse("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(describe(&query_plan), @r"
+    b at first <- -
+    b at second <- -
+    ");
+
+    Ok(())
+}
+
+#[test]
+fn never_copies_from_a_fetch_it_does_not_depend_on() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // `bFeed` has `createdAt` from `b`, the subgraph the plan asks for it at `aFeed`. But the
+    // `aFeed` call only waits for `aFeed`, so `bFeed` might not be in yet when it runs
+    let document = parse_operation("{ aFeed { createdAt } bFeed { createdAt } }");
+    let query_plan = plan_with_reuse(
+        "fixture/tests/simple-progressive-overrides.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(describe(&query_plan), @"b at aFeed.@ <- -");
+
+    Ok(())
+}

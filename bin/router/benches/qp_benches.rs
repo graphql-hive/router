@@ -16,6 +16,14 @@ use hive_router::query_planner::utils::parsing::{parse_operation, parse_schema};
 use std::hint::black_box;
 use std::time::Duration;
 
+/// Entity reuse is off by default, but its planning is on here so its cost stays measured
+fn planner_options() -> QueryPlannerOptions {
+    QueryPlannerOptions {
+        experimental_entity_reuse: true,
+        ..Default::default()
+    }
+}
+
 fn get_operation(operation_path: &str) -> Document<'static, String> {
     let document_text = std::fs::read_to_string(operation_path).expect("Unable to read input file");
     parse_operation(&document_text)
@@ -64,14 +72,14 @@ fn bench_query_plan(
                 bb_override_context,
                 query_tree,
                 bb_operation,
-                &QueryPlannerOptions::default(),
+                &planner_options(),
                 &cancellation_token,
             )
             .unwrap();
             let query_plan = build_query_plan_from_fetch_graph(
                 fetch_graph,
                 bb_supergraph_state,
-                &QueryPlannerOptions::default(),
+                &planner_options(),
                 &cancellation_token,
             )
             .unwrap();
@@ -216,8 +224,7 @@ fn cache_preparation(c: &mut Criterion) {
         ),
     ] {
         let schema = parse_schema(&std::fs::read_to_string(schema_path).unwrap());
-        let planner =
-            Planner::new_from_supergraph(&schema, QueryPlannerOptions::default()).unwrap();
+        let planner = Planner::new_from_supergraph(&schema, planner_options()).unwrap();
         let document = get_operation(operation_path);
         let operation = get_executable_operation(&document, &planner.supergraph, None);
         let plan = planner
@@ -273,7 +280,7 @@ fn provides_planning(c: &mut Criterion) {
                 &override_context,
                 query_tree,
                 &operation,
-                &QueryPlannerOptions::default(),
+                &planner_options(),
                 &cancellation_token,
             )
             .unwrap();
@@ -281,7 +288,7 @@ fn provides_planning(c: &mut Criterion) {
                 build_query_plan_from_fetch_graph(
                     fetch_graph,
                     &supergraph_state,
-                    &QueryPlannerOptions::default(),
+                    &planner_options(),
                     &cancellation_token,
                 )
                 .unwrap(),

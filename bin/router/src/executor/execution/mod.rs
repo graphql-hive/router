@@ -1,6 +1,7 @@
 pub mod client_request_details;
 mod context;
 pub mod demand_control;
+pub mod entity_reuse;
 pub mod error;
 pub mod error_masking;
 pub mod jwt_forward;

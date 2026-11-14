@@ -72,8 +72,8 @@ use crate::query_planner::{
     planner::error::QueryPlanError,
     planner::plan_nodes::planning::{
         custom_scalar_paths_for_entities_selection, BatchFetchNode, ConditionGroup,
-        CustomScalarPaths, EntityBatch, EntityBatchAlias, FetchContext, FetchId, FetchIdList,
-        FetchRewrite, FlattenNodePath, PlanNode,
+        CustomScalarPaths, EntityBatch, EntityBatchAlias, EntityReuse, FetchContext, FetchId,
+        FetchIdList, FetchRewrite, FlattenNodePath, PlanNode,
     },
     planner::QueryPlannerOptions,
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
@@ -189,6 +189,16 @@ impl<'a> BatchFetchBuilder<'a> {
                 .insert(alias.clone(), alias_paths);
         }
 
+        // Aliases that send the same list share one variable, and only the first one's list
+        // goes out. Copying could leave different entities out of each, so none of them copy.
+        let mut entity_reuse = shared_entity_reuse(shape_group);
+        for earlier in self.batched_aliases.iter_mut().filter(|earlier| {
+            earlier.representations_variable_name == representations_variable_name
+        }) {
+            earlier.entity_reuse = None;
+            entity_reuse = None;
+        }
+
         self.batched_aliases.push(EntityBatchAlias {
             alias,
             representations_variable_name,
@@ -198,6 +208,7 @@ impl<'a> BatchFetchBuilder<'a> {
             output_rewrites: representative.output_rewrites.clone(),
             context: representative.context.clone(),
             run_if: representative.run_if.clone(),
+            entity_reuse,
         });
 
         Ok(())
@@ -363,6 +374,7 @@ struct EntityFetch {
     depends_on: FetchIdList,
     shape_key: ShapeKey,
     non_representations_variable_definitions: Vec<VariableDefinition>,
+    entity_reuse: Option<std::sync::Arc<EntityReuse>>,
 }
 
 impl EntityFetch {
@@ -493,6 +505,7 @@ impl EntityFetch {
             depends_on: fetch_node.depends_on.clone(),
             shape_key,
             non_representations_variable_definitions,
+            entity_reuse: fetch_node.entity_reuse.clone(),
         }))
     }
 }
@@ -707,6 +720,35 @@ fn optimize_parallel_node(
     }
 
     Ok(optimized_nodes)
+}
+
+/// What the fetches of one alias may copy from: the sources of each of them. Each fetch only
+/// copies from fetches it depends on, and the batch waits for what any of them waits for.
+fn shared_entity_reuse(shape_group: &[EntityFetch]) -> Option<std::sync::Arc<EntityReuse>> {
+    let mut reuses = shape_group
+        .iter()
+        .filter_map(|fetch| fetch.entity_reuse.as_ref());
+    let first = reuses.next()?;
+    let mut shared: Option<EntityReuse> = None;
+    // fetches the planner answered the same share one, so each is merged once
+    let mut merged = vec![first];
+    // the same shape asks for the same fields, so `copy` is the same
+    for reuse in reuses {
+        if merged
+            .iter()
+            .any(|merged| std::sync::Arc::ptr_eq(merged, reuse))
+        {
+            continue;
+        }
+        merged.push(reuse);
+        let shared = shared.get_or_insert_with(|| first.as_ref().clone());
+        for source in &reuse.sources {
+            if !shared.sources.contains(source) {
+                shared.sources.push(source.clone());
+            }
+        }
+    }
+    Some(shared.map_or_else(|| first.clone(), std::sync::Arc::new))
 }
 
 fn partition_by_subgraph(
@@ -935,10 +977,11 @@ fn build_batched_fetch_node(
     // what any of them waited for
     batch.depends_on = candidates()
         .flat_map(|candidate| candidate.depends_on.iter().copied())
-        .filter(|id| !batch.completes.contains(id))
         .collect();
     batch.depends_on.sort_unstable();
     batch.depends_on.dedup();
+    // after the dedup, fetches in a batch often wait for the same ones
+    batch.depends_on.retain(|id| !batch.completes.contains(id));
     Ok(batch)
 }
 
@@ -984,8 +1027,9 @@ mod tests {
             selection_item::SelectionItem,
         },
         planner::plan_nodes::planning::{
-            ConditionGroup, FetchId, FetchIdList, FetchNode, FetchNodePathSegment, FetchRewrite,
-            FlattenNode, FlattenNodePath, PlanNode, QueryPlan, ValueSetter,
+            ConditionGroup, EntityReuse, FetchId, FetchIdList, FetchNode, FetchNodePathSegment,
+            FetchRewrite, FlattenNode, FlattenNodePath, PathSegment, PlanNode, QueryPlan,
+            ValueSetter,
         },
         planner::QueryPlannerOptions,
         state::supergraph_state::{OperationKind, SupergraphState},
@@ -2014,6 +2058,51 @@ mod tests {
         "#);
     }
 
+    #[test]
+    fn optimize_parallel_node_drops_entity_reuse_of_aliases_sharing_a_variable() {
+        let supergraph = test_supergraph_state();
+        let requires_query = "query { ... on Product { upc } }";
+        let fetch = |id, field: &str| {
+            let mut node = flatten_entity_fetch_node(
+                id,
+                "inventory",
+                "products",
+                requires_query,
+                &format!(
+                    "query($representations:[_Any!]!) {{ _entities(representations: $representations) {{ ... on Product {{ {field} }} }} }}"
+                ),
+            );
+            if let PlanNode::Flatten(flatten) = &mut node {
+                if let PlanNode::Fetch(fetch) = flatten.node.as_mut() {
+                    fetch.entity_reuse = Some(std::sync::Arc::new(EntityReuse {
+                        sources: vec![FlattenNodePath::from(vec![
+                            PathSegment::Field("topProducts".into()),
+                            PathSegment::List,
+                        ])],
+                        copy: Default::default(),
+                    }));
+                }
+            }
+            node
+        };
+
+        let optimized = optimize_root_node(
+            PlanNode::parallel(vec![fetch(1, "shippingEstimate"), fetch(2, "inStock")]),
+            &supergraph,
+            &Default::default(),
+        )
+        .expect("optimize should work");
+
+        let PlanNode::BatchFetch(batch) = optimized else {
+            panic!("expected a batch fetch");
+        };
+        assert_eq!(batch.entity_batch.aliases.len(), 2);
+        for alias in &batch.entity_batch.aliases {
+            assert_eq!(alias.representations_variable_name, "__batch_reps_0");
+            assert!(alias.entity_reuse.is_none());
+        }
+    }
+
     /// Different requires should prevent sharing the representations variable.
     #[test]
     fn optimize_parallel_node_does_not_share_representations_variable_when_requires_differs() {
@@ -2867,6 +2956,7 @@ mod tests {
             context: None,
             run_if: None,
             depends_on: FetchIdList::new(),
+            entity_reuse: None,
         };
 
         let path = FlattenNodePath::from(&MergePath::new(vec![
@@ -2949,6 +3039,7 @@ mod tests {
             context: None,
             run_if: None,
             depends_on: FetchIdList::new(),
+            entity_reuse: None,
         }
     }
 

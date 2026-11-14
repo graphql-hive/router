@@ -34,6 +34,10 @@ pub struct QueryPlannerOptions {
     /// Whether to turn hard-coded argument values into variables.
     /// It's done during normalization, not by the planner.
     pub arguments_to_variables: bool,
+    /// Find where entity fetches could copy entities already in the response, see
+    /// `traffic_shaping.experimental_entity_reuse`. Off, plans have nothing to copy and
+    /// planning skips that work.
+    pub experimental_entity_reuse: bool,
     /// The most aliased `_entities` fields one entity request to a subgraph may carry.
     /// `None` means no limit: batches are never split, and all groups of contextual argument
     /// values go in one request.
@@ -49,6 +53,7 @@ impl Default for QueryPlannerOptions {
         Self {
             experimental_abstract_type_folding: false,
             arguments_to_variables: true,
+            experimental_entity_reuse: false,
             max_aliases_per_request: None,
             subgraph_max_aliases_per_request: HashMap::new(),
         }
