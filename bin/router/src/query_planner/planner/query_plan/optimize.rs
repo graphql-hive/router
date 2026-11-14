@@ -730,8 +730,17 @@ fn shared_entity_reuse(shape_group: &[EntityFetch]) -> Option<std::sync::Arc<Ent
         .filter_map(|fetch| fetch.entity_reuse.as_ref());
     let first = reuses.next()?;
     let mut shared: Option<EntityReuse> = None;
+    // fetches the planner answered the same share one, so each is merged once
+    let mut merged = vec![first];
     // the same shape asks for the same fields, so `copy` is the same
-    for reuse in reuses.filter(|reuse| !std::sync::Arc::ptr_eq(reuse, first)) {
+    for reuse in reuses {
+        if merged
+            .iter()
+            .any(|merged| std::sync::Arc::ptr_eq(merged, reuse))
+        {
+            continue;
+        }
+        merged.push(reuse);
         let shared = shared.get_or_insert_with(|| first.as_ref().clone());
         for source in &reuse.sources {
             if !shared.sources.contains(source) {
@@ -968,10 +977,11 @@ fn build_batched_fetch_node(
     // what any of them waited for
     batch.depends_on = candidates()
         .flat_map(|candidate| candidate.depends_on.iter().copied())
-        .filter(|id| !batch.completes.contains(id))
         .collect();
     batch.depends_on.sort_unstable();
     batch.depends_on.dedup();
+    // after the dedup, fetches in a batch often wait for the same ones
+    batch.depends_on.retain(|id| !batch.completes.contains(id));
     Ok(batch)
 }
 
