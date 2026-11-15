@@ -238,10 +238,9 @@ fn project_requires_map_mut<'r>(
                     continue;
                 }
 
-                let original = Value::object_get(entity_obj, field_name)
-                    .or_else(|| Value::object_get(entity_obj, response_key));
-
-                let original = match original {
+                // Only where the fetch wrote it. With `price: _internal_qp_alias_0`, whatever
+                // sits under `price` is some other field, like the client's own `price`.
+                let original = match Value::object_get(entity_obj, field_name) {
                     Some(original) => {
                         applied.found.push(response_key);
                         original
@@ -408,7 +407,7 @@ mod tests {
                 "__typename": "Product",
                 "id": "original",
                 "key": "fallback",
-                "nested": { "renamed": 2 },
+                "nested": { "value": 2, "renamed": 3 },
                 "upc": "123"
             }),
         )
@@ -1031,6 +1030,14 @@ mod tests {
             let pretty = project_requires_pretty_with_keys(requires, entity.clone(), Some(&keys));
             assert_eq!(pretty.as_deref(), expected, "{entity}");
         }
+
+        // Without `_internal_qp_alias_0` there's no key, and the client's `id` isn't one.
+        let pretty = project_requires_pretty_with_keys(
+            requires,
+            json!({ "__typename": "T", "x": "1", "id": 7 }),
+            Some(&keys),
+        );
+        assert_eq!(pretty, None);
     }
 
     /// A Book without its key `id`, like when the subgraph that has `id` returned `null` for it,
