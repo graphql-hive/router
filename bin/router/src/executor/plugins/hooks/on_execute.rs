@@ -6,6 +6,9 @@ use serde::Serialize;
 use sonic_rs::json;
 
 use crate::executor::execution::plan::PlanExecutionOutput;
+use crate::executor::headers::plan::HeaderAggregationStrategy;
+use crate::executor::headers::response::ResponseHeaderAggregator;
+use crate::executor::headers::sanitizer::is_denied_response_header;
 use crate::executor::plugin_context::{PluginContext, RouterHttpRequest};
 use crate::executor::plugin_trait::{
     from_graphql_errors_to_bytes, EarlyHTTPResponse, EndHookPayload, EndHookResult,
@@ -14,6 +17,7 @@ use crate::executor::plugin_trait::{
 use crate::executor::request_context::RequestContextPluginApi;
 use crate::executor::response::graphql_error::GraphQLError;
 use crate::executor::response::value::Value;
+use http::{HeaderName, HeaderValue};
 
 type RequestContextApi = RequestContextPluginApi<super::OnExecute>;
 
@@ -198,6 +202,11 @@ pub struct OnExecuteEndHookPayload<'exec> {
     /// The demand-control cost for this operation, including the post-execution
     /// `actual` cost. `None` when demand control is disabled.
     pub demand_control_cost: Option<DemandControlCost>,
+
+    // aggregated client response headers (header rules, demand control, cache-control).
+    // kept private so plugins only go through the accessor methods below. stored into the
+    // shared response after all end callbacks so deduped joiners get the same headers
+    pub(crate) response_headers: ResponseHeaderAggregator,
 }
 
 impl<'exec> OnExecuteEndHookPayload<'exec> {
@@ -218,6 +227,74 @@ impl<'exec> OnExecuteEndHookPayload<'exec> {
     }
     pub fn remove_extension(&mut self, key: &str) -> Option<sonic_rs::Value> {
         self.extensions.remove(key)
+    }
+
+    /// Set a client response header, replacing any value already aggregated for it
+    /// (for example from header rules or the computed `cache-control`).
+    ///
+    /// A `cache-control` set here cannot make a mutation or a response with GraphQL
+    /// errors cacheable: in those cases the router replaces it with
+    /// `no-store, no-cache, must-revalidate` after all end hooks run.
+    ///
+    /// Headers set here are part of the shared execution result, so with inbound
+    /// request deduplication enabled, deduplicated requests receive them too even
+    /// though they never run the `on_execute` hook themselves.
+    ///
+    /// Hop-by-hop headers and router-owned headers (like `content-type`) are ignored.
+    ///
+    /// Example:
+    /// ```
+    /// payload.insert_response_header(
+    ///     HeaderName::from_static("cache-control"),
+    ///     HeaderValue::from_static("no-store"),
+    /// );
+    /// ```
+    pub fn insert_response_header(&mut self, name: HeaderName, value: HeaderValue) {
+        if is_denied_response_header(&name) {
+            return;
+        }
+        // drop existing values then go through write() so never-join headers
+        // (like set-cookie) get the append strategy, same as header rules
+        self.response_headers.entries.remove(&name);
+        self.response_headers
+            .write(&name, &value, HeaderAggregationStrategy::Last);
+    }
+
+    /// Append a value to a client response header, keeping the values already aggregated for it.
+    /// Multiple values are joined with a comma, except for headers that must never be
+    /// joined (like `set-cookie`), which are sent as separate header fields.
+    ///
+    /// Same as [`Self::insert_response_header`], the header is propagated to deduplicated
+    /// requests, and hop-by-hop and router-owned headers are ignored.
+    pub fn append_response_header(&mut self, name: HeaderName, value: HeaderValue) {
+        if is_denied_response_header(&name) {
+            return;
+        }
+        let (strategy, values) = self
+            .response_headers
+            .entries
+            .entry(name)
+            .or_insert_with(|| (HeaderAggregationStrategy::Append, vec![]));
+        // force append, otherwise a first/last strategy from header rules would drop the value
+        *strategy = HeaderAggregationStrategy::Append;
+        values.push(value);
+    }
+
+    /// Get the values currently aggregated for a client response header.
+    /// Returns `None` when the header is not set.
+    pub fn get_response_header(&self, name: &HeaderName) -> Option<&[HeaderValue]> {
+        self.response_headers
+            .entries
+            .get(name)
+            .map(|(_, values)| values.as_slice())
+    }
+
+    /// Remove a client response header, returning the values that were aggregated for it.
+    pub fn remove_response_header(&mut self, name: &HeaderName) -> Option<Vec<HeaderValue>> {
+        self.response_headers
+            .entries
+            .remove(name)
+            .map(|(_, values)| values)
     }
 }
 

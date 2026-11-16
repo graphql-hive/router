@@ -3,6 +3,52 @@
 mod header_propagation_e2e_tests {
     use crate::testkit::{some_header_map, TestRouter, TestSubgraphs};
     use futures::join;
+    use hive_router::{
+        async_trait,
+        http::{HeaderName, HeaderValue},
+        plugins::{
+            hooks::{
+                on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
+                on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
+            },
+            plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload},
+        },
+    };
+
+    // sets client response headers from the on_execute end hook, which deduped joiners never run
+    #[derive(Default)]
+    struct OnExecuteResponseHeaderPlugin;
+
+    #[async_trait]
+    impl RouterPlugin for OnExecuteResponseHeaderPlugin {
+        type Config = ();
+
+        fn plugin_name() -> &'static str {
+            "test_on_execute_response_header"
+        }
+
+        fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
+            payload.initialize_plugin_with_defaults()
+        }
+
+        async fn on_execute<'exec>(
+            &'exec self,
+            payload: OnExecuteStartHookPayload<'exec>,
+        ) -> OnExecuteStartHookResult<'exec> {
+            payload.on_end(|mut payload| {
+                payload.insert_response_header(
+                    HeaderName::from_static("cache-control"),
+                    HeaderValue::from_static("public, max-age=60"),
+                );
+                // x-subgraph is set by the header rules, appending keeps both values
+                payload.append_response_header(
+                    HeaderName::from_static("x-subgraph"),
+                    HeaderValue::from_static("plugin"),
+                );
+                payload.proceed()
+            })
+        }
+    }
 
     #[ntex::test]
     async fn should_propagate_headers_to_subgraphs() {
@@ -415,5 +461,75 @@ mod header_propagation_e2e_tests {
             Some("application/graphql-response+json"),
             "expected content-type to win over propagated content-type"
         );
+    }
+
+    #[ntex::test]
+    async fn should_propagate_on_execute_end_response_headers_to_deduped_requests() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_delay(std::time::Duration::from_millis(100))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: supergraph.graphql
+                  traffic_shaping:
+                    all:
+                      dedupe_enabled: false
+                    router:
+                      dedupe:
+                        enabled: true
+                  headers:
+                    all:
+                      response:
+                        - insert:
+                            name: x-subgraph
+                            value: rule
+                  plugins:
+                    test_on_execute_response_header:
+                      enabled: true
+                  "#,
+            )
+            .register_plugin::<OnExecuteResponseHeaderPlugin>()
+            .build()
+            .start()
+            .await;
+
+        let (response_a, response_b) = join!(
+            router.send_graphql_request("{ users { id } }", None, None),
+            router.send_graphql_request("{ users { id } }", None, None)
+        );
+
+        assert_eq!(
+            subgraphs
+                .get_requests_log("accounts")
+                .unwrap_or_default()
+                .len(),
+            1,
+            "expected the second request to be deduped"
+        );
+
+        for response in [&response_a, &response_b] {
+            assert!(response.status().is_success(), "Expected 200 OK");
+            assert_eq!(
+                response
+                    .headers()
+                    .get("cache-control")
+                    .and_then(|v| v.to_str().ok()),
+                Some("public, max-age=60"),
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .get("x-subgraph")
+                    .and_then(|v| v.to_str().ok()),
+                Some("rule, plugin"),
+            );
+        }
     }
 }
