@@ -30,10 +30,6 @@ use crate::{
     },
 };
 
-/// The [`EntityRef`] of each target on a path, in walk order. `None` when the target sends
-/// nothing (null, or not projected).
-pub(super) type TargetEntities = Arc<Vec<Option<EntityRef>>>;
-
 /// Which entity goes into a target: its index among the context group's representations, or
 /// among the fetch's copies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +37,10 @@ pub enum EntityRef {
     Fetched { context_group: u32, index: u32 },
     Copied { index: u32 },
 }
+
+/// The [`EntityRef`] of each target on a path, in walk order. `None` when the target sends
+/// nothing (null, or not projected).
+pub(super) type TargetEntities = Arc<Vec<Option<EntityRef>>>;
 
 pub(super) struct ContextGroup<'a> {
     pub variables: Vec<(&'a str, Vec<u8>)>,
