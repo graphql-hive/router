@@ -104,6 +104,8 @@ impl FetchNode<Planning> {
     }
 }
 
+// plans get their tries from `into_executable`, only tests build nodes by hand
+#[cfg(test)]
 impl EntityReuse {
     pub fn build_trie(&self) {
         self.trie
@@ -111,6 +113,7 @@ impl EntityReuse {
     }
 }
 
+#[cfg(test)]
 impl EntityBatch {
     /// For a batch that wasn't made executable from a plan, like one built by hand: puts the
     /// merge paths of every alias in one trie, and builds the tries of where each alias's

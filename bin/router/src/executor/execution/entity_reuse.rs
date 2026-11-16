@@ -51,15 +51,8 @@ pub fn merge_copies<'v>(
 ) {
     // the aliases of a batch come one after another and share its trie, so one walk merges all
     // of them
-    let mut rest = copies.as_mut_slice();
-    while let Some(first) = rest.first() {
-        let shared = 1 + rest[1..]
-            .iter()
-            .take_while(|next| std::ptr::eq(next.trie, first.trie))
-            .count();
-        let (group, after) = rest.split_at_mut(shared);
+    for group in copies.chunk_by_mut(|a, b| std::ptr::eq(a.trie, b.trie)) {
         merge_walk(data, group, possible_types);
-        rest = after;
     }
 }
 

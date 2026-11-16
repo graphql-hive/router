@@ -77,26 +77,27 @@ pub(crate) struct SharedSteps {
 }
 
 impl SharedSteps {
-    pub(crate) fn name(&mut self, name: &Arc<str>) -> Arc<str> {
-        let mut name = Arc::clone(name);
-        share(&mut self.names, &mut name);
-        name
-    }
-
-    pub(crate) fn condition(&mut self, condition: &Arc<TypeCondition>) -> Arc<TypeCondition> {
-        let mut condition = Arc::clone(condition);
-        share(&mut self.conditions, &mut condition);
-        condition
+    /// `segment`, with the one copy of its name or type condition
+    pub(crate) fn step(&mut self, segment: &PathSegment) -> PathSegment {
+        match segment {
+            PathSegment::Field(name) => PathSegment::Field(share(&mut self.names, name)),
+            PathSegment::TypeCondition(condition) => {
+                PathSegment::TypeCondition(share(&mut self.conditions, condition))
+            }
+            PathSegment::List => PathSegment::List,
+        }
     }
 }
 
-fn share<T: Eq + std::hash::Hash + ?Sized>(shared: &mut ahash::HashSet<Arc<T>>, item: &mut Arc<T>) {
-    match shared.get(item) {
-        Some(existing) => *item = Arc::clone(existing),
-        None => {
-            shared.insert(Arc::clone(item));
-        }
+fn share<T: Eq + std::hash::Hash + ?Sized>(
+    shared: &mut ahash::HashSet<Arc<T>>,
+    item: &Arc<T>,
+) -> Arc<T> {
+    if let Some(existing) = shared.get(item) {
+        return Arc::clone(existing);
     }
+    shared.insert(Arc::clone(item));
+    Arc::clone(item)
 }
 
 impl From<Vec<PathSegment>> for FlattenNodePath {
@@ -151,14 +152,6 @@ impl TriePath {
 
     pub fn trie(&self) -> &PathTrie {
         &self.0
-    }
-
-    pub fn len(&self) -> usize {
-        self.0.path_len(0)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 
     pub fn to_path(&self) -> FlattenNodePath {
@@ -224,11 +217,6 @@ impl TriePaths {
     pub fn path(&self, index: usize) -> FlattenNodePath {
         self.trie.path(self.range().start + index).into()
     }
-
-    /// How many steps the alias's path `index` has
-    pub fn path_len(&self, index: usize) -> usize {
-        self.trie.path_len(self.range().start + index)
-    }
 }
 
 impl PathList for TriePaths {
@@ -248,15 +236,15 @@ impl Serialize for TriePaths {
 }
 
 impl From<Vec<FlattenNodePath>> for TriePaths {
-    /// A trie of their own, [`super::EntityBatch::build_tries`] puts an alias's together with
-    /// the other ones of its batch
+    /// A trie of their own. Only a plan's `into_executable` puts an alias's together with the
+    /// other ones of its batch, or `EntityBatch::build_tries` in tests
     fn from(paths: Vec<FlattenNodePath>) -> Self {
         let trie = PathTrie::new(paths.iter().map(FlattenNodePath::as_slice));
         Self::new(Arc::new(trie), 0..paths.len())
     }
 }
 
-/// Gives the alias a trie of its own. [`super::EntityBatch::build_tries`] puts them together.
+/// Gives the alias a trie of its own, see the `From` above
 impl<'de> Deserialize<'de> for TriePaths {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         Ok(Vec::<FlattenNodePath>::deserialize(deserializer)?.into())

@@ -183,6 +183,14 @@ fn linked<T>(items: &[Linked<T>], first: u32) -> impl Iterator<Item = &T> {
     .map(|item| &item.item)
 }
 
+/// `segment`, with the plan's one copy of its name or type condition when there's `shared`
+fn shared_step(segment: &PathSegment, shared: Option<&mut SharedSteps>) -> PathSegment {
+    match shared {
+        Some(shared) => shared.step(segment),
+        None => segment.clone(),
+    }
+}
+
 fn satisfies_type_condition(
     object: &[(&str, Value<'_>)],
     condition: &TypeCondition,
@@ -216,15 +224,7 @@ impl PathTrie {
         Self(match (paths.next(), paths.next()) {
             (Some(path), None) => Repr::One(
                 path.iter()
-                    .map(|segment| match (segment, shared.as_deref_mut()) {
-                        (PathSegment::Field(name), Some(shared)) => {
-                            PathSegment::Field(shared.name(name))
-                        }
-                        (PathSegment::TypeCondition(condition), Some(shared)) => {
-                            PathSegment::TypeCondition(shared.condition(condition))
-                        }
-                        (segment, _) => segment.clone(),
-                    })
+                    .map(|segment| shared_step(segment, shared.as_deref_mut()))
                     .collect(),
             ),
             (first, second) => Repr::Tree(Box::new(Tree::build(
@@ -247,14 +247,6 @@ impl PathTrie {
         match &self.0 {
             Repr::One(_) => &[0],
             Repr::Tree(tree) => tree.paths_ending_at(node),
-        }
-    }
-
-    /// How many steps path `path` has
-    pub fn path_len(&self, path: usize) -> usize {
-        match &self.0 {
-            Repr::One(steps) => steps.len(),
-            Repr::Tree(tree) => tree.path_len(path),
         }
     }
 
@@ -487,18 +479,14 @@ impl Tree {
                     ..Default::default()
                 });
                 let parent = &mut nodes[node];
-                match segment {
+                match shared_step(segment, shared.as_deref_mut()) {
                     PathSegment::Field(name) => {
-                        let name = &match shared.as_deref_mut() {
-                            Some(shared) => shared.name(name),
-                            None => Arc::clone(name),
-                        };
                         // names a plan shares are found by pointer, any other one is only kept
                         // twice
-                        let id = match names.iter().position(|known| Arc::ptr_eq(known, name)) {
+                        let id = match names.iter().position(|known| Arc::ptr_eq(known, &name)) {
                             Some(id) => id,
                             None => {
-                                names.push(Arc::clone(name));
+                                names.push(name);
                                 names.len() - 1
                             }
                         };
@@ -510,10 +498,6 @@ impl Tree {
                         parent.field_count += 1;
                     }
                     PathSegment::TypeCondition(condition) => {
-                        let condition = match shared.as_deref_mut() {
-                            Some(shared) => shared.condition(condition),
-                            None => Arc::clone(condition),
-                        };
                         push_linked(
                             &mut type_conditions,
                             &mut parent.conditions,
@@ -634,17 +618,6 @@ impl Tree {
         }
         nodes.reverse();
         nodes
-    }
-
-    /// How many steps path `path` has
-    pub fn path_len(&self, path: usize) -> usize {
-        let mut len = 0;
-        let mut node = self.ends()[path];
-        while node != 0 {
-            len += 1;
-            node = self.parent(node);
-        }
-        len
     }
 
     /// Path `path` again, as the steps it was built from. Plans keep only their tries, so this is

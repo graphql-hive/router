@@ -792,11 +792,9 @@ struct AliasMerge<'a, 'exec> {
     error_targets: Option<HashMap<usize, Vec<GraphQLErrorPath>>>,
 }
 
-impl AliasMerge<'_, '_> {
-    fn entity_index(&self, target: Option<EntityRef>) -> Option<usize> {
-        entity_index(target, &self.state.context_group_offsets)
-    }
-}
+/// Room for the path a walk builds to a target, plus a few steps errors add below it. A longer
+/// path just grows it.
+const ERROR_PATH_CAPACITY: usize = 16;
 
 /// The targets a path still has to merge, in walk order
 struct Cursor<'a> {
@@ -1523,9 +1521,10 @@ impl<'exec> Executor<'exec> {
                             }
 
                             // If there is an error in the response, then collect the paths for normalizing the error
-                            let initial_error_path = response.errors.as_ref().map(|_| {
-                                GraphQLErrorPath::with_capacity(flatten_node.path.len() + 2)
-                            });
+                            let initial_error_path = response
+                                .errors
+                                .as_ref()
+                                .map(|_| GraphQLErrorPath::with_capacity(ERROR_PATH_CAPACITY));
                             let mut entity_index_error_map = response
                                 .errors
                                 .as_ref()
@@ -1787,18 +1786,7 @@ impl<'exec> Executor<'exec> {
             let error_path = merges
                 .iter()
                 .any(|merge| merge.error_targets.is_some())
-                .then(|| {
-                    let longest = aliases
-                        .iter()
-                        .flat_map(|alias_state| {
-                            let merge_paths = &alias_state.alias_spec.merge_paths;
-                            (0..merge_paths.len()).map(|path| merge_paths.path_len(path))
-                        })
-                        .max()
-                        .unwrap_or_default();
-                    // Small extra capacity for path segments that will be appended later.
-                    GraphQLErrorPath::with_capacity(longest + 2)
-                });
+                .then(|| GraphQLErrorPath::with_capacity(ERROR_PATH_CAPACITY));
             trie.walk_mut(
                 &mut ctx.data,
                 &self.schema_metadata.possible_types,
@@ -1810,7 +1798,9 @@ impl<'exec> Executor<'exec> {
                         };
                         let target = cursor.targets.next().copied().flatten();
                         let merge = &mut merges[cursor.alias];
-                        let Some(entity_index) = merge.entity_index(target) else {
+                        let Some(entity_index) =
+                            entity_index(target, &merge.state.context_group_offsets)
+                        else {
                             continue;
                         };
                         // If this alias has errors, we also collect target paths
@@ -1860,14 +1850,12 @@ impl<'exec> Executor<'exec> {
             .max()
             .unwrap_or_default();
         let path_values = collect_path_values(trie, data, possible_types, depth);
-        // the trie has every alias's paths, one alias after another
-        let mut first_path = 0;
         let mut prepared: Vec<_> = entity_batch
             .aliases
             .iter()
             .map(|alias_spec| {
-                let paths = first_path..first_path + alias_spec.merge_paths.len();
-                first_path = paths.end;
+                // the alias's paths among the ones of the batch's trie
+                let paths = alias_spec.merge_paths.range();
                 // an alias that's off sends `[]`
                 if !self.runs(alias_spec.run_if.as_deref()) {
                     return (Vec::new(), Arc::default());
