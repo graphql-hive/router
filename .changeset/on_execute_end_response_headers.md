@@ -15,3 +15,5 @@ payload.on_end(|mut payload| {
     payload.proceed()
 })
 ```
+
+Closes #1688
