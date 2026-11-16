@@ -46,10 +46,6 @@ pub struct TargetEntities {
 }
 
 impl TargetEntities {
-    pub fn path_count(&self) -> usize {
-        self.paths.len()
-    }
-
     pub fn path(&self, path: usize) -> &[Option<EntityRef>] {
         &self.targets[self.paths[path].clone()]
     }
@@ -618,20 +614,12 @@ mod tests {
         possible_types: &PossibleTypes,
         subgraph_keys: Option<&KeysByType>,
         reuse: Option<&EntityReuse>,
-    ) -> (
-        Vec<ContextGroup<'a>>,
-        Vec<Vec<Option<EntityRef>>>,
-        Vec<Value<'v>>,
-    ) {
+    ) -> Collected<'a, 'v> {
         let trie = PathTrie::new(paths.into_iter().map(|path| path.as_slice()));
         // like a fetch: one path is walked directly, more are collected first
         let path_values = (trie.ends().len() > 1)
             .then(|| collect_path_values(&trie, data, possible_types, context_depth(context)));
-        let Collected {
-            groups,
-            targets,
-            copies,
-        } = collect_context_entities(
+        collect_context_entities(
             path_values.as_deref(),
             &trie,
             0..trie.ends().len(),
@@ -642,11 +630,7 @@ mod tests {
             subgraph_keys,
             data,
             reuse,
-        );
-        let targets = (0..targets.path_count())
-            .map(|path| targets.path(path).to_vec())
-            .collect();
-        (groups, targets, copies)
+        )
     }
 
     #[test]
@@ -693,7 +677,9 @@ mod tests {
             },
         ];
         let context = FetchContext::new(vec!["__context_0".into()], Some(rewrites.to_vec()));
-        let (groups, targets, _) = collect(
+        let Collected {
+            groups, targets, ..
+        } = collect(
             &data,
             [path.as_ref()],
             &requires,
@@ -713,13 +699,13 @@ mod tests {
             ]
         );
         assert!(groups.iter().all(|g| g.count == 1));
-        assert_eq!(targets[0][0], targets[0][1]);
-        assert_ne!(targets[0][0], targets[0][2]);
-        assert_eq!(targets[0][4], None);
+        assert_eq!(targets.path(0)[0], targets.path(0)[1]);
+        assert_ne!(targets.path(0)[0], targets.path(0)[2]);
+        assert_eq!(targets.path(0)[4], None);
         // another parent with the same value lands in the same group
-        assert_eq!(targets[0][5], targets[0][0]);
-        assert_eq!(group_of(targets[0][0]), 0);
-        assert_ne!(group_of(targets[0][2]), 0);
+        assert_eq!(targets.path(0)[5], targets.path(0)[0]);
+        assert_eq!(group_of(targets.path(0)[0]), 0);
+        assert_ne!(group_of(targets.path(0)[2]), 0);
     }
 
     #[test]
@@ -753,7 +739,9 @@ mod tests {
         let possible_types = PossibleTypes::default();
         let path: FlattenNodePath =
             vec![PathSegment::Field("again".into()), PathSegment::List].into();
-        let (_, targets, copies) = collect(
+        let Collected {
+            targets, copies, ..
+        } = collect(
             &data,
             [path.as_ref()],
             &requires,
@@ -764,7 +752,7 @@ mod tests {
             Some(&reuse),
         );
         assert_eq!(
-            targets[0].as_slice(),
+            targets.path(0),
             [Some(EntityRef::Fetched {
                 context_group: 0,
                 index: 0
@@ -871,7 +859,9 @@ mod tests {
             Some(rewrites.to_vec()),
         );
         let possible_types = PossibleTypes::default();
-        let (groups, targets, _) = collect(
+        let Collected {
+            groups, targets, ..
+        } = collect(
             &data,
             [path.as_ref()],
             &requires,
@@ -884,7 +874,11 @@ mod tests {
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].variables[1].1, b"\"A\"");
         assert_eq!(groups[1].variables[1].1, b"\"B\"");
-        let entity_groups: Vec<usize> = targets[0].iter().map(|entity| group_of(*entity)).collect();
+        let entity_groups: Vec<usize> = targets
+            .path(0)
+            .iter()
+            .map(|entity| group_of(*entity))
+            .collect();
         assert_eq!(entity_groups[..3], [0, 1, 0]);
 
         // resolving the same sources again reuses the cached group, a different entity under
@@ -974,7 +968,9 @@ mod tests {
             vec!["__context_0".into(), "__context_1".into()],
             Some(rewrites.to_vec()),
         );
-        let (groups, targets, _) = collect(
+        let Collected {
+            groups, targets, ..
+        } = collect(
             &data,
             [posts.as_ref(), drafts.as_ref()],
             &requires,
@@ -999,7 +995,7 @@ mod tests {
             ]
         );
         // posts 1 to 4, then drafts 5 and 6, with the group each one must land in
-        let entities = targets[0].iter().chain(targets[1].iter());
+        let entities = targets.path(0).iter().chain(targets.path(1).iter());
         for (entity, group) in entities.zip([0, 0, 1, 2, 0, 2]) {
             assert_eq!(group_of(*entity), group);
         }
@@ -1027,7 +1023,7 @@ mod tests {
             .into_iter()
             .collect();
         let context = FetchContext::new(vec!["__context_0".into()], Some(Vec::new()));
-        let (groups, _, _) = collect(
+        let Collected { groups, .. } = collect(
             &data,
             [path.as_ref()],
             &requires,
@@ -1065,7 +1061,9 @@ mod tests {
             rename_key_to: "__context_0".into(),
         }];
         let context = FetchContext::new(vec!["__context_0".into()], Some(rewrites.to_vec()));
-        let (groups, targets, _) = collect(
+        let Collected {
+            groups, targets, ..
+        } = collect(
             &data,
             [path.as_ref()],
             &requires,
@@ -1081,8 +1079,8 @@ mod tests {
             groups[0].representations,
             br#"[{"__typename":"U","id":"1"}]"#
         );
-        assert_eq!(targets[0].len(), 1);
-        assert!(targets[0][0].is_some());
+        assert_eq!(targets.path(0).len(), 1);
+        assert!(targets.path(0)[0].is_some());
     }
 
     #[test]
@@ -1309,7 +1307,7 @@ mod tests {
         // the second alias collects its own `a` and `b`, its second `b` shares the first one's
         let (groups, second) = collect(2..5);
         assert_eq!(groups[0].count, 3);
-        assert_eq!(second.path_count(), 3);
+        assert_eq!(second.paths.len(), 3);
         assert_eq!(second.paths[1], second.paths[2]);
         assert_eq!(second.targets.len(), 3);
         assert_eq!(second.iter().count(), 4);
