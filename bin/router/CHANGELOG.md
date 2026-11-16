@@ -116,6 +116,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.3.14 (2026-11-16)
+
+### Features
+
+#### Run each subgraph fetch as soon as the fetches it reads from are done.
+
+A query plan lists fetches in waves, and every fetch of a wave used to wait for the whole wave before it. In `{ topProducts { upc inStock reviews { author { name } } } }`, the authors only need the reviews, but they also waited for the `inStock` call, so a slow inventory subgraph held them up. Plans now keep which fetches each fetch reads from, and the router starts every fetch the moment those are in. Root mutation fields still run one after another, entity calls included.
+
+### Fixes
+
+#### Send an entity to its subgraph when the client uses the name of one of its key fields for something else.
+
+In `{ t { x: id  id: y } }`, the client's `id` is a different field, so the router fetches the key `id` under an internal alias. The check for a complete key looked at `id` in the response instead, found nothing there before the entity call, and left the entity out, so `y` came back `null`. With `{ t { x: id  id: x  y } }`, the answer depended on which root fetch finished first. The check now looks at the key the representation actually read.
+
+A required field that the planner aliased is also read only from that alias now. When it was missing, the router used to send whatever sat under the field's name instead, like the client's `price(currency: USD)` as the `price(currency: EUR)` a `@requires` asked for.
+
+#### Set client response headers from the `on_execute` end hook
+
+`OnExecuteEndHookPayload` has `insert_response_header`, `append_response_header`, `get_response_header` and `remove_response_header` for the client response headers aggregated during execution. The headers are written after all end callbacks run, so plugin values win over the computed `cache-control`, except that mutations and responses with GraphQL errors (including errors added in end hooks) always get `no-store, no-cache, must-revalidate`, and they are part of the shared response, so requests deduplicated by inbound request deduplication receive them too even though they never run `on_execute`.
+
+```rust
+payload.on_end(|mut payload| {
+    payload.insert_response_header(
+        HeaderName::from_static("cache-control"),
+        HeaderValue::from_static("no-store"),
+    );
+    payload.proceed()
+})
+```
+
+Closes #1688
+
+#### Smaller cached query plans for queries with many fragments
+
+Cached query plans for queries that reuse fragments are much smaller and faster to build. On our largest test query, a plan went from 19.8 MB to 0.78 MB and builds 24x faster. Very large queries that used to fall back to the slower response parser now use the fast one.
+
 ## 0.3.13 (2026-11-12)
 
 ### Features
