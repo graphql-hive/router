@@ -5,7 +5,82 @@ mod cache_control_e2e_tests {
     use reqwest::StatusCode;
     use sonic_rs::json;
 
-    use crate::testkit::{some_header_map, ResponseLike, TestRouter, TestSubgraphs};
+    use crate::testkit::{some_header_map, ResponseLike, Started, TestRouter, TestSubgraphs};
+    use hive_router::{
+        async_trait,
+        http::{HeaderName, HeaderValue},
+        plugins::{
+            hooks::{
+                on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
+                on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
+            },
+            plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload},
+        },
+        GraphQLError,
+    };
+
+    // inserts a cacheable cache-control from the on_execute end hook, and adds a graphql
+    // error there too when the client sends x-add-error. used to check that the router's
+    // no-store rules for mutations and errors still hold over plugin-written values
+    #[derive(Default)]
+    struct CacheablePlugin;
+
+    #[async_trait]
+    impl RouterPlugin for CacheablePlugin {
+        type Config = ();
+
+        fn plugin_name() -> &'static str {
+            "test_cacheable"
+        }
+
+        fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
+            payload.initialize_plugin_with_defaults()
+        }
+
+        async fn on_execute<'exec>(
+            &'exec self,
+            payload: OnExecuteStartHookPayload<'exec>,
+        ) -> OnExecuteStartHookResult<'exec> {
+            let add_error = payload
+                .router_http_request
+                .headers
+                .contains_key("x-add-error");
+            payload.on_end(move |mut payload| {
+                if add_error {
+                    payload.with_error(GraphQLError::from_message_and_code(
+                        "plugin error",
+                        "PLUGIN_ERROR",
+                    ));
+                }
+                payload.insert_response_header(
+                    HeaderName::from_static("cache-control"),
+                    HeaderValue::from_static("public, max-age=60"),
+                );
+                payload.proceed()
+            })
+        }
+    }
+
+    async fn start_router_with_cacheable_plugin(
+        subgraphs: &TestSubgraphs<Started>,
+    ) -> TestRouter<Started> {
+        TestRouter::builder()
+            .with_subgraphs(subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                plugins:
+                    test_cacheable:
+                        enabled: true
+                "#,
+            )
+            .register_plugin::<CacheablePlugin>()
+            .build()
+            .start()
+            .await
+    }
 
     // helper: read the cache-control response header as a string
     fn cache_control(res: &ntex::client::ClientResponse) -> Option<String> {
@@ -720,6 +795,59 @@ mod cache_control_e2e_tests {
         assert!(
             cc.contains("public") && cc.contains("max-age=180"),
             "expected public, max-age=180 from propagate default but got: {cc}"
+        );
+    }
+
+    #[ntex::test]
+    async fn plugin_cache_control_is_kept_for_successful_queries() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = start_router_with_cacheable_plugin(&subgraphs).await;
+
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+
+        assert_eq!(res.status(), 200);
+        assert_eq!(cache_control(&res).as_deref(), Some("public, max-age=60"));
+    }
+
+    #[ntex::test]
+    async fn plugin_cache_control_cannot_make_mutations_cacheable() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = start_router_with_cacheable_plugin(&subgraphs).await;
+
+        let res = router
+            .send_graphql_request(
+                r#"mutation { oneofTest(input: { string: "dummy" }) { id } }"#,
+                None,
+                None,
+            )
+            .await;
+
+        assert_eq!(res.status(), 200);
+        assert_eq!(
+            cache_control(&res).as_deref(),
+            Some("no-store, no-cache, must-revalidate")
+        );
+    }
+
+    #[ntex::test]
+    async fn plugin_cache_control_is_no_store_when_end_hook_adds_errors() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = start_router_with_cacheable_plugin(&subgraphs).await;
+
+        let res = router
+            .send_graphql_request(
+                "{ users { id } }",
+                None,
+                some_header_map! { http::header::HeaderName::from_static("x-add-error") => "1" },
+            )
+            .await;
+
+        assert_eq!(res.status(), 200);
+        assert_eq!(
+            cache_control(&res).as_deref(),
+            Some("no-store, no-cache, must-revalidate")
         );
     }
 }
