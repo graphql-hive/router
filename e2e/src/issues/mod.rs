@@ -4693,8 +4693,10 @@ mod issues_e2e_tests {
     /// needs comes from `b` as `_internal_qp_alias_0`. `c` waits for `b` only. The router used to
     /// check the key by looking at `id`, the client's field, so when `a` was slower than `b`,
     /// `id` wasn't there yet, `t` wasn't sent to `c`, and `y` came back `null`. The answer
-    /// mustn't depend on which of `a` and `b` answers first. With `id: y`, the client's `id`
-    /// comes from `c`, so `t` was never sent.
+    /// mustn't depend on which of `a` and `b` answers first.
+    ///
+    /// With `{ t { x: id  id: y } }`, the client's `id` is `c`'s `y`, so it can't exist before
+    /// `c` is called. The router still has to send `c` the key it got from `b`.
     #[ntex::test]
     async fn aliased_key_does_not_depend_on_the_fetch_with_the_clients_field() {
         use std::time::Duration;
@@ -4732,7 +4734,8 @@ mod issues_e2e_tests {
                 "with {slow} slow"
             );
 
-            // The client's `id` comes from `c` itself here, so it's never there before the call
+            // The client's `id` is `c`'s `y`, so it can't be there before `c` is called. `c` still
+            // gets the key from `b`.
             let res = router
                 .send_graphql_request("{ t { x: id id: y } }", None, None)
                 .await;

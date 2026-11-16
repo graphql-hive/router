@@ -149,7 +149,7 @@ pub fn project_requires(
                 let has_complete_key = type_keys.iter().any(|key_fields| {
                     key_fields
                         .iter()
-                        .all(|field| applied.found.contains(&field.as_str()))
+                        .all(|field| applied.found_response_keys.contains(&field.as_str()))
                 });
                 if !has_complete_key {
                     buffer.truncate(object_start_offset);
@@ -203,8 +203,9 @@ struct AppliedSelections<'r> {
     typename: bool,
     /// One of the fields isn't in the object.
     missing_field: bool,
-    /// The representation's keys the object had a value for, `null` included.
-    found: SmallVec<[&'r str; 4]>,
+    /// Response keys whose source field was in the object, `null` included. With
+    /// `id: _internal_qp_alias_0`, it gets `id` when `_internal_qp_alias_0` was there.
+    found_response_keys: SmallVec<[&'r str; 4]>,
 }
 
 /// `keys_known` is whether `entity_obj` is the entity and its subgraph's keys are known. It has
@@ -242,7 +243,7 @@ fn project_requires_map_mut<'r>(
                 // sits under `price` is some other field, like the client's own `price`.
                 let original = match Value::object_get(entity_obj, field_name) {
                     Some(original) => {
-                        applied.found.push(response_key);
+                        applied.found_response_keys.push(response_key);
                         original
                     }
                     // A `@requires` field whose subgraph returned `null` for the entity. The
@@ -321,7 +322,9 @@ fn project_requires_map_mut<'r>(
                     );
                     applied.typename |= fragment.typename;
                     applied.missing_field |= fragment.missing_field;
-                    applied.found.extend(fragment.found);
+                    applied
+                        .found_response_keys
+                        .extend(fragment.found_response_keys);
                 }
             }
             RequiresSelection::FragmentSpread(_) => {
@@ -1025,7 +1028,6 @@ mod tests {
         for entity in [
             json!({ "__typename": "T", "x": "1", "_internal_qp_alias_0": "1" }),
             json!({ "__typename": "T", "x": "1", "_internal_qp_alias_0": "1", "id": null }),
-            json!({ "id": null, "__typename": "T", "x": "1", "_internal_qp_alias_0": "1" }),
         ] {
             let pretty = project_requires_pretty_with_keys(requires, entity.clone(), Some(&keys));
             assert_eq!(pretty.as_deref(), expected, "{entity}");
