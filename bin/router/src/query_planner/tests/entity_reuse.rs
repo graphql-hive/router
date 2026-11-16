@@ -2,7 +2,7 @@ use crate::query_planner::{
     planner::{
         plan_nodes::{
             planning::{PlanNode, QueryPlan},
-            FetchId,
+            EntityReuse, FetchId,
         },
         QueryPlannerOptions,
     },
@@ -27,7 +27,8 @@ fn plan_with_reuse(
     )
 }
 
-/// One line per entity fetch (or batch alias): where it merges, and where it may copy from.
+/// One line per entity fetch (or batch alias): its id, where it merges, where it may copy from,
+/// and the fetches it waits for.
 fn describe(plan: &QueryPlan) -> String {
     fn walk(node: &PlanNode, out: &mut String) {
         match node {
@@ -37,9 +38,11 @@ fn describe(plan: &QueryPlan) -> String {
                 if let PlanNode::Fetch(fetch) = flatten.node.as_ref() {
                     line(
                         out,
+                        fetch.id,
                         &fetch.service_name,
                         &flatten.path.to_string(),
                         fetch.entity_reuse.as_deref(),
+                        &fetch.depends_on,
                     );
                 }
             }
@@ -49,9 +52,11 @@ fn describe(plan: &QueryPlan) -> String {
                         alias.merge_paths.iter().map(|p| p.to_string()).collect();
                     line(
                         out,
+                        batch.id,
                         &batch.service_name,
                         &paths.join(" + "),
                         alias.entity_reuse.as_deref(),
+                        &batch.depends_on,
                     );
                 }
             }
@@ -60,9 +65,11 @@ fn describe(plan: &QueryPlan) -> String {
     }
     fn line(
         out: &mut String,
+        id: FetchId,
         service: &str,
         path: &str,
-        reuse: Option<&crate::query_planner::planner::plan_nodes::EntityReuse>,
+        reuse: Option<&EntityReuse>,
+        waits: &[FetchId],
     ) {
         let sources = match reuse {
             Some(reuse) => reuse
@@ -73,7 +80,11 @@ fn describe(plan: &QueryPlan) -> String {
                 .join(", "),
             None => "-".to_string(),
         };
-        out.push_str(&format!("{service} at {path} <- {sources}\n"));
+        let waits: Vec<String> = waits.iter().map(|id| id.to_string()).collect();
+        out.push_str(&format!(
+            "[{id}] {service} at {path} <- {sources} after [{}]\n",
+            waits.join(", ")
+        ));
     }
     let mut out = String::new();
     if let Some(node) = plan.node() {
@@ -85,73 +96,28 @@ fn describe(plan: &QueryPlan) -> String {
 #[test]
 fn bench_operation_entities_can_come_from_earlier_fetches() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let document = parse_operation(
-        &std::fs::read_to_string("../../bench/operation.graphql")
-            .expect("Unable to read input file"),
-    );
-    let query_plan = plan_with_reuse("../../bench/supergraph.graphql", document)?;
+    let operation = std::fs::read_to_string("../../bench/operation.graphql")?;
+    let query_plan = plan_with_reuse(
+        "../../bench/supergraph.graphql",
+        parse_operation(&operation),
+    )?;
 
-    // the deep `inventory` call asks what the one at `topProducts` asked, so it waits for it
-    // and copies
+    // the deep `inventory` batch [22] asks what the call at `topProducts` [17] asked, so it waits
+    // for that one too and copies. without the wait the copy would be a race the deep call loses.
     insta::assert_snapshot!(describe(&query_plan), @r"
-    inventory at topProducts.@ <- -
-    reviews at topProducts.@ <- -
-    reviews at users.@ <- -
-    products at topProducts.@.reviews.@.author.reviews.@.product + users.@.reviews.@.product + users.@.reviews.@.product.reviews.@.author.reviews.@.product <- topProducts.@
-    accounts at topProducts.@.reviews.@.author + users.@.reviews.@.product.reviews.@.author <- users.@
-    inventory at topProducts.@.reviews.@.author.reviews.@.product + users.@.reviews.@.product + users.@.reviews.@.product.reviews.@.author.reviews.@.product <- topProducts.@
+    [17] inventory at topProducts.@ <- - after [15]
+    [20] reviews at topProducts.@ <- - after [2, 15]
+    [20] reviews at users.@ <- - after [2, 15]
+    [25] products at topProducts.@.reviews.@.author.reviews.@.product + users.@.reviews.@.product + users.@.reviews.@.product.reviews.@.author.reviews.@.product <- topProducts.@ after [3, 20]
+    [21] accounts at topProducts.@.reviews.@.author + users.@.reviews.@.product.reviews.@.author <- users.@ after [3, 20]
+    [22] inventory at topProducts.@.reviews.@.author.reviews.@.product + users.@.reviews.@.product + users.@.reviews.@.product.reviews.@.author.reviews.@.product <- topProducts.@ after [7, 13, 17, 25]
     ");
 
-    // without the wait the copy would be a race the deep call loses
-    let mut shallow = None;
-    let mut deep_depends_on = None;
-    fn walk<'p>(
-        node: &'p PlanNode,
-        shallow: &mut Option<FetchId>,
-        deep_depends_on: &mut Option<&'p [FetchId]>,
-    ) {
-        match node {
-            PlanNode::Sequence(s) => s
-                .nodes
-                .iter()
-                .for_each(|n| walk(n, shallow, deep_depends_on)),
-            PlanNode::Parallel(p) => p
-                .nodes
-                .iter()
-                .for_each(|n| walk(n, shallow, deep_depends_on)),
-            PlanNode::Flatten(flatten) => match flatten.node.as_ref() {
-                PlanNode::Fetch(fetch) if fetch.service_name == "inventory" => {
-                    *shallow = Some(fetch.id)
-                }
-                _ => {}
-            },
-            PlanNode::BatchFetch(batch) if batch.service_name == "inventory" => {
-                *deep_depends_on = Some(&batch.depends_on)
-            }
-            _ => {}
-        }
-    }
-    walk(
-        query_plan.node().expect("a plan"),
-        &mut shallow,
-        &mut deep_depends_on,
-    );
-    assert!(deep_depends_on
-        .expect("the deep inventory batch")
-        .contains(&shallow.expect("the inventory call at topProducts")));
-
-    Ok(())
-}
-
-#[test]
-fn nothing_is_planned_with_entity_reuse_off() -> Result<(), Box<dyn Error>> {
-    init_logger();
-    let document = parse_operation(
-        &std::fs::read_to_string("../../bench/operation.graphql")
-            .expect("Unable to read input file"),
-    );
-    let query_plan = build_query_plan_with_defaults("../../bench/supergraph.graphql", document)?;
-
+    // with reuse off, nothing copies
+    let query_plan = build_query_plan_with_defaults(
+        "../../bench/supergraph.graphql",
+        parse_operation(&operation),
+    )?;
     assert!(!describe(&query_plan).contains("<- topProducts"));
     assert!(!describe(&query_plan).contains("<- users"));
 
@@ -167,8 +133,8 @@ fn source_with_an_aliased_key_is_left_out() -> Result<(), Box<dyn Error>> {
     let query_plan = plan_with_reuse("../../bench/supergraph.graphql", document)?;
 
     insta::assert_snapshot!(describe(&query_plan), @r"
-    reviews at users.@ <- -
-    accounts at users.@.reviews.@.author <- -
+    [3] reviews at users.@ <- - after [2]
+    [4] accounts at users.@.reviews.@.author <- - after [3]
     ");
 
     Ok(())
@@ -189,8 +155,8 @@ fn mutation_fields_never_copy_from_each_other() -> Result<(), Box<dyn Error>> {
     let query_plan = plan_with_reuse("fixture/tests/mutations.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(describe(&query_plan), @r"
-    b at first <- -
-    b at second <- -
+    [3] b at first <- - after [2]
+    [6] b at second <- - after [5]
     ");
 
     Ok(())
@@ -207,7 +173,7 @@ fn never_copies_from_a_fetch_it_does_not_depend_on() -> Result<(), Box<dyn Error
         document,
     )?;
 
-    insta::assert_snapshot!(describe(&query_plan), @"b at aFeed.@ <- -");
+    insta::assert_snapshot!(describe(&query_plan), @"[3] b at aFeed.@ <- - after [2]");
 
     Ok(())
 }

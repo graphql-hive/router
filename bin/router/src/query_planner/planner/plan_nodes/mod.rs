@@ -1217,7 +1217,7 @@ mod stored_size_tests {
     fn stored_sizes_stay_small() {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 32),
-            // `run_if` is an `Option<Vec<_>>`, `entity_reuse` an `Option<Box<_>>`. Executable nodes
+            // `run_if` is an `Option<Vec<_>>`, `entity_reuse` an `Option<Arc<_>>`. Executable nodes
             // keep no dependency ids, the plan's schedule has them by position
             ("FetchNode", size_of::<FetchNode>(), 272),
             ("BatchFetchNode", size_of::<BatchFetchNode>(), 168),

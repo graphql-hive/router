@@ -16,30 +16,7 @@ mod entity_reuse_e2e_tests {
     #[ntex::test]
     async fn bench_operation_copies_entities_it_already_has() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
-
-        let router = TestRouter::builder()
-            .with_subgraphs(&subgraphs)
-            .inline_config(
-                r#"
-                  supergraph:
-                    source: file
-                    path: supergraph.graphql
-                  traffic_shaping:
-                    experimental_entity_reuse: true
-                    all:
-                      dedupe_enabled: false
-                  "#,
-            )
-            .build()
-            .start()
-            .await;
-
-        let res = router
-            .send_graphql_request(include_str!("../../bench/operation.graphql"), None, None)
-            .await;
-        assert!(res.status().is_success(), "Expected 200 OK");
-
-        let body: sonic_rs::Value = res.json_body().await;
+        let body = send(&subgraphs, include_str!("../../bench/operation.graphql")).await;
         let expected: sonic_rs::Value =
             sonic_rs::from_str(include_str!("../../bench/expected_response.json")).unwrap();
         assert_eq!(
@@ -121,12 +98,14 @@ mod entity_reuse_e2e_tests {
             .map_or(0, |requests| requests.len())
     }
 
-    // Every review in the test data is of product 1, and `topProducts` has it.
+    // Every review in the test data is of product 1, and `topProducts` has it, so the deep call
+    // copies it. But when `topProducts` gets product 1's `name` as `null` with an error, copying
+    // that `null` would give the deep product 1 a `null` with no error at its path, so once an
+    // error came back we stop copying and the deep call asks `products`.
     #[ntex::test]
-    async fn deep_fetch_copies_what_it_already_has() {
+    async fn deep_fetch_copies_unless_a_field_is_null_from_an_error() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let body = send(&subgraphs, SHALLOW_AND_DEEP_PRODUCTS).await;
-
         assert!(body.get("errors").is_none(), "unexpected errors: {body}");
         let names = deep_names(&body);
         assert!(!names.is_empty());
@@ -135,13 +114,7 @@ mod entity_reuse_e2e_tests {
             "{names:?}"
         );
         assert_eq!(products_requests(&subgraphs), 1, "only `topProducts` asks");
-    }
 
-    // `topProducts` gets product 1's `name` as `null` with an error. Copying that `null` would
-    // give the deep product 1 a `null` with no error at its path, so once an error came back we
-    // stop copying and the deep call asks `products`.
-    #[ntex::test]
-    async fn deep_fetch_asks_subgraph_when_a_field_is_null_from_an_error() {
         let subgraphs = TestSubgraphs::builder()
             .with_on_request(|req| {
                 let asks_for_top_products = req

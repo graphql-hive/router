@@ -28,8 +28,6 @@ pub struct TrafficShapingConfig {
     pub http_client_mode: HttpClientMode,
     /// Copy entities that are already in the response instead of asking a subgraph for them
     /// again. Experimental, off by default.
-    ///
-    /// Can also be set using the `ROUTER_EXPERIMENTAL_ENTITY_REUSE` environment variable.
     #[serde(default)]
     pub experimental_entity_reuse: bool,
 

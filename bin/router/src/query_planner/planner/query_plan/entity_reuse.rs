@@ -423,9 +423,7 @@ impl<'a> EntityReuseIndex<'a> {
                     else {
                         continue;
                     };
-                    path.push(Segment::Field(
-                        field.alias.as_deref().unwrap_or(&field.name),
-                    ));
+                    path.push(Segment::Field(field.selection_identifier()));
                     for _ in 0..list_depth(field_type) {
                         path.push(Segment::List);
                     }
@@ -629,7 +627,7 @@ fn wanted(step: &Step) -> Option<(&str, &SelectionSet)> {
 fn key_mask(selections: &SelectionSet, keep: impl Fn(&FieldSelection) -> bool) -> u64 {
     selections.items.iter().fold(0, |mask, item| match item {
         SelectionItem::Field(field) if keep(field) => {
-            let key = field.alias.as_deref().unwrap_or(&field.name);
+            let key = field.selection_identifier();
             let hash = key.bytes().fold(0u32, |hash, byte| {
                 hash.wrapping_mul(31).wrapping_add(byte as u32)
             });
@@ -649,12 +647,11 @@ fn covers(source: &SelectionSet, needed: &SelectionSet) -> bool {
         if needed_field.name == "__typename" {
             return true;
         }
-        let key = needed_field.alias.as_ref().unwrap_or(&needed_field.name);
         source.items.iter().any(|item| {
             let SelectionItem::Field(field) = item else {
                 return false;
             };
-            field.alias.as_ref().unwrap_or(&field.name) == key
+            field.selection_identifier() == needed_field.selection_identifier()
                 && field.name == needed_field.name
                 && field.arguments == needed_field.arguments
                 && covers(&field.selections, &needed_field.selections)
@@ -725,12 +722,11 @@ fn conflicts_with(selections: &SelectionSet, representation: &SelectionSet) -> b
         let SelectionItem::Field(wanted) = item else {
             return false;
         };
-        let key = wanted.alias.as_ref().unwrap_or(&wanted.name);
         selections.items.iter().any(|item| {
             let SelectionItem::Field(field) = item else {
                 return false;
             };
-            field.alias.as_ref().unwrap_or(&field.name) == key
+            field.selection_identifier() == wanted.selection_identifier()
                 && (field.name != wanted.name
                     || field.arguments != wanted.arguments
                     || conflicts_with(&field.selections, &wanted.selections))
