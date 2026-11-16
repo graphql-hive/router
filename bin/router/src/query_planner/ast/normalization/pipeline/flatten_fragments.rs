@@ -112,8 +112,12 @@ fn process_field(
     parent_type_def: &SupergraphDefinition,
     field: &mut Field<'static, String>,
 ) -> Result<(), NormalizationError> {
-    if field.name.starts_with("__") || field.selection_set.items.is_empty() {
+    if field.selection_set.items.is_empty() {
         return Ok(());
+    }
+
+    if field.name.starts_with("__") {
+        return fill_introspection_type_conditions(parent_type_def.name(), field);
     }
 
     let field_def = parent_type_def.fields().get(&field.name).ok_or_else(|| {
@@ -136,6 +140,61 @@ fn process_field(
         inner_type_def,
         &mut field.selection_set,
     )
+}
+
+/// Introspection types (`__Schema`, `__Type`, ...) aren't in the supergraph, so the rest of this
+/// pass can't walk under `__schema` / `__type`. We still have to give every `... { }` in there
+/// a type condition, the planner AST needs one on every inline fragment.
+/// All introspection types are object types, so a fragment's type is always its parent's type.
+fn fill_introspection_type_conditions(
+    parent_type_name: &str,
+    field: &mut Field<'static, String>,
+) -> Result<(), NormalizationError> {
+    let type_name = introspection_field_type(parent_type_name, &field.name).ok_or_else(|| {
+        NormalizationError::FieldNotFoundInType {
+            field_name: field.name.clone(),
+            type_name: parent_type_name.to_string(),
+        }
+    })?;
+    fill_type_conditions_in(type_name, &mut field.selection_set)
+}
+
+fn fill_type_conditions_in(
+    type_name: &str,
+    selection_set: &mut SelectionSet<'static, String>,
+) -> Result<(), NormalizationError> {
+    for selection in &mut selection_set.items {
+        match selection {
+            Selection::Field(field) if !field.selection_set.items.is_empty() => {
+                fill_introspection_type_conditions(type_name, field)?;
+            }
+            Selection::InlineFragment(fragment) => {
+                fragment
+                    .type_condition
+                    .get_or_insert_with(|| TypeCondition::On(type_name.to_string()));
+                fill_type_conditions_in(type_name, &mut fragment.selection_set)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// The type a field of an introspection type returns, per the spec's introspection schema.
+fn introspection_field_type(parent_type_name: &str, field_name: &str) -> Option<&'static str> {
+    Some(match (parent_type_name, field_name) {
+        (_, "__schema") => "__Schema",
+        (_, "__type") => "__Type",
+        ("__Schema", "types" | "queryType" | "mutationType" | "subscriptionType") => "__Type",
+        ("__Schema", "directives") => "__Directive",
+        ("__Type", "fields") => "__Field",
+        ("__Type", "interfaces" | "possibleTypes" | "ofType") => "__Type",
+        ("__Type", "enumValues") => "__EnumValue",
+        ("__Type", "inputFields") => "__InputValue",
+        ("__Field" | "__InputValue", "type") => "__Type",
+        ("__Field" | "__Directive", "args") => "__InputValue",
+        _ => return None,
+    })
 }
 
 #[inline]

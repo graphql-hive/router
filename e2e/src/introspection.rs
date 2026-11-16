@@ -527,4 +527,55 @@ mod introspection_e2e_tests {
         }
         "#);
     }
+
+    // `... { }` without a type condition under introspection fields used to crash the worker.
+    #[ntex::test]
+    async fn should_resolve_inline_fragments_without_type_condition() {
+        let router = TestRouter::builder()
+            .inline_config(
+                r#"supergraph:
+                source: file
+                path: "./supergraph-introspection-extended.graphql"
+          "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let resp = router
+            .send_graphql_request(
+                r#"
+                {
+                  __type(name: "TestInput") {
+                    ... @include(if: true) { name }
+                    ... { kind inputFields { ... { name } } }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+
+        assert!(resp.status().is_success(), "Expected 200 OK");
+        let response = resp.json_body_string_pretty().await;
+
+        insta::assert_snapshot!(response, @r#"
+        {
+          "data": {
+            "__type": {
+              "name": "TestInput",
+              "kind": "INPUT_OBJECT",
+              "inputFields": [
+                {
+                  "name": "oldField"
+                },
+                {
+                  "name": "newField"
+                }
+              ]
+            }
+          }
+        }
+        "#);
+    }
 }

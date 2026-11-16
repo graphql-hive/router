@@ -244,6 +244,69 @@ mod tests {
         );
     }
 
+    // A `... { }` under `__schema` / `__type` used to keep no type condition
+    // and panic when turned into the planner AST.
+    #[test]
+    fn introspection_typeless_inline_fragments() {
+        let schema = parse_schema(
+            r#"
+            type Query {
+              words: String
+            }
+          "#,
+        );
+
+        let supergraph = SupergraphState::new(&schema);
+
+        let document = normalize_operation(
+            &supergraph,
+            &parse_query(
+                r#"
+                query {
+                  __schema { types { name ... { kind } } }
+                  __type(name: "Query") {
+                    ... @include(if: true) { name }
+                    fields { ... @skip(if: false) { type { ... { kind } } } }
+                  }
+                }
+                "#,
+            )
+            .expect("to parse"),
+            None,
+        )
+        .unwrap();
+
+        insta::assert_snapshot!(
+            pretty_query(document.to_string()),
+            @r#"
+        {
+          __schema {
+            types {
+              name
+              ... on __Type {
+                kind
+              }
+            }
+          }
+          __type(name: "Query") {
+            ... on __Type {
+              name
+            }
+            fields {
+              ... on __Field {
+                type {
+                  ... on __Type {
+                    kind
+                  }
+                }
+              }
+            }
+          }
+        }
+        "#
+        );
+    }
+
     #[test]
     fn empty_composite_under_inline_fragment_gets_skipped_typename_sentinel() {
         let schema = parse_schema(
