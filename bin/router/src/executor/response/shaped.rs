@@ -402,7 +402,7 @@ struct Builder<'d, F> {
     fits: bool,
 }
 
-/// What `Builder::object` is called with. Same pointers in, same object out.
+/// What `Builder::object` is called with. Same sets in, same object out.
 type ObjectInput = (SmallVec<[*const SelectionSet; 2]>, *const CustomScalarPaths);
 
 /// The run of `vec` from `start` to its end
@@ -437,7 +437,7 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
     /// If two types select the same fields, and those are not all the fields, they share one run.
     fn object(&mut self, sets: &[&'d SelectionSet], paths: Option<&'d CustomScalarPaths>) -> u32 {
         let input: ObjectInput = (
-            sets.iter().map(|set| *set as *const SelectionSet).collect(),
+            sets.iter().flat_map(|set| self.key(set)).collect(),
             paths.map_or(std::ptr::null(), |paths| paths as *const _),
         );
         if let Some(&index) = self.built.get(&input) {
@@ -505,8 +505,36 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
             extra,
         };
         self.fits &= index <= OBJECT_MASK as usize;
-        self.built.insert(input, index as u32);
+        // `data` is 0, and 0 in a node means no object. So it's never shared.
+        if index != 0 {
+            self.built.insert(input, index as u32);
+        }
         index as u32
+    }
+
+    /// A set that only spreads fragments is the bodies of those fragments, so `a { ...F }` and
+    /// `b { ...F }` share one object even though they are two sets. Any other set is itself. We
+    /// never build an object from a fragment body directly, so the two can't mix up. And a list
+    /// of sets is read as one long set, so `{ ...F ...G }` and `{ ...F } { ...G }` are the same.
+    fn key(&self, set: &'d SelectionSet) -> SmallVec<[*const SelectionSet; 2]> {
+        let spreads_only = !set.items.is_empty()
+            && set
+                .items
+                .iter()
+                .all(|item| matches!(item, SelectionItem::FragmentSpread(_)));
+        if !spreads_only {
+            return smallvec::smallvec![set as *const SelectionSet];
+        }
+        set.items
+            .iter()
+            .filter_map(|item| match item {
+                SelectionItem::FragmentSpread(name) => {
+                    self.document.fragments.iter().find(|f| &f.name == name)
+                }
+                _ => None,
+            })
+            .map(|fragment| &fragment.selection_set as *const SelectionSet)
+            .collect()
     }
 
     fn text(&mut self, bytes: &[u8]) -> Text {
@@ -1623,7 +1651,8 @@ mod tests {
     #[test]
     fn fits_fragments_that_expand_past_the_text_limit() {
         // Each fragment spreads the one below it twice, so written out the query has 2^16 long
-        // keys, about 26 MB. That's past the 16 MB of `text`. Shared, it's two objects a level.
+        // keys, about 26 MB. That's past the 16 MB of `text`. Shared, it's one object a level, since
+        // both `{ ...F }` there are the same spreads.
         let depth = 16;
         let a = "a".repeat(200);
         let b = "b".repeat(200);
@@ -1635,7 +1664,7 @@ mod tests {
             ));
         }
         let shape = shape(&query, None);
-        assert_eq!(shape.objects.len(), 1 + 2 * depth);
+        assert_eq!(shape.objects.len(), 1 + depth);
         assert_eq!(shape.text.len(), 2 * 202 + "\"id\"".len());
     }
 
@@ -1650,8 +1679,8 @@ mod tests {
 
     #[test]
     fn shares_objects_and_keys_of_repeated_fragments() {
-        // 50 fields spread the same fragment. Each field has its own set (`{ ...F }`), so it gets
-        // its own object, but everything under F is the same sets, so there's one copy of it.
+        // 50 fields spread the same fragment. Each field has its own set (`{ ...F }`), but they
+        // are the same spreads, so all 50 fields share one object, and there's one copy of F.
         let count = 50;
         let fields: Vec<String> = (0..count).map(|i| format!("f{i} {{ ...F }}")).collect();
         let query = format!(
@@ -1659,10 +1688,10 @@ mod tests {
             fields.join(" ")
         );
         let shape = shape(&query, None);
-        // data, one per field, deep, deeper
-        assert_eq!(shape.objects.len(), 1 + count + 2);
-        // data has 50 fields, each field 3 (__typename id deep), deep 3, deeper 1
-        assert_eq!(shape.nodes.len(), count + count * 3 + 3 + 1);
+        // data, the F object, deep, deeper
+        assert_eq!(shape.objects.len(), 4);
+        // data has 50 fields, F 3 (__typename id deep), deep 3, deeper 1
+        assert_eq!(shape.nodes.len(), count + 3 + 3 + 1);
         // every key once, with its quotes
         let keys: usize = (0..count).map(|i| format!("\"f{i}\"").len()).sum::<usize>()
             + ["__typename", "id", "deep", "name", "deeper"]
