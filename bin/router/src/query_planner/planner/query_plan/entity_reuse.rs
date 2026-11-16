@@ -82,8 +82,14 @@ struct Found<'a> {
     sources: Vec<u32>,
     /// the same without the steps waits add, when the fetch has any
     sources_without_waits: Option<Vec<u32>>,
-    /// and whether it needs the waits
-    reuse: Option<(Arc<EntityReuse>, bool)>,
+    reuse: Option<ReuseMatch>,
+}
+
+#[derive(Clone)]
+struct ReuseMatch {
+    reuse: Arc<EntityReuse>,
+    /// whether a source is only there through the fetches the waits add
+    needs_waits: bool,
 }
 
 #[derive(Default)]
@@ -315,23 +321,18 @@ impl<'a> EntityReuseIndex<'a> {
                 waits.push(lookup.id);
             }
         }
-        let (reuse, needs_waits) = match &waited {
-            Some(waited) => self.find_in_dependencies(
-                waited,
-                Some(&depends_on),
-                type_name,
-                needed,
-                representation,
-            )?,
-            None => {
-                self.find_in_dependencies(&depends_on, None, type_name, needed, representation)?
-            }
-        };
+        let found = self.find_in_dependencies(
+            waited.as_deref().unwrap_or(&depends_on),
+            waited.as_deref().map(|_| depends_on.as_slice()),
+            type_name,
+            needed,
+            representation,
+        )?;
         // waiting only pays off if it adds something to copy
-        if !needs_waits {
+        if !found.needs_waits {
             waits.clear();
         }
-        Some((reuse, waits))
+        Some((found.reuse, waits))
     }
 
     /// Like [`find_in`], cached per wave. With `without_waits`, also says whether any source
@@ -343,7 +344,7 @@ impl<'a> EntityReuseIndex<'a> {
         type_name: &'a str,
         needed: &'a SelectionSet,
         representation: &'a SelectionSet,
-    ) -> Option<(Arc<EntityReuse>, bool)> {
+    ) -> Option<ReuseMatch> {
         let positions = self.positions.get(type_name)?;
         let steps_in = |depends_on: &[bool]| -> Vec<u32> {
             positions
@@ -386,8 +387,7 @@ impl<'a> EntityReuseIndex<'a> {
             needed_keys,
             representation,
             representation_keys,
-        )
-        .map(|(reuse, needs_waits)| (Arc::new(reuse), needs_waits));
+        );
         found.push(Found {
             needed,
             representation,
@@ -455,49 +455,53 @@ impl<'a> Positions<'a> {
         if self.steps.last() != Some(&step) {
             self.steps.push(step);
         }
+        let path = self.intern(start, path) as u32;
+        self.list.push(Position {
+            path,
+            step,
+            selections,
+            keys: key_mask(selections, |_| true),
+        });
+    }
+
+    /// The id of the path `start` + `path`, it only allocates for a path it hasn't seen
+    fn intern(&mut self, start: &Start, path: &[Segment<'_>]) -> usize {
         let mut hasher = start.hasher.clone();
         for segment in path {
             segment.hash(&mut hasher);
         }
         let hash = hasher.finish();
         let is_path = |known: &FlattenNodePath| {
-            let (head, tail) = known
+            known
                 .as_slice()
-                .split_at_checked(start.path.as_slice().len())
-                .unwrap_or_default();
-            head == start.path.as_slice()
-                && tail.len() == path.len()
-                && path
-                    .iter()
-                    .zip(tail)
-                    .all(|(segment, known)| segment.matches(known))
+                .strip_prefix(start.path.as_slice())
+                .is_some_and(|tail| {
+                    tail.len() == path.len()
+                        && path
+                            .iter()
+                            .zip(tail)
+                            .all(|(segment, known)| segment.matches(known))
+                })
         };
-        let id = match self.ids.get(&hash) {
-            Some(&id) if is_path(&self.paths[id]) => id,
-            // another path with the same hash, or a new one
-            known => match known.and_then(|_| self.paths.iter().position(is_path)) {
-                Some(id) => id,
-                None => {
-                    let full: Vec<PathSegment> = start
-                        .path
-                        .as_slice()
-                        .iter()
-                        .cloned()
-                        .chain(path.iter().map(|segment| segment.to_path_segment()))
-                        .collect();
-                    self.paths.push(full.into());
-                    let id = self.paths.len() - 1;
-                    self.ids.entry(hash).or_insert(id);
-                    id
-                }
-            },
-        };
-        self.list.push(Position {
-            path: id as u32,
-            step,
-            selections,
-            keys: key_mask(selections, |_| true),
-        });
+        if let Some(&id) = self.ids.get(&hash) {
+            if is_path(&self.paths[id]) {
+                return id;
+            }
+            // another path with the same hash
+            if let Some(id) = self.paths.iter().position(is_path) {
+                return id;
+            }
+        }
+        let full: Vec<PathSegment> = start
+            .path
+            .as_slice()
+            .iter()
+            .cloned()
+            .chain(path.iter().map(|segment| segment.to_path_segment()))
+            .collect();
+        self.paths.push(full.into());
+        self.ids.entry(hash).or_insert(self.paths.len() - 1);
+        self.paths.len() - 1
     }
 }
 
@@ -532,7 +536,7 @@ fn find_in(
     needed_keys: u64,
     representation: &SelectionSet,
     representation_keys: u64,
-) -> Option<(EntityReuse, bool)> {
+) -> Option<ReuseMatch> {
     // a plan can have thousands of positions, so the masks rule most of them out before the
     // real checks
     let mut is_source = vec![false; positions.paths.len()];
@@ -601,7 +605,10 @@ fn find_in(
             .collect(),
         copy: RequiresSelectionSet::from(&copy),
     };
-    Some((reuse, needs_waits))
+    Some(ReuseMatch {
+        reuse: Arc::new(reuse),
+        needs_waits,
+    })
 }
 
 /// The type and fields an entity fetch could copy from the response, if it could copy at all
@@ -804,6 +811,25 @@ mod tests {
             .map(|position| position.path as usize)
             .collect();
         assert_eq!(ids, [0, 0, 0, 1]);
+        assert_eq!(positions.paths.len(), 2);
+    }
+
+    #[test]
+    fn a_hash_collision_still_finds_the_right_path() {
+        let selections = SelectionSet::default();
+        let mut positions = Positions::default();
+        let start = Start::new(FlattenNodePath::from(Vec::<PathSegment>::new()));
+        positions.add(&start, &[Segment::Field("first")], &selections, 0);
+
+        // point the hash of `second` at `first`
+        let mut hasher = start.hasher.clone();
+        Segment::Field("second").hash(&mut hasher);
+        positions.ids.insert(hasher.finish(), 0);
+
+        positions.add(&start, &[Segment::Field("second")], &selections, 0);
+        positions.add(&start, &[Segment::Field("second")], &selections, 0);
+        let ids: Vec<u32> = positions.list.iter().map(|p| p.path).collect();
+        assert_eq!(ids, [0, 1, 1]);
         assert_eq!(positions.paths.len(), 2);
     }
 }
