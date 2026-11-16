@@ -390,10 +390,11 @@ struct Builder<'d, F> {
     objects: Vec<Object>,
     types: Vec<TypeFields>,
     text: Vec<u8>,
-    /// Each key goes into `text` once, with its quotes
-    keys: HashMap<&'d str, Text>,
+    /// Each key goes into `text` once, with its quotes. With the first 8 bytes of it, for
+    /// `Node::prefix`.
+    keys: HashMap<&'d str, (Text, u64)>,
     /// Each type name goes into `text` once too.
-    names: HashMap<Box<str>, Text>,
+    names: HashMap<&'d str, Text>,
     /// Objects we already built, by their sets and paths
     built: HashMap<ObjectInput, u32>,
     /// false when something does not fit in its bits
@@ -411,7 +412,9 @@ fn span_from<T>(start: usize, vec: &[T]) -> Span {
     }
 }
 
-impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
+// Type names come from the document and from `possible_types`, so those live at least as long
+// as the builder too.
+impl<'d, 's: 'd, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
     /// Adds the object that the sets select, with the custom scalar paths under it. Returns its
     /// index.
     ///
@@ -491,7 +494,7 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
                 Some(&text) => text,
                 None => {
                     let text = self.text(name.as_bytes());
-                    self.names.insert(name.into(), text);
+                    self.names.insert(name, text);
                     text
                 }
             };
@@ -646,10 +649,14 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
     fn flatten(&mut self, fields: &[Field<'d>], paths: Option<&'d CustomScalarPaths>) -> Span {
         let start = self.nodes.len();
         for field in fields {
-            let key = match self.keys.get(field.key) {
+            let (key, prefix) = match self.keys.get(field.key) {
                 Some(&key) => key,
                 None => {
-                    let key = self.text(format!("\"{}\"", field.key).as_bytes());
+                    let quoted = format!("\"{}\"", field.key);
+                    let key = (
+                        self.text(quoted.as_bytes()),
+                        u64::from_le_bytes(first_bytes(quoted.as_bytes())),
+                    );
                     self.keys.insert(field.key, key);
                     key
                 }
@@ -665,7 +672,7 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
                 flags |= TYPENAME;
             }
             self.nodes.push(Node {
-                prefix: u64::from_le_bytes(first_bytes(&self.text[key.range()])),
+                prefix,
                 key,
                 object: flags,
             });
@@ -1703,5 +1710,39 @@ mod tests {
         let body = format!(r#"{{"data":{{{}}}}}"#, entries.join(","));
         assert!(parse_response(body.as_bytes(), &shape).is_some());
         same_as_sonic_for(&query, body.as_bytes(), None);
+    }
+
+    #[test]
+    fn keeps_objects_apart_when_their_custom_scalar_paths_differ() {
+        // Same spreads, but `a.x` is a custom scalar and `b.x` isn't. So `a` and `b` can't share.
+        let query = "{ a { ...F } b { ...F } } fragment F on T { x y }";
+        let mut paths = CustomScalarPaths::default();
+        paths.insert_path(["a", "x"]);
+        let shape = shape(query, Some(&paths));
+        // data, a, b
+        assert_eq!(shape.objects.len(), 3);
+
+        // `a.x` stays raw JSON, `b.x` is read as a normal value
+        let body = r#"{"data":{"a":{"x":{"k":1},"y":2},"b":{"x":{"k":1},"y":2}}}"#;
+        assert!(parse_response(body.as_bytes(), &shape).is_some());
+        same_as_sonic_for(query, body.as_bytes(), Some(&paths));
+    }
+
+    #[test]
+    fn shares_objects_of_the_same_spreads() {
+        // `a`, `b` and `m` spread F then G (`m` from two places), so they share one object. `c`
+        // spreads only F, and `d` spreads them in the other order, so each gets its own. `e` and
+        // `f` spread a fragment the document doesn't have, so they're both empty and share one.
+        let query = "{ a { ...F ...G } b { ...F ...G } m { ...F } m { ...G } c { ...F }
+            d { ...G ...F } e { ...Missing } f { ...Missing } }
+            fragment F on T { x } fragment G on T { y }";
+        let shape = shape(query, None);
+        // data, a b m, c, d, e f
+        assert_eq!(shape.objects.len(), 5);
+
+        let body = r#"{"data":{"a":{"x":1,"y":2},"b":{"x":3,"y":4},"m":{"x":5,"y":6},
+            "c":{"x":7},"d":{"y":8,"x":9},"e":{},"f":{"z":1}}}"#;
+        assert!(parse_response(body.as_bytes(), &shape).is_some());
+        same_as_sonic_for(query, body.as_bytes(), None);
     }
 }
