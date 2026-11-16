@@ -32,6 +32,7 @@ use futures::stream::BoxStream;
 
 use async_trait::async_trait;
 
+use crate::executor::executors::tls::HttpConnector;
 use bytes::{BufMut, Bytes, BytesMut};
 use http::HeaderMap;
 use http::HeaderValue;
@@ -41,7 +42,7 @@ use http_body_util::Full;
 use hyper::body::Body as _;
 use hyper::Version;
 use hyper_rustls::HttpsConnector;
-use hyper_util::client::legacy::{connect::HttpConnector, Client};
+use hyper_util::client::legacy::Client;
 use thread_local::ThreadLocal;
 use tokio::sync::Semaphore;
 use tracing::{debug, trace};

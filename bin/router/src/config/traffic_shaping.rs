@@ -101,6 +101,18 @@ impl SupergraphTrafficShapingConfig {
             .unwrap_or(self.all.pool_idle_timeout)
     }
 
+    /// Returns the most bytes an HTTP/1.1 connection to a subgraph buffers while reading a response.
+    ///
+    /// A per-subgraph value takes precedence over `traffic_shaping.all.http1_max_read_buffer_size`.
+    pub fn http1_max_read_buffer_size(&self, subgraph_name: &str) -> usize {
+        let size = self
+            .subgraphs
+            .get(subgraph_name)
+            .and_then(|config| config.http1_max_read_buffer_size.as_ref())
+            .unwrap_or(&self.all.http1_max_read_buffer_size);
+        size.to_bytes() as usize
+    }
+
     /// Returns the resolved compression config for a subgraph.
     ///
     /// A per-subgraph `compression` block fully replaces `traffic_shaping.all.compression`
@@ -277,6 +289,17 @@ pub struct TrafficShapingExecutorSubgraphConfig {
     /// When omitted, `traffic_shaping.all.max_aliases_per_request` is used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_aliases_per_request: Option<usize>,
+
+    /// Overrides the most memory an HTTP/1.1 connection to this subgraph uses to read a response.
+    ///
+    /// When omitted, `traffic_shaping.all.http1_max_read_buffer_size` is used. Has to be at least `8KiB`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_read_buffer_size"
+    )]
+    #[schemars(with = "Option<String>")]
+    pub http1_max_read_buffer_size: Option<Size>,
 }
 
 /// Controls which transport queries and mutations use for WebSocket-enabled subgraphs.
@@ -523,6 +546,64 @@ pub struct TrafficShapingExecutorGlobalConfig {
     /// argument groups of a fetch go in one request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_aliases_per_request: Option<usize>,
+
+    /// The most memory an HTTP/1.1 connection to a subgraph uses to read a response.
+    ///
+    /// The read buffer grows with big responses and stays that big while the connection is busy,
+    /// so with hundreds of busy connections this adds up. A response bigger than this isn't
+    /// rejected, it just arrives in more chunks, which costs a bit more CPU. A smaller value saves
+    /// memory under load, a bigger one helps subgraphs that send very large responses. Response
+    /// headers have to fit in it. HTTP/2 connections don't use it.
+    ///
+    /// Per-subgraph values under `traffic_shaping.subgraphs.<name>.http1_max_read_buffer_size` take precedence.
+    ///
+    /// Defaults to `64KiB`. Has to be at least `8KiB`.
+    #[serde(
+        default = "default_http1_max_read_buffer_size",
+        deserialize_with = "deserialize_read_buffer_size"
+    )]
+    #[schemars(with = "String")]
+    pub http1_max_read_buffer_size: Size,
+}
+
+fn default_http1_max_read_buffer_size() -> Size {
+    // At 16KiB a 100KB or 3MB response took 15-20% more CPU, at 64KiB it's within a few
+    // percent of no limit, while hyper's own default of about 400KiB held a lot more memory.
+    "64KiB".parse().expect(
+        "Default value for 'traffic_shaping.all.http1_max_read_buffer_size' should be a valid human-readable size",
+    )
+}
+
+/// hyper won't go below this, and panics if asked to
+const MIN_READ_BUFFER_SIZE: u64 = 8 * 1024;
+
+fn deserialize_read_buffer_size<'de, D>(deserializer: D) -> Result<Size, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let size = Size::deserialize(deserializer)?;
+    check_read_buffer_size(&size).map_err(de::Error::custom)?;
+    Ok(size)
+}
+
+fn deserialize_optional_read_buffer_size<'de, D>(deserializer: D) -> Result<Option<Size>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let size = Option::<Size>::deserialize(deserializer)?;
+    if let Some(size) = &size {
+        check_read_buffer_size(size).map_err(de::Error::custom)?;
+    }
+    Ok(size)
+}
+
+fn check_read_buffer_size(size: &Size) -> Result<(), String> {
+    if size.to_bytes() < MIN_READ_BUFFER_SIZE {
+        return Err(format!(
+            "`http1_max_read_buffer_size` must be at least 8KiB, got: {size}"
+        ));
+    }
+    Ok(())
 }
 
 fn default_request_timeout() -> DurationOrExpression {
@@ -557,6 +638,7 @@ impl Default for TrafficShapingExecutorGlobalConfig {
             websocket: Default::default(),
             compression: Default::default(),
             max_aliases_per_request: None,
+            http1_max_read_buffer_size: default_http1_max_read_buffer_size(),
         }
     }
 }
@@ -1441,6 +1523,41 @@ mod tests {
     use std::time::Duration;
 
     use super::{SupergraphTrafficShapingConfig, TrafficShapingConfig, TrafficShapingRouterConfig};
+
+    #[test]
+    fn http1_max_read_buffer_size_defaults_and_overrides() {
+        let config: TrafficShapingConfig = serde_json::from_str(
+            r#"{
+                "all": { "http1_max_read_buffer_size": "128KiB" },
+                "subgraphs": {
+                    "big": { "http1_max_read_buffer_size": "1MiB" },
+                    "smallest": { "http1_max_read_buffer_size": "8KiB" }
+                }
+            }"#,
+        )
+        .expect("human readable sizes should deserialize");
+        let resolved = SupergraphTrafficShapingConfig::from(&config);
+        assert_eq!(resolved.http1_max_read_buffer_size("accounts"), 128 * 1024);
+        assert_eq!(resolved.http1_max_read_buffer_size("big"), 1024 * 1024);
+        assert_eq!(resolved.http1_max_read_buffer_size("smallest"), 8 * 1024);
+
+        let config: TrafficShapingConfig =
+            serde_json::from_str("{}").expect("empty config should deserialize");
+        let resolved = SupergraphTrafficShapingConfig::from(&config);
+        assert_eq!(resolved.http1_max_read_buffer_size("accounts"), 64 * 1024);
+    }
+
+    #[test]
+    fn http1_max_read_buffer_size_below_8kib_is_a_config_error() {
+        for json in [
+            r#"{ "all": { "http1_max_read_buffer_size": "4KiB" } }"#,
+            r#"{ "subgraphs": { "tiny": { "http1_max_read_buffer_size": "1KiB" } } }"#,
+        ] {
+            let err = serde_json::from_str::<TrafficShapingConfig>(json)
+                .expect_err("a read buffer below 8KiB should be rejected");
+            assert!(err.to_string().contains("must be at least 8KiB"), "{err}");
+        }
+    }
 
     #[test]
     fn keep_alive_defaults_to_five_seconds() {

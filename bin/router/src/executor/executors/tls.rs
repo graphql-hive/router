@@ -1,16 +1,27 @@
-use std::sync::Arc;
+use dashmap::DashMap;
+use futures::future::{BoxFuture, FutureExt, Shared};
+use std::{
+    future::Future,
+    io,
+    net::SocketAddr,
+    panic::AssertUnwindSafe,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 use crate::config::{
     primitives::{file_path::FilePath, single_or_multiple::SingleOrMultiple},
     traffic_shaping::ClientTLSConfig,
 };
 use hyper_rustls::{ConfigBuilderExt, HttpsConnector, HttpsConnectorBuilder};
-use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::connect::dns::{GaiResolver, Name};
 use rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer, ServerName, UnixTime},
     ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme,
 };
+use tower_service::Service;
 
 use crate::executor::executors::error::{SubgraphExecutorError, TlsCertificatesError};
 
@@ -149,10 +160,88 @@ pub fn build_https_client_config(
     Ok(client_config)
 }
 
+pub type HttpConnector = hyper_util::client::legacy::connect::HttpConnector<SharedResolver>;
+
+type InFlightLookup = Shared<BoxFuture<'static, Result<Vec<SocketAddr>, Arc<io::Error>>>>;
+
+/// hyper's default resolver runs getaddrinfo on a blocking thread for every new connection, so a
+/// burst of new subgraph connections starts hundreds of threads, each with its own stack. This
+/// one lets connections that ask for the same name while a lookup is running wait for that lookup
+/// and take its answer. Nothing is kept after that, the next connection looks the name up again,
+/// so the OS resolver still decides how long an answer is good for.
+#[derive(Clone, Default)]
+pub struct SharedResolver {
+    in_flight: Arc<DashMap<Name, InFlightLookup>>,
+}
+
+impl SharedResolver {
+    async fn resolve<F, Fut>(&self, name: Name, lookup: F) -> io::Result<Vec<SocketAddr>>
+    where
+        F: FnOnce(Name) -> Fut,
+        Fut: Future<Output = io::Result<Vec<SocketAddr>>> + Send + 'static,
+    {
+        let mut started_here = false;
+        let lookup = self
+            .in_flight
+            .entry(name.clone())
+            .or_insert_with(|| {
+                started_here = true;
+                // only a Weak to the map, so a dropped resolver doesn't stay alive through a
+                // lookup that's still running
+                let in_flight = Arc::downgrade(&self.in_flight);
+                let started = lookup(name.clone());
+                async move {
+                    // a panicking lookup is an error for everyone waiting, not a panic in each
+                    let addrs = AssertUnwindSafe(started)
+                        .catch_unwind()
+                        .await
+                        .unwrap_or_else(|_| Err(io::Error::other("name lookup panicked")))
+                        // a failed lookup isn't kept either, the next connection tries again
+                        .map_err(Arc::new);
+                    if let Some(in_flight) = in_flight.upgrade() {
+                        in_flight.remove(&name);
+                    }
+                    addrs
+                }
+                .boxed()
+                .shared()
+            })
+            .clone();
+        // the map guard is gone by now. The lookup also runs on its own task, so it finishes and
+        // clears its entry even when every connection waiting on it gives up.
+        if started_here {
+            tokio::spawn(lookup.clone());
+        }
+        lookup.await.map_err(|err| io::Error::new(err.kind(), err))
+    }
+}
+
+impl Service<Name> for SharedResolver {
+    type Response = std::vec::IntoIter<SocketAddr>;
+    type Error = io::Error;
+    type Future = Pin<Box<dyn Future<Output = io::Result<Self::Response>> + Send>>;
+
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, name: Name) -> Self::Future {
+        let this = self.clone();
+        Box::pin(async move {
+            let addrs = this
+                .resolve(name, |name| async move {
+                    Ok(GaiResolver::new().call(name).await?.collect())
+                })
+                .await?;
+            Ok(addrs.into_iter())
+        })
+    }
+}
+
 pub fn build_https_connector(
     tls_config: Option<&ClientTLSConfig>,
 ) -> Result<HttpsConnector<HttpConnector>, SubgraphExecutorError> {
-    let mut http = HttpConnector::new();
+    let mut http = HttpConnector::new_with_resolver(SharedResolver::default());
     http.enforce_http(false);
     http.set_nodelay(true);
     Ok(HttpsConnectorBuilder::new()
@@ -187,5 +276,153 @@ pub fn get_merged_tls_config(
         (None, Some(subgraph)) => Some(subgraph.clone()),
         (Some(global), None) => Some(global.clone()),
         (None, None) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn instant_lookups_under_contention_finish_and_leave_nothing() {
+        let resolver = SharedResolver::default();
+        let addr = SocketAddr::from(([10, 0, 0, 1], 0));
+        let tasks: Vec<_> = (0..2000)
+            .map(|i| {
+                let resolver = resolver.clone();
+                let name = Name::from_str(["products", "reviews", "users"][i % 3]).unwrap();
+                tokio::spawn(async move {
+                    resolver
+                        .resolve(name, |_| async move { Ok(vec![addr]) })
+                        .await
+                        .unwrap()
+                })
+            })
+            .collect();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            for task in tasks {
+                assert_eq!(task.await.unwrap(), vec![addr]);
+            }
+        })
+        .await
+        .expect("lookups got stuck");
+        // a lookup takes its entry out before anyone gets its answer
+        assert!(resolver.in_flight.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn connections_waiting_on_a_failed_lookup_share_its_error() {
+        let resolver = SharedResolver::default();
+        let lookups = Arc::new(AtomicUsize::new(0));
+        let tasks: Vec<_> = (0..50)
+            .map(|_| {
+                let resolver = resolver.clone();
+                let lookups = lookups.clone();
+                tokio::spawn(async move {
+                    resolver
+                        .resolve(Name::from_str("products").unwrap(), |_| async move {
+                            lookups.fetch_add(1, Ordering::SeqCst);
+                            tokio::time::sleep(Duration::from_millis(20)).await;
+                            Err(io::Error::new(io::ErrorKind::NotFound, "no such host"))
+                        })
+                        .await
+                })
+            })
+            .collect();
+        for task in tasks {
+            let err = task.await.unwrap().unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        }
+        assert_eq!(lookups.load(Ordering::SeqCst), 1);
+        assert!(resolver.in_flight.is_empty());
+    }
+
+    #[tokio::test]
+    async fn lookup_nobody_waits_for_anymore_still_clears_its_entry() {
+        let resolver = SharedResolver::default();
+        let in_flight = Arc::downgrade(&resolver.in_flight);
+        let gave_up = tokio::time::timeout(
+            Duration::from_millis(5),
+            resolver.resolve(Name::from_str("products").unwrap(), |_| async {
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                Ok(vec![SocketAddr::from(([10, 0, 0, 1], 0))])
+            }),
+        )
+        .await;
+        assert!(gave_up.is_err());
+        assert_eq!(resolver.in_flight.len(), 1);
+
+        // the lookup finishes on its own and takes its entry out
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert!(resolver.in_flight.is_empty());
+
+        // and a running lookup doesn't keep a dropped resolver's map alive
+        let _ = tokio::time::timeout(
+            Duration::from_millis(5),
+            resolver.resolve(Name::from_str("reviews").unwrap(), |_| async {
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                Ok(vec![])
+            }),
+        )
+        .await;
+        drop(resolver);
+        assert!(in_flight.upgrade().is_none());
+    }
+
+    #[tokio::test]
+    async fn connections_to_one_name_share_one_lookup() {
+        let resolver = SharedResolver::default();
+        let lookups = Arc::new(AtomicUsize::new(0));
+        let addr = SocketAddr::from(([10, 0, 0, 1], 0));
+
+        let tasks: Vec<_> = (0..50)
+            .map(|_| {
+                let resolver = resolver.clone();
+                let lookups = lookups.clone();
+                tokio::spawn(async move {
+                    resolver
+                        .resolve(Name::from_str("products").unwrap(), |_| async move {
+                            lookups.fetch_add(1, Ordering::SeqCst);
+                            tokio::time::sleep(Duration::from_millis(20)).await;
+                            Ok(vec![addr])
+                        })
+                        .await
+                        .unwrap()
+                })
+            })
+            .collect();
+        for task in tasks {
+            assert_eq!(task.await.unwrap(), vec![addr]);
+        }
+        assert_eq!(lookups.load(Ordering::SeqCst), 1);
+
+        // once that lookup is done nothing is kept, the next connection looks it up again
+        resolver
+            .resolve(Name::from_str("products").unwrap(), |_| {
+                lookups.fetch_add(1, Ordering::SeqCst);
+                async move { Ok(vec![addr]) }
+            })
+            .await
+            .unwrap();
+        assert_eq!(lookups.load(Ordering::SeqCst), 2);
+
+        // a failed lookup isn't kept
+        let failed = resolver
+            .resolve(Name::from_str("reviews").unwrap(), |_| async {
+                Err(io::Error::other("nope"))
+            })
+            .await;
+        assert!(failed.is_err());
+        let retried = resolver
+            .resolve(Name::from_str("reviews").unwrap(), |_| async move {
+                Ok(vec![addr])
+            })
+            .await
+            .unwrap();
+        assert_eq!(retried, vec![addr]);
     }
 }
