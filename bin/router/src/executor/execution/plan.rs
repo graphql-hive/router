@@ -1,6 +1,6 @@
 use super::context::{
     collect_context_entities, collect_path_values, context_depth, unalias_response,
-    AliasedRequests, ContextGroup, EntityRef, TargetEntities,
+    AliasedRequests, ContextGroup, EntityInputs, EntityPaths, EntityRef, TargetEntities,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -1316,21 +1316,27 @@ impl<'exec> Executor<'exec> {
                     targets,
                     copies,
                 } = collect_context_entities(
-                    None,
-                    trie,
-                    0..trie.ends().len(),
-                    requires_nodes,
-                    fetch_node.input_rewrites.as_deref(),
-                    &fetch_node.context,
+                    // one path, walked as it's collected
+                    EntityPaths {
+                        data,
+                        trie,
+                        paths: 0..trie.ends().len(),
+                        path_values: None,
+                    },
+                    EntityInputs {
+                        requires: requires_nodes,
+                        input_rewrites: fetch_node.input_rewrites.as_deref(),
+                        context: &fetch_node.context,
+                        subgraph_keys: self
+                            .schema_metadata
+                            .entity_keys
+                            .of_subgraph(&fetch_node.service_name),
+                        reuse: fetch_node
+                            .entity_reuse
+                            .as_deref()
+                            .filter(|_| copy_into.is_some()),
+                    },
                     possible_types,
-                    self.schema_metadata
-                        .entity_keys
-                        .of_subgraph(&fetch_node.service_name),
-                    data,
-                    fetch_node
-                        .entity_reuse
-                        .as_deref()
-                        .filter(|_| copy_into.is_some()),
                 );
                 let targets = Arc::new(targets);
                 if let Some(copy_into) = copy_into.filter(|_| !copies.is_empty()) {
@@ -1865,19 +1871,23 @@ impl<'exec> Executor<'exec> {
                     targets,
                     copies,
                 } = collect_context_entities(
-                    Some(&path_values),
-                    trie,
-                    paths.clone(),
-                    &alias_spec.requires,
-                    alias_spec.input_rewrites.as_deref(),
-                    &alias_spec.context,
+                    EntityPaths {
+                        data,
+                        trie,
+                        paths: paths.clone(),
+                        path_values: Some(&path_values),
+                    },
+                    EntityInputs {
+                        requires: &alias_spec.requires,
+                        input_rewrites: alias_spec.input_rewrites.as_deref(),
+                        context: &alias_spec.context,
+                        subgraph_keys,
+                        reuse: alias_spec
+                            .entity_reuse
+                            .as_deref()
+                            .filter(|_| copy_into.is_some()),
+                    },
                     possible_types,
-                    subgraph_keys,
-                    data,
-                    alias_spec
-                        .entity_reuse
-                        .as_deref()
-                        .filter(|_| copy_into.is_some()),
                 );
                 let targets = Arc::new(targets);
                 if let Some(copy_into) = copy_into.as_deref_mut().filter(|_| !copies.is_empty()) {

@@ -311,25 +311,48 @@ pub(super) struct Collected<'a, 'v> {
     pub copies: Vec<Value<'v>>,
 }
 
-/// Goes over the values at the end of the `paths` of `trie` (see [`collect_path_values`]), or
-/// walks `trie` itself when it has one path and there are no `path_values`. Deduplicates the
-/// entities by hash and projects their representations. Entities are grouped by the tuple of
-/// their context values (one request per group), without context variables there is at most one
-/// group. Identical paths share their target entities. With `reuse`, entities already in the
-/// response are copied instead of sent.
-#[allow(clippy::too_many_arguments)]
+/// Where a fetch's entities are: at the end of the `paths` of `trie` in `data`
+pub(super) struct EntityPaths<'p, 'd, 'v> {
+    pub data: &'d Value<'v>,
+    pub trie: &'p PathTrie,
+    pub paths: Range<usize>,
+    /// The values at the ends of the paths of `trie`, see [`collect_path_values`]. Without them
+    /// `trie` has to have one path, and it's walked.
+    pub path_values: Option<&'p [PathValues<'d, 'v>]>,
+}
+
+/// What a fetch sends for each entity, and where it may copy one from instead. `context` lives as
+/// long as the groups that come out, the rest only as long as the call.
+pub(super) struct EntityInputs<'a, 'f> {
+    pub requires: &'f RequiresSelectionSet,
+    pub input_rewrites: Option<&'f [FetchRewrite]>,
+    pub context: &'a Option<Box<FetchContext>>,
+    pub subgraph_keys: Option<&'f KeysByType>,
+    pub reuse: Option<&'f EntityReuse>,
+}
+
+/// Goes over the entities at `at`, deduplicates them by hash and projects their
+/// representations. Entities are grouped by the tuple of their context values (one request per
+/// group), without context variables there is at most one group. Identical paths share their
+/// target entities. With `reuse`, entities already in the response are copied instead of sent.
 pub(super) fn collect_context_entities<'a, 'd, 'v>(
-    path_values: Option<&[PathValues<'d, 'v>]>,
-    trie: &PathTrie,
-    paths: Range<usize>,
-    requires: &RequiresSelectionSet,
-    input_rewrites: Option<&[FetchRewrite]>,
-    context: &'a Option<Box<FetchContext>>,
+    at: EntityPaths<'_, 'd, 'v>,
+    inputs: EntityInputs<'a, '_>,
     possible_types: &PossibleTypes,
-    subgraph_keys: Option<&KeysByType>,
-    data: &'d Value<'v>,
-    reuse: Option<&EntityReuse>,
 ) -> Collected<'a, 'v> {
+    let EntityPaths {
+        data,
+        trie,
+        paths,
+        path_values,
+    } = at;
+    let EntityInputs {
+        requires,
+        input_rewrites,
+        context,
+        subgraph_keys,
+        reuse,
+    } = inputs;
     let mut contexts = ContextGroups::new(context);
     // the planner keeps fetches with context from copying. the hashes below mix in the group
     // there, so nothing would match anyway
@@ -620,16 +643,20 @@ mod tests {
         let path_values = (trie.ends().len() > 1)
             .then(|| collect_path_values(&trie, data, possible_types, context_depth(context)));
         collect_context_entities(
-            path_values.as_deref(),
-            &trie,
-            0..trie.ends().len(),
-            requires,
-            input_rewrites,
-            context,
+            EntityPaths {
+                data,
+                trie: &trie,
+                paths: 0..trie.ends().len(),
+                path_values: path_values.as_deref(),
+            },
+            EntityInputs {
+                requires,
+                input_rewrites,
+                context,
+                subgraph_keys,
+                reuse,
+            },
             possible_types,
-            subgraph_keys,
-            data,
-            reuse,
         )
     }
 
@@ -1285,16 +1312,20 @@ mod tests {
             let Collected {
                 groups, targets, ..
             } = collect_context_entities(
-                Some(&path_values),
-                &trie,
-                paths,
-                &requires,
-                None,
-                &None,
+                EntityPaths {
+                    data: &data,
+                    trie: &trie,
+                    paths,
+                    path_values: Some(&path_values),
+                },
+                EntityInputs {
+                    requires: &requires,
+                    input_rewrites: None,
+                    context: &None,
+                    subgraph_keys: None,
+                    reuse: None,
+                },
                 &possible_types,
-                None,
-                &data,
-                None,
             );
             (groups, targets)
         };
