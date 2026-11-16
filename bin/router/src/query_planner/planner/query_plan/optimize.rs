@@ -72,8 +72,8 @@ use crate::query_planner::{
     planner::error::QueryPlanError,
     planner::plan_nodes::planning::{
         custom_scalar_paths_for_entities_selection, BatchFetchNode, ConditionGroup,
-        CustomScalarPaths, EntityBatch, EntityBatchAlias, FetchContext, FetchRewrite,
-        FlattenNodePath, PlanNode,
+        CustomScalarPaths, EntityBatch, EntityBatchAlias, FetchContext, FetchId, FetchIdList,
+        FetchRewrite, FlattenNodePath, PlanNode,
     },
     planner::QueryPlannerOptions,
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
@@ -329,6 +329,8 @@ impl<'a> BatchFetchBuilder<'a> {
             entity_batch: EntityBatch {
                 aliases: self.batched_aliases,
             },
+            depends_on: FetchIdList::new(),
+            completes: FetchIdList::new(),
         })
     }
 }
@@ -348,7 +350,7 @@ impl<'a> BatchFetchBuilder<'a> {
 struct EntityFetch {
     /// Original index in the Parallel block (for stable ordering).
     index: usize,
-    fetch_node_id: i64,
+    fetch_node_id: FetchId,
     service_name: String,
     flatten_path: FlattenNodePath,
     variable_usages: Option<BTreeSet<String>>,
@@ -358,6 +360,7 @@ struct EntityFetch {
     output_rewrites: Option<Vec<FetchRewrite>>,
     context: Option<Box<FetchContext>>,
     run_if: Option<Vec<ConditionGroup>>,
+    depends_on: FetchIdList,
     shape_key: ShapeKey,
     non_representations_variable_definitions: Vec<VariableDefinition>,
 }
@@ -487,6 +490,7 @@ impl EntityFetch {
             output_rewrites,
             context,
             run_if: fetch_node.run_if.clone(),
+            depends_on: fetch_node.depends_on.clone(),
             shape_key,
             non_representations_variable_definitions,
         }))
@@ -923,7 +927,19 @@ fn build_batched_fetch_node(
         builder.add_shape_group(index, shape_group, supergraph)?;
     }
 
-    builder.finish(first_candidate, supergraph, max_aliases)
+    let mut batch = builder.finish(first_candidate, supergraph, max_aliases)?;
+    let candidates = || shape_groups.iter().flatten();
+    batch.completes = candidates()
+        .map(|candidate| candidate.fetch_node_id)
+        .collect();
+    // what any of them waited for
+    batch.depends_on = candidates()
+        .flat_map(|candidate| candidate.depends_on.iter().copied())
+        .filter(|id| !batch.completes.contains(id))
+        .collect();
+    batch.depends_on.sort_unstable();
+    batch.depends_on.dedup();
+    Ok(batch)
 }
 
 fn optimize_plan_sequence(nodes: Vec<PlanNode>) -> Vec<PlanNode> {
@@ -968,8 +984,8 @@ mod tests {
             selection_item::SelectionItem,
         },
         planner::plan_nodes::planning::{
-            ConditionGroup, FetchNode, FetchNodePathSegment, FetchRewrite, FlattenNode,
-            FlattenNodePath, PlanNode, QueryPlan, ValueSetter,
+            ConditionGroup, FetchId, FetchIdList, FetchNode, FetchNodePathSegment, FetchRewrite,
+            FlattenNode, FlattenNodePath, PlanNode, QueryPlan, ValueSetter,
         },
         planner::QueryPlannerOptions,
         state::supergraph_state::{OperationKind, SupergraphState},
@@ -1016,10 +1032,7 @@ mod tests {
             optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
                 .expect("optimize should work");
 
-        let query_plan = QueryPlan {
-            kind: "QueryPlan",
-            node: Some(optimized),
-        };
+        let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
@@ -1106,10 +1119,7 @@ mod tests {
             optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
                 .expect("optimize should work");
 
-        let query_plan = QueryPlan {
-            kind: "QueryPlan",
-            node: Some(optimized),
-        };
+        let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
@@ -1171,10 +1181,7 @@ mod tests {
             optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
                 .expect("optimize should work");
 
-        let query_plan = QueryPlan {
-            kind: "QueryPlan",
-            node: Some(optimized),
-        };
+        let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
@@ -1236,10 +1243,7 @@ mod tests {
             optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
                 .expect("optimize should work");
 
-        let query_plan = QueryPlan {
-            kind: "QueryPlan",
-            node: Some(optimized),
-        };
+        let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
@@ -1310,10 +1314,7 @@ mod tests {
             optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
                 .expect("optimize should work");
 
-        let query_plan = QueryPlan {
-            kind: "QueryPlan",
-            node: Some(optimized),
-        };
+        let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
@@ -1385,10 +1386,7 @@ mod tests {
             optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
                 .expect("optimize should work");
 
-        let query_plan = QueryPlan {
-            kind: "QueryPlan",
-            node: Some(optimized),
-        };
+        let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
@@ -1451,7 +1449,7 @@ mod tests {
                 .enumerate()
                 .map(|(index, key)| {
                     flatten_entity_fetch_node(
-                        index as i64,
+                        index as u32,
                         "inventory",
                         "products",
                         &format!("query {{ ... on Product {{ {key} }} }}"),
@@ -1558,7 +1556,7 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(index, query)| {
-                flatten_entity_fetch_node(index as i64, "inventory", "products", requires, query)
+                flatten_entity_fetch_node(index as u32, "inventory", "products", requires, query)
             })
             .collect();
         let options = QueryPlannerOptions {
@@ -1618,6 +1616,128 @@ mod tests {
         assert_eq!(batch.entity_batch.aliases.len(), 20);
     }
 
+    fn with_depends_on(mut node: PlanNode, depends_on: Vec<u32>) -> PlanNode {
+        if let PlanNode::Flatten(flatten) = &mut node {
+            if let PlanNode::Fetch(fetch) = flatten.node.as_mut() {
+                fetch.depends_on = depends_on.into_iter().map(FetchId).collect();
+            }
+        }
+        node
+    }
+
+    fn ids(ids: &[FetchId]) -> Vec<u32> {
+        ids.iter().map(|id| id.0).collect()
+    }
+
+    /// A batch depends on what any of its fetches depends on, and completes all of them
+    #[test]
+    fn optimize_parallel_node_batch_keeps_all_merged_fetch_ids_and_dependencies() {
+        let supergraph = test_supergraph_state();
+        let requires_query = "query { ... on Product { upc } }";
+        let entities_query = "
+          query($representations:[_Any!]!) {
+            _entities(representations: $representations) {
+              ... on Product { shippingEstimate }
+            }
+          }
+        ";
+        let batch = |depends_on_a: Vec<u32>, depends_on_b: Vec<u32>| {
+            let nodes = vec![
+                with_depends_on(
+                    flatten_entity_fetch_node(
+                        1,
+                        "inventory",
+                        "products",
+                        requires_query,
+                        entities_query,
+                    ),
+                    depends_on_a,
+                ),
+                with_depends_on(
+                    flatten_entity_fetch_node(
+                        2,
+                        "inventory",
+                        "products",
+                        requires_query,
+                        entities_query,
+                    ),
+                    depends_on_b,
+                ),
+            ];
+            match optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
+                .expect("optimize should work")
+            {
+                PlanNode::BatchFetch(batch) => batch,
+                other => panic!("expected a BatchFetch, got {other:?}"),
+            }
+        };
+
+        let both = batch(vec![7], vec![8, 7]);
+        assert_eq!(both.id, FetchId(1));
+        assert_eq!(ids(&both.completes), [1, 2]);
+        assert_eq!(ids(&both.depends_on), [7, 8]);
+
+        // the merged fetches don't wait for each other
+        assert_eq!(ids(&batch(vec![], vec![1]).depends_on), [] as [u32; 0]);
+    }
+
+    /// A batch split by `max_aliases_per_request` gives each part its own fetches
+    #[test]
+    fn optimize_parallel_node_split_batches_complete_their_own_fetches() {
+        let supergraph = test_supergraph_state();
+        let entities = |field: &str| {
+            format!(
+                "query($representations:[_Any!]!) {{ _entities(representations: $representations) {{ ... on Product {{ {field} }} }} }}"
+            )
+        };
+        let requires_upc = "query { ... on Product { upc } }";
+        let requires_name = "query { ... on Product { name } }";
+        let nodes = [
+            (1, requires_upc, "shippingEstimate"),
+            (2, requires_upc, "inStock"),
+            (3, requires_name, "shippingEstimate"),
+            (4, requires_name, "inStock"),
+        ]
+        .into_iter()
+        .map(|(id, requires, field)| {
+            with_depends_on(
+                flatten_entity_fetch_node(id, "inventory", "products", requires, &entities(field)),
+                vec![id + 10],
+            )
+        })
+        .collect();
+        let options = QueryPlannerOptions {
+            subgraph_max_aliases_per_request: [("inventory".to_string(), 2)].into(),
+            ..Default::default()
+        };
+        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph, &options)
+            .expect("optimize should work");
+
+        let batches: Vec<_> = optimized
+            .into_nodes()
+            .into_iter()
+            .map(|node| match node {
+                PlanNode::BatchFetch(batch) => batch,
+                other => panic!("expected a BatchFetch, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(batches.len(), 2);
+        let mut all: Vec<u32> = Vec::new();
+        for batch in &batches {
+            assert_eq!(batch.completes.len(), 2);
+            assert_eq!(batch.completes[0], batch.id);
+            let expected: Vec<u32> = batch.completes.iter().map(|id| id.0 + 10).collect();
+            let mut depends_on = ids(&batch.depends_on);
+            depends_on.sort_unstable();
+            let mut expected = expected;
+            expected.sort_unstable();
+            assert_eq!(depends_on, expected);
+            all.extend(ids(&batch.completes));
+        }
+        all.sort_unstable();
+        assert_eq!(all, [1, 2, 3, 4]);
+    }
+
     /// A batch with more aliases than `max_aliases_per_request` is split into several batches,
     /// and a leftover single fetch stays a plain fetch.
     #[test]
@@ -1665,10 +1785,7 @@ mod tests {
         let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph, &options)
             .expect("optimize should work");
 
-        let query_plan = QueryPlan {
-            kind: "QueryPlan",
-            node: Some(optimized),
-        };
+        let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
@@ -1760,10 +1877,7 @@ mod tests {
         )
         .expect("optimize should work");
 
-        let query_plan = QueryPlan {
-            kind: "QueryPlan",
-            node: Some(optimized),
-        };
+        let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
@@ -1837,10 +1951,7 @@ mod tests {
         )
         .expect("optimize should work");
 
-        let query_plan = QueryPlan {
-            kind: "QueryPlan",
-            node: Some(optimized),
-        };
+        let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
@@ -1928,10 +2039,7 @@ mod tests {
         )
         .expect("optimize should work");
 
-        let query_plan = QueryPlan {
-            kind: "QueryPlan",
-            node: Some(optimized),
-        };
+        let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
@@ -2008,10 +2116,7 @@ mod tests {
         )
         .expect("optimize should work");
 
-        let query_plan = QueryPlan {
-            kind: "QueryPlan",
-            node: Some(optimized),
-        };
+        let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
@@ -2082,10 +2187,7 @@ mod tests {
             optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
                 .expect("optimize should work");
 
-        let query_plan = QueryPlan {
-            kind: "QueryPlan",
-            node: Some(optimized),
-        };
+        let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
@@ -2185,10 +2287,7 @@ mod tests {
             "rewrite node should have input rewrites"
         );
 
-        let query_plan = QueryPlan {
-            kind: "QueryPlan",
-            node: Some(optimized),
-        };
+        let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
@@ -2263,10 +2362,7 @@ mod tests {
             optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
                 .expect("optimize should work");
 
-        let query_plan = QueryPlan {
-            kind: "QueryPlan",
-            node: Some(optimized),
-        };
+        let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
@@ -2342,10 +2438,7 @@ mod tests {
             optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
                 .expect("optimize should work");
 
-        let query_plan = QueryPlan {
-            kind: "QueryPlan",
-            node: Some(optimized),
-        };
+        let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
@@ -2430,10 +2523,7 @@ mod tests {
             optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
                 .expect("optimize should work");
 
-        let query_plan = QueryPlan {
-            kind: "QueryPlan",
-            node: Some(optimized),
-        };
+        let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
@@ -2518,10 +2608,7 @@ mod tests {
             optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
                 .expect("optimize should work");
 
-        let query_plan = QueryPlan {
-            kind: "QueryPlan",
-            node: Some(optimized),
-        };
+        let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
@@ -2567,10 +2654,7 @@ mod tests {
             optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
                 .expect("optimize should work");
 
-        let query_plan = QueryPlan {
-            kind: "QueryPlan",
-            node: Some(optimized),
-        };
+        let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
@@ -2616,10 +2700,7 @@ mod tests {
             optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
                 .expect("optimize should work");
 
-        let query_plan = QueryPlan {
-            kind: "QueryPlan",
-            node: Some(optimized),
-        };
+        let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
@@ -2674,10 +2755,7 @@ mod tests {
             optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
                 .expect("optimize should work");
 
-        let query_plan = QueryPlan {
-            kind: "QueryPlan",
-            node: Some(optimized),
-        };
+        let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
@@ -2740,7 +2818,7 @@ mod tests {
     }
 
     fn flatten_entity_fetch_node(
-        id: i64,
+        id: u32,
         service_name: &str,
         root_path_field: &str,
         requires_query: &str,
@@ -2776,7 +2854,7 @@ mod tests {
         let operation = PlanningFetchOperation::from_anonymous_operation(entities_document);
 
         let fetch_node = FetchNode {
-            id,
+            id: FetchId(id),
             service_name: service_name.to_string(),
             variable_usages: non_representation_variable_names,
             operation_kind: Some(OperationKind::Query),
@@ -2788,6 +2866,7 @@ mod tests {
             output_rewrites: None,
             context: None,
             run_if: None,
+            depends_on: FetchIdList::new(),
         };
 
         let path = FlattenNodePath::from(&MergePath::new(vec![
@@ -2851,13 +2930,13 @@ mod tests {
         PlanNode::Flatten(flatten_node)
     }
 
-    fn non_entity_fetch_node(id: i64, service_name: &str) -> FetchNode {
+    fn non_entity_fetch_node(id: u32, service_name: &str) -> FetchNode {
         let operation = PlanningFetchOperation::from_anonymous_operation(parse_document(
             "query { products { upc } }",
         ));
 
         FetchNode {
-            id,
+            id: FetchId(id),
             service_name: service_name.to_string(),
             variable_usages: None,
             operation_kind: Some(OperationKind::Query),
@@ -2869,6 +2948,7 @@ mod tests {
             output_rewrites: None,
             context: None,
             run_if: None,
+            depends_on: FetchIdList::new(),
         }
     }
 

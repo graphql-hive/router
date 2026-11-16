@@ -7,16 +7,15 @@ use std::sync::Arc;
 use std::vec;
 
 use crate::query_planner::ast::operation::{ContextAliasTemplate, SubgraphFetchOperation};
+use crate::query_planner::planner::plan_nodes::dependencies::{plan_fetches, PlanSchedule};
 use crate::query_planner::planner::plan_nodes::{
     BatchFetchNode, ConditionGroup, CustomScalarPaths, FetchContext, FetchNode, FlattenNode,
     ResponsePathRef,
 };
-use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use crate::query_planner::{
     ast::operation::OperationDefinition,
     planner::plan_nodes::{
         EntityBatch, EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode, QueryPlan,
-        SequenceNode,
     },
     state::supergraph_state::OperationKind,
 };
@@ -35,6 +34,7 @@ use futures::{
 };
 use http::{HeaderMap, StatusCode};
 use serde::Serialize;
+use smallvec::{smallvec, SmallVec};
 use sonic_rs::{JsonValueTrait, ValueRef};
 use tracing::{debug, error, warn, Instrument};
 
@@ -241,47 +241,15 @@ fn log_plan_execution_error(error: &PlanExecutionError) {
 pub async fn execute_query_plan<'exec>(
     opts: QueryPlanExecutionOpts<'exec>,
 ) -> Result<QueryPlanExecutionResult, PlanExecutionError> {
-    let (subscription_node, remaining_nodes) = match &opts.query_plan.node {
-        // a subscription to a subgraph that contains all data and doesn't need entity resolution
-        Some(PlanNode::Subscription(sub)) => (Some(sub), None),
-        // a subscription that needs entity resolution. after emitting, it needs to execute the
-        // remaining plan nodes in the sequence
-        Some(PlanNode::Sequence(seq)) => match seq.nodes.first() {
-            Some(PlanNode::Subscription(sub)) => {
-                let remaining = if seq.nodes.len() > 1 {
-                    // TODO: why to_vec()? is it wasteful? it's actually a slice, we dont need it as Vec
-                    Some(seq.nodes[1..].to_vec())
-                } else {
-                    None
-                };
-                (Some(sub), remaining)
-            }
-            _ => (None, None),
-        },
-        _ => (None, None),
-    };
-
     // subscription
-    if let Some(sub) = subscription_node {
-        // subscription
-
+    if let Some((sub, query_plan)) = opts.query_plan.split_subscription() {
         // the primary (fetch node) of the subscription is the
         // subscription destination, we execute it first and it
         // would give us back a stream of results
         let fetch_node = &sub.primary;
 
-        // we assemble a synthetic query plan for entity resolution from remaining nodes
-        // because we might need entity resolution after receiving each subscription event
-        let query_plan: Arc<QueryPlan> = Arc::new(QueryPlan {
-            kind: QUERY_PLAN_KIND,
-            node: remaining_nodes.map(|nodes| {
-                if nodes.len() == 1 {
-                    nodes.into_iter().next().unwrap()
-                } else {
-                    PlanNode::Sequence(SequenceNode { nodes })
-                }
-            }),
-        });
+        // the rest of the plan, for entity resolution after each subscription event
+        let query_plan: Arc<QueryPlan> = Arc::new(query_plan);
 
         // we perform a regular subgraph request to the subscription subgraph
         // the only difference is that we get back a stream of results
@@ -546,9 +514,7 @@ async fn execute_query_plan_with_data<'exec>(
         aliased_requests: &aliased_requests,
     };
 
-    if let Some(node) = &opts.query_plan.node {
-        executor.execute_plan_node(&mut exec_ctx, node).await;
-    }
+    executor.execute_plan(&mut exec_ctx, opts.query_plan).await;
 
     let error_count = exec_ctx.errors.len(); // Added for usage reporting
 
@@ -897,40 +863,74 @@ struct PrepareExecutionJobOpts<'exec> {
     affected_path: Option<ResponsePathRef<'exec>>,
 }
 
+/// The `index`th fetch is done: the fetches waiting only for it are ready.
+fn release(
+    schedule: &PlanSchedule,
+    index: u32,
+    waits: &mut [u32],
+    ready: &mut SmallVec<[u32; 16]>,
+) {
+    for &dependent in schedule.dependents(index as usize) {
+        waits[dependent as usize] -= 1;
+        if waits[dependent as usize] == 0 {
+            ready.push(dependent);
+        }
+    }
+}
+
 impl<'exec> Executor<'exec> {
-    async fn execute_plan_node(&self, ctx: &mut ExecutionContext<'exec>, node: &'exec PlanNode) {
-        match node {
-            PlanNode::Parallel(parallel_node) => {
-                let mut scope = FuturesUnordered::new();
-
-                for child in &parallel_node.nodes {
-                    // We borrow `ctx.data` only for sync preparation of the job future,
-                    // and the actual execution of the job future is done without the borrow of `ctx.data`
-                    for fut in self.prepare_job_future(child, &ctx.data) {
-                        scope.push(fut);
-                    }
+    /// Runs the fetches of the plan, each as soon as the fetches it waits for are done (the
+    /// plan's schedule says which). Results are merged as they come in, and every fetch that's
+    /// done lets go of the ones waiting for it.
+    async fn execute_plan(&self, ctx: &mut ExecutionContext<'exec>, plan: &'exec QueryPlan) {
+        let Some(root) = plan.node() else {
+            return;
+        };
+        let fetches = plan_fetches(root);
+        let schedule = plan.schedule();
+        debug_assert_eq!(
+            fetches.len(),
+            schedule.fetch_count(),
+            "the schedule is for these nodes"
+        );
+        // how many fetches each one still waits for, and how many jobs each running one has left
+        let mut waits: SmallVec<[u32; 16]> = SmallVec::from_slice(schedule.waits());
+        let mut jobs_left: SmallVec<[u32; 16]> = smallvec![0; fetches.len()];
+        let mut ready: SmallVec<[u32; 16]> = (0..fetches.len() as u32)
+            .filter(|index| waits[*index as usize] == 0)
+            .collect();
+        let mut running = FuturesUnordered::new();
+        loop {
+            while let Some(index) = ready.pop() {
+                // `ctx.data` is only borrowed to prepare the jobs, they run without it
+                let jobs = self.prepare_job_future(fetches[index as usize], &ctx.data);
+                if jobs.is_empty() {
+                    release(schedule, index, &mut waits, &mut ready);
+                    continue;
                 }
-
-                while let Some(job) = scope.next().await {
-                    self.process_job_result(ctx, job);
-                }
+                jobs_left[index as usize] = jobs.len() as u32;
+                running.extend(
+                    jobs.into_iter()
+                        .map(|job| job.map(move |result| (index, result))),
+                );
             }
-            PlanNode::Sequence(sequence_node) => {
-                for child in &sequence_node.nodes {
-                    // We use `Box.pin` here to avoid the compiler error about recursive future,
-                    // as `execute_plan_node` is calling itself recursively for sequence nodes
-                    Box::pin(self.execute_plan_node(ctx, child)).await;
-                }
+            let Some((index, result)) = running.next().await else {
+                break;
+            };
+            self.process_job_result(ctx, result);
+            jobs_left[index as usize] -= 1;
+            if jobs_left[index as usize] == 0 {
+                release(schedule, index, &mut waits, &mut ready);
             }
-            node => {
-                let mut scope: FuturesUnordered<_> = self
-                    .prepare_job_future(node, &ctx.data)
-                    .into_iter()
-                    .collect();
-                while let Some(job) = scope.next().await {
-                    self.process_job_result(ctx, job);
-                }
-            }
+        }
+        // the schedule has no cycles, so every fetch was let go and ran, or had nothing to run.
+        // A fetch still waiting means the schedule doesn't fit the plan, a bug
+        if waits.iter().any(|&waits| waits != 0) {
+            error!(
+                target: targets::GRAPHQL_EXECUTION,
+                waits = ?waits,
+                "fetches still waiting after the plan finished",
+            );
         }
     }
 
@@ -1966,8 +1966,8 @@ mod tests {
             document::Document, operation::PlanningFetchOperation, requires::RequiresSelectionSet,
         },
         planner::plan_nodes::{
-            EntityBatch, EntityBatchAlias, FetchNode, FlattenNodePath, ParallelNode, PathSegment,
-            PlanNode,
+            dependencies::PlanSchedule, EntityBatch, EntityBatchAlias, FetchId, FetchNode,
+            FlattenNodePath, ParallelNode, PathSegment, PlanNode,
         },
         utils::parsing::parse_operation,
     };
@@ -2405,49 +2405,51 @@ mod tests {
             })
             .create();
 
-        executor
-            .execute_plan_node(
-                &mut exec_ctx,
-                &PlanNode::Parallel(ParallelNode {
-                    nodes: vec![
-                        PlanNode::Fetch(Box::new(FetchNode {
-                            id: 1,
-                            planner_requires: (),
-                            service_name: "subgraph_a".to_string(),
-                            context: None,
-                            run_if: None,
-                            operation: PlanningFetchOperation::from_anonymous_operation(
-                                parse_document("{ from_a }"),
-                            )
-                            .operation,
-                            custom_scalar_paths: None,
-                            requires: None,
-                            input_rewrites: None,
-                            output_rewrites: None,
-                            variable_usages: None,
-                            operation_kind: None,
-                        })),
-                        PlanNode::Fetch(Box::new(FetchNode {
-                            id: 2,
-                            planner_requires: (),
-                            service_name: "subgraph_b".to_string(),
-                            context: None,
-                            run_if: None,
-                            operation: PlanningFetchOperation::from_anonymous_operation(
-                                parse_document("{ from_b }"),
-                            )
-                            .operation,
-                            custom_scalar_paths: None,
-                            requires: None,
-                            input_rewrites: None,
-                            output_rewrites: None,
-                            variable_usages: None,
-                            operation_kind: None,
-                        })),
-                    ],
-                }),
-            )
-            .await;
+        // two root fetches, neither waits for the other
+        let plan = crate::query_planner::planner::plan_nodes::QueryPlan::with_schedule_for_tests(
+            Some(PlanNode::Parallel(ParallelNode {
+                nodes: vec![
+                    PlanNode::Fetch(Box::new(FetchNode {
+                        id: FetchId(1),
+                        planner_requires: (),
+                        service_name: "subgraph_a".to_string(),
+                        context: None,
+                        run_if: None,
+                        depends_on: (),
+                        operation: PlanningFetchOperation::from_anonymous_operation(
+                            parse_document("{ from_a }"),
+                        )
+                        .operation,
+                        custom_scalar_paths: None,
+                        requires: None,
+                        input_rewrites: None,
+                        output_rewrites: None,
+                        variable_usages: None,
+                        operation_kind: None,
+                    })),
+                    PlanNode::Fetch(Box::new(FetchNode {
+                        id: FetchId(2),
+                        planner_requires: (),
+                        service_name: "subgraph_b".to_string(),
+                        context: None,
+                        run_if: None,
+                        depends_on: (),
+                        operation: PlanningFetchOperation::from_anonymous_operation(
+                            parse_document("{ from_b }"),
+                        )
+                        .operation,
+                        custom_scalar_paths: None,
+                        requires: None,
+                        input_rewrites: None,
+                        output_rewrites: None,
+                        variable_usages: None,
+                        operation_kind: None,
+                    })),
+                ],
+            })),
+            PlanSchedule::from_dependencies(2, Vec::new()),
+        );
+        executor.execute_plan(&mut exec_ctx, &plan).await;
         mock_a.assert();
         mock_b.assert();
 

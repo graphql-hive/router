@@ -17,6 +17,7 @@ use crate::query_planner::planner::fetch::fetch_step_data::{
 use crate::query_planner::planner::fetch::response_keys::{place_of, ResponseKeys};
 use crate::query_planner::planner::fetch::selections::FetchStepSelections;
 use crate::query_planner::planner::fetch::state::{MultiTypeFetchStep, SingleTypeFetchStep};
+use crate::query_planner::planner::plan_nodes::FetchId;
 use crate::query_planner::planner::plan_nodes::{
     FetchNodePathSegment, FetchRewrite, KeyRenamer, ValueSetter,
 };
@@ -81,6 +82,9 @@ pub struct FetchGraph<State> {
     /// Only kept while the graph is built: until the merges, a step keeps making the same entity
     /// call and no edge goes away.
     pub(crate) children_by_entity_call: Option<HashMap<(NodeIndex, u64), Vec<NodeIndex>>>,
+    /// The id the next step gets. Only goes up: the step count drops when a step is removed, and
+    /// an id from it could be one a step still has.
+    next_fetch_id: u32,
 }
 
 impl FetchGraph<SingleTypeFetchStep> {
@@ -101,6 +105,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             context_variable_counter: 0,
             operation_variables: HashSet::new(),
             children_by_entity_call: None,
+            next_fetch_id: self.next_fetch_id,
         }
     }
 
@@ -117,6 +122,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             context_variable_counter: 0,
             operation_variables: HashSet::new(),
             children_by_entity_call: Some(HashMap::new()),
+            next_fetch_id: 1,
         }
     }
 
@@ -202,8 +208,14 @@ impl<State> FetchGraph<State> {
         self.graph.node_references()
     }
 
-    pub fn create_fetch_id(&self) -> i64 {
-        (self.graph.node_count() + 1) as i64
+    pub fn create_fetch_id(&mut self) -> FetchId {
+        let id = FetchId(self.next_fetch_id);
+        // a plan with more fetches than that doesn't get past the request limits
+        self.next_fetch_id = self
+            .next_fetch_id
+            .checked_add(1)
+            .expect("fewer than 2^32 fetches");
+        id
     }
 
     pub fn get_step_data_mut(
@@ -493,8 +505,9 @@ fn create_noop_fetch_step(
         FetchStepFlags::empty()
     };
 
+    let id = fetch_graph.create_fetch_id();
     fetch_graph.add_step(FetchStepData {
-        id: fetch_graph.create_fetch_id(),
+        id,
         service_name: SubgraphName::any(),
         response_path: MergePath::default(),
         input: FetchStepSelections::new_empty(),
@@ -539,8 +552,9 @@ fn create_fetch_step_for_entity_call(
         })
         .unwrap();
 
+    let id = fetch_graph.create_fetch_id();
     let step_index = fetch_graph.add_step(FetchStepData {
-        id: fetch_graph.create_fetch_id(),
+        id,
         service_name: subgraph_name.clone(),
         response_path: response_path.clone(),
         input,
@@ -577,8 +591,9 @@ fn create_fetch_step_for_root_move(
     conditions: Conditions<'_>,
 ) -> NodeIndex {
     let condition = conditions.current;
+    let id = fetch_graph.create_fetch_id();
     let idx = fetch_graph.add_step(FetchStepData {
-        id: fetch_graph.create_fetch_id(),
+        id,
         service_name: subgraph_name.clone(),
         response_path: response_path.clone(),
         input: FetchStepSelections::new(type_name),
@@ -2661,6 +2676,19 @@ pub fn build_fetch_graph_from_query_tree(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A step added after a removal still gets an id no other step has.
+    #[test]
+    fn fetch_ids_are_not_reused_after_a_removal() {
+        let mut fetch_graph = FetchGraph::new(OperationKind::Query);
+        let first = create_noop_fetch_step(&mut fetch_graph, false);
+        let removed = create_noop_fetch_step(&mut fetch_graph, false);
+        let last = create_noop_fetch_step(&mut fetch_graph, false);
+        fetch_graph.remove_step(removed);
+        let added = create_noop_fetch_step(&mut fetch_graph, false);
+        let id = |index| fetch_graph.get_step_data(index).unwrap().id.0;
+        assert_eq!([id(first), id(last), id(added)], [1, 3, 4]);
+    }
 
     #[test]
     fn same_entity_calls_are_children_of_one_parent_newest_first() {

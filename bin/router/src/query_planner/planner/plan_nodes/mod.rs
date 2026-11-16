@@ -21,7 +21,32 @@ use crate::query_planner::{
 use serde::{Deserialize, Serialize};
 
 mod state;
-pub use state::{Executable, PlanState, Planning};
+pub use state::{Executable, FetchIdList, PlanState, Planning};
+pub mod dependencies;
+use crate::query_planner::planner::error::QueryPlanError;
+use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
+use dependencies::PlanSchedule;
+
+/// A fetch's number in its plan, from the planner. It names the fetch in `depends_on`, and in the
+/// operation name sent to the subgraph. Not its position in the plan, that's what the schedule
+/// counts in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct FetchId(pub u32);
+
+impl FetchId {
+    /// The id as an index, for arrays sized by ids.
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl Display for FetchId {
+    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
+        self.0.fmt(f)
+    }
+}
+
 mod prepare;
 
 pub mod planning {
@@ -51,7 +76,8 @@ use std::{
 };
 use xxhash_rust::xxh3::Xxh3;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+// Only serialized, to show it. A plan read back from JSON wouldn't have its schedule.
+#[derive(Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 // Why `[serde(bound = "")]` ?
 // `S` only tracks the plan state. Only `S::Operation` is serialized.
@@ -59,8 +85,83 @@ use xxhash_rust::xxh3::Xxh3;
 #[serde(bound = "")]
 pub struct QueryPlan<S: PlanState = Executable> {
     pub kind: &'static str, // "QueryPlan"
+    /// Private like `schedule`: a plan is only made in this module, so the two always match.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub node: Option<PlanNode<S>>,
+    node: Option<PlanNode<S>>,
+    /// What each fetch of `node` waits for, worked out once with the plan.
+    #[serde(skip)]
+    schedule: PlanSchedule,
+}
+
+impl QueryPlan<Planning> {
+    /// A plan with `node`, and the schedule its fetches run on. Fails when a fetch depends on one
+    /// that doesn't come before it in the plan.
+    pub fn new(node: Option<PlanNode<Planning>>) -> Result<Self, QueryPlanError> {
+        let schedule = PlanSchedule::new(node.as_ref())?;
+        Ok(Self::with_schedule(node, schedule))
+    }
+}
+
+impl<S: PlanState> QueryPlan<S> {
+    /// A plan with nothing to fetch.
+    pub fn empty() -> Self {
+        Self::with_schedule(None, PlanSchedule::default())
+    }
+
+    /// A plan with a schedule that's already worked out for `node`. Private, anything outside
+    /// this module could hand it a schedule that doesn't fit.
+    fn with_schedule(node: Option<PlanNode<S>>, schedule: PlanSchedule) -> Self {
+        Self {
+            kind: QUERY_PLAN_KIND,
+            node,
+            schedule,
+        }
+    }
+
+    /// A plan for tests, with a schedule made by hand.
+    #[cfg(test)]
+    pub(crate) fn with_schedule_for_tests(
+        node: Option<PlanNode<S>>,
+        schedule: PlanSchedule,
+    ) -> Self {
+        Self::with_schedule(node, schedule)
+    }
+
+    pub fn node(&self) -> Option<&PlanNode<S>> {
+        self.node.as_ref()
+    }
+
+    pub fn into_node(self) -> Option<PlanNode<S>> {
+        self.node
+    }
+
+    /// What each fetch of the plan waits for, the fetches counted in the order
+    /// [`dependencies::plan_fetches`] lists them.
+    pub fn schedule(&self) -> &PlanSchedule {
+        &self.schedule
+    }
+
+    /// For a subscription plan, its subscription fetch and the plan that runs on each event: the
+    /// fetches after the subscription one, which comes first, so they keep their schedule.
+    pub fn split_subscription(&self) -> Option<(&SubscriptionNode<S>, QueryPlan<S>)> {
+        let (subscription, rest) = match self.node.as_ref()? {
+            PlanNode::Subscription(subscription) => (subscription, &[][..]),
+            PlanNode::Sequence(sequence) => match sequence.nodes.split_first()? {
+                (PlanNode::Subscription(subscription), rest) => (subscription, rest),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let node = match rest {
+            [] => None,
+            [node] => Some(node.clone()),
+            nodes => Some(PlanNode::Sequence(SequenceNode {
+                nodes: nodes.to_vec(),
+            })),
+        };
+        let rest = Self::with_schedule(node, self.schedule.after_first_fetch());
+        Some((subscription.as_ref(), rest))
+    }
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -133,7 +234,7 @@ impl<S: PlanState> PlanNode<S> {
 #[serde(bound = "")]
 pub struct FetchNode<S: PlanState = Executable> {
     #[serde(skip_serializing)]
-    pub id: i64,
+    pub id: FetchId,
     pub service_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub variable_usages: Option<BTreeSet<String>>,
@@ -157,6 +258,10 @@ pub struct FetchNode<S: PlanState = Executable> {
     /// nothing to ask for. Never empty, a fetch that can't ever run is left out of the plan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_if: Option<Vec<ConditionGroup>>,
+    /// The fetches whose data this fetch reads, from the planner's fetch graph. Empty for a fetch
+    /// that reads nothing another fetch brings, a root fetch.
+    #[serde(skip)]
+    pub depends_on: S::FetchIds,
 }
 
 /// What a fetch with `@fromContext` arguments needs at execution time.
@@ -214,7 +319,7 @@ impl FetchContext {
 #[serde(bound = "")]
 pub struct BatchFetchNode<S: PlanState = Executable> {
     #[serde(skip_serializing)]
-    pub id: i64,
+    pub id: FetchId,
     pub service_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub variable_usages: Option<BTreeSet<String>>,
@@ -224,6 +329,13 @@ pub struct BatchFetchNode<S: PlanState = Executable> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_scalar_paths: Option<CustomScalarPaths>,
     pub entity_batch: EntityBatch,
+    /// What the merged fetches waited for, without the merged fetches themselves.
+    #[serde(skip)]
+    pub depends_on: S::FetchIds,
+    /// Every fetch merged into this batch, `id` is only the first of them. A fetch that depends
+    /// on any of them depends on the batch.
+    #[serde(skip)]
+    pub completes: S::FetchIds,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -675,10 +787,12 @@ fn create_output_operation(
 }
 
 impl FetchNode<Planning> {
+    /// `depends_on` is the fetches whose data it reads, see [`FetchNode::depends_on`].
     pub fn from_fetch_step(
         step: &FetchStepData<MultiTypeFetchStep>,
         supergraph: &SupergraphState,
         options: &QueryPlannerOptions,
+        depends_on: FetchIdList,
     ) -> Self {
         match step.is_entity_call() {
             true => {
@@ -730,6 +844,7 @@ impl FetchNode<Planning> {
                     output_rewrites: step.output_rewrites.clone(),
                     context,
                     run_if: None,
+                    depends_on,
                 }
             }
             false => {
@@ -772,6 +887,7 @@ impl FetchNode<Planning> {
                         step.context_rewrites.clone(),
                     ),
                     run_if: None,
+                    depends_on,
                 }
             }
         }
@@ -779,12 +895,14 @@ impl FetchNode<Planning> {
 }
 
 impl PlanNode<Planning> {
+    /// `depends_on` is the fetches whose data it reads, see [`FetchNode::depends_on`].
     pub fn from_fetch_step(
         step: &FetchStepData<MultiTypeFetchStep>,
         supergraph: &SupergraphState,
         options: &QueryPlannerOptions,
+        depends_on: FetchIdList,
     ) -> Option<Self> {
-        let mut fetch = FetchNode::from_fetch_step(step, supergraph, options);
+        let mut fetch = FetchNode::from_fetch_step(step, supergraph, options, depends_on);
 
         // A fetch runs when the `@include`/`@skip` around it hold and any of its fields is asked
         // for. The step has the innermost condition, its path has the ones around it, and the
@@ -1081,9 +1199,10 @@ mod stored_size_tests {
     fn stored_sizes_stay_small() {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 32),
-            // `run_if` is an `Option<Vec<_>>`
-            ("FetchNode", size_of::<FetchNode>(), 272),
-            ("BatchFetchNode", size_of::<BatchFetchNode>(), 176),
+            // `run_if` is an `Option<Vec<_>>`. Executable nodes keep no dependency ids, the
+            // plan's schedule has them by position
+            ("FetchNode", size_of::<FetchNode>(), 264),
+            ("BatchFetchNode", size_of::<BatchFetchNode>(), 168),
             (
                 "SubgraphFetchOperation",
                 size_of::<crate::query_planner::ast::operation::SubgraphFetchOperation>(),
