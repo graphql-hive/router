@@ -1,6 +1,7 @@
 use crate::query_planner::ast::requires::{RequiresSelection, RequiresSelectionSetRef};
 use crate::query_planner::state::entity_keys::KeysByType;
 use bytes::BufMut;
+use smallvec::SmallVec;
 
 use crate::executor::{
     introspection::schema::PossibleTypes,
@@ -141,11 +142,14 @@ pub fn project_requires(
             );
             // The subgraph finds an entity by any one of its keys. Without a complete one, it's
             // left out, whatever was written for it.
+            // A key field counts when the representation got it from the entity. Not when the
+            // entity has something under the field's name: a key field can sit under
+            // `_internal_qp_alias_0`, with the client's own `id: x` under `id`.
             if let Some(type_keys) = type_keys {
                 let has_complete_key = type_keys.iter().any(|key_fields| {
                     key_fields
                         .iter()
-                        .all(|field| Value::object_get(entity_obj, field).is_some())
+                        .all(|field| applied.found_response_keys.contains(&field.as_str()))
                 });
                 if !has_complete_key {
                     buffer.truncate(object_start_offset);
@@ -194,26 +198,29 @@ pub fn project_requires(
 
 /// What the selections that apply to an object ask for.
 #[derive(Default)]
-struct AppliedSelections {
+struct AppliedSelections<'r> {
     /// `__typename` is one of them.
     typename: bool,
     /// One of the fields isn't in the object.
     missing_field: bool,
+    /// Response keys whose source field was in the object, `null` included. With
+    /// `id: _internal_qp_alias_0`, it gets `id` when `_internal_qp_alias_0` was there.
+    found_response_keys: SmallVec<[&'r str; 4]>,
 }
 
 /// `keys_known` is whether `entity_obj` is the entity and its subgraph's keys are known. It has
 /// a complete key then, so a field it misses is sent as `null`.
 #[allow(clippy::too_many_arguments)]
-fn project_requires_map_mut(
+fn project_requires_map_mut<'r>(
     possible_types: &PossibleTypes,
-    requires_selections: RequiresSelectionSetRef<'_>,
+    requires_selections: RequiresSelectionSetRef<'r>,
     entity_obj: &Vec<(&str, Value<'_>)>,
     buffer: &mut Vec<u8>,
     first: &mut bool,
     parent_response_key: Option<&str>,
     parent_first: bool,
     keys_known: bool,
-) -> AppliedSelections {
+) -> AppliedSelections<'r> {
     // First, check if __typename is present in the entity object, we'll use it later
     let type_name = Value::object_get(entity_obj, TYPENAME_FIELD_NAME).and_then(Value::as_str);
     let mut applied = AppliedSelections::default();
@@ -232,11 +239,13 @@ fn project_requires_map_mut(
                     continue;
                 }
 
-                let original = Value::object_get(entity_obj, field_name)
-                    .or_else(|| Value::object_get(entity_obj, response_key));
-
-                let original = match original {
-                    Some(original) => original,
+                // Only where the fetch wrote it. With `price: _internal_qp_alias_0`, whatever
+                // sits under `price` is some other field, like the client's own `price`.
+                let original = match Value::object_get(entity_obj, field_name) {
+                    Some(original) => {
+                        applied.found_response_keys.push(response_key);
+                        original
+                    }
                     // A `@requires` field whose subgraph returned `null` for the entity. The
                     // entity has a complete key, so the subgraph can still find it.
                     None if keys_known => &Value::Null,
@@ -313,6 +322,9 @@ fn project_requires_map_mut(
                     );
                     applied.typename |= fragment.typename;
                     applied.missing_field |= fragment.missing_field;
+                    applied
+                        .found_response_keys
+                        .extend(fragment.found_response_keys);
                 }
             }
             RequiresSelection::FragmentSpread(_) => {
@@ -398,7 +410,7 @@ mod tests {
                 "__typename": "Product",
                 "id": "original",
                 "key": "fallback",
-                "nested": { "renamed": 2 },
+                "nested": { "value": 2, "renamed": 3 },
                 "upc": "123"
             }),
         )
@@ -997,6 +1009,37 @@ mod tests {
             "petCount": null
           }
         "#);
+    }
+
+    /// `{ t { x: id  id: x  y } }`: the client's `id: x` sits under `id`, so the key `id` is
+    /// fetched as `_internal_qp_alias_0`. The representation reads the key from there, so it
+    /// doesn't matter whether the fetch with the client's `id` merged first, or at all.
+    #[test]
+    fn project_requires_aliased_key_ignores_what_sits_under_its_name() {
+        let requires = "... on T { __typename id: _internal_qp_alias_0 }";
+        let keys = keys_of(&[("T", &["id"])]);
+        let expected = Some(
+            r#"{
+  "__typename": "T",
+  "id": "1"
+}"#,
+        );
+
+        for entity in [
+            json!({ "__typename": "T", "x": "1", "_internal_qp_alias_0": "1" }),
+            json!({ "__typename": "T", "x": "1", "_internal_qp_alias_0": "1", "id": null }),
+        ] {
+            let pretty = project_requires_pretty_with_keys(requires, entity.clone(), Some(&keys));
+            assert_eq!(pretty.as_deref(), expected, "{entity}");
+        }
+
+        // Without `_internal_qp_alias_0` there's no key, and the client's `id` isn't one.
+        let pretty = project_requires_pretty_with_keys(
+            requires,
+            json!({ "__typename": "T", "x": "1", "id": 7 }),
+            Some(&keys),
+        );
+        assert_eq!(pretty, None);
     }
 
     /// A Book without its key `id`, like when the subgraph that has `id` returned `null` for it,

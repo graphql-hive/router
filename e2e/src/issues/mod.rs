@@ -4688,4 +4688,62 @@ mod issues_e2e_tests {
             json!({ "tag": "t1" })
         );
     }
+
+    /// `{ t { x: id  id: x  y } }`. The client's `id: x` comes from `a`, so the key `id` that `c`
+    /// needs comes from `b` as `_internal_qp_alias_0`. `c` waits for `b` only. The router used to
+    /// check the key by looking at `id`, the client's field, so when `a` was slower than `b`,
+    /// `id` wasn't there yet, `t` wasn't sent to `c`, and `y` came back `null`. The answer
+    /// mustn't depend on which of `a` and `b` answers first.
+    ///
+    /// With `{ t { x: id  id: y } }`, the client's `id` is `c`'s `y`, so it can't exist before
+    /// `c` is called. The router still has to send `c` the key it got from `b`.
+    #[ntex::test]
+    async fn aliased_key_does_not_depend_on_the_fetch_with_the_clients_field() {
+        use std::time::Duration;
+
+        for slow in ["/a", "/b"] {
+            let subgraphs = TestSubgraphs::builder()
+                .with_on_request(mock_subgraphs(json!({
+                    "a": { "query": { "t": { "x": 7 } } },
+                    "b": { "query": { "t": { "__typename": "T", "id": "1" } } },
+                    "c": { "entities": [{ "__typename": "T", "id": "1", "y": 41 }] }
+                })))
+                .with_path_delay(slow, Duration::from_millis(200))
+                .build()
+                .start()
+                .await;
+            let router = TestRouter::builder()
+                .with_subgraphs(&subgraphs)
+                .inline_config(
+                    r#"
+                      supergraph:
+                        source: file
+                        path: src/issues/supergraph.aliased-key-collision.graphql
+                      "#,
+                )
+                .build()
+                .start()
+                .await;
+
+            let res = router
+                .send_graphql_request("{ t { x: id id: x y } }", None, None)
+                .await;
+            assert_eq!(
+                res.string_body().await,
+                r#"{"data":{"t":{"x":"1","id":7,"y":41}}}"#,
+                "with {slow} slow"
+            );
+
+            // The client's `id` is `c`'s `y`, so it can't be there before `c` is called. `c` still
+            // gets the key from `b`.
+            let res = router
+                .send_graphql_request("{ t { x: id id: y } }", None, None)
+                .await;
+            assert_eq!(
+                res.string_body().await,
+                r#"{"data":{"t":{"x":"1","id":41}}}"#,
+                "with {slow} slow"
+            );
+        }
+    }
 }
