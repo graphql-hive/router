@@ -45,7 +45,11 @@
 //! - `search` can be a User or a Post. They select different fields, so `search` also has
 //!   `types`. When the response has `"__typename":"User"`, the parser reads the rest of the
 //!   object with nodes 9..11. It allocates space for 2 fields, not 3.
-//! - All keys and type names are in one byte buffer, `text`. Nodes point into it.
+//! - All keys and type names are in one byte buffer, `text`. Nodes point into it. Each one is
+//!   there once.
+//! - Objects built from the same selection sets are shared, so a fragment spread in 50 places
+//!   is built once. An object can have more than one parent, so a child's nodes aren't always
+//!   right after its parent's.
 //!
 //! There are no pointers and no hash maps. There are only a few flat arrays, and indices into
 //! them. So the shape has only a few allocations, and the main loop reads nodes that are next to
@@ -81,7 +85,7 @@
 //! ask for. `Parser::value` reads them. It is a normal JSON parser, and it makes the same `Value`s
 //! as the sonic visitor.
 
-use ahash::HashSet;
+use ahash::{HashMap, HashSet};
 use smallvec::SmallVec;
 use std::ops::Range;
 
@@ -285,6 +289,9 @@ impl ResponseShape {
             objects: Vec::new(),
             types: Vec::new(),
             text: Vec::new(),
+            keys: HashMap::default(),
+            names: HashMap::default(),
+            built: HashMap::default(),
             fits: true,
         };
         let raw_data = paths.is_some_and(|paths| paths.terminal);
@@ -383,9 +390,19 @@ struct Builder<'d, F> {
     objects: Vec<Object>,
     types: Vec<TypeFields>,
     text: Vec<u8>,
+    /// Each key goes into `text` once, with its quotes. With the first 8 bytes of it, for
+    /// `Node::prefix`.
+    keys: HashMap<&'d str, (Text, u64)>,
+    /// Each type name goes into `text` once too.
+    names: HashMap<&'d str, Text>,
+    /// Objects we already built, by their sets and paths
+    built: HashMap<ObjectInput, u32>,
     /// false when something does not fit in its bits
     fits: bool,
 }
+
+/// What `Builder::object` is called with. Same sets in, same object out.
+type ObjectInput = (SmallVec<[*const SelectionSet; 2]>, *const CustomScalarPaths);
 
 /// The run of `vec` from `start` to its end
 fn span_from<T>(start: usize, vec: &[T]) -> Span {
@@ -395,7 +412,9 @@ fn span_from<T>(start: usize, vec: &[T]) -> Span {
     }
 }
 
-impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
+// Type names come from the document and from `possible_types`, so those live at least as long
+// as the builder too.
+impl<'d, 's: 'd, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
     /// Adds the object that the sets select, with the custom scalar paths under it. Returns its
     /// index.
     ///
@@ -418,6 +437,13 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
     ///
     /// If two types select the same fields, and those are not all the fields, they share one run.
     fn object(&mut self, sets: &[&'d SelectionSet], paths: Option<&'d CustomScalarPaths>) -> u32 {
+        let input: ObjectInput = (
+            sets.iter().flat_map(|set| self.key(set)).collect(),
+            paths.map_or(std::ptr::null(), |paths| paths as *const _),
+        );
+        if let Some(&index) = self.built.get(&input) {
+            return index;
+        }
         // Get the index first, so `data` is 0.
         let index = self.objects.len();
         self.objects.push(Object::default());
@@ -464,7 +490,14 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
         }
         let start = self.types.len();
         for (name, fields) in types {
-            let name = self.text(name.as_bytes());
+            let name = match self.names.get(name) {
+                Some(&text) => text,
+                None => {
+                    let text = self.text(name.as_bytes());
+                    self.names.insert(name, text);
+                    text
+                }
+            };
             self.types.push(TypeFields { name, fields });
         }
         self.objects[index] = Object {
@@ -473,7 +506,35 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
             extra,
         };
         self.fits &= index <= OBJECT_MASK as usize;
+        // `data` is 0, and 0 in a node means no object. So it's never shared.
+        if index != 0 {
+            self.built.insert(input, index as u32);
+        }
         index as u32
+    }
+
+    /// A set with only fragment spreads is keyed by the fragment bodies, so `a { ...F }` and
+    /// `b { ...F }` share one object. We never build from a fragment body directly, so the keys
+    /// don't mix.
+    fn key(&self, set: &'d SelectionSet) -> SmallVec<[*const SelectionSet; 2]> {
+        let spreads_only = !set.items.is_empty()
+            && set
+                .items
+                .iter()
+                .all(|item| matches!(item, SelectionItem::FragmentSpread(_)));
+        if !spreads_only {
+            return smallvec::smallvec![set as *const SelectionSet];
+        }
+        set.items
+            .iter()
+            .filter_map(|item| match item {
+                SelectionItem::FragmentSpread(name) => {
+                    self.document.fragments.iter().find(|f| &f.name == name)
+                }
+                _ => None,
+            })
+            .map(|fragment| &fragment.selection_set as *const SelectionSet)
+            .collect()
     }
 
     fn text(&mut self, bytes: &[u8]) -> Text {
@@ -588,7 +649,18 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
     fn flatten(&mut self, fields: &[Field<'d>], paths: Option<&'d CustomScalarPaths>) -> Span {
         let start = self.nodes.len();
         for field in fields {
-            let quoted = format!("\"{}\"", field.key);
+            let (key, prefix) = match self.keys.get(field.key) {
+                Some(&key) => key,
+                None => {
+                    let quoted = format!("\"{}\"", field.key);
+                    let key = (
+                        self.text(quoted.as_bytes()),
+                        u64::from_le_bytes(first_bytes(quoted.as_bytes())),
+                    );
+                    self.keys.insert(field.key, key);
+                    key
+                }
+            };
             let raw = paths
                 .and_then(|paths| paths.child(field.key))
                 .is_some_and(|paths| paths.terminal);
@@ -599,9 +671,8 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
             if field.key == "__typename" {
                 flags |= TYPENAME;
             }
-            let key = self.text(quoted.as_bytes());
             self.nodes.push(Node {
-                prefix: u64::from_le_bytes(first_bytes(quoted.as_bytes())),
+                prefix,
                 key,
                 object: flags,
             });
@@ -1582,11 +1653,96 @@ mod tests {
     }
 
     #[test]
+    fn fits_fragments_that_expand_past_the_text_limit() {
+        // Written out, this is 2^16 long keys (~26 MB, past the 16 MB limit). Shared, it's one
+        // object per level.
+        let depth = 16;
+        let a = "a".repeat(200);
+        let b = "b".repeat(200);
+        let mut query = format!("{{ ...F{depth} }} fragment F0 on T {{ id }}");
+        for level in 1..=depth {
+            let below = level - 1;
+            query.push_str(&format!(
+                " fragment F{level} on T {{ {a} {{ ...F{below} }} {b} {{ ...F{below} }} }}"
+            ));
+        }
+        let shape = shape(&query, None);
+        assert_eq!(shape.objects.len(), 1 + depth);
+        assert_eq!(shape.text.len(), 2 * 202 + "\"id\"".len());
+    }
+
+    #[test]
     fn negative_underflow_matches_sonic() {
         same_as_sonic(br#"{"data":{"a":-1e-324}}"#, None);
         same_as_sonic(
             br#"{"data":{"a":[-0,-0.0,-0e5,-0.000e9,-0.00,-0.0001e-400,1e-400,-1.5e-330,0e-5]}}"#,
             None,
         );
+    }
+
+    #[test]
+    fn shares_objects_and_keys_of_repeated_fragments() {
+        // 50 fields spread the same fragment. Each field has its own set (`{ ...F }`), but they
+        // are the same spreads, so all 50 fields share one object, and there's one copy of F.
+        let count = 50;
+        let fields: Vec<String> = (0..count).map(|i| format!("f{i} {{ ...F }}")).collect();
+        let query = format!(
+            "{{ {} }} fragment F on T {{ __typename id deep {{ id name deeper {{ id }} }} }}",
+            fields.join(" ")
+        );
+        let shape = shape(&query, None);
+        // data, the F object, deep, deeper
+        assert_eq!(shape.objects.len(), 4);
+        // data has 50 fields, F 3 (__typename id deep), deep 3, deeper 1
+        assert_eq!(shape.nodes.len(), count + 3 + 3 + 1);
+        // every key once, with its quotes
+        let keys: usize = (0..count).map(|i| format!("\"f{i}\"").len()).sum::<usize>()
+            + ["__typename", "id", "deep", "name", "deeper"]
+                .iter()
+                .map(|key| key.len() + 2)
+                .sum::<usize>();
+        assert_eq!(shape.text.len(), keys);
+
+        // and it reads the same as sonic, with each field in its own place
+        let item =
+            r#"{"__typename":"T","id":1,"deep":{"id":2,"name":"n","deeper":[{"id":3},null]}}"#;
+        let entries: Vec<String> = (0..count).map(|i| format!(r#""f{i}":{item}"#)).collect();
+        let body = format!(r#"{{"data":{{{}}}}}"#, entries.join(","));
+        assert!(parse_response(body.as_bytes(), &shape).is_some());
+        same_as_sonic_for(&query, body.as_bytes(), None);
+    }
+
+    #[test]
+    fn keeps_objects_apart_when_their_custom_scalar_paths_differ() {
+        // Same spreads, but `a.x` is a custom scalar and `b.x` isn't. So `a` and `b` can't share.
+        let query = "{ a { ...F } b { ...F } } fragment F on T { x y }";
+        let mut paths = CustomScalarPaths::default();
+        paths.insert_path(["a", "x"]);
+        let shape = shape(query, Some(&paths));
+        // data, a, b
+        assert_eq!(shape.objects.len(), 3);
+
+        // `a.x` stays raw JSON, `b.x` is read as a normal value
+        let body = r#"{"data":{"a":{"x":{"k":1},"y":2},"b":{"x":{"k":1},"y":2}}}"#;
+        assert!(parse_response(body.as_bytes(), &shape).is_some());
+        same_as_sonic_for(query, body.as_bytes(), Some(&paths));
+    }
+
+    #[test]
+    fn shares_objects_of_the_same_spreads() {
+        // `a`, `b` and `m` spread F then G (`m` from two places), so they share one object. `c`
+        // spreads only F, and `d` spreads them in the other order, so each gets its own. `e` and
+        // `f` spread a fragment the document doesn't have, so they're both empty and share one.
+        let query = "{ a { ...F ...G } b { ...F ...G } m { ...F } m { ...G } c { ...F }
+            d { ...G ...F } e { ...Missing } f { ...Missing } }
+            fragment F on T { x } fragment G on T { y }";
+        let shape = shape(query, None);
+        // data, a b m, c, d, e f
+        assert_eq!(shape.objects.len(), 5);
+
+        let body = r#"{"data":{"a":{"x":1,"y":2},"b":{"x":3,"y":4},"m":{"x":5,"y":6},
+            "c":{"x":7},"d":{"y":8,"x":9},"e":{},"f":{"z":1}}}"#;
+        assert!(parse_response(body.as_bytes(), &shape).is_some());
+        same_as_sonic_for(query, body.as_bytes(), None);
     }
 }
