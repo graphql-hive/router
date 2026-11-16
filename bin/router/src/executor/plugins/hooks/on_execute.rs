@@ -232,6 +232,10 @@ impl<'exec> OnExecuteEndHookPayload<'exec> {
     /// Set a client response header, replacing any value already aggregated for it
     /// (for example from header rules or the computed `cache-control`).
     ///
+    /// A `cache-control` set here cannot make a mutation or a response with GraphQL
+    /// errors cacheable: in those cases the router replaces it with
+    /// `no-store, no-cache, must-revalidate` after all end hooks run.
+    ///
     /// Headers set here are part of the shared execution result, so with inbound
     /// request deduplication enabled, deduplicated requests receive them too even
     /// though they never run the `on_execute` hook themselves.
@@ -249,9 +253,11 @@ impl<'exec> OnExecuteEndHookPayload<'exec> {
         if is_denied_response_header(&name) {
             return;
         }
+        // drop existing values then go through write() so never-join headers
+        // (like set-cookie) get the append strategy, same as header rules
+        self.response_headers.entries.remove(&name);
         self.response_headers
-            .entries
-            .insert(name, (HeaderAggregationStrategy::Last, vec![value]));
+            .write(&name, &value, HeaderAggregationStrategy::Last);
     }
 
     /// Append a value to a client response header, keeping the values already aggregated for it.

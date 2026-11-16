@@ -585,7 +585,7 @@ async fn execute_query_plan_with_data<'exec>(
     );
 
     // stored into the sink only after the end callbacks, so plugin header writes
-    // win over cache_control::finalize and land in the shared (deduped) response
+    // win over the merged cache-control and land in the shared (deduped) response
     let mut response_headers = std::mem::take(&mut exec_ctx.response_headers_aggregator);
 
     // merge_into takes ownership of the aggregator to drain it in one pass; mem::take
@@ -639,6 +639,13 @@ async fn execute_query_plan_with_data<'exec>(
         opts.extensions.extensions = end_payload.extensions;
         response_size_estimate = end_payload.response_size_estimate;
         response_headers = end_payload.response_headers;
+
+        // end hooks may have written a cacheable cache-control or added errors, so
+        // re-apply the no-store rule on the final state. plugins can tighten the
+        // policy, never loosen it for mutations or errored responses
+        if opts.operation_kind.is_mutation() || !errors.is_empty() {
+            cache_control::finalize(&mut response_headers, true, 0);
+        }
     }
 
     opts.response_header_sink.store(response_headers);
