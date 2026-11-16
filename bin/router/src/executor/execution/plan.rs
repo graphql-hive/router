@@ -584,8 +584,9 @@ async fn execute_query_plan_with_data<'exec>(
         exec_ctx.response_storage.len(),
     );
 
-    opts.response_header_sink
-        .store(std::mem::take(&mut exec_ctx.response_headers_aggregator));
+    // stored into the sink only after the end callbacks, so plugin header writes
+    // win over cache_control::finalize and land in the shared (deduped) response
+    let mut response_headers = std::mem::take(&mut exec_ctx.response_headers_aggregator);
 
     // merge_into takes ownership of the aggregator to drain it in one pass; mem::take
     // gives us ownership while leaving a default (empty) aggregator in place, since
@@ -605,6 +606,7 @@ async fn execute_query_plan_with_data<'exec>(
                 .map(|state| state.request_context.for_plugin::<hooks::OnExecute>())
                 .expect("plugin state not available, but on_end_callbacks are present"),
             demand_control_cost,
+            response_headers,
         };
 
         for callback in on_end_callbacks {
@@ -613,8 +615,15 @@ async fn execute_query_plan_with_data<'exec>(
             match result.control_flow {
                 EndControlFlow::Proceed => { /* continue to next callback */ }
                 EndControlFlow::EndWithResponse(response) => match response {
-                    OnExecuteResponse::Output(response) => return Ok(response),
+                    OnExecuteResponse::Output(response) => {
+                        opts.response_header_sink
+                            .store(end_payload.response_headers);
+                        return Ok(response);
+                    }
                     OnExecuteResponse::EarlyResponse(response) => {
+                        // early response headers replace the aggregated ones when present
+                        opts.response_header_sink
+                            .store(end_payload.response_headers);
                         return Ok(early_http_response_into_execution_output(
                             response,
                             &opts.response_header_sink,
@@ -629,7 +638,10 @@ async fn execute_query_plan_with_data<'exec>(
         errors = end_payload.errors;
         opts.extensions.extensions = end_payload.extensions;
         response_size_estimate = end_payload.response_size_estimate;
+        response_headers = end_payload.response_headers;
     }
+
+    opts.response_header_sink.store(response_headers);
 
     let mut status_code = StatusCode::OK;
 
