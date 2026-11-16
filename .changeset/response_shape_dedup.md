@@ -4,4 +4,4 @@ hive-router: patch
 
 # Smaller cached query plans for queries with many fragments
 
-The shape the router keeps for each fetch, to read subgraph responses fast, no longer repeats the fields of a fragment for every place that spreads it, and fields that only spread the same fragments share one copy. Each key is stored once too. On our largest fixtures this makes a cached plan up to 25x smaller (19.8 MB to 0.78 MB) and builds it up to 24x faster. Queries that expanded past the shape's 16 MB limit and fell back to the slower parser now get a shape. Responses are read the same way and give the same results.
+Cached query plans for queries that reuse fragments are much smaller and faster to build. On our largest test query, a plan went from 19.8 MB to 0.78 MB and builds 24x faster. Very large queries that used to fall back to the slower response parser now use the fast one.

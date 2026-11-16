@@ -47,9 +47,9 @@
 //!   object with nodes 9..11. It allocates space for 2 fields, not 3.
 //! - All keys and type names are in one byte buffer, `text`. Nodes point into it. Each one is
 //!   there once.
-//! - Objects that come from the same selection sets are one object. A fragment spread in 50
-//!   places gives the objects under it one time, not 50 times. So an object can have more than
-//!   one parent, and the nodes of a child are not always right after its parent.
+//! - Objects built from the same selection sets are shared, so a fragment spread in 50 places
+//!   is built once. An object can have more than one parent, so a child's nodes aren't always
+//!   right after its parent's.
 //!
 //! There are no pointers and no hash maps. There are only a few flat arrays, and indices into
 //! them. So the shape has only a few allocations, and the main loop reads nodes that are next to
@@ -390,13 +390,11 @@ struct Builder<'d, F> {
     objects: Vec<Object>,
     types: Vec<TypeFields>,
     text: Vec<u8>,
-    /// Each key goes into `text` once, with its quotes. Fragments repeat the same keys a lot.
+    /// Each key goes into `text` once, with its quotes
     keys: HashMap<&'d str, Text>,
     /// Each type name goes into `text` once too.
     names: HashMap<Box<str>, Text>,
-    /// Objects we already built, by the sets and the paths they came from. A fragment spread
-    /// in many places selects the same sets every time, so they share one object (and all the
-    /// objects under it) instead of a copy for each spread.
+    /// Objects we already built, by their sets and paths
     built: HashMap<ObjectInput, u32>,
     /// false when something does not fit in its bits
     fits: bool,
@@ -512,10 +510,9 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
         index as u32
     }
 
-    /// A set that only spreads fragments is the bodies of those fragments, so `a { ...F }` and
-    /// `b { ...F }` share one object even though they are two sets. Any other set is itself. We
-    /// never build an object from a fragment body directly, so the two can't mix up. And a list
-    /// of sets is read as one long set, so `{ ...F ...G }` and `{ ...F } { ...G }` are the same.
+    /// A set with only fragment spreads is keyed by the fragment bodies, so `a { ...F }` and
+    /// `b { ...F }` share one object. We never build from a fragment body directly, so the keys
+    /// don't mix.
     fn key(&self, set: &'d SelectionSet) -> SmallVec<[*const SelectionSet; 2]> {
         let spreads_only = !set.items.is_empty()
             && set
@@ -1650,9 +1647,8 @@ mod tests {
 
     #[test]
     fn fits_fragments_that_expand_past_the_text_limit() {
-        // Each fragment spreads the one below it twice, so written out the query has 2^16 long
-        // keys, about 26 MB. That's past the 16 MB of `text`. Shared, it's one object a level, since
-        // both `{ ...F }` there are the same spreads.
+        // Written out, this is 2^16 long keys (~26 MB, past the 16 MB limit). Shared, it's one
+        // object per level.
         let depth = 16;
         let a = "a".repeat(200);
         let b = "b".repeat(200);
