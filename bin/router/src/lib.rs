@@ -703,11 +703,12 @@ pub async fn configure_app_from_config(
     let schema_state_arc = Arc::new(schema_state);
 
     let validation_options = ValidationOptions {
-        disable_int_value_range_validation: std::env::var(
-            "ROUTER_DISABLE_INT_VALUE_RANGE_VALIDATION",
-        )
-        .map(|value| matches!(value.as_str(), "true" | "1"))
-        .unwrap_or(false),
+        disable_int_value_range_validation: router_config
+            .validation
+            .disable_int_value_range_validation,
+        disable_unknown_input_fields_validation: router_config
+            .validation
+            .disable_unknown_input_fields_validation,
     };
     let mut validation_plan = default_rules_validation_plan_with_options(validation_options);
     if let Some(max_depth_config) = &router_config.limits.max_depth {

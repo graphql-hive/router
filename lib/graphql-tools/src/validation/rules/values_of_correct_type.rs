@@ -264,6 +264,7 @@ impl ValidationRule for ValuesOfCorrectType {
     fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(ValuesOfCorrectType::with_options(ValidationOptions {
             disable_int_value_range_validation: self.disable_int_value_range_validation,
+            ..Default::default()
         }))
     }
 }
@@ -2222,6 +2223,7 @@ fn int_out_of_32_bit_range_can_be_disabled() {
     let mut plan = create_plan_from_rule(Box::new(ValuesOfCorrectType::with_options(
         ValidationOptions {
             disable_int_value_range_validation: true,
+            ..Default::default()
         },
     )));
     let errors = test_operation_with_schema(

@@ -982,3 +982,40 @@ mod defaults {
         );
     }
 }
+
+/// `validation.disable_unknown_input_fields_validation`: unknown fields are let through, the rest is still
+/// checked.
+mod disable_unknown_input_fields_validation {
+    use super::super::harness::{coerce_without_unknown_fields_validation, coerced, Outcome};
+    use super::*;
+
+    #[test]
+    fn accepts_unknown_field_and_forwards_it_as_sent() {
+        let variables = r#"{"input":{"a":"foo","c":"baz","extra":"dog"}}"#;
+        assert_eq!(
+            coerce_without_unknown_fields_validation(TEST_INPUT, variables),
+            coerced(variables)
+        );
+    }
+
+    /// What clients do when they send back objects they got from the API.
+    #[test]
+    fn accepts_typename_in_object_inside_a_list() {
+        let variables = r#"{"v":{"nested":[{"b":1,"__typename":"ExampleInputObject"}]}}"#;
+        assert_eq!(
+            coerce_without_unknown_fields_validation(WRAPPERS, variables),
+            coerced(variables)
+        );
+    }
+
+    #[test]
+    fn still_rejects_missing_required_field() {
+        assert_eq!(
+            coerce_without_unknown_fields_validation(EXAMPLE_INPUT, r#"{"var":{"a":"x","extra":1}}"#),
+            Outcome::Rejected(vec![
+                r#"Variable "$var" has invalid value: Expected value of type "ExampleInputObject" to include required field "b", found: { a: "x", extra: 1 }."#
+                    .to_string()
+            ])
+        );
+    }
+}
