@@ -12,3 +12,11 @@ The new `validation.disable_unknown_input_fields_validation` option allows unkno
 ```yaml
 validation:
   disable_unknown_input_fields_validation: true
+```
+
+The existing `ROUTER_DISABLE_INT_VALUE_RANGE_VALIDATION` environment variable also gains a configuration equivalent. The environment variable remains supported and takes precedence over the config file.
+
+```yaml
+validation:
+  disable_int_value_range_validation: true
+```
