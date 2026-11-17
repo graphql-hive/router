@@ -27,18 +27,27 @@ fn plan_with_reuse(
     )
 }
 
-/// One line per entity fetch (or batch alias): its id, where it merges, where it may copy from,
-/// and the fetches it waits for.
+/// One line per fetch (a batch, one per alias): its id, where it merges, where it may copy from,
+/// and the fetches it waits for. A root fetch merges at `root`. A batch lists every fetch it
+/// completes, so each id in a wait list is one of the lines.
 fn describe(plan: &QueryPlan) -> String {
     fn walk(node: &PlanNode, out: &mut String) {
         match node {
             PlanNode::Sequence(s) => s.nodes.iter().for_each(|n| walk(n, out)),
             PlanNode::Parallel(p) => p.nodes.iter().for_each(|n| walk(n, out)),
+            PlanNode::Fetch(fetch) => line(
+                out,
+                &[fetch.id],
+                &fetch.service_name,
+                "root",
+                fetch.entity_reuse.as_deref(),
+                &fetch.depends_on,
+            ),
             PlanNode::Flatten(flatten) => {
                 if let PlanNode::Fetch(fetch) = flatten.node.as_ref() {
                     line(
                         out,
-                        fetch.id,
+                        &[fetch.id],
                         &fetch.service_name,
                         &flatten.path.to_string(),
                         fetch.entity_reuse.as_deref(),
@@ -47,12 +56,14 @@ fn describe(plan: &QueryPlan) -> String {
                 }
             }
             PlanNode::BatchFetch(batch) => {
+                let mut completes = batch.completes.to_vec();
+                completes.sort_unstable();
                 for alias in &batch.entity_batch.aliases {
                     let paths: Vec<String> =
                         alias.merge_paths.iter().map(|p| p.to_string()).collect();
                     line(
                         out,
-                        batch.id,
+                        &completes,
                         &batch.service_name,
                         &paths.join(" + "),
                         alias.entity_reuse.as_deref(),
@@ -65,7 +76,7 @@ fn describe(plan: &QueryPlan) -> String {
     }
     fn line(
         out: &mut String,
-        id: FetchId,
+        ids: &[FetchId],
         service: &str,
         path: &str,
         reuse: Option<&EntityReuse>,
@@ -80,10 +91,16 @@ fn describe(plan: &QueryPlan) -> String {
                 .join(", "),
             None => "-".to_string(),
         };
-        let waits: Vec<String> = waits.iter().map(|id| id.to_string()).collect();
+        let list = |ids: &[FetchId]| {
+            ids.iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
         out.push_str(&format!(
-            "[{id}] {service} at {path} <- {sources} after [{}]\n",
-            waits.join(", ")
+            "[{}] {service} at {path} <- {sources} after [{}]\n",
+            list(ids),
+            list(waits)
         ));
     }
     let mut out = String::new();
@@ -105,12 +122,14 @@ fn bench_operation_entities_can_come_from_earlier_fetches() -> Result<(), Box<dy
     // the deep `inventory` batch [22] asks what the call at `topProducts` [17] asked, so it waits
     // for that one too and copies. without the wait the copy would be a race the deep call loses.
     insta::assert_snapshot!(describe(&query_plan), @r"
+    [15] products at root <- - after []
+    [2] accounts at root <- - after []
     [17] inventory at topProducts.@ <- - after [15]
-    [20] reviews at topProducts.@ <- - after [2, 15]
-    [20] reviews at users.@ <- - after [2, 15]
-    [25] products at topProducts.@.reviews.@.author.reviews.@.product + users.@.reviews.@.product + users.@.reviews.@.product.reviews.@.author.reviews.@.product <- topProducts.@ after [3, 20]
-    [21] accounts at topProducts.@.reviews.@.author + users.@.reviews.@.product.reviews.@.author <- users.@ after [3, 20]
-    [22] inventory at topProducts.@.reviews.@.author.reviews.@.product + users.@.reviews.@.product + users.@.reviews.@.product.reviews.@.author.reviews.@.product <- topProducts.@ after [7, 13, 17, 25]
+    [3, 20] reviews at topProducts.@ <- - after [2, 15]
+    [3, 20] reviews at users.@ <- - after [2, 15]
+    [7, 13, 25] products at topProducts.@.reviews.@.author.reviews.@.product + users.@.reviews.@.product + users.@.reviews.@.product.reviews.@.author.reviews.@.product <- topProducts.@ after [3, 20]
+    [9, 21] accounts at topProducts.@.reviews.@.author + users.@.reviews.@.product.reviews.@.author <- users.@ after [3, 20]
+    [4, 10, 22] inventory at topProducts.@.reviews.@.author.reviews.@.product + users.@.reviews.@.product + users.@.reviews.@.product.reviews.@.author.reviews.@.product <- topProducts.@ after [7, 13, 17, 25]
     ");
 
     // with reuse off, nothing copies
@@ -133,6 +152,7 @@ fn source_with_an_aliased_key_is_left_out() -> Result<(), Box<dyn Error>> {
     let query_plan = plan_with_reuse("../../bench/supergraph.graphql", document)?;
 
     insta::assert_snapshot!(describe(&query_plan), @r"
+    [2] accounts at root <- - after []
     [3] reviews at users.@ <- - after [2]
     [4] accounts at users.@.reviews.@.author <- - after [3]
     ");
@@ -155,7 +175,10 @@ fn mutation_fields_never_copy_from_each_other() -> Result<(), Box<dyn Error>> {
     let query_plan = plan_with_reuse("fixture/tests/mutations.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(describe(&query_plan), @r"
+    [2] a at root <- - after []
     [3] b at first <- - after [2]
+    [4] c at root <- - after [3]
+    [5] a at root <- - after [4]
     [6] b at second <- - after [5]
     ");
 
@@ -173,7 +196,11 @@ fn never_copies_from_a_fetch_it_does_not_depend_on() -> Result<(), Box<dyn Error
         document,
     )?;
 
-    insta::assert_snapshot!(describe(&query_plan), @"[3] b at aFeed.@ <- - after [2]");
+    insta::assert_snapshot!(describe(&query_plan), @r"
+    [4] b at root <- - after []
+    [2] a at root <- - after []
+    [3] b at aFeed.@ <- - after [2]
+    ");
 
     Ok(())
 }
