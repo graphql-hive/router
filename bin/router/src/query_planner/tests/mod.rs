@@ -2,6 +2,7 @@ mod alias;
 mod arguments;
 mod context;
 mod dependencies;
+mod entity_reuse;
 mod fragments;
 mod generated;
 mod include_skip;

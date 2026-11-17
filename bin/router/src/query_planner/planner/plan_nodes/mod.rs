@@ -262,6 +262,14 @@ pub struct FetchNode<S: PlanState = Executable> {
     /// that reads nothing another fetch brings, a root fetch.
     #[serde(skip)]
     pub depends_on: S::FetchIds,
+    /// The fetches in `depends_on` only so this one can copy from them, see `entity_reuse`. A
+    /// batch alias that can't copy leaves them out.
+    #[serde(skip)]
+    pub reuse_waits: S::FetchIds,
+    /// Where entities this fetch asks for might already be in the response. Fetches that ask for
+    /// the same thing in one wave share it.
+    #[serde(skip)]
+    pub entity_reuse: Option<std::sync::Arc<EntityReuse>>,
 }
 
 /// What a fetch with `@fromContext` arguments needs at execution time.
@@ -312,6 +320,15 @@ impl FetchContext {
         }
         names
     }
+}
+
+/// Places in the response, filled by earlier fetches, that hold objects of the type an entity
+/// fetch resolves, with all the fields it asks for. An entity whose representation matches one
+/// of those objects gets the `copy` fields copied from it, instead of going to the subgraph.
+#[derive(Debug, Clone)]
+pub struct EntityReuse {
+    pub sources: Vec<FlattenNodePath>,
+    pub copy: RequiresSelectionSet,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -575,6 +592,9 @@ pub struct EntityBatchAlias {
     /// Like `FetchNode::run_if`, an alias that's off sends no representations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_if: Option<Vec<ConditionGroup>>,
+    /// Where entities this alias asks for might already be in the response.
+    #[serde(skip)]
+    pub entity_reuse: Option<std::sync::Arc<EntityReuse>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -845,6 +865,8 @@ impl FetchNode<Planning> {
                     context,
                     run_if: None,
                     depends_on,
+                    reuse_waits: FetchIdList::new(),
+                    entity_reuse: None,
                 }
             }
             false => {
@@ -888,6 +910,8 @@ impl FetchNode<Planning> {
                     ),
                     run_if: None,
                     depends_on,
+                    reuse_waits: FetchIdList::new(),
+                    entity_reuse: None,
                 }
             }
         }
@@ -1199,9 +1223,9 @@ mod stored_size_tests {
     fn stored_sizes_stay_small() {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 32),
-            // `run_if` is an `Option<Vec<_>>`. Executable nodes keep no dependency ids, the
-            // plan's schedule has them by position
-            ("FetchNode", size_of::<FetchNode>(), 264),
+            // `run_if` is an `Option<Vec<_>>`, `entity_reuse` an `Option<Arc<_>>`. Executable nodes
+            // keep no dependency ids, the plan's schedule has them by position
+            ("FetchNode", size_of::<FetchNode>(), 272),
             ("BatchFetchNode", size_of::<BatchFetchNode>(), 168),
             (
                 "SubgraphFetchOperation",
