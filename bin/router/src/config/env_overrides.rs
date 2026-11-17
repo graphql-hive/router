@@ -41,6 +41,10 @@ pub struct EnvVarOverrides {
     #[envconfig(from = "ROUTER_HTTP_SHUTDOWN_TIMEOUT")]
     pub http_shutdown_timeout: Option<String>,
 
+    // Traffic shaping overrides
+    #[envconfig(from = "ROUTER_TRAFFIC_SHAPING_ENTITY_REUSE")]
+    pub traffic_shaping_entity_reuse: Option<bool>,
+
     // Cache overrides
     #[envconfig(from = "ROUTER_CACHE_PLUGIN_SUPERGRAPH_RUNTIMES")]
     pub plugin_supergraph_runtimes: Option<u64>,
@@ -142,6 +146,11 @@ impl EnvVarOverrides {
         if let Some(http_shutdown_timeout) = self.http_shutdown_timeout.take() {
             debug!(target: CONFIG_LOGGING_TARGET, value = http_shutdown_timeout, "overriding 'http.shutdown_timeout'");
             config = config.set_override("http.shutdown_timeout", http_shutdown_timeout)?;
+        }
+
+        if let Some(entity_reuse) = self.traffic_shaping_entity_reuse.take() {
+            debug!(target: CONFIG_LOGGING_TARGET, value = entity_reuse, "overriding 'traffic_shaping.entity_reuse'");
+            config = config.set_override("traffic_shaping.entity_reuse", entity_reuse)?;
         }
 
         if let Some(plugin_supergraph_runtimes) = self.plugin_supergraph_runtimes.take() {
