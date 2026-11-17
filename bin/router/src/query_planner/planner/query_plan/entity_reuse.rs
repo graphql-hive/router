@@ -61,13 +61,13 @@ pub(super) struct EntityReuseIndex<'a> {
     subgraphs: Vec<u16>,
     /// what `find` answered since the last wave, by type and key masks. Fetches in one wave
     /// often ask for the same thing, and the positions don't change until the wave is done.
-    found: HashMap<(&'a str, u64, u64), Vec<Found<'a>>>,
+    found: HashMap<(&'a str, KeyMask, KeyMask), Vec<Found<'a>>>,
     /// the entity fetches of earlier waves that could copy, a later fetch asking the same may
     /// wait for one of them
-    lookups: Vec<Lookup<'a>>,
+    earlier_fetches: Vec<EarlierEntityFetch<'a>>,
 }
 
-struct Lookup<'a> {
+struct EarlierEntityFetch<'a> {
     index: NodeIndex,
     id: FetchId,
     service: &'a str,
@@ -75,13 +75,42 @@ struct Lookup<'a> {
     needed: &'a SelectionSet,
 }
 
-struct Found<'a> {
+/// What an entity fetch would copy: its type and fields, and the representation the executor
+/// matches entities by. The masks are theirs, see [`key_mask`].
+#[derive(Clone, Copy)]
+struct Wanted<'a> {
+    type_name: &'a str,
     needed: &'a SelectionSet,
     representation: &'a SelectionSet,
-    /// the steps with positions of the type the fetch depends on, all that `find_in` looks at
-    sources: Vec<u32>,
-    /// the same without the steps waits add, when the fetch has any
-    sources_without_waits: Option<Vec<u32>>,
+    needed_keys: KeyMask,
+    representation_keys: KeyMask,
+}
+
+impl<'a> Wanted<'a> {
+    fn new(type_name: &'a str, needed: &'a SelectionSet, representation: &'a SelectionSet) -> Self {
+        Self {
+            type_name,
+            needed,
+            representation,
+            // `covers` counts `__typename` as there, the executor checks for it before copying
+            needed_keys: key_mask(needed, |field| field.name != "__typename"),
+            representation_keys: key_mask(representation, |_| true),
+        }
+    }
+
+    fn is(&self, other: &Wanted) -> bool {
+        let same = |a: &SelectionSet, b: &SelectionSet| std::ptr::eq(a, b) || a == b;
+        same(self.needed, other.needed) && same(self.representation, other.representation)
+    }
+}
+
+struct Found<'a> {
+    wanted: Wanted<'a>,
+    /// the steps with positions of the type the fetch depends on, with its waits if it has
+    /// any, all that `find_in` looks at
+    steps: Vec<NodeIndex>,
+    /// the same without the waits, when it has any
+    steps_without_waits: Option<Vec<NodeIndex>>,
     reuse: Option<ReuseMatch>,
 }
 
@@ -97,21 +126,87 @@ struct Positions<'a> {
     /// every distinct path, so `find` compares ids instead of paths
     paths: Vec<FlattenNodePath>,
     /// path ids by the hash of the path. A collision falls back to a scan of `paths`.
-    ids: HashMap<u64, usize>,
+    ids: HashMap<u64, PathId>,
     list: Vec<Position<'a>>,
     /// the steps that filled a position, each once, in the order they did
-    steps: Vec<u32>,
+    steps: Vec<NodeIndex>,
 }
 
+/// 24 bytes, `find` goes over all of them
 struct Position<'a> {
-    /// index into [`Positions::paths`]. `u32`s keep a position at 24 bytes, `find` goes over
-    /// all of them
-    path: u32,
-    /// the index of the step that filled it
-    step: u32,
+    path: PathId,
+    /// the step that filled it
+    step: NodeIndex,
     selections: &'a SelectionSet,
-    /// see [`key_mask`]
-    keys: u64,
+    keys: KeyMask,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(std::mem::size_of::<Position<'static>>() == 24);
+
+/// Index into [`Positions::paths`], so `find` compares ids instead of paths
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PathId(u32);
+
+impl PathId {
+    fn new(index: usize) -> Self {
+        Self(u32::try_from(index).expect("a plan has fewer than 2^32 paths"))
+    }
+
+    fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// One bit per response key, see [`key_mask`]. Two fields with the same key always share the
+/// bit, others may too, so it only rules things out.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct KeyMask(u64);
+
+impl KeyMask {
+    /// whether it has every bit of `other`, as a position has to for every field it's asked for
+    fn has_all(self, other: KeyMask) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    /// whether the two share a bit, as a position has to before it can conflict with `other`
+    fn shares_any(self, other: KeyMask) -> bool {
+        self.0 & other.0 != 0
+    }
+}
+
+/// The steps a fetch depends on, directly or through other steps
+#[derive(Clone)]
+struct Dependencies(Vec<bool>);
+
+impl Dependencies {
+    fn of(fetch_graph: &FetchGraph<MultiTypeFetchStep>, index: NodeIndex) -> Self {
+        let mut dependencies = Self(vec![false; fetch_graph.graph.node_bound()]);
+        dependencies.add_parents(fetch_graph, index);
+        dependencies
+    }
+
+    fn contains(&self, step: NodeIndex) -> bool {
+        self.0[step.index()]
+    }
+
+    /// Adds `step` and every step it depends on
+    fn add(&mut self, fetch_graph: &FetchGraph<MultiTypeFetchStep>, step: NodeIndex) {
+        self.0[step.index()] = true;
+        self.add_parents(fetch_graph, step);
+    }
+
+    fn add_parents(&mut self, fetch_graph: &FetchGraph<MultiTypeFetchStep>, index: NodeIndex) {
+        let mut stack = vec![index];
+        while let Some(step) = stack.pop() {
+            for edge in fetch_graph.parents_of(step) {
+                let parent = edge.source();
+                if !std::mem::replace(&mut self.0[parent.index()], true) {
+                    stack.push(parent);
+                }
+            }
+        }
+    }
 }
 
 /// A path segment that borrows its name, so walking doesn't allocate
@@ -223,7 +318,7 @@ impl<'a> EntityReuseIndex<'a> {
             positions,
             subgraphs: Vec::new(),
             found: HashMap::default(),
-            lookups: Vec::new(),
+            earlier_fetches: Vec::new(),
         }
     }
 
@@ -241,7 +336,7 @@ impl<'a> EntityReuseIndex<'a> {
         self.subgraphs[index.index()] = subgraph;
         // without any, a fetch never waits for one
         if let Some((type_name, needed)) = wanted(step).filter(|_| WAIT_FOR_SAME_FETCH) {
-            self.lookups.push(Lookup {
+            self.earlier_fetches.push(EarlierEntityFetch {
                 index,
                 id: step.id,
                 service: &step.service_name.0,
@@ -249,7 +344,6 @@ impl<'a> EntityReuseIndex<'a> {
                 needed,
             });
         }
-        let step_index = index.index() as u32;
         self.found.clear();
         // most steps hold no position, so the start is only built for the first one
         let mut start = LazyStart {
@@ -258,13 +352,7 @@ impl<'a> EntityReuseIndex<'a> {
         };
         let mut path = Vec::new();
         for (definition_name, selections) in step.output.iter_selections() {
-            self.walk(
-                &mut start,
-                &mut path,
-                selections,
-                definition_name,
-                step_index,
-            );
+            self.walk(&mut start, &mut path, selections, definition_name, index);
         }
     }
 
@@ -301,98 +389,101 @@ impl<'a> EntityReuseIndex<'a> {
             return None;
         }
         let representation = step.input.selections_for_definition(type_name)?;
-        let mut depends_on = vec![false; self.fetch_graph.graph.node_bound()];
-        mark_dependencies(self.fetch_graph, index, &mut depends_on);
+        let wanted = Wanted::new(type_name, needed, representation);
+        let depends_on = Dependencies::of(self.fetch_graph, index);
+        let (expanded, waits) = self.earlier_fetch_waits(step, &wanted, &depends_on);
 
-        // an earlier fetch to the same subgraph that asked for (at least) the same. `waited` is
-        // what the fetch would depend on if it waited for them too.
-        let mut waits = FetchIdList::new();
-        let mut waited: Option<Vec<bool>> = None;
-        for lookup in &self.lookups {
-            let marks = waited.as_deref().unwrap_or(&depends_on);
-            if !marks[lookup.index.index()]
-                && lookup.service == step.service_name.0
-                && lookup.type_name == type_name
-                && covers(lookup.needed, needed)
-            {
-                let marks = waited.get_or_insert_with(|| depends_on.clone());
-                marks[lookup.index.index()] = true;
-                mark_dependencies(self.fetch_graph, lookup.index, marks);
-                waits.push(lookup.id);
-            }
-        }
-        let found = self.find_in_dependencies(
-            waited.as_deref().unwrap_or(&depends_on),
-            waited.as_deref().map(|_| depends_on.as_slice()),
-            type_name,
-            needed,
-            representation,
-        )?;
+        let found = self.find_cached(&depends_on, expanded.as_ref(), wanted)?;
         // waiting only pays off if it adds something to copy
         if !found.needs_waits {
-            waits.clear();
+            return Some((found.reuse, FetchIdList::new()));
         }
         Some((found.reuse, waits))
     }
 
-    /// Like [`find_in`], cached per wave. With `without_waits`, also says whether any source
-    /// needs the fetches `depends_on` has on top of those.
-    fn find_in_dependencies(
+    /// The earlier fetches to the same subgraph that asked for at least what this one does, and
+    /// what the fetch would depend on if it waited for them too. `None` when there's no earlier
+    /// fetch it doesn't already wait for, as for most fetches.
+    fn earlier_fetch_waits(
+        &self,
+        step: &Step,
+        wanted: &Wanted,
+        depends_on: &Dependencies,
+    ) -> (Option<Dependencies>, FetchIdList) {
+        let mut expanded: Option<Dependencies> = None;
+        let mut waits = FetchIdList::new();
+        for earlier in &self.earlier_fetches {
+            // already waits for it, directly or through another one
+            if expanded
+                .as_ref()
+                .unwrap_or(depends_on)
+                .contains(earlier.index)
+            {
+                continue;
+            }
+            if earlier.service != step.service_name.0
+                || earlier.type_name != wanted.type_name
+                || !covers(earlier.needed, wanted.needed)
+            {
+                continue;
+            }
+            expanded
+                .get_or_insert_with(|| depends_on.clone())
+                .add(self.fetch_graph, earlier.index);
+            waits.push(earlier.id);
+        }
+        (expanded, waits)
+    }
+
+    /// [`find_in`], cached for the wave
+    fn find_cached(
         &mut self,
-        depends_on: &[bool],
-        without_waits: Option<&[bool]>,
-        type_name: &'a str,
-        needed: &'a SelectionSet,
-        representation: &'a SelectionSet,
+        depends_on: &Dependencies,
+        expanded: Option<&Dependencies>,
+        wanted: Wanted<'a>,
     ) -> Option<ReuseMatch> {
-        let positions = self.positions.get(type_name)?;
-        let steps_in = |depends_on: &[bool]| -> Vec<u32> {
+        let positions = self.positions.get(wanted.type_name)?;
+        let steps_in = |dependencies: &Dependencies| -> Vec<NodeIndex> {
             positions
                 .steps
                 .iter()
                 .copied()
-                .filter(|&step| depends_on[step as usize])
+                .filter(|&step| dependencies.contains(step))
                 .collect()
         };
-        let sources = steps_in(depends_on);
-        if sources.is_empty() {
+        let steps = steps_in(expanded.unwrap_or(depends_on));
+        if steps.is_empty() {
             return None;
         }
-        let sources_without_waits = without_waits.map(steps_in);
-        let needed_keys = key_mask(needed, |field| field.name != "__typename");
-        let representation_keys = key_mask(representation, |_| true);
-        let found = self
-            .found
-            .entry((type_name, needed_keys, representation_keys))
-            .or_default();
-        // fetches waiting for different ones leave many entries apart only by `sources`, so
+        let steps_without_waits = expanded.map(|_| steps_in(depends_on));
+        let key = (
+            wanted.type_name,
+            wanted.needed_keys,
+            wanted.representation_keys,
+        );
+        let found = self.found.entry(key).or_default();
+        // fetches waiting for different ones leave many entries apart only by their steps, so
         // those go first, they're cheap to compare
-        let same = |a: &SelectionSet, b: &SelectionSet| std::ptr::eq(a, b) || a == b;
-        if let Some(found) = found.iter().find(|found| {
-            found.sources == sources
-                && found.sources_without_waits == sources_without_waits
-                && same(found.needed, needed)
-                && same(found.representation, representation)
-        }) {
-            return found.reuse.clone();
+        let cached = found.iter().find(|found| {
+            found.steps == steps
+                && found.steps_without_waits == steps_without_waits
+                && found.wanted.is(&wanted)
+        });
+        if let Some(cached) = cached {
+            return cached.reuse.clone();
         }
         let reuse = find_in(
             self.supergraph,
             positions,
-            depends_on,
-            without_waits,
             &self.subgraphs,
-            type_name,
-            needed,
-            needed_keys,
-            representation,
-            representation_keys,
+            depends_on,
+            expanded,
+            &wanted,
         );
         found.push(Found {
-            needed,
-            representation,
-            sources,
-            sources_without_waits,
+            wanted,
+            steps,
+            steps_without_waits,
             reuse: reuse.clone(),
         });
         reuse
@@ -404,7 +495,7 @@ impl<'a> EntityReuseIndex<'a> {
         path: &mut Vec<Segment<'a>>,
         selections: &'a SelectionSet,
         current_type: &'a str,
-        step: u32,
+        step: NodeIndex,
     ) {
         if let Some(positions) = self.positions.get_mut(current_type) {
             positions.add(start.get(), path, selections, step);
@@ -450,12 +541,12 @@ impl<'a> Positions<'a> {
         start: &Start,
         path: &[Segment<'_>],
         selections: &'a SelectionSet,
-        step: u32,
+        step: NodeIndex,
     ) {
         if self.steps.last() != Some(&step) {
             self.steps.push(step);
         }
-        let path = self.intern(start, path) as u32;
+        let path = self.intern(start, path);
         self.list.push(Position {
             path,
             step,
@@ -465,7 +556,7 @@ impl<'a> Positions<'a> {
     }
 
     /// The id of the path `start` + `path`, it only allocates for a path it hasn't seen
-    fn intern(&mut self, start: &Start, path: &[Segment<'_>]) -> usize {
+    fn intern(&mut self, start: &Start, path: &[Segment<'_>]) -> PathId {
         let mut hasher = start.hasher.clone();
         for segment in path {
             segment.hash(&mut hasher);
@@ -484,12 +575,12 @@ impl<'a> Positions<'a> {
                 })
         };
         if let Some(&id) = self.ids.get(&hash) {
-            if is_path(&self.paths[id]) {
+            if is_path(&self.paths[id.index()]) {
                 return id;
             }
             // another path with the same hash
-            if let Some(id) = self.paths.iter().position(is_path) {
-                return id;
+            if let Some(index) = self.paths.iter().position(is_path) {
+                return PathId::new(index);
             }
         }
         let full: Vec<PathSegment> = start
@@ -499,100 +590,96 @@ impl<'a> Positions<'a> {
             .cloned()
             .chain(path.iter().map(|segment| segment.to_path_segment()))
             .collect();
+        let id = PathId::new(self.paths.len());
         self.paths.push(full.into());
-        self.ids.entry(hash).or_insert(self.paths.len() - 1);
-        self.paths.len() - 1
+        self.ids.entry(hash).or_insert(id);
+        id
     }
 }
 
-/// Marks the steps `index` depends on, directly or through other steps, by step index
-fn mark_dependencies(
-    fetch_graph: &FetchGraph<MultiTypeFetchStep>,
-    index: NodeIndex,
-    depends_on: &mut [bool],
-) {
-    let mut stack = vec![index];
-    while let Some(step) = stack.pop() {
-        for edge in fetch_graph.parents_of(step) {
-            let parent = edge.source();
-            if !std::mem::replace(&mut depends_on[parent.index()], true) {
-                stack.push(parent);
-            }
-        }
-    }
+/// Whether a fetch can copy from a path: not at all, only after an extra wait, or with what it
+/// already waits for. Ordered, so a position can only raise it.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum SourceMatch {
+    Unmatched,
+    AfterExtraWait,
+    Ready,
 }
 
-#[allow(clippy::too_many_arguments)]
-/// The sources among the positions filled by steps in `depends_on`, and with `without_waits`,
-/// whether any of them is only there through steps that aren't in it
+/// The paths the fetch can copy from, among the positions filled by steps it depends on, with
+/// the waits for earlier fetches when there are any (`expanded`). And whether any of those paths
+/// is only there through the waits.
 fn find_in(
     supergraph: &SupergraphState,
     positions: &Positions<'_>,
-    depends_on: &[bool],
-    without_waits: Option<&[bool]>,
     subgraphs: &[u16],
-    type_name: &str,
-    needed: &SelectionSet,
-    needed_keys: u64,
-    representation: &SelectionSet,
-    representation_keys: u64,
+    depends_on: &Dependencies,
+    expanded: Option<&Dependencies>,
+    wanted: &Wanted,
 ) -> Option<ReuseMatch> {
-    // a plan can have thousands of positions, so the masks rule most of them out before the
-    // real checks
-    let mut is_source = vec![false; positions.paths.len()];
-    // paths a position of a step in `without_waits` is a source for
-    let mut is_source_without_waits =
-        vec![false; without_waits.map_or(0, |_| positions.paths.len())];
+    let waited = expanded.unwrap_or(depends_on);
+    let mut source = vec![SourceMatch::Unmatched; positions.paths.len()];
+    let mut sources = Vec::new();
     // depends only on the subgraph, and a plan has a few of them
     let mut resolves_all: HashMap<u16, bool> = HashMap::default();
-    let mut sources = Vec::new();
     for position in &positions.list {
-        let filled_without_waits = without_waits.is_some_and(|marks| marks[position.step as usize]);
-        if position.keys & needed_keys == needed_keys
-            && (!is_source[position.path as usize]
-                || filled_without_waits && !is_source_without_waits[position.path as usize])
-            && depends_on[position.step as usize]
-            && *resolves_all
-                .entry(subgraphs[position.step as usize])
-                .or_insert_with(|| {
-                    let subgraph = subgraphs[position.step as usize];
-                    resolves_every_field(supergraph, type_name, needed, subgraph)
-                })
-            && covers(position.selections, needed)
-        {
-            if !std::mem::replace(&mut is_source[position.path as usize], true) {
-                sources.push(position.path as usize);
-            }
-            if filled_without_waits {
-                is_source_without_waits[position.path as usize] = true;
-            }
+        let (path, step) = (position.path.index(), position.step);
+        if !waited.contains(step) {
+            continue;
         }
+        let found = if depends_on.contains(step) {
+            SourceMatch::Ready
+        } else {
+            SourceMatch::AfterExtraWait
+        };
+        // nothing this position could add
+        if source[path] >= found {
+            continue;
+        }
+        // a plan can have thousands of positions, the mask rules most of them out cheaply
+        if !position.keys.has_all(wanted.needed_keys) {
+            continue;
+        }
+        let subgraph = subgraphs[step.index()];
+        let resolves = *resolves_all.entry(subgraph).or_insert_with(|| {
+            resolves_every_field(supergraph, wanted.type_name, wanted.needed, subgraph)
+        });
+        if !resolves || !covers(position.selections, wanted.needed) {
+            continue;
+        }
+        if source[path] == SourceMatch::Unmatched {
+            sources.push(position.path);
+        }
+        source[path] = found;
     }
     if sources.is_empty() {
         return None;
     }
+
     // the executor matches entities by their representation, read from these positions. a user
     // alias like `id: username` would match the wrong entity there, so a position that puts
     // another field under a key of the representation rules out its path.
     for position in &positions.list {
-        if position.keys & representation_keys != 0
-            && is_source[position.path as usize]
-            && conflicts_with(position.selections, representation)
+        let path = position.path.index();
+        if source[path] != SourceMatch::Unmatched
+            && position.keys.shares_any(wanted.representation_keys)
+            && conflicts_with(position.selections, wanted.representation)
         {
-            is_source[position.path as usize] = false;
+            source[path] = SourceMatch::Unmatched;
         }
     }
-    sources.retain(|&path| is_source[path]);
+    sources.retain(|path| source[path.index()] != SourceMatch::Unmatched);
     if sources.is_empty() {
         return None;
     }
-    let needs_waits =
-        without_waits.is_some() && sources.iter().any(|&path| !is_source_without_waits[path]);
+    let needs_waits = sources
+        .iter()
+        .any(|path| source[path.index()] == SourceMatch::AfterExtraWait);
 
     let copy = SelectionSet {
         items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-            type_condition: type_name.to_string(),
-            selections: needed.clone(),
+            type_condition: wanted.type_name.to_string(),
+            selections: wanted.needed.clone(),
             skip_if: None,
             include_if: None,
         })],
@@ -601,7 +688,7 @@ fn find_in(
     let reuse = EntityReuse {
         sources: sources
             .into_iter()
-            .map(|path| positions.paths[path].clone())
+            .map(|path| positions.paths[path.index()].clone())
             .collect(),
         copy: RequiresSelectionSet::from(&copy),
     };
@@ -631,8 +718,8 @@ fn wanted(step: &Step) -> Option<(&str, &SelectionSet)> {
 
 /// One bit per response key of the fields in `selections` that pass `keep`. A position can only
 /// cover a selection if it has all of its bits, and only conflict with one if they share a bit.
-fn key_mask(selections: &SelectionSet, keep: impl Fn(&FieldSelection) -> bool) -> u64 {
-    selections.items.iter().fold(0, |mask, item| match item {
+fn key_mask(selections: &SelectionSet, keep: impl Fn(&FieldSelection) -> bool) -> KeyMask {
+    KeyMask(selections.items.iter().fold(0, |mask, item| match item {
         SelectionItem::Field(field) if keep(field) => {
             let key = field.selection_identifier();
             let hash = key.bytes().fold(0u32, |hash, byte| {
@@ -641,7 +728,7 @@ fn key_mask(selections: &SelectionSet, keep: impl Fn(&FieldSelection) -> bool) -
             mask | 1 << (hash % 64)
         }
         _ => mask,
-    })
+    }))
 }
 
 /// Does `source` ask for every field in `needed`, with the same response key and arguments?
@@ -795,20 +882,30 @@ mod tests {
         let top = || PathSegment::Field("top".into());
         let start = |path: Vec<PathSegment>| Start::new(FlattenNodePath::from(path));
 
-        positions.add(&start(vec![top()]), &[Segment::List], &selections, 0);
-        positions.add(&start(vec![top(), PathSegment::List]), &[], &selections, 0);
+        positions.add(
+            &start(vec![top()]),
+            &[Segment::List],
+            &selections,
+            NodeIndex::new(0),
+        );
+        positions.add(
+            &start(vec![top(), PathSegment::List]),
+            &[],
+            &selections,
+            NodeIndex::new(0),
+        );
         positions.add(
             &start(vec![]),
             &[Segment::Field("top"), Segment::List],
             &selections,
-            0,
+            NodeIndex::new(0),
         );
-        positions.add(&start(vec![top()]), &[], &selections, 0);
+        positions.add(&start(vec![top()]), &[], &selections, NodeIndex::new(0));
 
         let ids: Vec<usize> = positions
             .list
             .iter()
-            .map(|position| position.path as usize)
+            .map(|position| position.path.index())
             .collect();
         assert_eq!(ids, [0, 0, 0, 1]);
         assert_eq!(positions.paths.len(), 2);
@@ -819,16 +916,31 @@ mod tests {
         let selections = SelectionSet::default();
         let mut positions = Positions::default();
         let start = Start::new(FlattenNodePath::from(Vec::<PathSegment>::new()));
-        positions.add(&start, &[Segment::Field("first")], &selections, 0);
+        positions.add(
+            &start,
+            &[Segment::Field("first")],
+            &selections,
+            NodeIndex::new(0),
+        );
 
         // point the hash of `second` at `first`
         let mut hasher = start.hasher.clone();
         Segment::Field("second").hash(&mut hasher);
-        positions.ids.insert(hasher.finish(), 0);
+        positions.ids.insert(hasher.finish(), PathId::new(0));
 
-        positions.add(&start, &[Segment::Field("second")], &selections, 0);
-        positions.add(&start, &[Segment::Field("second")], &selections, 0);
-        let ids: Vec<u32> = positions.list.iter().map(|p| p.path).collect();
+        positions.add(
+            &start,
+            &[Segment::Field("second")],
+            &selections,
+            NodeIndex::new(0),
+        );
+        positions.add(
+            &start,
+            &[Segment::Field("second")],
+            &selections,
+            NodeIndex::new(0),
+        );
+        let ids: Vec<usize> = positions.list.iter().map(|p| p.path.index()).collect();
         assert_eq!(ids, [0, 1, 1]);
         assert_eq!(positions.paths.len(), 2);
     }
