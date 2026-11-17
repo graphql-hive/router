@@ -80,6 +80,10 @@ pub struct EnvVarOverrides {
     // Error masking
     #[envconfig(from = "DISABLE_SUBGRAPH_ERROR_MASKING")]
     pub disable_subgraph_error_masking: Option<bool>,
+
+    // Validation overrides. A string, not a bool, as it has always accepted `1` too.
+    #[envconfig(from = "ROUTER_DISABLE_INT_VALUE_RANGE_VALIDATION")]
+    pub disable_int_value_range_validation: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -284,6 +288,13 @@ impl EnvVarOverrides {
 
             config =
                 config.set_override("error_masking.enabled", !disable_subgraph_error_masking)?;
+        }
+
+        if let Some(value) = self.disable_int_value_range_validation.take() {
+            let disabled = matches!(value.as_str(), "true" | "1");
+            debug!(target: CONFIG_LOGGING_TARGET, value = disabled, "overriding 'validation.disable_int_value_range_validation'");
+            config =
+                config.set_override("validation.disable_int_value_range_validation", disabled)?;
         }
 
         Ok(config)
@@ -508,6 +519,33 @@ http:
                 "unexpected error: {err}"
             );
         }
+    }
+
+    #[test]
+    fn disable_int_value_range_validation_override_accepts_true_and_1() {
+        for value in ["true", "1"] {
+            let config = config_from_overrides(EnvVarOverrides {
+                disable_int_value_range_validation: Some(value.to_string()),
+                ..Default::default()
+            });
+            assert!(
+                config.validation.disable_int_value_range_validation,
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn disable_int_value_range_validation_override_wins_over_config_file_value() {
+        let config = config_from_yaml_and_overrides(
+            "validation:\n  disable_int_value_range_validation: true\n",
+            EnvVarOverrides {
+                disable_int_value_range_validation: Some("false".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!config.validation.disable_int_value_range_validation);
     }
 
     #[test]

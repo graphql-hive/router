@@ -77,6 +77,29 @@ pub(super) fn coerce_with_options(
     }
 }
 
+/// Like `coerce`, with `validation.disable_unknown_input_fields_validation` turned on.
+pub(super) fn coerce_without_unknown_fields_validation(
+    operation: &str,
+    variables: &str,
+) -> Outcome {
+    coerce_with_options(
+        operation,
+        variables,
+        ValidationOptions {
+            disable_unknown_input_fields_validation: true,
+            ..Default::default()
+        },
+    )
+}
+
+/// The coerced variables `expected` (a JSON object) parses to.
+pub(super) fn coerced(expected: &str) -> Outcome {
+    Outcome::Coerced(
+        sonic_rs::from_str(expected)
+            .unwrap_or_else(|err| panic!("expected must be a JSON object: {err}\n{expected}")),
+    )
+}
+
 /// The request error messages for a coercion error. The only place that knows the error type.
 fn messages(err: &VariableCoercionError) -> Vec<String> {
     vec![err.to_string()]

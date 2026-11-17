@@ -74,6 +74,7 @@ mod int {
                 r#"{"v":2147483648}"#,
                 ValidationOptions {
                     disable_int_value_range_validation: true,
+                    ..Default::default()
                 },
             ),
             Outcome::Coerced(

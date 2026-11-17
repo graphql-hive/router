@@ -523,3 +523,29 @@ mod variables_in_literals {
         );
     }
 }
+
+/// `validation.disable_unknown_input_fields_validation`: unknown fields don't count towards the one field.
+mod disable_unknown_input_fields_validation {
+    use super::super::harness::{coerce_without_unknown_fields_validation, coerced, Outcome};
+    use super::*;
+
+    #[test]
+    fn accepts_unknown_field_next_to_valid_member() {
+        let variables = r#"{"input":{"foo":123,"__typename":"IntOneOf"}}"#;
+        assert_eq!(
+            coerce_without_unknown_fields_validation(INT_ONE_OF, variables),
+            coerced(variables)
+        );
+    }
+
+    #[test]
+    fn rejects_oneof_with_only_unknown_field() {
+        assert_eq!(
+            coerce_without_unknown_fields_validation(INT_ONE_OF, r#"{"input":{"bart":123}}"#),
+            Outcome::Rejected(vec![format!(
+                r#"Variable "$input" has invalid value: {}"#,
+                one_of_error("IntOneOf")
+            )])
+        );
+    }
+}

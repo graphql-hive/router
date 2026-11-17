@@ -13,6 +13,9 @@ use super::{
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ValidationOptions {
     pub disable_int_value_range_validation: bool,
+    /// Accept input object variables with fields their type doesn't define. Only used when
+    /// coercing variable values, inline values are still checked by `ValuesOfCorrectType`.
+    pub disable_unknown_input_fields_validation: bool,
 }
 
 pub fn default_rules_validation_plan() -> ValidationPlan {

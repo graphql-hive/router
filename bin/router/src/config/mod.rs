@@ -27,6 +27,7 @@ pub mod supergraph;
 pub mod telemetry;
 pub mod traffic_shaping;
 pub mod usage_reporting;
+pub mod validation;
 pub mod websocket;
 
 use config_rs::{Config, File, FileFormat, FileSourceFile};
@@ -132,6 +133,10 @@ pub struct HiveRouterConfig {
     #[serde(default)]
     /// Configuration for checking the limits such as query depth, complexity, etc.
     pub limits: limits::LimitsConfig,
+
+    /// Configuration for request validation.
+    #[serde(default)]
+    pub validation: validation::ValidationConfig,
 
     /// Configuration to enable or disable introspection queries.
     #[serde(default, skip_serializing_if = "Option::is_none")]

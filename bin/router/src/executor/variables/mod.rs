@@ -310,9 +310,14 @@ fn validate_input_object(
         }));
     };
     let fields = &input_object.fields;
+    let is_known = |key: &str| fields.iter().any(|field| field.name == key);
 
     if input_object.is_one_of {
-        let mut entries = object.iter();
+        // Unknown fields that are let through don't count, so `{ a: 1, __typename: "X" }` still has
+        // exactly one field.
+        let mut entries = object
+            .iter()
+            .filter(|(key, _)| !options.disable_unknown_input_fields_validation || is_known(key));
         let invalid_one_of = || InvalidValueReason::InvalidOneOf {
             type_name: type_name.to_string(),
         };
@@ -358,10 +363,11 @@ fn validate_input_object(
         }
     }
 
-    if let Some((unknown_field, _)) = object
-        .iter()
-        .find(|(key, _)| !fields.iter().any(|field| field.name == *key))
-    {
+    if options.disable_unknown_input_fields_validation {
+        return Ok(());
+    }
+
+    if let Some((unknown_field, _)) = object.iter().find(|(key, _)| !is_known(key)) {
         return Err(InvalidValue::new(InvalidValueReason::UnknownField {
             type_name: type_name.to_string(),
             field_name: unknown_field.to_string(),
