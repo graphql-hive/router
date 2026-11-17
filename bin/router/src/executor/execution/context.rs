@@ -815,13 +815,15 @@ mod tests {
         let reuse = EntityReuse {
             sources: vec![vec![PathSegment::Field("top".into()), PathSegment::List].into()],
             copy: selection("{ __typename name }"),
+            trie: Default::default(),
         };
+        reuse.build_trie();
         let possible_types = PossibleTypes::default();
         let path: FlattenNodePath =
             vec![PathSegment::Field("again".into()), PathSegment::List].into();
         let Collected {
             targets, copies, ..
-        } = collect_context_entities(
+        } = collect(
             &data,
             [path.as_ref()],
             &requires,
@@ -831,10 +833,7 @@ mod tests {
             None,
             Some(&reuse),
         );
-        assert_eq!(
-            targets[0].as_slice(),
-            [Some(EntityRef::Copied { index: 0 })]
-        );
+        assert_eq!(targets.path(0), [Some(EntityRef::Copied { index: 0 })]);
         assert_eq!(
             sonic_rs::to_string(&copies).unwrap(),
             r#"[{"__typename":"P","name":"A"}]"#
