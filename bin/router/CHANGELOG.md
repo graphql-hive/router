@@ -116,6 +116,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.3.15 (2026-11-17)
+
+### Features
+
+#### Add `validation` configuration options to control input validation.
+
+Input object variables containing unknown fields are rejected by default.
+
+The new `validation.disable_unknown_input_fields_validation` option allows unknown fields in variables and forwards them to subgraphs unchanged. All other validation rules remain enforced, including required fields, type checks, and `@oneOf` constraints. Unknown fields are excluded from `@oneOf` field counting, and inline input values are still validated.
+
+```yaml
+validation:
+  disable_unknown_input_fields_validation: true
+```
+
+The existing `ROUTER_DISABLE_INT_VALUE_RANGE_VALIDATION` environment variable also gains a configuration equivalent. The environment variable remains supported and takes precedence over the config file.
+
+```yaml
+validation:
+  disable_int_value_range_validation: true
+```
+
+### Fixes
+
+#### Copy entities already in the response
+
+An entity fetch often asks for entities an earlier fetch already put in the response. With entity reuse on, the fetch copies those into place and leaves them out of the request. When it has every entity, the subgraph isn't called at all. Off by default:
+
+```yaml
+traffic_shaping:
+  entity_reuse: true
+```
+
+Or with the `ROUTER_TRAFFIC_SHAPING_ENTITY_REUSE=true` environment variable.
+
+A fetch copies only from the fetches it waits for. It may also wait for an earlier fetch to the same subgraph that asked for the same fields, when that gives it something to copy. It never copies once the request has an error, in mutations, fields a subgraph only has through `@provides`, or entities whose representation has a missing or null field. Fetches with `@fromContext` arguments, input or output rewrites don't copy.
+
+Closes #1730
+
 ## 0.3.14 (2026-11-16)
 
 ### Features

@@ -1,6 +1,6 @@
 [package]
 name = "graphql-tools"
-version = "0.5.13"
+version = "0.5.14"
 edition = "2021"
 description = "Tools for working with GraphQL in Rust"
 license = "MIT"
