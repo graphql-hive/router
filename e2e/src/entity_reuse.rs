@@ -61,7 +61,7 @@ mod entity_reuse_e2e_tests {
                     source: file
                     path: supergraph.graphql
                   traffic_shaping:
-                    experimental_entity_reuse: true
+                    entity_reuse: true
                     all:
                       dedupe_enabled: false
                   "#,

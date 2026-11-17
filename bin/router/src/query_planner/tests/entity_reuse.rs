@@ -21,7 +21,7 @@ fn plan_with_reuse(
         document,
         Default::default(),
         QueryPlannerOptions {
-            experimental_entity_reuse: true,
+            entity_reuse: true,
             ..Default::default()
         },
     )

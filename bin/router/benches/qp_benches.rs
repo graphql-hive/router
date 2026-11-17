@@ -19,7 +19,7 @@ use std::time::Duration;
 /// Entity reuse is off by default, but its planning is on here so its cost stays measured
 fn planner_options() -> QueryPlannerOptions {
     QueryPlannerOptions {
-        experimental_entity_reuse: true,
+        entity_reuse: true,
         ..Default::default()
     }
 }

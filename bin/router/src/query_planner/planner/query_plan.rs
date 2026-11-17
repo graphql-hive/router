@@ -70,11 +70,8 @@ pub fn build_query_plan_from_fetch_graph(
     let mut provides: Vec<FetchIdList> = vec![FetchIdList::new(); steps];
     // what finished waves put in the response. An entity fetch may copy entities the fetches it
     // depends on put there.
-    let mut entity_reuse = entity_reuse::EntityReuseIndex::new(
-        &fetch_graph,
-        supergraph,
-        options.experimental_entity_reuse,
-    );
+    let mut entity_reuse =
+        entity_reuse::EntityReuseIndex::new(&fetch_graph, supergraph, options.entity_reuse);
 
     while !queue.is_empty() {
         let mut current_wave_nodes: Vec<PlanNode> = Vec::new();
