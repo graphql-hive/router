@@ -202,18 +202,21 @@ jobs:
             binary: "hive_router"
             config: "bench/configs/default.config.yaml"
             compare_with_default: true
+            main_binary: "default"
           - name: "dedupe-inbound"
             args: ""
             package: "hive-router"
             binary: "hive_router"
             config: "bench/configs/dedupe-inbound.config.yaml"
             compare_with_default: false
+            main_binary: "default"
           - name: "no-dedupe"
             args: ""
             package: "hive-router"
             binary: "hive_router"
             config: bench/configs/no-deduplication.config.yaml
             compare_with_default: false
+            main_binary: "default"
           - name: "hive-tracing"
             # turns otlp http/grpc to noop
             args: "--features noop_otlp_exporter"
@@ -221,6 +224,7 @@ jobs:
             binary: "hive_router"
             config: bench/configs/hive-tracing.config.yaml
             compare_with_default: false
+            main_binary: "otel"
           - name: "otel"
             # turns otlp http/grpc to noop
             args: "--features noop_otlp_exporter"
@@ -228,18 +232,21 @@ jobs:
             binary: "hive_router"
             config: bench/configs/otel.config.yaml
             compare_with_default: false
+            main_binary: "otel"
           - name: "plugins"
             args: ""
             package: "plugin-template"
             binary: "hive_router_with_plugin"
             config: "bench/configs/plugins.config.yaml"
             compare_with_default: true
+            main_binary: "default"
           - name: "persisted-documents"
             args: ""
             package: "hive-router"
             binary: "hive_router"
             config: "bench/configs/persisted-documents.config.yaml"
             compare_with_default: true
+            main_binary: "default"
     name: benchmark / router / ${{ matrix.name }}
     runs-on: ubuntu-latest
     env:
@@ -276,38 +283,51 @@ jobs:
           SUMMARY_PATH: ./bench/results/pr
           BENCH_PERSISTED_MODE: ${{ matrix.name == 'persisted-documents' && 'true' || '' }}
           BENCH_DOCUMENT_ID: ${{ matrix.name == 'persisted-documents' && 'bench_test_query' || '' }}
-      - name: Checkout main branch in a separate directory
+      # On main, keep the built router around so PRs can compare against it without building main.
+      - name: Upload router binary for main
+        if: github.event_name == 'push' && matrix.name == matrix.main_binary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: router-main-${{ matrix.main_binary }}
+          path: target/release/hive_router
+          retention-days: 30
+      - name: Download router binary built on main
+        id: main-binary
         if: github.event_name == 'pull_request'
+        env:
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p main-bin
+          # push events only come from this repo, so forks can't plant a "main" binary
+          for run_id in $(gh run list --workflow ci.yaml --branch main --event push --limit 10 --json databaseId --jq '.[].databaseId'); do
+            if gh run download "$run_id" --name "router-main-${{ matrix.main_binary }}" --dir main-bin; then
+              chmod +x main-bin/hive_router
+              echo "Using hive_router built on main in run $run_id"
+              echo "found=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "No router binary from main found, building main from source"
+      - name: Checkout main branch in a separate directory
+        if: github.event_name == 'pull_request' && steps.main-binary.outputs.found != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           path: main-branch
-
-      - name: Build router from main branch w/ default config
-        if: github.event_name == 'pull_request' && matrix.compare_with_default == true
-        run: cargo build --release -p hive-router
+      - name: Build router from main branch
+        if: github.event_name == 'pull_request' && steps.main-binary.outputs.found != 'true'
+        run: |
+          cargo build --release -p hive-router ${{ matrix.main_binary == 'otel' && '--features noop_otlp_exporter' || '' }}
+          cp target/release/hive_router ../main-bin/
         working-directory: main-branch
-      - name: Run router from main branch w/ default config
-        if: github.event_name == 'pull_request' && matrix.compare_with_default == true
+      - name: Run router from main branch
+        if: github.event_name == 'pull_request'
         run: |
           kill $(cat router.pid)
-          ./main-branch/target/release/hive_router &
+          ./main-bin/hive_router &
           sleep 5
         env:
-          ROUTER_CONFIG_FILE_PATH: bench/configs/default.config.yaml
-
-      - name: Build router from main branch w/ ${{ matrix.config }} config
-        if: github.event_name == 'pull_request' && matrix.compare_with_default == false
-        run: cargo build --release -p ${{ matrix.package }} ${{matrix.args}}
-        working-directory: main-branch
-      - name: Run router from main branch w/ ${{ matrix.config }} config
-        if: github.event_name == 'pull_request' && matrix.compare_with_default == false
-        run: |
-          kill $(cat router.pid)
-          ./main-branch/target/release/${{ matrix.binary }} &
-          sleep 5
-        env:
-          ROUTER_CONFIG_FILE_PATH: ${{matrix.config}}
+          ROUTER_CONFIG_FILE_PATH: ${{ matrix.compare_with_default && 'bench/configs/default.config.yaml' || matrix.config }}
 
       - name: Run benchmark for main
         if: github.event_name == 'pull_request'
