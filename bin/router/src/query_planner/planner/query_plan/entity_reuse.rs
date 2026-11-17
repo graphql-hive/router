@@ -857,7 +857,7 @@ fn resolved_by<'s>(
 /// its fields in those fragments. See `walk`.
 fn only_typename_besides_fragments(selections: &SelectionSet) -> bool {
     selections.items.iter().all(|item| match item {
-        SelectionItem::Field(field) => field.name == "__typename",
+        SelectionItem::Field(field) => field.name == "__typename" && field.alias.is_none(),
         _ => true,
     })
 }
@@ -952,6 +952,9 @@ mod tests {
         )));
         assert!(!only_typename_besides_fragments(&selections(
             "{ id: username ... on User { name } }"
+        )));
+        assert!(!only_typename_besides_fragments(&selections(
+            "{ id: __typename ... on User { name } }"
         )));
     }
 
