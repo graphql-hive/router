@@ -637,6 +637,59 @@ mod tests {
     }
 
     #[test]
+    fn an_aliased_requires_field_is_read_where_the_fetch_wrote_it() {
+        use crate::query_planner::planner::plan_nodes::EntityReuse;
+        // `price: _internal_qp_alias_0` goes out as `price`, but the fetch wrote it under
+        // `_internal_qp_alias_0`. That's the one the hash reads, so it's the one that has to
+        // be there, the `price` next to it is another field.
+        let data: Value<'_> = sonic_rs::from_str(
+            r#"{
+            "top": [{"__typename":"P", "id":"1", "_internal_qp_alias_0":"real", "price":null, "name":"A"}],
+            "again": [{"__typename":"P", "id":"1", "_internal_qp_alias_0":"real"}]
+        }"#,
+        )
+        .unwrap();
+        let selection = |query: &str| {
+            let definition = parse_operation(query).definitions.remove(0);
+            let graphql_tools::parser::query::Definition::Operation(
+                graphql_tools::parser::query::OperationDefinition::SelectionSet(selection),
+            ) = definition
+            else {
+                panic!("selection");
+            };
+            RequiresSelectionSet::from(&SelectionSet::from(selection))
+        };
+        let requires = selection("{ __typename id price: _internal_qp_alias_0 }");
+        let reuse = EntityReuse {
+            sources: vec![vec![PathSegment::Field("top".into()), PathSegment::List].into()],
+            copy: selection("{ __typename name }"),
+        };
+        let possible_types = PossibleTypes::default();
+        let path: FlattenNodePath =
+            vec![PathSegment::Field("again".into()), PathSegment::List].into();
+        let Collected {
+            targets, copies, ..
+        } = collect_context_entities(
+            &data,
+            [path.as_ref()],
+            &requires,
+            None,
+            &None,
+            &possible_types,
+            None,
+            Some(&reuse),
+        );
+        assert_eq!(
+            targets[0].as_slice(),
+            [Some(EntityRef::Copied { index: 0 })]
+        );
+        assert_eq!(
+            sonic_rs::to_string(&copies).unwrap(),
+            r#"[{"__typename":"P","name":"A"}]"#
+        );
+    }
+
+    #[test]
     fn ancestor_cache_invalidates_on_entity_local_values() {
         // all posts share the same user, only the entity-local code differs, so the cached
         // parent alone must not decide the group

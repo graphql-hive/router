@@ -80,16 +80,17 @@ pub fn merge_copies<'v>(
 /// Whether `value` has every field of `selections`, none of them null. An entity with a missing
 /// or null key can't be told apart from another one like it, so we never copy from it. A null
 /// `@requires` field counts too, that only costs a fetch.
+///
+/// A field is read under its name, like the hash and the representation do: in
+/// `price: _internal_qp_alias_0` the fetch wrote the value under `_internal_qp_alias_0`, and
+/// `price` is only what it's called in the representation.
 fn holds_every_field(value: &Value, selections: RequiresSelectionSetRef<'_>) -> bool {
     match value {
         Value::Null => false,
         Value::Object(fields) => selections.iter().all(|selection| match selection {
             RequiresSelection::Field {
-                name,
-                alias,
-                selections,
-                ..
-            } => Value::object_get(fields, alias.unwrap_or(name))
+                name, selections, ..
+            } => Value::object_get(fields, name)
                 .is_some_and(|field| holds_every_field(field, selections)),
             RequiresSelection::InlineFragment { selections, .. } => {
                 holds_every_field(value, selections)
