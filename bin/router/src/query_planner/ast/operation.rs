@@ -4,6 +4,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+use crate::executor::executors::common::QueryHash;
 use crate::executor::response::shaped::ResponseShape;
 use crate::query_planner::{
     ast::{document::Document, hash::ast_hash},
@@ -70,6 +71,8 @@ pub struct SubgraphFetchOperation {
     context_template: Option<Box<ContextAliasTemplate>>,
     #[serde(skip)]
     pub response_shape: Option<Box<ResponseShape>>,
+    #[serde(skip)]
+    query_hash: QueryHash,
 }
 
 /// An entity fetch operation cut into the parts every group of contextual argument values
@@ -161,6 +164,7 @@ impl ContextAliasTemplate {
             document_str: document.into_boxed_str(),
             context_template: None,
             response_shape: None,
+            query_hash: QueryHash::default(),
         }
     }
 
@@ -235,6 +239,10 @@ impl SubgraphFetchOperation {
     /// The template to write this operation out for several groups, `None` when aliasing is off.
     pub fn context_alias_template(&self) -> Option<&ContextAliasTemplate> {
         self.context_template.as_deref()
+    }
+
+    pub fn query_hash(&self) -> &QueryHash {
+        &self.query_hash
     }
 }
 
@@ -609,6 +617,7 @@ impl PlanningFetchOperation {
                 name_write_position,
                 context_template: None,
                 response_shape: None,
+                query_hash: QueryHash::default(),
             },
         }
     }

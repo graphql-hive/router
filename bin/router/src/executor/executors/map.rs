@@ -138,6 +138,7 @@ struct ResolvedSubgraphConfig<'a> {
     timeout_config: &'a DurationOrExpression,
     dedupe_enabled: bool,
     compression: TrafficShapingSubgraphCompressionConfig,
+    apq_enabled: bool,
 }
 
 pub type InflightRequestsMap = InFlightMap<u128, (SubgraphHttpResponse, u64)>;
@@ -876,6 +877,7 @@ impl SubgraphExecutorMap {
                     self.config.subscriptions.subgraph_buffer_capacity,
                     subgraph_config.compression.request,
                     subgraph_config.compression.response.accept_encoding,
+                    subgraph_config.apq_enabled,
                 )
                 .to_boxed_arc();
 
@@ -987,6 +989,7 @@ impl SubgraphExecutorMap {
                 .config
                 .traffic_shaping
                 .subgraph_compression(subgraph_name),
+            apq_enabled: self.config.traffic_shaping.all.automatic_persisted_queries,
         };
 
         let Some(subgraph_config) = self.config.traffic_shaping.subgraphs.get(subgraph_name) else {
@@ -1024,6 +1027,10 @@ impl SubgraphExecutorMap {
         // Apply other subgraph-specific overrides
         if let Some(dedupe_enabled) = subgraph_config.dedupe_enabled {
             config.dedupe_enabled = dedupe_enabled;
+        }
+
+        if let Some(apq_enabled) = subgraph_config.automatic_persisted_queries {
+            config.apq_enabled = apq_enabled;
         }
 
         if let Some(custom_timeout) = &subgraph_config.request_timeout {
