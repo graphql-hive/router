@@ -262,6 +262,10 @@ pub struct FetchNode<S: PlanState = Executable> {
     /// that reads nothing another fetch brings, a root fetch.
     #[serde(skip)]
     pub depends_on: S::FetchIds,
+    /// The fetches in `depends_on` only so this one can copy from them, see `entity_reuse`. A
+    /// batch alias that can't copy leaves them out.
+    #[serde(skip)]
+    pub reuse_waits: S::FetchIds,
     /// Where entities this fetch asks for might already be in the response. Fetches that ask for
     /// the same thing in one wave share it.
     #[serde(skip)]
@@ -861,6 +865,7 @@ impl FetchNode<Planning> {
                     context,
                     run_if: None,
                     depends_on,
+                    reuse_waits: FetchIdList::new(),
                     entity_reuse: None,
                 }
             }
@@ -905,6 +910,7 @@ impl FetchNode<Planning> {
                     ),
                     run_if: None,
                     depends_on,
+                    reuse_waits: FetchIdList::new(),
                     entity_reuse: None,
                 }
             }

@@ -370,9 +370,11 @@ impl<'a> EntityReuseIndex<'a> {
         };
         fetch.entity_reuse = Some(reuse);
         if !waits.is_empty() {
-            fetch.depends_on.extend(waits);
+            fetch.depends_on.extend(waits.iter().copied());
             fetch.depends_on.sort_unstable();
             fetch.depends_on.dedup();
+            // never ones it already waited for, see `earlier_fetch_waits`
+            fetch.reuse_waits = waits;
         }
     }
 

@@ -376,6 +376,8 @@ struct EntityFetch {
     context: Option<Box<FetchContext>>,
     run_if: Option<Vec<ConditionGroup>>,
     depends_on: FetchIdList,
+    /// the ones in `depends_on` it waits for only to copy, see `FetchNode::reuse_waits`
+    reuse_waits: FetchIdList,
     shape_key: ShapeKey,
     non_representations_variable_definitions: Vec<VariableDefinition>,
     entity_reuse: Option<std::sync::Arc<EntityReuse>>,
@@ -507,6 +509,7 @@ impl EntityFetch {
             context,
             run_if: fetch_node.run_if.clone(),
             depends_on: fetch_node.depends_on.clone(),
+            reuse_waits: fetch_node.reuse_waits.clone(),
             shape_key,
             non_representations_variable_definitions,
             entity_reuse: fetch_node.entity_reuse.clone(),
@@ -978,9 +981,21 @@ fn build_batched_fetch_node(
     batch.completes = candidates()
         .map(|candidate| candidate.fetch_node_id)
         .collect();
-    // what any of them waited for
-    batch.depends_on = candidates()
-        .flat_map(|candidate| candidate.depends_on.iter().copied())
+    // what any of them waited for. An alias per shape group, in order, and one that can't copy
+    // (see `add_shape_group`) doesn't need what its fetches waited for only to copy.
+    batch.depends_on = shape_groups
+        .iter()
+        .zip(&batch.entity_batch.aliases)
+        .flat_map(|(shape_group, alias)| {
+            let copies = alias.entity_reuse.is_some();
+            shape_group.iter().flat_map(move |candidate| {
+                candidate
+                    .depends_on
+                    .iter()
+                    .copied()
+                    .filter(move |id| copies || !candidate.reuse_waits.contains(id))
+            })
+        })
         .collect();
     batch.depends_on.sort_unstable();
     batch.depends_on.dedup();
@@ -2066,7 +2081,8 @@ mod tests {
     fn optimize_parallel_node_drops_entity_reuse_of_aliases_sharing_a_variable() {
         let supergraph = test_supergraph_state();
         let requires_query = "query { ... on Product { upc } }";
-        let fetch = |id, field: &str| {
+        // both read what 10 brings, the first one also waits for 7, only to copy from it
+        let fetch = |id, field: &str, reuse_waits: &[u32]| {
             let mut node = flatten_entity_fetch_node(
                 id,
                 "inventory",
@@ -2085,13 +2101,20 @@ mod tests {
                         ])],
                         copy: Default::default(),
                     }));
+                    fetch.reuse_waits = reuse_waits.iter().copied().map(FetchId).collect();
+                    fetch.depends_on = std::iter::once(FetchId(10))
+                        .chain(fetch.reuse_waits.iter().copied())
+                        .collect();
                 }
             }
             node
         };
 
         let optimized = optimize_root_node(
-            PlanNode::parallel(vec![fetch(1, "shippingEstimate"), fetch(2, "inStock")]),
+            PlanNode::parallel(vec![
+                fetch(1, "shippingEstimate", &[7]),
+                fetch(2, "inStock", &[]),
+            ]),
             &supergraph,
             &Default::default(),
         )
@@ -2105,6 +2128,8 @@ mod tests {
             assert_eq!(alias.representations_variable_name, "__batch_reps_0");
             assert!(alias.entity_reuse.is_none());
         }
+        // nothing copies, so the batch doesn't wait for 7 either
+        assert_eq!(batch.depends_on.as_slice(), [FetchId(10)]);
     }
 
     /// Different requires should prevent sharing the representations variable.
@@ -2960,6 +2985,7 @@ mod tests {
             context: None,
             run_if: None,
             depends_on: FetchIdList::new(),
+            reuse_waits: FetchIdList::new(),
             entity_reuse: None,
         };
 
@@ -3043,6 +3069,7 @@ mod tests {
             context: None,
             run_if: None,
             depends_on: FetchIdList::new(),
+            reuse_waits: FetchIdList::new(),
             entity_reuse: None,
         }
     }

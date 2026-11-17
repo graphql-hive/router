@@ -2499,6 +2499,7 @@ mod tests {
                         context: None,
                         run_if: None,
                         depends_on: (),
+                        reuse_waits: (),
                         operation: PlanningFetchOperation::from_anonymous_operation(
                             parse_document("{ from_a }"),
                         )
@@ -2518,6 +2519,7 @@ mod tests {
                         context: None,
                         run_if: None,
                         depends_on: (),
+                        reuse_waits: (),
                         operation: PlanningFetchOperation::from_anonymous_operation(
                             parse_document("{ from_b }"),
                         )
