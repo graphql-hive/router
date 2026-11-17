@@ -401,6 +401,9 @@ impl<'a> EntityReuseIndex<'a> {
             return None;
         }
         let representation = step.input.selections_for_definition(type_name)?;
+        if reads_renamed_keys(representation) {
+            return None;
+        }
         let wanted = Wanted::new(type_name, needed, representation);
         let depends_on = Dependencies::of(self.fetch_graph, index);
         let (expanded, waits) = self.earlier_fetch_waits(step, &wanted, &depends_on);
@@ -842,6 +845,16 @@ fn only_typename_besides_fragments(selections: &SelectionSet) -> bool {
     })
 }
 
+/// Whether a representation reads a value from under another key than its field's name,
+/// `price: _internal_qp_alias_0` when the planner moved a field there. The conflict and key
+/// checks compare response keys of what fetches wrote, so a fetch reading one like that doesn't
+/// copy. It's rare.
+fn reads_renamed_keys(representation: &SelectionSet) -> bool {
+    fields_through_fragments(representation)
+        .into_iter()
+        .any(|field| field.alias.is_some() || reads_renamed_keys(&field.selections))
+}
+
 /// Fields of a fetch with `@fromContext` arguments depend on values from outside the entity,
 /// so the same entity can come back different. We don't copy into or out of those.
 fn has_context(step: &Step) -> bool {
@@ -922,6 +935,17 @@ mod tests {
         )));
         assert!(!only_typename_besides_fragments(&selections(
             "{ id: username ... on User { name } }"
+        )));
+    }
+
+    #[test]
+    fn a_representation_reading_a_renamed_key_is_noticed() {
+        assert!(!reads_renamed_keys(&selections("{ __typename id price }")));
+        assert!(reads_renamed_keys(&selections(
+            "{ __typename id price: _internal_qp_alias_0 }"
+        )));
+        assert!(reads_renamed_keys(&selections(
+            "{ __typename id dimensions { size: _internal_qp_alias_1 } }"
         )));
     }
 
