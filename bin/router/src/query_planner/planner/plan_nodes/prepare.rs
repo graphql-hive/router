@@ -104,41 +104,6 @@ impl FetchNode<Planning> {
     }
 }
 
-// plans get their tries from `into_executable`, only tests build nodes by hand
-#[cfg(test)]
-impl EntityReuse {
-    pub fn build_trie(&self) {
-        self.trie
-            .get_or_init(|| PathTrie::new(self.sources.iter().map(FlattenNodePath::as_slice)));
-    }
-}
-
-#[cfg(test)]
-impl EntityBatch {
-    /// For a batch that wasn't made executable from a plan, like one built by hand: puts the
-    /// merge paths of every alias in one trie, and builds the tries of where each alias's
-    /// entities might already be.
-    pub fn build_tries(&mut self) {
-        let merge_paths: Vec<FlattenNodePath> = self
-            .aliases
-            .iter()
-            .flat_map(|alias| alias.merge_paths.to_paths().into_owned())
-            .collect();
-        let trie = Arc::new(PathTrie::new(
-            merge_paths.iter().map(FlattenNodePath::as_slice),
-        ));
-        let mut start = 0;
-        for alias in &mut self.aliases {
-            if let Some(reuse) = &alias.entity_reuse {
-                reuse.build_trie();
-            }
-            let paths = start..start + alias.merge_paths.len();
-            start = paths.end;
-            alias.merge_paths = TriePaths::new(Arc::clone(&trie), paths);
-        }
-    }
-}
-
 impl PlanNode<Planning> {
     fn into_executable(self, prepare: &mut Prepare) -> PlanNode {
         match self {

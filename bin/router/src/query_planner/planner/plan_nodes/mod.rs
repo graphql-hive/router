@@ -342,11 +342,10 @@ pub struct EntityReuse {
 
 impl EntityReuse {
     pub fn trie(&self) -> &PathTrie {
-        self.trie.get().expect(TRIE_BUILT)
+        self.trie
+            .get_or_init(|| PathTrie::new(self.sources.iter().map(FlattenNodePath::as_slice)))
     }
 }
-
-const TRIE_BUILT: &str = "path tries are built when the plan is made executable";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -601,7 +600,7 @@ impl EntityBatch {
             self.aliases
                 .iter()
                 .all(|alias| std::sync::Arc::ptr_eq(alias.merge_paths.trie(), trie)),
-            "{TRIE_BUILT}"
+            "the aliases share the trie built when the plan is made executable"
         );
         trie
     }

@@ -41,7 +41,7 @@ pub enum EntityRef {
 #[derive(Debug, Default)]
 pub struct TargetEntities {
     targets: Vec<Option<EntityRef>>,
-    /// Where each path's targets are in `targets`. Identical paths share theirs.
+    /// Where each path's targets are in `targets`
     paths: Vec<Range<usize>>,
 }
 
@@ -50,12 +50,9 @@ impl TargetEntities {
         &self.targets[self.paths[path].clone()]
     }
 
-    /// Every path's targets, one after another. A target identical paths share comes up once for
-    /// each of them, like the walk gives it.
+    /// Every path's targets, one after another
     pub fn iter(&self) -> impl Iterator<Item = &Option<EntityRef>> {
-        self.paths
-            .iter()
-            .flat_map(|range| &self.targets[range.clone()])
+        self.targets.iter()
     }
 }
 
@@ -333,8 +330,8 @@ pub(super) struct EntityInputs<'a, 'f> {
 
 /// Goes over the entities at `at`, deduplicates them by hash and projects their
 /// representations. Entities are grouped by the tuple of their context values (one request per
-/// group), without context variables there is at most one group. Identical paths share their
-/// target entities. With `reuse`, entities already in the response are copied instead of sent.
+/// group), without context variables there is at most one group. With `reuse`, entities already
+/// in the response are copied instead of sent.
 pub(super) fn collect_context_entities<'a, 'd, 'v>(
     at: EntityPaths<'_, 'd, 'v>,
     inputs: EntityInputs<'a, '_>,
@@ -368,18 +365,8 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
     let copy = reuse.map(|reuse| reuse.copy.root_selections());
     let mut copies = Vec::new();
     let mut targets = TargetEntities::default();
-    for path in paths.clone() {
+    for path in paths {
         let end = trie.ends()[path] as usize;
-        // identical paths end at the same node, the first of them is collected for all
-        let ending_here = trie.paths_ending_at(end);
-        let first = ending_here
-            [ending_here.partition_point(|&other| (other as usize) < paths.start)]
-            as usize;
-        if first != path {
-            let shared = targets.paths[first - paths.start].clone();
-            targets.paths.push(shared);
-            continue;
-        }
         let start = targets.targets.len();
         let entities = &mut targets.targets;
         // the callback gets references into `data`, which the ancestor cache relies on
@@ -762,7 +749,6 @@ mod tests {
             copy: selection("{ __typename name }"),
             trie: Default::default(),
         };
-        reuse.build_trie();
         let possible_types = PossibleTypes::default();
         let path: FlattenNodePath =
             vec![PathSegment::Field("again".into()), PathSegment::List].into();
@@ -817,7 +803,6 @@ mod tests {
             copy: selection("{ __typename name }"),
             trie: Default::default(),
         };
-        reuse.build_trie();
         let possible_types = PossibleTypes::default();
         let path: FlattenNodePath =
             vec![PathSegment::Field("again".into()), PathSegment::List].into();
@@ -1283,64 +1268,6 @@ mod tests {
         assert!(errors[1].path.is_none());
         assert_eq!(errors[2].message, "surplus entity");
         assert!(errors[2].path.is_none());
-    }
-
-    #[test]
-    fn identical_paths_share_targets_within_an_alias_only() {
-        // one trie for two aliases, `a` and `b` for the first, `a`, `b` and `b` again for the
-        // second, like a batch fetch has them
-        let data = sonic_rs::from_str(
-            r#"{"a":[{"__typename":"T","id":"1"},{"__typename":"T","id":"2"}],"b":{"__typename":"T","id":"3"}}"#,
-        )
-        .unwrap();
-        let a = vec![PathSegment::Field("a".into()), PathSegment::List];
-        let b = vec![PathSegment::Field("b".into())];
-        let paths = [&a, &b, &a, &b, &b];
-        let trie = PathTrie::new(paths.iter().map(|path| path.as_slice()));
-        let definition = parse_operation("{ __typename id }").definitions.remove(0);
-        let graphql_tools::parser::query::Definition::Operation(
-            graphql_tools::parser::query::OperationDefinition::SelectionSet(selection),
-        ) = definition
-        else {
-            panic!("selection");
-        };
-        let requires = RequiresSelectionSet::from(&SelectionSet::from(selection));
-        let possible_types = PossibleTypes::default();
-        let path_values = collect_path_values(&trie, &data, &possible_types, 0);
-        let collect = |paths: Range<usize>| {
-            let Collected {
-                groups, targets, ..
-            } = collect_context_entities(
-                EntityPaths {
-                    data: &data,
-                    trie: &trie,
-                    paths,
-                    path_values: Some(&path_values),
-                },
-                EntityInputs {
-                    requires: &requires,
-                    input_rewrites: None,
-                    context: &None,
-                    subgraph_keys: None,
-                    reuse: None,
-                },
-                &possible_types,
-            );
-            (groups, targets)
-        };
-
-        let (groups, first) = collect(0..2);
-        assert_eq!(groups[0].count, 3);
-        assert_eq!(first.path(0).len(), 2);
-        assert_eq!(first.path(1).len(), 1);
-
-        // the second alias collects its own `a` and `b`, its second `b` shares the first one's
-        let (groups, second) = collect(2..5);
-        assert_eq!(groups[0].count, 3);
-        assert_eq!(second.paths.len(), 3);
-        assert_eq!(second.paths[1], second.paths[2]);
-        assert_eq!(second.targets.len(), 3);
-        assert_eq!(second.iter().count(), 4);
     }
 
     #[test]

@@ -20,10 +20,8 @@ use crate::{
 /// Puts every object at the planner's sources that has all the fields of a representation into
 /// `seen`, by the same hash a representation of it would get.
 ///
-/// A target whose representation hashes the same gets a copy of that object, without comparing
-/// their fields, the way deduplicating representations already trusts the hash. That assumes a
-/// 64-bit hash spreads entities evenly, so two different ones colliding is vanishingly unlikely.
-/// If they did, the target would get the other entity's fields.
+/// A target whose representation hashes the same gets a copy without comparing fields, trusting
+/// the 64-bit hash like deduplicating representations does.
 pub(super) fn index_sources<'d, 'v>(
     reuse: &EntityReuse,
     data: &'d Value<'v>,

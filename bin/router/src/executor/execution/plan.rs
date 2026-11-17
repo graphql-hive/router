@@ -10,7 +10,7 @@ use crate::query_planner::ast::operation::{ContextAliasTemplate, SubgraphFetchOp
 use crate::query_planner::planner::plan_nodes::dependencies::{plan_fetches, PlanSchedule};
 use crate::query_planner::planner::plan_nodes::{
     BatchFetchNode, ConditionGroup, CustomScalarPaths, FetchContext, FetchNode, FlattenNode,
-    TriePath,
+    PathList, TriePath,
 };
 use crate::query_planner::{
     ast::operation::OperationDefinition,
@@ -2356,19 +2356,27 @@ mod tests {
         let requires_selection = document_into_selection(requires_query);
 
         let shared_var = "__batch_reps_0".to_string();
-        let products_path = || -> crate::query_planner::planner::plan_nodes::TriePaths {
-            vec![FlattenNodePath::from(vec![
-                PathSegment::Field("products".into()),
-                PathSegment::List,
-            ])]
-            .into()
+        // both aliases merge into `products`, in the one trie of the batch
+        let products = FlattenNodePath::from(vec![
+            PathSegment::Field("products".into()),
+            PathSegment::List,
+        ]);
+        let trie = Arc::new(crate::executor::utils::traverse::PathTrie::new([
+            products.as_slice(),
+            products.as_slice(),
+        ]));
+        let products_path = |alias: usize| {
+            crate::query_planner::planner::plan_nodes::TriePaths::new(
+                trie.clone(),
+                alias..alias + 1,
+            )
         };
-        let mut entity_batch = EntityBatch {
+        let entity_batch = EntityBatch {
             aliases: vec![
                 EntityBatchAlias {
                     alias: "_e0".to_string(),
                     representations_variable_name: shared_var.clone(),
-                    merge_paths: products_path(),
+                    merge_paths: products_path(0),
                     requires: requires_from(requires_selection.clone()),
                     input_rewrites: None,
                     output_rewrites: None,
@@ -2379,7 +2387,7 @@ mod tests {
                 EntityBatchAlias {
                     alias: "_e1".to_string(),
                     representations_variable_name: shared_var,
-                    merge_paths: products_path(),
+                    merge_paths: products_path(1),
                     requires: requires_from(requires_selection),
                     input_rewrites: None,
                     output_rewrites: None,
@@ -2389,7 +2397,6 @@ mod tests {
                 },
             ],
         };
-        entity_batch.build_tries();
 
         let (_, waves) = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None, None);
 
@@ -2399,6 +2406,7 @@ mod tests {
         assert_eq!(raw_variable_values.len(), 1);
         assert_eq!(raw_variable_values[0].0, "__batch_reps_0");
 
+        let mut entity_batch = entity_batch;
         for (index, alias) in entity_batch.aliases.iter_mut().enumerate() {
             alias.context = crate::query_planner::planner::plan_nodes::FetchContext::new(
                 vec![format!("__context_{index}")],

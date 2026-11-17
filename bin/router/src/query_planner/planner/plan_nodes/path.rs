@@ -200,14 +200,6 @@ impl TriePaths {
         &self.trie
     }
 
-    pub fn len(&self) -> usize {
-        self.len as usize
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
     /// The alias's paths among the ones of [`Self::trie`]
     pub fn range(&self) -> Range<usize> {
         self.start as usize..(self.start + self.len) as usize
@@ -221,7 +213,7 @@ impl TriePaths {
 
 impl PathList for TriePaths {
     fn len(&self) -> usize {
-        TriePaths::len(self)
+        self.len as usize
     }
 
     fn to_paths(&self) -> Cow<'_, [FlattenNodePath]> {
@@ -236,8 +228,7 @@ impl Serialize for TriePaths {
 }
 
 impl From<Vec<FlattenNodePath>> for TriePaths {
-    /// A trie of their own. Only a plan's `into_executable` puts an alias's together with the
-    /// other ones of its batch, or `EntityBatch::build_tries` in tests
+    /// A trie of their own. A plan's `into_executable` puts an alias's in the batch's trie.
     fn from(paths: Vec<FlattenNodePath>) -> Self {
         let trie = PathTrie::new(paths.iter().map(FlattenNodePath::as_slice));
         Self::new(Arc::new(trie), 0..paths.len())
@@ -321,11 +312,9 @@ impl From<&MergePath> for FlattenNodePath {
         path.inner
             .iter()
             .map(|segment| match segment {
-                Segment::TypeCondition(type_names, _) => {
-                    PathSegment::TypeCondition(std::sync::Arc::new(TypeCondition::from_names(
-                        type_names.iter().map(String::as_str),
-                    )))
-                }
+                Segment::TypeCondition(type_names, _) => PathSegment::TypeCondition(Arc::new(
+                    TypeCondition::from_names(type_names.iter().map(String::as_str)),
+                )),
                 Segment::Field(field_seg, _args_hash, _) => {
                     PathSegment::Field(field_seg.response_key().into())
                 }
@@ -407,9 +396,7 @@ mod type_condition_tests {
     fn a_path_round_trips_through_an_unordered_condition() {
         let expected: FlattenNodePath = vec![
             PathSegment::Field("media".into()),
-            PathSegment::TypeCondition(std::sync::Arc::new(TypeCondition::from_names([
-                "Book", "User",
-            ]))),
+            PathSegment::TypeCondition(Arc::new(TypeCondition::from_names(["Book", "User"]))),
         ]
         .into();
 

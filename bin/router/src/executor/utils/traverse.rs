@@ -47,15 +47,12 @@ const FIELDS_BY_NAME_FROM: usize = 8;
 /// No list step below a node, or nothing rare about it
 const NONE: u32 = u32::MAX;
 
-/// The paths of a fetch merged into a tree, so one walk covers all of them and the steps they
-/// share are walked once.
+/// The paths of a fetch merged into a tree, so the steps they share are walked once. Each path
+/// sees its values in the order a walk of it alone gives, so what [`PathTrie::walk`] collects
+/// lines up with what [`PathTrie::walk_mut`] gives later.
 ///
-/// Each path sees its values in the same order a walk of that path alone gives them, so hashes
-/// collected with [`PathTrie::walk`] line up with the values [`PathTrie::walk_mut`] gives later.
-///
-/// Tries stay around as long as their plan is cached. Most have one path, a flatten fetch's, and
-/// a tree of it would take a few times the memory of the path, so those keep the path as it is.
-/// It's one node, `0`.
+/// Most tries have one path, a flatten fetch's, and keep just the path, as node `0`. A tree of
+/// it would take a few times the memory in the plan cache.
 #[derive(Debug, Clone)]
 pub struct PathTrie(Repr);
 
@@ -74,10 +71,8 @@ struct Tree {
     fields: Box<[FieldStep]>,
     /// The field names of the trie. A plan's paths share their names, so most come once.
     names: Box<[Arc<str>]>,
-    /// First the node each path ends at, in the order [`PathTrie::new`] got them. Then the
-    /// paths that end at every node, each node's next to each other, in that order too. Then
-    /// every node's parent, to tell a path back. One list, since small tries are the most
-    /// common and each list costs an allocation.
+    /// The node each path ends at, then the paths ending at each node, then each node's parent.
+    /// One list, so a small trie is one allocation.
     ids: Box<[u32]>,
     /// What only a few nodes have, and many tries have none of
     rare: Option<Box<RareParts>>,
@@ -135,7 +130,7 @@ fn range<T>(items: &[T], (start, len): (u32, u32)) -> &[T] {
 }
 
 /// A node while the trie is built. Its steps are linked lists in lists the whole build shares,
-/// so a build allocates per trie, not per node.
+/// so a build doesn't allocate per node.
 #[derive(Clone, Copy)]
 struct BuildNode {
     parent: u32,
@@ -1156,7 +1151,7 @@ mod tests {
     }
 
     #[test]
-    fn trie_matches_multi_type_cast() {
+    fn traverse_matches_multi_type_cast() {
         let data = Value::Object(vec![("__typename", Value::String("Book".into()))]);
         let path = path(&["|Book|User"]);
         let trie = super::PathTrie::new([path.as_slice()]);
@@ -1170,7 +1165,7 @@ mod tests {
     }
 
     #[test]
-    fn trie_rejects_non_matching_multi_type_cast() {
+    fn traverse_rejects_non_matching_multi_type_cast() {
         let data = Value::Object(vec![("__typename", Value::String("Magazine".into()))]);
         let path = path(&["|Book|User"]);
         let trie = super::PathTrie::new([path.as_slice()]);
