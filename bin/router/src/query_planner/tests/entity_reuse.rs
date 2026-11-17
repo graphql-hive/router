@@ -204,3 +204,30 @@ fn never_copies_from_a_fetch_it_does_not_depend_on() -> Result<(), Box<dyn Error
 
     Ok(())
 }
+
+#[test]
+fn an_alias_outside_the_fragment_rules_out_its_objects() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // the books at `products` get `id` from `id: sku`, outside `... on Book`. A representation
+    // read there would hold a sku, not the book's id, so the deep books can't copy from them.
+    // (the fetch puts `id: sku` into `... on Book`, which the conflict check sees, and `walk`
+    // leaves out objects whose fields aren't all in their fragment)
+    let document = parse_operation(
+        r#"{
+          products {
+            id: sku
+            ... on Book { title reviews { product { ... on Book { title } } } }
+          }
+        }"#,
+    );
+    let query_plan = plan_with_reuse("fixture/tests/abstract-types.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(describe(&query_plan), @r"
+    [2] products at root <- - after []
+    [4] reviews at products.@|[Book] <- - after [2]
+    [3] books at products.@|[Book] <- - after [2]
+    [5] books at products.@|[Book].reviews.@.product|[Book] <- - after [4]
+    ");
+
+    Ok(())
+}

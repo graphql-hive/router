@@ -27,7 +27,10 @@ use crate::query_planner::{
         merge_path::MergePath,
         requires::RequiresSelectionSet,
         selection_item::SelectionItem,
-        selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
+        selection_set::{
+            fields_through_fragments, response_keys_conflict, FieldSelection,
+            InlineFragmentSelection, SelectionSet,
+        },
     },
     planner::{
         fetch::{
@@ -352,7 +355,14 @@ impl<'a> EntityReuseIndex<'a> {
         };
         let mut path = Vec::new();
         for (definition_name, selections) in step.output.iter_selections() {
-            self.walk(&mut start, &mut path, selections, definition_name, index);
+            self.walk(
+                &mut start,
+                &mut path,
+                selections,
+                definition_name,
+                index,
+                true,
+            );
         }
     }
 
@@ -491,6 +501,11 @@ impl<'a> EntityReuseIndex<'a> {
         reuse
     }
 
+    /// `record` is false under a fragment whose enclosing selection has more than `__typename`
+    /// for the same objects. A fetch's selection normally doesn't, every field goes into the
+    /// fragment of each type. If one did, a field there like `id: username` would put another
+    /// value under a key of these objects, one the conflict check in `find_in` doesn't see, so
+    /// they're no source.
     fn walk(
         &mut self,
         start: &mut LazyStart<'_>,
@@ -498,9 +513,12 @@ impl<'a> EntityReuseIndex<'a> {
         selections: &'a SelectionSet,
         current_type: &'a str,
         step: NodeIndex,
+        record: bool,
     ) {
-        if let Some(positions) = self.positions.get_mut(current_type) {
-            positions.add(start.get(), path, selections, step);
+        if record {
+            if let Some(positions) = self.positions.get_mut(current_type) {
+                positions.add(start.get(), path, selections, step);
+            }
         }
 
         for item in &selections.items {
@@ -521,14 +539,16 @@ impl<'a> EntityReuseIndex<'a> {
                         path.push(Segment::List);
                     }
                     let field_type = field_type.inner_type();
-                    self.walk(start, path, &field.selections, field_type, step);
+                    // another object, its selection is all of it
+                    self.walk(start, path, &field.selections, field_type, step, true);
                 }
                 SelectionItem::InlineFragment(fragment) => {
                     if fragment.type_condition != current_type {
                         path.push(Segment::TypeCondition(&fragment.type_condition));
                     }
                     let condition = &fragment.type_condition;
-                    self.walk(start, path, &fragment.selections, condition, step);
+                    let record = record && only_typename_besides_fragments(selections);
+                    self.walk(start, path, &fragment.selections, condition, step, record);
                 }
                 _ => {}
             }
@@ -665,7 +685,7 @@ fn find_in(
         let path = position.path.index();
         if source[path] != SourceMatch::Unmatched
             && position.keys.shares_any(wanted.representation_keys)
-            && conflicts_with(position.selections, wanted.representation)
+            && response_keys_conflict(position.selections, wanted.representation)
         {
             source[path] = SourceMatch::Unmatched;
         }
@@ -720,7 +740,7 @@ fn wanted(step: &Step) -> Option<(&str, &SelectionSet)> {
 
 /// One bit per response key of the fields in `selections` that pass `keep`. A position can only
 /// cover a selection if it has all of its bits, and only conflict with one if they share a bit.
-fn key_mask(selections: &SelectionSet, keep: impl Fn(&FieldSelection) -> bool) -> KeyMask {
+fn key_mask(selections: &SelectionSet, keep: impl Fn(&FieldSelection) -> bool + Copy) -> KeyMask {
     KeyMask(selections.items.iter().fold(0, |mask, item| match item {
         SelectionItem::Field(field) if keep(field) => {
             let key = field.selection_identifier();
@@ -729,6 +749,8 @@ fn key_mask(selections: &SelectionSet, keep: impl Fn(&FieldSelection) -> bool) -
             });
             mask | 1 << (hash % 64)
         }
+        // their fields write the same object, see `response_keys_conflict`
+        SelectionItem::InlineFragment(fragment) => mask | key_mask(&fragment.selections, keep).0,
         _ => mask,
     }))
 }
@@ -811,22 +833,12 @@ fn resolved_by<'s>(
         .then_some(field)
 }
 
-/// Does `selections` put a different field (or arguments) under a response key `representation`
-/// reads?
-fn conflicts_with(selections: &SelectionSet, representation: &SelectionSet) -> bool {
-    representation.items.iter().any(|item| {
-        let SelectionItem::Field(wanted) = item else {
-            return false;
-        };
-        selections.items.iter().any(|item| {
-            let SelectionItem::Field(field) = item else {
-                return false;
-            };
-            field.selection_identifier() == wanted.selection_identifier()
-                && (field.name != wanted.name
-                    || field.arguments != wanted.arguments
-                    || conflicts_with(&field.selections, &wanted.selections))
-        })
+/// Whether the selection above a type fragment has only `__typename` and fragments, the rest of
+/// its fields in those fragments. See `walk`.
+fn only_typename_besides_fragments(selections: &SelectionSet) -> bool {
+    selections.items.iter().all(|item| match item {
+        SelectionItem::Field(field) => field.name == "__typename",
+        _ => true,
     })
 }
 
@@ -875,6 +887,42 @@ mod tests {
         let overrides = "fixture/tests/simple-progressive-overrides.supergraph.graphql";
         assert!(resolves(overrides, "Post", "createdAt", "a"));
         assert!(resolves(overrides, "Post", "createdAt", "b"));
+    }
+
+    fn selections(query: &str) -> SelectionSet {
+        let definition = crate::query_planner::utils::parsing::parse_operation(query)
+            .definitions
+            .remove(0);
+        let graphql_tools::parser::query::Definition::Operation(
+            graphql_tools::parser::query::OperationDefinition::SelectionSet(selection),
+        ) = definition
+        else {
+            panic!("selection");
+        };
+        SelectionSet::from(selection)
+    }
+
+    #[test]
+    fn an_alias_inside_a_fragment_conflicts_with_the_representation() {
+        let representation = selections("{ __typename id }");
+        let source = selections("{ name ... on Node { id: username } }");
+        let representation_keys = key_mask(&representation, |_| true);
+        assert!(key_mask(&source, |_| true).shares_any(representation_keys));
+        assert!(response_keys_conflict(&source, &representation));
+        assert!(!response_keys_conflict(
+            &selections("{ name ... on Node { id } }"),
+            &representation
+        ));
+    }
+
+    #[test]
+    fn objects_with_fields_outside_their_fragment_are_left_out() {
+        assert!(only_typename_besides_fragments(&selections(
+            "{ __typename ... on User { id } }"
+        )));
+        assert!(!only_typename_besides_fragments(&selections(
+            "{ id: username ... on User { name } }"
+        )));
     }
 
     #[test]
