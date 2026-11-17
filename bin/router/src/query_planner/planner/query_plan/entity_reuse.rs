@@ -5,8 +5,10 @@
 //!
 //! The one exception: an entity fetch that asks a subgraph what an earlier one asked it
 //! (the same field deeper in the query, say) waits for that one too, if that lets it copy more.
-//! The earlier one was sent first, so the wait is usually short, and it saves a subgraph call.
-//! [`WAIT_FOR_SAME_FETCH`] turns it off.
+//! Only when the earlier one waits for nothing this one doesn't already: then it's ready no later
+//! than this one, the wait is at most the rest of that one call, and it saves a subgraph call.
+//! An earlier planner wave alone doesn't promise that, the earlier one could be held up by a slow
+//! chain this one never waits for. [`WAIT_FOR_SAME_FETCH`] turns it off.
 //!
 //! Fields are matched by name, arguments and response key, not by subgraph.
 //! A field resolved by two subgraphs is `@shareable`, which promises the same data.
@@ -76,6 +78,8 @@ struct EarlierEntityFetch<'a> {
     service: &'a str,
     type_name: &'a str,
     needed: &'a SelectionSet,
+    /// what it waits for, a later fetch only waits for it when it waits for all of that anyway
+    depends_on: Dependencies,
 }
 
 /// What an entity fetch would copy: its type and fields, and the representation the executor
@@ -191,6 +195,14 @@ impl Dependencies {
 
     fn contains(&self, step: NodeIndex) -> bool {
         self.0[step.index()]
+    }
+
+    fn contains_all(&self, other: &Dependencies) -> bool {
+        other
+            .0
+            .iter()
+            .zip(&self.0)
+            .all(|(&theirs, &ours)| !theirs || ours)
     }
 
     /// Adds `step` and every step it depends on
@@ -345,6 +357,7 @@ impl<'a> EntityReuseIndex<'a> {
                 service: &step.service_name.0,
                 type_name,
                 needed,
+                depends_on: Dependencies::of(self.fetch_graph, index),
             });
         }
         self.found.clear();
@@ -440,6 +453,10 @@ impl<'a> EntityReuseIndex<'a> {
                 || earlier.type_name != wanted.type_name
                 || !covers(earlier.needed, wanted.needed)
             {
+                continue;
+            }
+            // it could be held up by something this one doesn't wait for, see the module docs
+            if !depends_on.contains_all(&earlier.depends_on) {
                 continue;
             }
             expanded
