@@ -160,7 +160,7 @@ impl<'a> BatchFetchBuilder<'a> {
 
         let alias = format!("_e{alias_index}");
         let merge_paths = Self::collect_merge_paths(shape_group);
-        let representations_variable_name =
+        let (representations_variable_name, shared_variable) =
             self.get_or_create_representations_var(representative, &merge_paths);
 
         self.operation_selection_items
@@ -192,11 +192,13 @@ impl<'a> BatchFetchBuilder<'a> {
         // Aliases that send the same list share one variable, and only the first one's list
         // goes out. Copying could leave different entities out of each, so none of them copy.
         let mut entity_reuse = shared_entity_reuse(shape_group);
-        for earlier in self.batched_aliases.iter_mut().filter(|earlier| {
-            earlier.representations_variable_name == representations_variable_name
-        }) {
-            earlier.entity_reuse = None;
+        if shared_variable {
             entity_reuse = None;
+            for earlier in self.batched_aliases.iter_mut().filter(|earlier| {
+                earlier.representations_variable_name == representations_variable_name
+            }) {
+                earlier.entity_reuse = None;
+            }
         }
 
         self.batched_aliases.push(EntityBatchAlias {
@@ -228,11 +230,13 @@ impl<'a> BatchFetchBuilder<'a> {
         merge_paths
     }
 
+    /// The variable the alias sends its representations in, and whether an earlier alias
+    /// already sends the same list in it
     fn get_or_create_representations_var(
         &mut self,
         representative: &EntityFetch,
         merge_paths: &[FlattenNodePath],
-    ) -> String {
+    ) -> (String, bool) {
         let representations_input_key = RepresentationsInputKey {
             requires: representative.requires.clone(),
             input_rewrites: representative.input_rewrites.clone(),
@@ -245,7 +249,7 @@ impl<'a> BatchFetchBuilder<'a> {
             .representations_var_by_input_key
             .get(&representations_input_key)
         {
-            return existing_name.clone();
+            return (existing_name.clone(), true);
         }
 
         let name = next_unique_representations_var_name(
@@ -273,7 +277,7 @@ impl<'a> BatchFetchBuilder<'a> {
         self.representations_var_by_input_key
             .insert(representations_input_key, name.clone());
 
-        name
+        (name, false)
     }
 
     fn finish(
