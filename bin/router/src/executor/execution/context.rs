@@ -1346,7 +1346,7 @@ mod tests {
 
     #[test]
     fn copies_of_aliases_sharing_a_trie_merge_in_one_walk() {
-        use crate::executor::execution::entity_reuse::{merge_copies, Copies};
+        use crate::executor::execution::entity_reuse::{merge_copies, EntityCopyBatch};
         use std::sync::Arc;
 
         let mut data: Value<'_> =
@@ -1360,23 +1360,23 @@ mod tests {
         let copied = |index| Some(EntityRef::Copied { index });
         let field =
             |name, value: &'static str| Value::Object(vec![(name, Value::String(value.into()))]);
-        let first = Copies {
+        let first = EntityCopyBatch {
             trie: &trie,
             paths: 0..2,
-            targets: Arc::new(TargetEntities {
+            targets_by_path: Arc::new(TargetEntities {
                 targets: vec![copied(0), None, copied(1)],
                 paths: vec![0..2, 2..3],
             }),
-            copies: vec![field("x", "a0"), field("x", "b0")],
+            entities: vec![field("x", "a0"), field("x", "b0")],
         };
-        let second = Copies {
+        let second = EntityCopyBatch {
             trie: &trie,
             paths: 2..3,
-            targets: Arc::new(TargetEntities {
+            targets_by_path: Arc::new(TargetEntities {
                 targets: vec![None, copied(0)],
                 paths: vec![0..2],
             }),
-            copies: vec![field("y", "a1")],
+            entities: vec![field("y", "a1")],
         };
         merge_copies(&mut data, vec![first, second], &PossibleTypes::default());
         assert_eq!(

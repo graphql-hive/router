@@ -39,7 +39,7 @@ use tracing::{debug, error, warn, Instrument};
 use crate::executor::execution::client_request_details::OperationDetails;
 use crate::executor::execution::context::Collected;
 use crate::executor::execution::demand_control::DemandControlExecutionContext;
-use crate::executor::execution::entity_reuse::{self, Copies};
+use crate::executor::execution::entity_reuse::{self, EntityCopyBatch};
 use crate::executor::execution::error_masking::ErrorMaskingRuntime;
 use crate::executor::execution::operation_name::OperationNameFactory;
 use crate::executor::executors::common::ConnectionFingerprint;
@@ -942,17 +942,17 @@ impl<'exec> Executor<'exec> {
         loop {
             while let Some(index) = ready.pop() {
                 // `ctx.data` is only borrowed to prepare the jobs, they run without it
-                let mut copies = Vec::new();
+                let mut copied = Vec::new();
                 let jobs = self.prepare_job_future(
                     fetches[index as usize],
                     &ctx.data,
-                    self.copy_into(ctx, &mut copies),
+                    self.copy_into(ctx, &mut copied),
                 );
                 // in before anything waiting for this fetch is prepared, a fetch that copied
                 // everything has no jobs and lets them go right away
                 entity_reuse::merge_copies(
                     &mut ctx.data,
-                    copies,
+                    copied,
                     &self.schema_metadata.possible_types,
                 );
                 if jobs.is_empty() {
@@ -991,9 +991,9 @@ impl<'exec> Executor<'exec> {
     fn copy_into<'c>(
         &self,
         ctx: &ExecutionContext<'exec>,
-        copies: &'c mut Vec<Copies<'exec, 'exec>>,
-    ) -> Option<&'c mut Vec<Copies<'exec, 'exec>>> {
-        (self.executors.entity_reuse_enabled() && ctx.errors.is_empty()).then_some(copies)
+        copied: &'c mut Vec<EntityCopyBatch<'exec, 'exec>>,
+    ) -> Option<&'c mut Vec<EntityCopyBatch<'exec, 'exec>>> {
+        (self.executors.entity_reuse_enabled() && ctx.errors.is_empty()).then_some(copied)
     }
 
     fn prepare_root_reentry_fetch_job<'wave>(
@@ -1214,7 +1214,7 @@ impl<'exec> Executor<'exec> {
         &'wave self,
         node: &'exec PlanNode,
         data: &Value<'exec>,
-        copy_into: Option<&mut Vec<Copies<'exec, 'exec>>>,
+        copy_into: Option<&mut Vec<EntityCopyBatch<'exec, 'exec>>>,
     ) -> Vec<BoxFuture<'wave, Result<ExecutionJob<'exec>, PlanExecutionError>>> {
         match node {
             PlanNode::Fetch(fetch_node) if !self.runs(fetch_node.run_if.as_deref()) => Vec::new(),
@@ -1340,11 +1340,11 @@ impl<'exec> Executor<'exec> {
                 );
                 let targets = Arc::new(targets);
                 if let Some(copy_into) = copy_into.filter(|_| !copies.is_empty()) {
-                    copy_into.push(Copies {
+                    copy_into.push(EntityCopyBatch {
                         trie,
                         paths: 0..trie.ends().len(),
-                        targets: Arc::clone(&targets),
-                        copies,
+                        targets_by_path: Arc::clone(&targets),
+                        entities: copies,
                     });
                 }
 
@@ -1845,7 +1845,7 @@ impl<'exec> Executor<'exec> {
         entity_batch: &'exec EntityBatch,
         data: &Value<'exec>,
         subgraph_keys: Option<&KeysByType>,
-        mut copy_into: Option<&mut Vec<Copies<'exec, 'exec>>>,
+        mut copy_into: Option<&mut Vec<EntityCopyBatch<'exec, 'exec>>>,
     ) -> (&'exec PathTrie, Vec<BatchWave<'exec>>) {
         let possible_types = &self.schema_metadata.possible_types;
         let trie = entity_batch.trie();
@@ -1891,11 +1891,11 @@ impl<'exec> Executor<'exec> {
                 );
                 let targets = Arc::new(targets);
                 if let Some(copy_into) = copy_into.as_deref_mut().filter(|_| !copies.is_empty()) {
-                    copy_into.push(Copies {
+                    copy_into.push(EntityCopyBatch {
                         trie,
                         paths,
-                        targets: Arc::clone(&targets),
-                        copies,
+                        targets_by_path: Arc::clone(&targets),
+                        entities: copies,
                     });
                 }
                 (groups, targets)
