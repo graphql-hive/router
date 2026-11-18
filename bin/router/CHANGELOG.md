@@ -116,6 +116,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.3.16 (2026-11-18)
+
+### Fixes
+
+#### Raise the open files limit on start
+
+On start, the router now raises its soft open files limit up to the hard limit. It logs the old and new limits, or a warning if the raise fails.
+
 ## 0.3.15 (2026-11-17)
 
 ### Features
