@@ -161,6 +161,7 @@ impl Serialize for SelectionSet {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct FieldSelection {
     pub name: String,
     #[serde(skip_serializing_if = "SelectionSet::is_empty")]
@@ -179,11 +180,7 @@ pub struct FieldSelection {
     /// due to a field being `@skip(if: true)` or `@include(if: false)`,
     /// and used to avoid sending empty selection sets,
     /// and to project an empty object.
-    #[serde(
-        rename = "omitFromResponse",
-        default,
-        skip_serializing_if = "std::ops::Not::not"
-    )]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub omit_from_response: bool,
 }
 
