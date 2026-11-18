@@ -41,6 +41,7 @@ pub struct RequiresSelectionSetRef<'a> {
 #[derive(Serialize)]
 #[serde(tag = "kind")]
 pub enum RequiresSelection<'a> {
+    #[serde(rename_all = "camelCase")]
     Field {
         name: &'a str,
         #[serde(skip_serializing_if = "RequiresSelectionSetRef::is_empty")]
@@ -484,7 +485,7 @@ mod tests {
 
         let json = serde_json::to_string(&compact).expect("serializes");
         assert_eq!(
-            json.matches("\"omit_from_response\":true").count(),
+            json.matches("\"omitFromResponse\":true").count(),
             3,
             "expected exactly the three omitted fields to serialize the flag: {json}"
         );

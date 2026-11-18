@@ -11,7 +11,7 @@ use napi_derive::napi;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::query_plan::{QueryPlanError, QueryPlanTask};
+use crate::query_plan::{JsQueryPlan, QueryPlanError, QueryPlanTask};
 
 #[napi]
 pub struct QueryPlanner {
@@ -100,7 +100,7 @@ impl QueryPlanner {
             &cancellation_token,
         )?;
 
-        env.to_js_value(&query_plan)
+        env.to_js_value(&JsQueryPlan(&query_plan))
     }
 
     #[napi(ts_return_type = "Promise<QueryPlan>")]

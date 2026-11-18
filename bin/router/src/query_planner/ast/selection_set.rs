@@ -161,6 +161,7 @@ impl Serialize for SelectionSet {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct FieldSelection {
     pub name: String,
     #[serde(skip_serializing_if = "SelectionSet::is_empty")]

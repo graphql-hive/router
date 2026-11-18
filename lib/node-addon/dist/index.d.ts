@@ -25,13 +25,19 @@ export type PlanNode =
   | SubscriptionNode
   | DeferNode;
 
+/**
+ * A fetch's number in its plan. Fetches name the fetches they wait for by it, in `dependsOn`.
+ * It's not the fetch's position in the plan.
+ */
+export type FetchId = number;
+
 export interface FetchNode {
   kind: "Fetch";
   serviceName: string;
   variableUsages?: string[];
   operationKind?: "query" | "mutation" | "subscription";
-  operationName?: string;
   operation: string;
+  customScalarPaths?: CustomScalarPaths;
   requires?: RequiresSelection[];
   inputRewrites?: InputRewrite[];
   outputRewrites?: OutputRewrite[];
@@ -39,6 +45,22 @@ export interface FetchNode {
   contextVariables?: string[];
   /** The fetch runs when any of these holds, always when missing. */
   runIf?: ConditionGroup[];
+  id: FetchId;
+  /**
+   * The fetches whose data this fetch reads, it can start once they're all done. Empty for a
+   * fetch that reads nothing another fetch brings, like a root fetch. An id merged into a
+   * batch fetch stands for that batch, see `BatchFetchNode.completes`.
+   */
+  dependsOn: FetchId[];
+}
+
+/**
+ * The response paths, under the fetch's response data, that hold custom scalar values.
+ * A `terminal` path is a custom scalar itself.
+ */
+export interface CustomScalarPaths {
+  children?: Record<string, CustomScalarPaths>;
+  terminal?: boolean;
 }
 
 /** Holds when every `includeIf` variable is `true` and no `skipIf` one is. */
@@ -52,9 +74,17 @@ export interface BatchFetchNode {
   serviceName: string;
   variableUsages?: string[];
   operationKind?: "query" | "mutation" | "subscription";
-  operationName?: string;
   operation: string;
+  customScalarPaths?: CustomScalarPaths;
   entityBatch: EntityBatch;
+  /** The first of the ids in `completes`. */
+  id: FetchId;
+  /** What the fetches merged into this batch waited for, without those fetches themselves. */
+  dependsOn: FetchId[];
+  /**
+   * Every fetch merged into this batch. A fetch that depends on any of them depends on the batch.
+   */
+  completes: FetchId[];
 }
 
 export interface EntityBatch {
@@ -86,9 +116,7 @@ export type FetchNodePathSegment =
 
 export type FetchRewrite =
   | { ValueSetter: ValueSetter }
-  | { KeyRenamer: KeyRenamer }
-  // TODO: why sometimes? see query plans of federation tests in hive gateway
-  | ({ kind: "ValueSetter" } & ValueSetter);
+  | { KeyRenamer: KeyRenamer };
 
 export type InputRewrite = FetchRewrite;
 export type OutputRewrite = FetchRewrite;
@@ -116,17 +144,10 @@ export interface FieldRequiresNode {
   name: string;
   alias?: string;
   selections?: RequiresSelection[];
+  omitFromResponse?: boolean;
 }
 
-export interface FragmentSpreadRequiresNode {
-  kind: "FragmentSpread";
-  value: string;
-}
-
-export type RequiresSelection =
-  | InlineFragmentRequiresNode
-  | FieldRequiresNode
-  | FragmentSpreadRequiresNode;
+export type RequiresSelection = InlineFragmentRequiresNode | FieldRequiresNode;
 
 export interface SequenceNode {
   kind: "Sequence";
@@ -156,8 +177,8 @@ export interface DeferNode {
 }
 
 export interface DeferPrimary {
-  subselection?: string;
-  node?: PlanNode;
+  subselection: string | null;
+  node: PlanNode | null;
 }
 
 export interface DeferredNode {
