@@ -11,13 +11,17 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "{topProducts{__typename upc name price weight}}"
+            "operation": "{topProducts{__typename upc name price weight}}",
+            "id": 15,
+            "dependsOn": []
           },
           {
             "kind": "Fetch",
             "serviceName": "accounts",
             "operationKind": "query",
-            "operation": "{users{__typename id username name}}"
+            "operation": "{users{__typename id username name}}",
+            "id": 2,
+            "dependsOn": []
           }
         ]
       },
@@ -60,6 +64,10 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                     }
                   ]
                 }
+              ],
+              "id": 17,
+              "dependsOn": [
+                15
               ]
             }
           },
@@ -127,7 +135,16 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                   ]
                 }
               ]
-            }
+            },
+            "id": 20,
+            "dependsOn": [
+              2,
+              15
+            ],
+            "completes": [
+              20,
+              3
+            ]
           }
         ]
       },
@@ -224,7 +241,17 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                   ]
                 }
               ]
-            }
+            },
+            "id": 25,
+            "dependsOn": [
+              3,
+              20
+            ],
+            "completes": [
+              25,
+              7,
+              13
+            ]
           },
           {
             "kind": "BatchFetch",
@@ -289,7 +316,16 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                   ]
                 }
               ]
-            }
+            },
+            "id": 21,
+            "dependsOn": [
+              3,
+              20
+            ],
+            "completes": [
+              21,
+              9
+            ]
           }
         ]
       },
@@ -391,7 +427,18 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
               ]
             }
           ]
-        }
+        },
+        "id": 22,
+        "dependsOn": [
+          7,
+          13,
+          25
+        ],
+        "completes": [
+          22,
+          4,
+          10
+        ]
       }
     ]
   }
@@ -405,7 +452,9 @@ exports[`fixtures > should plan simple-inaccessible/test-2.graphql 1`] = `
     "kind": "Fetch",
     "serviceName": "friends",
     "operationKind": "query",
-    "operation": "{usersInFriends{id friends(type: FRIEND){id}}}"
+    "operation": "{usersInFriends{id friends(type: FRIEND){id}}}",
+    "id": 2,
+    "dependsOn": []
   }
 }
 `;
@@ -423,13 +472,17 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "{topProducts{__typename upc name price weight}}"
+            "operation": "{topProducts{__typename upc name price weight}}",
+            "id": 15,
+            "dependsOn": []
           },
           {
             "kind": "Fetch",
             "serviceName": "accounts",
             "operationKind": "query",
-            "operation": "{users{__typename id username name}}"
+            "operation": "{users{__typename id username name}}",
+            "id": 2,
+            "dependsOn": []
           }
         ]
       },
@@ -472,6 +525,10 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
                     }
                   ]
                 }
+              ],
+              "id": 17,
+              "dependsOn": [
+                15
               ]
             }
           },
@@ -539,7 +596,16 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
                   ]
                 }
               ]
-            }
+            },
+            "id": 20,
+            "dependsOn": [
+              2,
+              15
+            ],
+            "completes": [
+              20,
+              3
+            ]
           }
         ]
       },
@@ -636,7 +702,17 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
                   ]
                 }
               ]
-            }
+            },
+            "id": 25,
+            "dependsOn": [
+              3,
+              20
+            ],
+            "completes": [
+              25,
+              7,
+              13
+            ]
           },
           {
             "kind": "BatchFetch",
@@ -701,7 +777,16 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
                   ]
                 }
               ]
-            }
+            },
+            "id": 21,
+            "dependsOn": [
+              3,
+              20
+            ],
+            "completes": [
+              21,
+              9
+            ]
           }
         ]
       },
@@ -803,7 +888,18 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
               ]
             }
           ]
-        }
+        },
+        "id": 22,
+        "dependsOn": [
+          7,
+          13,
+          25
+        ],
+        "completes": [
+          22,
+          4,
+          10
+        ]
       }
     ]
   }
@@ -817,7 +913,9 @@ exports[`fixtures > should planAsync simple-inaccessible/test-2.graphql 1`] = `
     "kind": "Fetch",
     "serviceName": "friends",
     "operationKind": "query",
-    "operation": "{usersInFriends{id friends(type: FRIEND){id}}}"
+    "operation": "{usersInFriends{id friends(type: FRIEND){id}}}",
+    "id": 2,
+    "dependsOn": []
   }
 }
 `;
