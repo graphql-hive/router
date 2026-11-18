@@ -187,8 +187,8 @@ export interface DeferNode {
 }
 
 export interface DeferPrimary {
-  subselection?: string;
-  node?: PlanNode;
+  subselection: string | null;
+  node: PlanNode | null;
 }
 
 export interface DeferredNode {
