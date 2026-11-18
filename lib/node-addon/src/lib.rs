@@ -8,7 +8,7 @@ use hive_router::query_planner::utils::parsing::safe_parse_schema;
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use crate::query_plan::{JsQueryPlan, QueryPlanError, QueryPlanTask};
@@ -19,6 +19,7 @@ pub struct QueryPlanner {
     pub consumer_schema: String,
     pub override_labels: Vec<String>,
     pub override_percentages: Vec<f64>,
+    entity_keys: BTreeMap<String, BTreeMap<String, Vec<Vec<String>>>>,
 }
 
 // TODO: Did not find struct `QueryPlanner` parsed before expand #[napi] for impl?
@@ -51,12 +52,38 @@ impl QueryPlanner {
             .map(|p| (*p as f64) / (PERCENTAGE_SCALE_FACTOR as f64))
             .collect();
 
+        let entity_keys = planner
+            .supergraph
+            .known_subgraphs
+            .values()
+            .filter_map(|subgraph| {
+                let keys = planner.supergraph.entity_keys.of_subgraph(subgraph)?;
+                let keys = keys
+                    .iter()
+                    .map(|(type_name, keys)| (type_name.clone(), keys.clone()))
+                    .collect();
+                Some((subgraph.clone(), keys))
+            })
+            .collect();
+
         Ok(QueryPlanner {
             planner,
             consumer_schema,
             override_labels,
             override_percentages,
+            entity_keys,
         })
+    }
+
+    /// Each subgraph's resolvable `@key`s, by subgraph name and then entity type. A key is its
+    /// top-level fields without `__typename`, like `["id", "org"]` for
+    /// `@key(fields: "id org { id }")`, and `[]` for a key of `__typename` alone. A representation
+    /// goes to a subgraph only when it has every field of at least one of its type's keys there.
+    /// Then a field it misses is sent as `null`. Without keys for the type, a representation that
+    /// misses any field is left out.
+    #[napi(getter)]
+    pub fn entity_keys(&self) -> BTreeMap<String, BTreeMap<String, Vec<Vec<String>>>> {
+        self.entity_keys.clone()
     }
 
     #[napi]

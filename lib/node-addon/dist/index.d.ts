@@ -6,6 +6,15 @@ export declare class QueryPlanner {
   overrideLabels: Array<string>
   overridePercentages: Array<number>
   constructor(supergraphSdl: string)
+  /**
+   * Each subgraph's resolvable `@key`s, by subgraph name and then entity type. A key is its
+   * top-level fields without `__typename`, like `["id", "org"]` for
+   * `@key(fields: "id org { id }")`, and `[]` for a key of `__typename` alone. A representation
+   * goes to a subgraph only when it has every field of at least one of its type's keys there.
+   * Then a field it misses is sent as `null`. Without keys for the type, a representation that
+   * misses any field is left out.
+   */
+  get entityKeys(): Record<string, Record<string, Array<Array<string>>>>
   computeCacheKey(query: string, operationName: string | undefined | null, activeLabels: Set<string>, percentageValue: number): string
   plan(query: string, operationName: string | undefined | null, activeLabels: Set<string>, percentageValue: number, signal?: AbortSignal | undefined | null): QueryPlan
   planAsync(query: string, operationName: string | undefined | null, activeLabels: Set<string>, percentageValue: number, signal?: AbortSignal | undefined | null): Promise<QueryPlan>
