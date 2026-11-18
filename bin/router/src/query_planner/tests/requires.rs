@@ -1519,3 +1519,253 @@ fn requires_after_two_entity_hops() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+/// `d` only has the `sku` key and `a` doesn't have `sku`, we get to `d` through `b`. The
+/// `@requires` step can't take the key from `a` then, it has to re-enter `d` where the key is.
+#[test]
+fn requires_reenter_key_from_other_subgraph() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          thing {
+            name
+            price
+            weight
+            shipping
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-reenter-key-from-other-subgraph.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            thing {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "thing") {
+          Fetch(service: "b") {
+            {
+              ... on Thing {
+                __typename
+                id
+                sku
+              }
+            } =>
+            {
+              ... on Thing {
+                __typename
+                name
+                price
+                sku
+                id
+              }
+            }
+          },
+        },
+        Flatten(path: "thing") {
+          Fetch(service: "c") {
+            {
+              ... on Thing {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Thing {
+                weight
+              }
+            }
+          },
+        },
+        Flatten(path: "thing") {
+          Fetch(service: "d") {
+            {
+              ... on Thing {
+                __typename
+                weight
+                sku
+              }
+            } =>
+            {
+              ... on Thing {
+                shipping
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `c` can't resolve its own key, `size` is external there. The key comes from `a`.
+#[test]
+fn requires_with_external_nested_key() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          product {
+            shipping
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-external-nested-key.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            product {
+              __typename
+              id
+              dimensions {
+                size
+              }
+            }
+          }
+        },
+        Flatten(path: "product") {
+          Fetch(service: "b") {
+            {
+              ... on Product {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                dimensions {
+                  weight
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "c") {
+            {
+              ... on Product {
+                __typename
+                dimensions {
+                  weight
+                  size
+                }
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                shipping
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Same as above, but only the `@requires` field. `b` gets `sku` for `d` and then `id` back
+/// with `sku`, so once merged it looks like it only sends back what it got. It still has to
+/// stay its own fetch, `a` can't give `sku`.
+#[test]
+fn requires_reenter_key_from_other_subgraph_only_requires_field() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          thing {
+            shipping
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-reenter-key-from-other-subgraph.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            thing {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "thing") {
+          Fetch(service: "b") {
+            {
+              ... on Thing {
+                __typename
+                id
+                sku
+              }
+            } =>
+            {
+              ... on Thing {
+                __typename
+                sku
+                id
+              }
+            }
+          },
+        },
+        Flatten(path: "thing") {
+          Fetch(service: "c") {
+            {
+              ... on Thing {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Thing {
+                weight
+              }
+            }
+          },
+        },
+        Flatten(path: "thing") {
+          Fetch(service: "d") {
+            {
+              ... on Thing {
+                __typename
+                weight
+                sku
+              }
+            } =>
+            {
+              ... on Thing {
+                shipping
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}

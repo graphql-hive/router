@@ -1786,14 +1786,7 @@ fn process_requires_field_edge(
         _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
 
-    let key_to_reenter_subgraph =
-        find_satisfiable_key(graph, supergraph, override_context, head_node_index, true)?;
     let requires_input = requires.map(|requires| fetch_graph.read_at(response_path, requires));
-    let key_input = fetch_graph.read_at(response_path, key_to_reenter_subgraph);
-    let key_output = fetch_graph.response_keys.output(
-        &place_of(response_path),
-        &key_to_reenter_subgraph.selection_set,
-    );
     let field_alias = fetch_graph.alias_at(
         response_path,
         query_node,
@@ -1803,7 +1796,7 @@ fn process_requires_field_edge(
 
     let parent_fetch_step = fetch_graph.get_step_data(parent_fetch_step_index)?;
     // In case of a field with `@requires`, the parent will be the current subgraph we're in.
-    let real_parent_fetch_step_index = match !parent_fetch_step
+    let mut real_parent_fetch_step_index = match !parent_fetch_step
         .output
         .is_selecting_definition(head_type_name)
         // The parent is an entity call of the same type, but the field sits deeper in its
@@ -1833,7 +1826,7 @@ fn process_requires_field_edge(
             .ok_or_else(|| FetchGraphError::MissingEntityOwner(parent_fetch_step_index.index()))?,
     };
     // Which subgraph (and type) these objects were loaded from. `None` if we don't know.
-    let holder_node = if real_parent_fetch_step_index == parent_fetch_step_index {
+    let mut holder_node = if real_parent_fetch_step_index == parent_fetch_step_index {
         Some(head_node_index)
     } else {
         fetch_graph
@@ -1841,6 +1834,35 @@ fn process_requires_field_edge(
             .get(&parent_fetch_step_index)
             .copied()
     };
+    // The key goes into the output of the real parent, so it has to be a key that the real
+    // parent's subgraph can hand over, not just one the head subgraph knows.
+    let key_to_reenter_subgraph = match holder_node {
+        Some(holder) if real_parent_fetch_step_index != parent_fetch_step_index => {
+            match key_from_holder(graph, supergraph, override_context, holder, head_node_index)? {
+                Some(key) => key,
+                None => {
+                    // The holder has none of the keys, we got into the head subgraph through
+                    // some other subgraph. The parent entity call already has a key of it
+                    // in the response, so re-enter from the parent.
+                    real_parent_fetch_step_index = parent_fetch_step_index;
+                    holder_node = Some(head_node_index);
+                    find_satisfiable_key(
+                        graph,
+                        supergraph,
+                        override_context,
+                        head_node_index,
+                        true,
+                    )?
+                }
+            }
+        }
+        _ => find_satisfiable_key(graph, supergraph, override_context, head_node_index, true)?,
+    };
+    let key_input = fetch_graph.read_at(response_path, key_to_reenter_subgraph);
+    let key_output = fetch_graph.response_keys.output(
+        &place_of(response_path),
+        &key_to_reenter_subgraph.selection_set,
+    );
 
     // When a field (foo) is annotated with `@requires(fields: "bar")`
     // We want to create new FetchStep (entity move) for that field (foo)
@@ -2314,6 +2336,58 @@ fn find_satisfiable_key<'a>(
     Err(FetchGraphError::Internal(String::from(
         "Failed to find Satisfiable Key",
     )))
+}
+
+/// A key of `head` that `holder`'s subgraph resolves on its own, no jumps. Goes with the one
+/// `find_satisfiable_key` picks when the holder has that one too, so plans don't move around.
+fn key_from_holder<'a>(
+    graph: &'a Graph<'a>,
+    supergraph: &'a SupergraphState,
+    override_context: &'a PlannerOverrideContext,
+    holder: NodeIndex,
+    head: NodeIndex,
+) -> Result<Option<&'a TypeAwareSelection<'a>>, FetchGraphError> {
+    let preferred = find_satisfiable_key(graph, supergraph, override_context, head, true).ok();
+    let mut edges: Vec<EdgeReference<'a>> = graph
+        .edges_from(holder)
+        .filter(|edge_ref| {
+            edge_ref.target() == head && matches!(edge_ref.weight(), Edge::EntityMove(_))
+        })
+        .collect();
+    edges.sort_by_key(|edge| std::cmp::Reverse(edge.weight().cost()));
+
+    let from_holder = OperationPath {
+        root_node: holder,
+        last_segment: None,
+        cost: 0,
+        union_context: None,
+    };
+    let mut found = None;
+    for edge_ref in edges {
+        let Some(key) = edge_ref.weight().requirements() else {
+            continue;
+        };
+        if can_satisfy_edge(
+            graph,
+            supergraph,
+            override_context,
+            &edge_ref,
+            &from_holder,
+            &Default::default(),
+            true,
+            &CancellationToken::new(),
+        )?
+        .is_none()
+        {
+            continue;
+        }
+        if preferred == Some(key) {
+            return Ok(Some(key));
+        }
+        found.get_or_insert(key);
+    }
+
+    Ok(found)
 }
 
 // TODO: simplfy args

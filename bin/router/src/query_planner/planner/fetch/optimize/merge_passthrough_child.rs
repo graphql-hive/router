@@ -8,7 +8,10 @@ use petgraph::{
 use tracing::{instrument, trace};
 
 use crate::query_planner::{
-    ast::selection_set::selection_items_are_subset_of,
+    ast::{
+        selection_item::SelectionItem,
+        selection_set::{find_selection_set_by_path, selection_items_are_subset_of},
+    },
     planner::fetch::{
         error::FetchGraphError,
         fetch_graph::FetchGraph,
@@ -113,20 +116,52 @@ impl FetchStepData<MultiTypeFetchStep> {
         }
 
         // Every type it fetches has to be in its input already, not just one of them.
-        other
+        let is_passthrough =
+            other
+                .output
+                .iter_selections()
+                .all(|(output_def_name, output_selections)| {
+                    other
+                        .input
+                        .selections_for_definition(output_def_name)
+                        .is_some_and(|input_selections| {
+                            selection_items_are_subset_of(
+                                &input_selections.items,
+                                &output_selections.items,
+                            )
+                        })
+                });
+
+        is_passthrough && self.already_outputs_passthrough_of(other)
+    }
+
+    /// The child sends back what it got, but that's not always from us. After a merge, a step
+    /// can take a field as input that it fetches itself, like `id` -> `sku` merged with
+    /// `sku` -> `id`. Its output then lands in our output, and our subgraph may not have it.
+    /// So from another subgraph, we need to output it already. `__typename` is always fine.
+    /// When we can't tell where it would land, it's merged like before.
+    fn already_outputs_passthrough_of(&self, other: &Self) -> bool {
+        if self.service_name == other.service_name {
+            return true;
+        }
+        let Some(output_type) = self.output.try_as_single() else {
+            return true;
+        };
+        let path = other.response_path.slice_from(self.response_path.len());
+        let Some(at_path) = self
             .output
-            .iter_selections()
-            .all(|(output_def_name, output_selections)| {
-                other
-                    .input
-                    .selections_for_definition(output_def_name)
-                    .is_some_and(|input_selections| {
-                        selection_items_are_subset_of(
-                            &input_selections.items,
-                            &output_selections.items,
-                        )
-                    })
+            .selections_for_definition(output_type)
+            .and_then(|output| find_selection_set_by_path(output, &path))
+        else {
+            return true;
+        };
+
+        other.output.iter_selections().all(|(_, selections)| {
+            selections.items.iter().all(|item| {
+                matches!(item, SelectionItem::Field(field) if field.name == "__typename")
+                    || selection_items_are_subset_of(&at_path.items, std::slice::from_ref(item))
             })
+        })
     }
 }
 
