@@ -103,9 +103,7 @@ export type FetchNodePathSegment =
 
 export type FetchRewrite =
   | { ValueSetter: ValueSetter }
-  | { KeyRenamer: KeyRenamer }
-  // TODO: why sometimes? see query plans of federation tests in hive gateway
-  | ({ kind: "ValueSetter" } & ValueSetter);
+  | { KeyRenamer: KeyRenamer };
 
 export type InputRewrite = FetchRewrite;
 export type OutputRewrite = FetchRewrite;
@@ -136,15 +134,7 @@ export interface FieldRequiresNode {
   omit_from_response?: boolean;
 }
 
-export interface FragmentSpreadRequiresNode {
-  kind: "FragmentSpread";
-  value: string;
-}
-
-export type RequiresSelection =
-  | InlineFragmentRequiresNode
-  | FieldRequiresNode
-  | FragmentSpreadRequiresNode;
+export type RequiresSelection = InlineFragmentRequiresNode | FieldRequiresNode;
 
 export interface SequenceNode {
   kind: "Sequence";
