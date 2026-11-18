@@ -4779,9 +4779,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-h2"
-version = "4.4.3"
+version = "4.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7443046a66021398b532a24d705265b6180d69464d7314e750a51067cc290cf6"
+checksum = "91cdc988c8033c29bdd8d4730cbec48dfaddad6a9dc544d69ee6a7d5d2feddc2"
 dependencies = [
  "bitflags 2.13.2",
  "fastrand",
@@ -4869,9 +4869,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-net"
-version = "4.10.3"
+version = "4.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef70da0b9947e0823509ede3c1c3dece12cdfdf40ac6debb13fb1d6219b28c91"
+checksum = "d521a556d53ac08d303188b842f982c5c1dd47c99ace245f277f83c59b6aea50"
 dependencies = [
  "bitflags 2.13.2",
  "cfg-if",
@@ -4949,9 +4949,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-server"
-version = "4.5.2"
+version = "4.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df2dbf016b453d4f6ece0c5e5709d7557e1224f18f0a6dd0f4b941cf0876cb52"
+checksum = "98f61727fc234e6effece5d90ab4d836d8319e2348db33a46a390c739e48ec03"
 dependencies = [
  "async-channel",
  "event-listener",
