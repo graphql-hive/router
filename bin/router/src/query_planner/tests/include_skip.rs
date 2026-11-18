@@ -22,58 +22,42 @@ fn include_basic_test() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($bool:Boolean) {
-            product {
-              __typename
-              price
-              id
-              ... on Product @include(if: $bool) {
-                __typename
-                price
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "product") {
-          Fetch(service: "b", if: $bool) {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-        Flatten(path: "product") {
-          Fetch(service: "c", if: $bool) {
-            {
-              ... on Product {
-                __typename
-                isExpensive
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                neverCalledInclude
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $bool: Boolean
+
+    fetches
+      fetch               after
+      [2] a               -
+      [6] b               [2]
+      [4] c               [6]
+
+    [2] a
+      out
+        { product { __typename price id ... on Product @include(if: $bool) { __typename price id } } }
+      vars
+        $bool
+
+    [6] b   after [2]
+      if
+        $bool
+      merge
+        product
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isExpensive }
+
+    [4] c   after [6]
+      if
+        $bool
+      merge
+        product
+      in
+        ... on Product { __typename isExpensive id }
+      out
+        ... on Product { neverCalledInclude }
+    ");
 
     Ok(())
 }
@@ -98,56 +82,42 @@ fn include_fragment_test() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($bool:Boolean) {
-            product {
-              price
-              ... on Product @include(if: $bool) {
-                __typename
-                id
-                price
-              }
-            }
-          }
-        },
-        Flatten(path: "product|[Product]") {
-          Fetch(service: "b", if: $bool) {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-        Flatten(path: "product|[Product]") {
-          Fetch(service: "c", if: $bool) {
-            {
-              ... on Product {
-                __typename
-                isExpensive
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                neverCalledInclude
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $bool: Boolean
+
+    fetches
+      fetch               after
+      [2] a               -
+      [6] b               [2]
+      [4] c               [6]
+
+    [2] a
+      out
+        { product { price ... on Product @include(if: $bool) { __typename id price } } }
+      vars
+        $bool
+
+    [6] b   after [2]
+      if
+        $bool
+      merge
+        product|[Product]
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isExpensive }
+
+    [4] c   after [6]
+      if
+        $bool
+      merge
+        product|[Product]
+      in
+        ... on Product { __typename isExpensive id }
+      out
+        ... on Product { neverCalledInclude }
+    ");
 
     Ok(())
 }
@@ -170,58 +140,42 @@ fn skip_basic_test() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($bool:Boolean=false) {
-            product {
-              __typename
-              price
-              id
-              ... on Product @skip(if: $bool) {
-                __typename
-                price
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "product") {
-          Fetch(service: "b", if: !$bool) {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-        Flatten(path: "product") {
-          Fetch(service: "c", if: !$bool) {
-            {
-              ... on Product {
-                __typename
-                isExpensive
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                skip
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $bool: Boolean = false
+
+    fetches
+      fetch               after
+      [2] a               -
+      [6] b               [2]
+      [4] c               [6]
+
+    [2] a
+      out
+        { product { __typename price id ... on Product @skip(if: $bool) { __typename price id } } }
+      vars
+        $bool
+
+    [6] b   after [2]
+      if
+        !$bool
+      merge
+        product
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isExpensive }
+
+    [4] c   after [6]
+      if
+        !$bool
+      merge
+        product
+      in
+        ... on Product { __typename isExpensive id }
+      out
+        ... on Product { skip }
+    ");
 
     Ok(())
 }
@@ -244,58 +198,49 @@ fn skip_and_include_field_condition_test() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($include:Boolean=true,$skip:Boolean=false) {
-            product {
-              __typename
-              price
-              id
-              ... on Product @skip(if: $skip) @include(if: $include) {
-                __typename
-                price
-                id
-              }
-            }
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $include: Boolean = true, $skip: Boolean = false
+
+    fetches
+      fetch               after
+      [2] a               -
+      [6] b               [2]
+      [4] c               [6]
+
+    [2] a
+      out
+        {
+          product {
+            __typename
+            price
+            id
+            ... on Product @skip(if: $skip) @include(if: $include) { __typename price id }
           }
-        },
-        Flatten(path: "product") {
-          Fetch(service: "b", if: $include && !$skip) {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-        Flatten(path: "product") {
-          Fetch(service: "c", if: $include && !$skip) {
-            {
-              ... on Product {
-                __typename
-                isExpensive
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                neverCalledInclude
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+        }
+      vars
+        $include, $skip
+
+    [6] b   after [2]
+      if
+        $include && !$skip
+      merge
+        product
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isExpensive }
+
+    [4] c   after [6]
+      if
+        $include && !$skip
+      merge
+        product
+      in
+        ... on Product { __typename isExpensive id }
+      out
+        ... on Product { neverCalledInclude }
+    ");
 
     Ok(())
 }
@@ -320,56 +265,47 @@ fn skip_and_include_fragment_condition_test() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($include:Boolean=true,$skip:Boolean=false) {
-            product {
-              price
-              ... on Product @skip(if: $skip) @include(if: $include) {
-                __typename
-                id
-                price
-              }
-            }
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $include: Boolean = true, $skip: Boolean = false
+
+    fetches
+      fetch               after
+      [2] a               -
+      [6] b               [2]
+      [4] c               [6]
+
+    [2] a
+      out
+        {
+          product {
+            price
+            ... on Product @skip(if: $skip) @include(if: $include) { __typename id price }
           }
-        },
-        Flatten(path: "product|[Product]") {
-          Fetch(service: "b", if: $include && !$skip) {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-        Flatten(path: "product|[Product]") {
-          Fetch(service: "c", if: $include && !$skip) {
-            {
-              ... on Product {
-                __typename
-                isExpensive
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                neverCalledInclude
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+        }
+      vars
+        $include, $skip
+
+    [6] b   after [2]
+      if
+        $include && !$skip
+      merge
+        product|[Product]
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isExpensive }
+
+    [4] c   after [6]
+      if
+        $include && !$skip
+      merge
+        product|[Product]
+      in
+        ... on Product { __typename isExpensive id }
+      out
+        ... on Product { neverCalledInclude }
+    ");
 
     Ok(())
 }
@@ -392,18 +328,20 @@ fn include_at_root_fetch_test() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        query ($bool:Boolean) {
-          product {
-            id
-            price @include(if: $bool)
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $bool: Boolean
+
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { product { id price @include(if: $bool) } }
+      vars
+        $bool
+    ");
 
     Ok(())
 }
@@ -428,20 +366,20 @@ fn include_fragment_at_root_fetch_test() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        query ($bool:Boolean) {
-          product {
-            id
-            ... on Product @include(if: $bool) {
-              price
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $bool: Boolean
+
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { product { id ... on Product @include(if: $bool) { price } } }
+      vars
+        $bool
+    ");
 
     Ok(())
 }
@@ -464,18 +402,20 @@ fn include_interface_at_root_fetch_test() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "b") {
-        query ($bool:Boolean) {
-          accounts {
-            id
-            name @include(if: $bool)
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $bool: Boolean
+
+    fetches
+      fetch               after
+      [2] b               -
+
+    [2] b
+      out
+        { accounts { id name @include(if: $bool) } }
+      vars
+        $bool
+    ");
 
     Ok(())
 }
@@ -500,20 +440,20 @@ fn include_interface_fragment_at_root_fetch_test() -> Result<(), Box<dyn Error>>
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "b") {
-        query ($bool:Boolean) {
-          accounts {
-            id
-            ... on Account @include(if: $bool) {
-              name
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $bool: Boolean
+
+    fetches
+      fetch               after
+      [2] b               -
+
+    [2] b
+      out
+        { accounts { id ... on Account @include(if: $bool) { name } } }
+      vars
+        $bool
+    ");
 
     Ok(())
 }
@@ -544,30 +484,27 @@ fn include_union_fragment_at_root_fetch_test() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        query ($bool:Boolean) {
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $bool: Boolean
+
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        {
           review {
             __typename
-            ... on UserReview {
-              product @include(if: $bool) {
-                ...a
-              }
-            }
-            ... on AnonymousReview {
-              product @include(if: $bool) {
-                ...a
-              }
-            }
+            ... on UserReview { product @include(if: $bool) { ...a } }
+            ... on AnonymousReview { product @include(if: $bool) { ...a } }
           }
         }
-        fragment a on Product {
-          id
-        }
-      },
-    },
-    "#);
+        fragment a on Product { id }
+      vars
+        $bool
+    ");
 
     Ok(())
 }
@@ -755,45 +692,31 @@ fn qp_include_field_level() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($bool:Boolean) {
-            product {
-              __typename
-              price
-              id
-              ... on Product @include(if: $bool) {
-                __typename
-                price
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "product") {
-          Fetch(service: "b") {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            ($bool:Boolean) {
-              ... on Product {
-                ... on Product @include(if: $bool) {
-                  name
-                }
-                isCheap
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $bool: Boolean
+
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+
+    [2] a
+      out
+        { product { __typename price id ... on Product @include(if: $bool) { __typename price id } } }
+      vars
+        $bool
+
+    [4] b   after [2]
+      merge
+        product
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { ... on Product @include(if: $bool) { name } isCheap }
+      vars
+        $bool
+    ");
     Ok(())
 }
 
@@ -818,45 +741,31 @@ fn qp_include_field_level_unconditional_before_conditional() -> Result<(), Box<d
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($bool:Boolean) {
-            product {
-              __typename
-              price
-              id
-              ... on Product @include(if: $bool) {
-                __typename
-                price
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "product") {
-          Fetch(service: "b") {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            ($bool:Boolean) {
-              ... on Product {
-                isCheap
-                ... on Product @include(if: $bool) {
-                  name
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $bool: Boolean
+
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+
+    [2] a
+      out
+        { product { __typename price id ... on Product @include(if: $bool) { __typename price id } } }
+      vars
+        $bool
+
+    [4] b   after [2]
+      merge
+        product
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isCheap ... on Product @include(if: $bool) { name } }
+      vars
+        $bool
+    ");
 
     Ok(())
 }
@@ -882,43 +791,31 @@ fn qp_include_field_level_all_merged_fields_conditional() -> Result<(), Box<dyn 
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($bool:Boolean) {
-            product {
-              __typename
-              price
-              id
-              ... on Product @include(if: $bool) {
-                __typename
-                price
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "product") {
-          Fetch(service: "b", if: $bool) {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                name
-                isCheap
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $bool: Boolean
+
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+
+    [2] a
+      out
+        { product { __typename price id ... on Product @include(if: $bool) { __typename price id } } }
+      vars
+        $bool
+
+    [4] b   after [2]
+      if
+        $bool
+      merge
+        product
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { name isCheap }
+    ");
 
     Ok(())
 }
@@ -942,45 +839,31 @@ fn qp_skip_field_level() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($bool:Boolean) {
-            product {
-              __typename
-              price
-              id
-              ... on Product @skip(if: $bool) {
-                __typename
-                price
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "product") {
-          Fetch(service: "b") {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            ($bool:Boolean) {
-              ... on Product {
-                ... on Product @skip(if: $bool) {
-                  name
-                }
-                isCheap
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $bool: Boolean
+
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+
+    [2] a
+      out
+        { product { __typename price id ... on Product @skip(if: $bool) { __typename price id } } }
+      vars
+        $bool
+
+    [4] b   after [2]
+      merge
+        product
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { ... on Product @skip(if: $bool) { name } isCheap }
+      vars
+        $bool
+    ");
     Ok(())
 }
 
@@ -1005,45 +888,31 @@ fn qp_skip_field_level_unconditional_before_conditional() -> Result<(), Box<dyn 
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($bool:Boolean) {
-            product {
-              __typename
-              price
-              id
-              ... on Product @skip(if: $bool) {
-                __typename
-                price
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "product") {
-          Fetch(service: "b") {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            ($bool:Boolean) {
-              ... on Product {
-                isCheap
-                ... on Product @skip(if: $bool) {
-                  name
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $bool: Boolean
+
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+
+    [2] a
+      out
+        { product { __typename price id ... on Product @skip(if: $bool) { __typename price id } } }
+      vars
+        $bool
+
+    [4] b   after [2]
+      merge
+        product
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isCheap ... on Product @skip(if: $bool) { name } }
+      vars
+        $bool
+    ");
 
     Ok(())
 }
@@ -1070,43 +939,31 @@ fn qp_skip_field_level_all_merged_fields_conditional() -> Result<(), Box<dyn Err
     )?;
     let printed = format!("{}", query_plan);
 
-    insta::assert_snapshot!(printed, @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($bool:Boolean) {
-            product {
-              __typename
-              price
-              id
-              ... on Product @skip(if: $bool) {
-                __typename
-                price
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "product") {
-          Fetch(service: "b", if: !$bool) {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                name
-                isCheap
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(printed, @r"
+    variables
+      $bool: Boolean
+
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+
+    [2] a
+      out
+        { product { __typename price id ... on Product @skip(if: $bool) { __typename price id } } }
+      vars
+        $bool
+
+    [4] b   after [2]
+      if
+        !$bool
+      merge
+        product
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { name isCheap }
+    ");
 
     Ok(())
 }
@@ -1133,43 +990,38 @@ fn qp_skip_and_include_field_level_all_merged_fields_conditional() -> Result<(),
     )?;
     let printed = format!("{}", query_plan);
 
-    insta::assert_snapshot!(printed, @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($include:Boolean,$skip:Boolean) {
-            product {
-              __typename
-              price
-              id
-              ... on Product @skip(if: $skip) @include(if: $include) {
-                __typename
-                price
-                id
-              }
-            }
+    insta::assert_snapshot!(printed, @r"
+    variables
+      $include: Boolean, $skip: Boolean
+
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+
+    [2] a
+      out
+        {
+          product {
+            __typename
+            price
+            id
+            ... on Product @skip(if: $skip) @include(if: $include) { __typename price id }
           }
-        },
-        Flatten(path: "product") {
-          Fetch(service: "b", if: $include && !$skip) {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                name
-                isCheap
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+        }
+      vars
+        $include, $skip
+
+    [4] b   after [2]
+      if
+        $include && !$skip
+      merge
+        product
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { name isCheap }
+    ");
 
     Ok(())
 }
@@ -1196,53 +1048,45 @@ fn qp_mixed_include_skip_field_level_keeps_conditions_scoped() -> Result<(), Box
     )?;
     let printed = format!("{}", query_plan);
 
-    insta::assert_snapshot!(printed, @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($include:Boolean,$skip:Boolean) {
-            product {
-              __typename
-              price
-              id
-              ... on Product @skip(if: $skip) {
-                ...a
-              }
-              ... on Product @include(if: $include) {
-                ...a
-              }
-            }
-          }
-          fragment a on Product {
+    insta::assert_snapshot!(printed, @r"
+    variables
+      $include: Boolean, $skip: Boolean
+
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+
+    [2] a
+      out
+        {
+          product {
             __typename
             price
             id
+            ... on Product @skip(if: $skip) { ...a }
+            ... on Product @include(if: $include) { ...a }
           }
-        },
-        Flatten(path: "product") {
-          Fetch(service: "b", if: !$skip || $include) {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            ($include:Boolean,$skip:Boolean) {
-              ... on Product {
-                ... on Product @include(if: $include) {
-                  name
-                }
-                ... on Product @skip(if: $skip) {
-                  isCheap
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+        }
+        fragment a on Product { __typename price id }
+      vars
+        $include, $skip
+
+    [4] b   after [2]
+      if
+        !$skip || $include
+      merge
+        product
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product {
+          ... on Product @include(if: $include) { name }
+          ... on Product @skip(if: $skip) { isCheap }
+        }
+      vars
+        $include, $skip
+    ");
 
     Ok(())
 }
@@ -1278,100 +1122,76 @@ fn qp_nested_include_skip_conditions_in_complex_products_query() -> Result<(), B
         build_query_plan_with_defaults("fixture/products-example.supergraph.graphql", document)?;
     let printed = format!("{}", query_plan);
 
-    insta::assert_snapshot!(printed, @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "products") {
-          {
-            topProducts {
+    insta::assert_snapshot!(printed, @r"
+    variables
+      $nestedReviews: Boolean, $product: Boolean, $reviews, $skipAuthor: Boolean
+
+    fetches
+      fetch               after
+      [2] products        -
+      [3] reviews         [2]
+      [8] products        [3]
+      [4] accounts        [3]
+      [7] inventory       [8]
+
+    [2] products
+      out
+        { topProducts { __typename name upc } }
+
+    [3] reviews   after [2]
+      if
+        $reviews
+      merge
+        topProducts.@
+      in
+        ... on Product { __typename upc }
+      out
+        ... on Product {
+          reviews {
+            body
+            author @skip(if: $skipAuthor) {
               __typename
-              name
-              upc
+              id
+              reviews @include(if: $nestedReviews) {
+                body
+                product @include(if: $product) { __typename upc }
+              }
             }
           }
-        },
-        Flatten(path: "topProducts.@") {
-          Fetch(service: "reviews", if: $reviews) {
-            {
-              ... on Product {
-                __typename
-                upc
-              }
-            } =>
-            ($nestedReviews:Boolean,$product:Boolean,$skipAuthor:Boolean) {
-              ... on Product {
-                reviews {
-                  body
-                  author @skip(if: $skipAuthor) {
-                    __typename
-                    id
-                    reviews @include(if: $nestedReviews) {
-                      body
-                      product @include(if: $product) {
-                        __typename
-                        upc
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-        },
-        Parallel {
-          Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
-            Fetch(service: "products", if: $nestedReviews && $product && $reviews && !$skipAuthor) {
-              {
-                ... on Product {
-                  __typename
-                  upc
-                }
-              } =>
-              {
-                ... on Product {
-                  price
-                  weight
-                  name
-                }
-              }
-            },
-          },
-          Flatten(path: "topProducts.@.reviews.@.author") {
-            Fetch(service: "accounts", if: $reviews && !$skipAuthor) {
-              {
-                ... on User {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on User {
-                  name
-                }
-              }
-            },
-          },
-        },
-        Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
-          Fetch(service: "inventory", if: $nestedReviews && $product && $reviews && !$skipAuthor) {
-            {
-              ... on Product {
-                __typename
-                price
-                weight
-                upc
-              }
-            } =>
-            {
-              ... on Product {
-                shippingEstimate
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+        }
+      vars
+        $nestedReviews, $product, $skipAuthor
+
+    [8] products   after [3]
+      if
+        $nestedReviews && $product && $reviews && !$skipAuthor
+      merge
+        topProducts.@.reviews.@.author.reviews.@.product
+      in
+        ... on Product { __typename upc }
+      out
+        ... on Product { price weight name }
+
+    [4] accounts   after [3]
+      if
+        $reviews && !$skipAuthor
+      merge
+        topProducts.@.reviews.@.author
+      in
+        ... on User { __typename id }
+      out
+        ... on User { name }
+
+    [7] inventory   after [8]
+      if
+        $nestedReviews && $product && $reviews && !$skipAuthor
+      merge
+        topProducts.@.reviews.@.author.reviews.@.product
+      in
+        ... on Product { __typename price weight upc }
+      out
+        ... on Product { shippingEstimate }
+    ");
 
     Ok(())
 }
@@ -1404,75 +1224,53 @@ fn qp_abstract_interface_mixed_conditions_stay_scoped() -> Result<(), Box<dyn Er
     )?;
     let printed = format!("{}", query_plan);
 
-    insta::assert_snapshot!(printed, @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "products") {
-          query ($hideSku:Boolean) {
-            products {
-              __typename
-              id
-              sku @skip(if: $hideSku)
-            }
-          }
-        },
-        Parallel {
-          Flatten(path: "products.@") {
-            Fetch(service: "reviews", if: $showReviews) {
-              {
-                ... on Book {
-                  __typename
-                  id
-                }
-                ... on Magazine {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Book {
-                  reviewsCount
-                }
-                ... on Magazine {
-                  reviewsCount
-                }
-              }
-            },
-          },
-          Flatten(path: "products.@|[Book]") {
-            Fetch(service: "books", if: $showReviews) {
-              {
-                ... on Book {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Book {
-                  title
-                }
-              }
-            },
-          },
-          Flatten(path: "products.@|[Magazine]") {
-            Fetch(service: "magazines", if: !$hideSku) {
-              {
-                ... on Magazine {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Magazine {
-                  title
-                }
-              }
-            },
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(printed, @r"
+    variables
+      $hideSku: Boolean, $showReviews
+
+    fetches
+      fetch               after
+      [2] products        -
+      [6] reviews         [2]
+      [5] books           [2]
+      [3] magazines       [2]
+
+    [2] products
+      out
+        { products { __typename id sku @skip(if: $hideSku) } }
+      vars
+        $hideSku
+
+    [6] reviews   after [2]
+      if
+        $showReviews
+      merge
+        products.@
+      in
+        ... on Book { __typename id } ... on Magazine { __typename id }
+      out
+        ... on Book { reviewsCount } ... on Magazine { reviewsCount }
+
+    [5] books   after [2]
+      if
+        $showReviews
+      merge
+        products.@|[Book]
+      in
+        ... on Book { __typename id }
+      out
+        ... on Book { title }
+
+    [3] magazines   after [2]
+      if
+        !$hideSku
+      merge
+        products.@|[Magazine]
+      in
+        ... on Magazine { __typename id }
+      out
+        ... on Magazine { title }
+    ");
 
     Ok(())
 }
@@ -1499,44 +1297,29 @@ fn qp_abstract_interface_shared_condition_can_skip_remote_fetch() -> Result<(), 
     )?;
     let printed = format!("{}", query_plan);
 
-    insta::assert_snapshot!(printed, @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "products") {
-          {
-            products {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "products.@") {
-          Fetch(service: "reviews", if: $showReviews) {
-            {
-              ... on Book {
-                __typename
-                id
-              }
-              ... on Magazine {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Book {
-                reviewsCount
-                reviewsScore
-              }
-              ... on Magazine {
-                reviewsCount
-                reviewsScore
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(printed, @r"
+    variables
+      $showReviews
+
+    fetches
+      fetch               after
+      [2] products        -
+      [4] reviews         [2]
+
+    [2] products
+      out
+        { products { __typename id } }
+
+    [4] reviews   after [2]
+      if
+        $showReviews
+      merge
+        products.@
+      in
+        ... on Book { __typename id } ... on Magazine { __typename id }
+      out
+        ... on Book { reviewsCount reviewsScore } ... on Magazine { reviewsCount reviewsScore }
+    ");
 
     Ok(())
 }
@@ -1570,65 +1353,49 @@ fn qp_abstract_union_member_conditions_stay_scoped() -> Result<(), Box<dyn Error
     )?;
     let printed = format!("{}", query_plan);
 
-    insta::assert_snapshot!(printed, @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($hideAnonymousReview:Boolean,$showUserReview:Boolean) {
-            review {
-              __typename
-              ... on UserReview {
-                product @include(if: $showUserReview) {
-                  ...a
-                }
-              }
-              ... on AnonymousReview {
-                product @skip(if: $hideAnonymousReview) {
-                  ...a
-                }
-              }
-            }
-          }
-          fragment a on Product {
+    insta::assert_snapshot!(printed, @r"
+    variables
+      $hideAnonymousReview: Boolean, $showUserReview: Boolean
+
+    fetches
+      fetch               after
+      [2] a               -
+      [4] c               [2]
+      [3] b               [2]
+
+    [2] a
+      out
+        {
+          review {
             __typename
-            id
+            ... on UserReview { product @include(if: $showUserReview) { ...a } }
+            ... on AnonymousReview { product @skip(if: $hideAnonymousReview) { ...a } }
           }
-        },
-        Parallel {
-          Flatten(path: "review|[AnonymousReview].product") {
-            Fetch(service: "c", if: !$hideAnonymousReview) {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  c
-                }
-              }
-            },
-          },
-          Flatten(path: "review|[UserReview].product") {
-            Fetch(service: "b", if: $showUserReview) {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  b
-                }
-              }
-            },
-          },
-        },
-      },
-    },
-    "#);
+        }
+        fragment a on Product { __typename id }
+      vars
+        $hideAnonymousReview, $showUserReview
+
+    [4] c   after [2]
+      if
+        !$hideAnonymousReview
+      merge
+        review|[AnonymousReview].product
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { c }
+
+    [3] b   after [2]
+      if
+        $showUserReview
+      merge
+        review|[UserReview].product
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { b }
+    ");
 
     Ok(())
 }
@@ -1658,61 +1425,48 @@ fn conditional_root_fragment_survives_merges() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b", if: $x) {
-          query ($x:Boolean!) {
-            ... on Query @include(if: $x) {
-              userInB {
-                __typename
-                id
-                ... on User @include(if: $x) {
-                  __typename
-                  name
-                  id
-                }
-              }
-            }
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $x: Boolean!
+
+    fetches
+      fetch               after
+      [2] b               -
+      [4] a               [2]
+      [7] c               [2]
+
+    [2] b
+      if
+        $x
+      out
+        {
+          ... on Query @include(if: $x) {
+            userInB { __typename id ... on User @include(if: $x) { __typename name id } }
           }
-        },
-        Parallel {
-          Flatten(path: "|[Query].userInB") {
-            Fetch(service: "a", if: $x) {
-              {
-                ... on User {
-                  __typename
-                  name
-                  id
-                }
-              } =>
-              {
-                ... on User {
-                  aName
-                }
-              }
-            },
-          },
-          Flatten(path: "|[Query].userInB") {
-            Fetch(service: "c", if: $x) {
-              {
-                ... on User {
-                  __typename
-                  name
-                  id
-                }
-              } =>
-              {
-                ... on User {
-                  cName
-                }
-              }
-            },
-          },
-        },
-      },
-    },
-    "#);
+        }
+      vars
+        $x
+
+    [4] a   after [2]
+      if
+        $x
+      merge
+        |[Query].userInB
+      in
+        ... on User { __typename name id }
+      out
+        ... on User { aName }
+
+    [7] c   after [2]
+      if
+        $x
+      merge
+        |[Query].userInB
+      in
+        ... on User { __typename name id }
+      out
+        ... on User { cName }
+    ");
 
     Ok(())
 }
@@ -1741,40 +1495,33 @@ fn entity_call_under_nested_conditional_fragments() -> Result<(), Box<dyn Error>
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{query_plan}"), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($a:Boolean!,$b:Boolean!) {
-            userInA {
-              id
-              ... on User @include(if: $a) {
-                ... on User @include(if: $b) {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-        },
-        Flatten(path: "userInA|[User]|[User]") {
-          Fetch(service: "b", if: $a && $b) {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{query_plan}"), @r"
+    variables
+      $a: Boolean!, $b: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+      [3] b               [2]
+
+    [2] a
+      out
+        {
+          userInA { id ... on User @include(if: $a) { ... on User @include(if: $b) { __typename id } } }
+        }
+      vars
+        $a, $b
+
+    [3] b   after [2]
+      if
+        $a && $b
+      merge
+        userInA|[User]|[User]
+      in
+        ... on User { __typename id }
+      out
+        ... on User { name }
+    ");
 
     Ok(())
 }
@@ -1804,63 +1551,45 @@ fn batched_entity_calls_keep_the_condition_of_their_fragment() -> Result<(), Box
     );
     let query_plan = build_query_plan_with_defaults("../../bench/supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{query_plan}"), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "accounts") {
-          {
-            users {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "users.@") {
-          Fetch(service: "reviews") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            ($a:Boolean!) {
-              ... on User {
-                reviews {
-                  product {
-                    upc
-                    ... on Product @include(if: $a) {
-                      __typename
-                      upc
-                    }
-                  }
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "users.@.reviews.@.product|[Product]") {
-          Fetch(service: "products", if: $a) {
-            {
-              ... on Product {
-                __typename
-                upc
-              }
-            } =>
-            ($a:Boolean!,$b:Boolean!) {
-              ... on Product {
-                ... on Product @include(if: $b) {
-                  price
-                }
-                ... on Product @include(if: $a) {
-                  notes
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{query_plan}"), @r"
+    variables
+      $a: Boolean!, $b: Boolean!
+
+    fetches
+      fetch               after
+      [2] accounts        -
+      [3] reviews         [2]
+      [5] products        [3]
+
+    [2] accounts
+      out
+        { users { __typename id } }
+
+    [3] reviews   after [2]
+      merge
+        users.@
+      in
+        ... on User { __typename id }
+      out
+        ... on User { reviews { product { upc ... on Product @include(if: $a) { __typename upc } } } }
+      vars
+        $a
+
+    [5] products   after [3]
+      if
+        $a
+      merge
+        users.@.reviews.@.product|[Product]
+      in
+        ... on Product { __typename upc }
+      out
+        ... on Product {
+          ... on Product @include(if: $b) { price }
+          ... on Product @include(if: $a) { notes }
+        }
+      vars
+        $a, $b
+    ");
 
     Ok(())
 }
@@ -1894,129 +1623,77 @@ fn condition_kept_when_another_branch_fetches_the_same_field() -> Result<(), Box
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "users") {
-          query ($c:Boolean!) {
-            user {
-              __typename
-              id
-              ... on User @skip(if: $c) {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        BatchFetch(service: "orders") {
-          {
-            _e0(if: !$c) {
-              paths: [
-                "user|[User]"
-              ]
-              {
-                ... on User {
-                  __typename
-                  id
-                }
-              }
-            }
-            _e1(if: $a) {
-              paths: [
-                "user"
-              ]
-              {
-                ... on User {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-          ($b:Boolean!) {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on User {
-                orders {
-                  __typename
-                  id
-                }
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on User {
-                orders {
-                  ... on Order @include(if: $b) {
-                    __typename
-                    id
-                    sku
-                  }
-                }
-              }
-            }
-          }
-        },
-        BatchFetch(service: "catalog") {
-          {
-            _e0(if: !$c) {
-              paths: [
-                "user|[User].orders.@"
-              ]
-              {
-                ... on Order {
-                  __typename
-                  id
-                }
-              }
-            }
-            _e1(if: $a && $b) {
-              paths: [
-                "user.orders.@|[Order]"
-              ]
-              {
-                ... on Order {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-          {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on Order {
-                ...a
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on Order {
-                ...a
-              }
-            }
-          }
-          fragment a on Order {
-            weight
-          }
-        },
-        Flatten(path: "user.orders.@|[Order]") {
-          Fetch(service: "orders", if: $a && $b) {
-            {
-              ... on Order {
-                __typename
-                sku
-                weight
-                id
-              }
-            } =>
-            {
-              ... on Order {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $a, $b: Boolean!, $c: Boolean!
+
+    fetches
+      fetch               after
+      [2] users           -
+      [6] orders          [2]
+      [7] catalog         [6]
+      [4] orders          [7]
+
+    [2] users
+      out
+        { user { __typename id ... on User @skip(if: $c) { __typename id } } }
+      vars
+        $c
+
+    [6] orders   after [2]
+      alias _e0
+        if
+          !$c
+        merge
+          user|[User]
+        in
+          ... on User { __typename id }
+        out
+          ... on User { orders { __typename id } }
+      alias _e1
+        if
+          $a
+        merge
+          user
+        in
+          ... on User { __typename id }
+        out
+          ... on User { orders { ... on Order @include(if: $b) { __typename id sku } } }
+      vars
+        $b
+
+    [7] catalog   after [6]
+      alias _e0
+        if
+          !$c
+        merge
+          user|[User].orders.@
+        in
+          ... on Order { __typename id }
+        out
+          ... on Order { ...a }
+      alias _e1
+        if
+          $a && $b
+        merge
+          user.orders.@|[Order]
+        in
+          ... on Order { __typename id }
+        out
+          ... on Order { ...a }
+      fragments
+        fragment a on Order { weight }
+
+    [4] orders   after [7]
+      if
+        $a && $b
+      merge
+        user.orders.@|[Order]
+      in
+        ... on Order { __typename sku weight id }
+      out
+        ... on Order { name }
+    ");
 
     Ok(())
 }
@@ -2047,78 +1724,56 @@ fn field_condition_kept_when_the_field_is_also_unconditional() -> Result<(), Box
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "users") {
-          {
-            user {
-              __typename
-              id
-            }
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $a: Boolean!, $b: Boolean!
+
+    fetches
+      fetch               after
+      [2] users           -
+      [4] orders          [2]
+      [6] catalog         [4]
+      [5] orders          [6]
+
+    [2] users
+      out
+        { user { __typename id } }
+
+    [4] orders   after [2]
+      merge
+        user
+      in
+        ... on User { __typename id }
+      out
+        ... on User {
+          ... on User @include(if: $a) {
+            orders { ... on Order @include(if: $b) { __typename id sku } }
           }
-        },
-        Flatten(path: "user") {
-          Fetch(service: "orders") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            ($a:Boolean!,$b:Boolean!) {
-              ... on User {
-                ... on User @include(if: $a) {
-                  orders {
-                    ... on Order @include(if: $b) {
-                      __typename
-                      id
-                      sku
-                    }
-                  }
-                }
-                orders {
-                  id
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "user.orders.@|[Order]") {
-          Fetch(service: "catalog", if: $a && $b) {
-            {
-              ... on Order {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Order {
-                weight
-              }
-            }
-          },
-        },
-        Flatten(path: "user.orders.@|[Order]") {
-          Fetch(service: "orders", if: $a && $b) {
-            {
-              ... on Order {
-                __typename
-                sku
-                weight
-                id
-              }
-            } =>
-            {
-              ... on Order {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+          orders { id }
+        }
+      vars
+        $a, $b
+
+    [6] catalog   after [4]
+      if
+        $a && $b
+      merge
+        user.orders.@|[Order]
+      in
+        ... on Order { __typename id }
+      out
+        ... on Order { weight }
+
+    [5] orders   after [6]
+      if
+        $a && $b
+      merge
+        user.orders.@|[Order]
+      in
+        ... on Order { __typename sku weight id }
+      out
+        ... on Order { name }
+    ");
     Ok(())
 }
 
@@ -2146,70 +1801,61 @@ fn condition_with_no_spot_on_the_path_still_wraps_the_fetch() -> Result<(), Box<
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b", if: !$a) {
-          query ($a:Boolean!,$b:Boolean!) {
-            anotherUsers @skip(if: $a) {
-              __typename
-              ... on NodeWithName @skip(if: $b) {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "anotherUsers.@") {
-          Fetch(service: "a", if: !$a && !$b) {
-            {
-              ... on NodeWithName {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on NodeWithName {
-                __typename
-              }
-            }
-          },
-        },
-        Flatten(path: "anotherUsers.@") {
-          Fetch(service: "b", if: !$a && !$b) {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on NodeWithName {
-                __typename
-                id
-              }
-            }
-          },
-        },
-        Flatten(path: "anotherUsers.@") {
-          Fetch(service: "a", if: $d && !$a && !$b && !$c) {
-            {
-              ... on NodeWithName {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on NodeWithName {
-                __typename
-                ... on User {
-                  __typename
-                }
-              }
-            }
-          },
-        },
-      },
-    },
+    variables
+      $a: Boolean!, $b: Boolean!, $c, $d
+
+    fetches
+      fetch               after
+      [2] b               -
+      [5] a               [2]
+      [3] b               [5]
+      [6] a               [3]
+
+    [2] b
+      if
+        !$a
+      out
+        {
+          anotherUsers @skip(if: $a) { __typename ... on NodeWithName @skip(if: $b) { __typename id } }
+        }
+      vars
+        $a, $b
+
+    [5] a   after [2]
+      if
+        !$a && !$b
+      merge
+        anotherUsers.@
+      in
+        ... on NodeWithName { __typename id }
+      out
+        ... on NodeWithName { __typename }
+      rewrite in
+        [NodeWithName]/__typename = "NodeWithName"
+
+    [3] b   after [5]
+      if
+        !$a && !$b
+      merge
+        anotherUsers.@
+      in
+        ... on User { __typename id }
+      out
+        ... on NodeWithName { __typename id }
+      rewrite in
+        [NodeWithName]/__typename = "NodeWithName"
+
+    [6] a   after [3]
+      if
+        $d && !$a && !$b && !$c
+      merge
+        anotherUsers.@
+      in
+        ... on NodeWithName { __typename id }
+      out
+        ... on NodeWithName { __typename ... on User { __typename } }
+      rewrite in
+        [NodeWithName]/__typename = "NodeWithName"
     "#);
 
     Ok(())
@@ -2240,42 +1886,38 @@ fn spread_condition_kept_around_same_type_fragment_with_its_own() -> Result<(), 
     let query_plan =
         build_query_plan_with_defaults("fixture/issues/1309.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "search") {
-          query ($x:Boolean!,$y:Boolean!) {
-            listings {
-              pet {
-                __typename
-                ... on Dog @include(if: $x) {
-                  ... on Dog @skip(if: $y) {
-                    __typename
-                    id
-                  }
-                }
-              }
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $x: Boolean!, $y: Boolean!
+
+    fetches
+      fetch               after
+      [2] search          -
+      [3] catalog         [2]
+
+    [2] search
+      out
+        {
+          listings {
+            pet {
+              __typename
+              ... on Dog @include(if: $x) { ... on Dog @skip(if: $y) { __typename id } }
             }
           }
-        },
-        Flatten(path: "listings.@.pet|[Dog]|[Dog]") {
-          Fetch(service: "catalog", if: $x && !$y) {
-            {
-              ... on Dog {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Dog {
-                tricks
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+        }
+      vars
+        $x, $y
+
+    [3] catalog   after [2]
+      if
+        $x && !$y
+      merge
+        listings.@.pet|[Dog]|[Dog]
+      in
+        ... on Dog { __typename id }
+      out
+        ... on Dog { tricks }
+    ");
 
     // The same with a field: `name` has `$y` and needs `$x` too
     let document = parse_operation(
@@ -2294,40 +1936,31 @@ fn spread_condition_kept_around_same_type_fragment_with_its_own() -> Result<(), 
     let query_plan =
         build_query_plan_with_defaults("fixture/issues/1309.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "search") {
-          query ($x:Boolean!) {
-            listings {
-              pet {
-                __typename
-                ... on Dog @include(if: $x) {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-        },
-        Flatten(path: "listings.@.pet|[Dog]") {
-          Fetch(service: "catalog", if: $x && !$y) {
-            {
-              ... on Dog {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Dog {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $x: Boolean!, $y
+
+    fetches
+      fetch               after
+      [2] search          -
+      [3] catalog         [2]
+
+    [2] search
+      out
+        { listings { pet { __typename ... on Dog @include(if: $x) { __typename id } } } }
+      vars
+        $x
+
+    [3] catalog   after [2]
+      if
+        $x && !$y
+      merge
+        listings.@.pet|[Dog]
+      in
+        ... on Dog { __typename id }
+      out
+        ... on Dog { name }
+    ");
     Ok(())
 }
 
@@ -2354,42 +1987,38 @@ fn entity_call_under_nested_fragments_needs_every_condition() -> Result<(), Box<
     let query_plan =
         build_query_plan_with_defaults("fixture/issues/1309.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "search") {
-          query ($x:Boolean!,$z:Boolean!) {
-            listings {
-              pet {
-                __typename
-                ... on Dog @include(if: $x) {
-                  ... on Dog @include(if: $z) {
-                    __typename
-                    id
-                  }
-                }
-              }
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $x: Boolean!, $z: Boolean!
+
+    fetches
+      fetch               after
+      [2] search          -
+      [3] catalog         [2]
+
+    [2] search
+      out
+        {
+          listings {
+            pet {
+              __typename
+              ... on Dog @include(if: $x) { ... on Dog @include(if: $z) { __typename id } }
             }
           }
-        },
-        Flatten(path: "listings.@.pet|[Dog]|[Dog]") {
-          Fetch(service: "catalog", if: $x && $z) {
-            {
-              ... on Dog {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Dog {
-                tricks
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+        }
+      vars
+        $x, $z
+
+    [3] catalog   after [2]
+      if
+        $x && $z
+      merge
+        listings.@.pet|[Dog]|[Dog]
+      in
+        ... on Dog { __typename id }
+      out
+        ... on Dog { tricks }
+    ");
 
     let document = parse_operation(
         r#"
@@ -2411,42 +2040,40 @@ fn entity_call_under_nested_fragments_needs_every_condition() -> Result<(), Box<
     let query_plan =
         build_query_plan_with_defaults("fixture/issues/1309.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "search") {
-          query ($x:Boolean!,$y:Boolean!,$z:Boolean!) {
-            listings {
-              pet {
-                __typename
-                ... on Dog @include(if: $x) {
-                  ... on Dog @skip(if: $y) @include(if: $z) {
-                    __typename
-                    id
-                  }
-                }
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $x: Boolean!, $y: Boolean!, $z: Boolean!
+
+    fetches
+      fetch               after
+      [2] search          -
+      [3] catalog         [2]
+
+    [2] search
+      out
+        {
+          listings {
+            pet {
+              __typename
+              ... on Dog @include(if: $x) {
+                ... on Dog @skip(if: $y) @include(if: $z) { __typename id }
               }
             }
           }
-        },
-        Flatten(path: "listings.@.pet|[Dog]|[Dog]") {
-          Fetch(service: "catalog", if: $x && $z && !$y) {
-            {
-              ... on Dog {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Dog {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+        }
+      vars
+        $x, $y, $z
+
+    [3] catalog   after [2]
+      if
+        $x && $z && !$y
+      merge
+        listings.@.pet|[Dog]|[Dog]
+      in
+        ... on Dog { __typename id }
+      out
+        ... on Dog { name }
+    ");
     Ok(())
 }
 
@@ -2477,117 +2104,53 @@ fn condition_kept_on_every_type_of_a_batched_call_under_a_type_condition(
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "products") {
-          {
-            similar(id: "x") {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "similar.@") {
-          Fetch(service: "reviews", if: $a) {
-            {
-              ... on Book {
-                __typename
-                id
-              }
-              ... on Magazine {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Book {
-                reviews {
-                  ...a
-                }
-              }
-              ... on Magazine {
-                reviews {
-                  ...a
-                }
-              }
-            }
-            fragment a on Review {
-              product {
-                __typename
-                id
-              }
-            }
-          },
-        },
-        Flatten(path: "similar.@.reviews.@.product") {
-          Fetch(service: "products", if: $a) {
-            {
-              ... on Book {
-                __typename
-                id
-              }
-              ... on Magazine {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Book {
-                dimensions {
-                  ...a
-                }
-              }
-              ... on Magazine {
-                dimensions {
-                  ...a
-                }
-              }
-            }
-            fragment a on ProductDimension {
-              weight
-              size
-            }
-          },
-        },
-        Flatten(path: "similar.@.reviews.@.product") {
-          Fetch(service: "inventory", if: $a) {
-            {
-              ... on Book {
-                __typename
-                dimensions {
-                  size
-                  weight
-                }
-                id
-              }
-              ... on Magazine {
-                __typename
-                dimensions {
-                  size
-                  weight
-                }
-                id
-              }
-            } =>
-            {
-              ... on Book {
-                delivery {
-                  ...a
-                }
-              }
-              ... on Magazine {
-                delivery {
-                  ...a
-                }
-              }
-            }
-            fragment a on DeliveryEstimates {
-              fastestDelivery
-            }
-          },
-        },
-      },
-    },
+    variables
+      $a
+
+    fetches
+      fetch               after
+      [2] products        -
+      [10] reviews        [2]
+      [6] products        [10]
+      [15] inventory      [6]
+
+    [2] products
+      out
+        { similar(id: "x") { __typename id } }
+
+    [10] reviews   after [2]
+      if
+        $a
+      merge
+        similar.@
+      in
+        ... on Book { __typename id } ... on Magazine { __typename id }
+      out
+        ... on Book { reviews { ...a } } ... on Magazine { reviews { ...a } }
+        fragment a on Review { product { __typename id } }
+
+    [6] products   after [10]
+      if
+        $a
+      merge
+        similar.@.reviews.@.product
+      in
+        ... on Book { __typename id } ... on Magazine { __typename id }
+      out
+        ... on Book { dimensions { ...a } } ... on Magazine { dimensions { ...a } }
+        fragment a on ProductDimension { weight size }
+
+    [15] inventory   after [6]
+      if
+        $a
+      merge
+        similar.@.reviews.@.product
+      in
+        ... on Book { __typename dimensions { size weight } id }
+        ... on Magazine { __typename dimensions { size weight } id }
+      out
+        ... on Book { delivery { ...a } } ... on Magazine { delivery { ...a } }
+        fragment a on DeliveryEstimates { fastestDelivery }
     "#);
 
     Ok(())
@@ -2619,43 +2182,29 @@ fn condition_on_a_fragment_of_the_same_type_goes_to_its_fragments() -> Result<()
     let query_plan =
         build_query_plan_with_defaults("fixture/issues/1309.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "search") {
-          {
-            listings {
-              pet {
-                __typename
-                ... on Dog {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-        },
-        Flatten(path: "listings.@.pet|[Dog]") {
-          Fetch(service: "catalog") {
-            {
-              ... on Dog {
-                __typename
-                id
-              }
-            } =>
-            ($x:Boolean!) {
-              ... on Dog {
-                name
-                ... on Dog @include(if: $x) {
-                  tricks
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $x: Boolean!
+
+    fetches
+      fetch               after
+      [2] search          -
+      [4] catalog         [2]
+
+    [2] search
+      out
+        { listings { pet { __typename ... on Dog { __typename id } } } }
+
+    [4] catalog   after [2]
+      merge
+        listings.@.pet|[Dog]
+      in
+        ... on Dog { __typename id }
+      out
+        ... on Dog { name ... on Dog @include(if: $x) { tricks } }
+      vars
+        $x
+    ");
 
     Ok(())
 }
@@ -2682,21 +2231,20 @@ fn fetch_that_never_runs_is_left_out() -> Result<(), Box<dyn Error>> {
     );
     let query_plan = build_query_plan_with_defaults("../../bench/supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{query_plan}"), @r#"
-    QueryPlan {
-      Fetch(service: "accounts") {
-        query ($a:Boolean!) {
-          me {
-            name
-            ... on User @skip(if: $a) @include(if: $a) {
-              __typename
-              id
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{query_plan}"), @r"
+    variables
+      $a: Boolean!
+
+    fetches
+      fetch               after
+      [2] accounts        -
+
+    [2] accounts
+      out
+        { me { name ... on User @skip(if: $a) @include(if: $a) { __typename id } } }
+      vars
+        $a
+    ");
 
     Ok(())
 }
@@ -2716,9 +2264,8 @@ fn plan_is_empty_when_no_fetch_ever_runs() -> Result<(), Box<dyn Error>> {
     let query_plan = build_query_plan_with_defaults("../../bench/supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{query_plan}"), @r"
-    QueryPlan {
-      None,
-    },
+    fetches
+      none
     ");
 
     Ok(())
@@ -2746,29 +2293,28 @@ fn abstract_field_selected_again_under_a_condition_asks_for_its_typename(
     let query_plan =
         build_query_plan_with_defaults("fixture/issues/190.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "recommender", if: $c) {
-        query ($a:Boolean!,$b:Boolean!,$c:Boolean!) {
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $a: Boolean!, $b: Boolean!, $c: Boolean!
+
+    fetches
+      fetch               after
+      [2] recommender     -
+
+    [2] recommender
+      if
+        $c
+      out
+        {
           recommender @include(if: $c) {
-            results @include(if: $b) {
-              id
-            }
-            results {
-              __typename
-              id
-            }
-            results @include(if: $a) {
-              __typename
-              ... on Product {
-                id
-              }
-            }
+            results @include(if: $b) { id }
+            results { __typename id }
+            results @include(if: $a) { __typename ... on Product { id } }
           }
         }
-      },
-    },
-    "#);
+      vars
+        $a, $b, $c
+    ");
 
     Ok(())
 }
@@ -2792,50 +2338,32 @@ fn abstract_field_selected_again_under_a_condition_in_an_entity_call_asks_for_it
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "books") {
-          {
-            books {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "books.@") {
-          Fetch(service: "reviews") {
-            {
-              ... on Book {
-                __typename
-                id
-              }
-            } =>
-            ($a:Boolean!) {
-              ... on Book {
-                ... on Book @include(if: $a) {
-                  reviews {
-                    product {
-                      __typename
-                      ... on Book {
-                        id
-                      }
-                    }
-                  }
-                }
-                reviews {
-                  product {
-                    __typename
-                    id
-                  }
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $a: Boolean!
+
+    fetches
+      fetch               after
+      [2] books           -
+      [4] reviews         [2]
+
+    [2] books
+      out
+        { books { __typename id } }
+
+    [4] reviews   after [2]
+      merge
+        books.@
+      in
+        ... on Book { __typename id }
+      out
+        ... on Book {
+          ... on Book @include(if: $a) { reviews { product { __typename ... on Book { id } } } }
+          reviews { product { __typename id } }
+        }
+      vars
+        $a
+    ");
 
     Ok(())
 }

@@ -22,54 +22,33 @@ fn testing() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/testing.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "store") {
-          {
-            products {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "products") {
-          Fetch(service: "info") {
-            {
-              ... on Product {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isAvailable
-                uuid
-              }
-            }
-          },
-        },
-        Flatten(path: "products") {
-          Fetch(service: "cost") {
-            {
-              ... on Product {
-                __typename
-                uuid
-              }
-            } =>
-            {
-              ... on Product {
-                price {
-                  amount
-                  currency
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] store           -
+      [5] info            [2]
+      [3] cost            [5]
+
+    [2] store
+      out
+        { products { __typename id } }
+
+    [5] info   after [2]
+      merge
+        products
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { isAvailable uuid }
+
+    [3] cost   after [5]
+      merge
+        products
+      in
+        ... on Product { __typename uuid }
+      out
+        ... on Product { price { amount currency } }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -169,41 +148,24 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            products {
-              __typename
-              id
-              pid
-            }
-          }
-        },
-        Flatten(path: "products.@") {
-          Fetch(service: "c") {
-            {
-              ... on Product {
-                __typename
-                id
-                pid
-              }
-            } =>
-            {
-              ... on Product {
-                category {
-                  details {
-                    products
-                  }
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [3] c               [2]
+
+    [2] a
+      out
+        { products { __typename id pid } }
+
+    [3] c   after [2]
+      merge
+        products.@
+      in
+        ... on Product { __typename id pid }
+      out
+        ... on Product { category { details { products } } }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -281,71 +243,40 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "d") {
-          {
-            productFromD(id: "1") {
-              __typename
-              id
-              name
-            }
-          }
-        },
-        Parallel {
-          Flatten(path: "productFromD") {
-            Fetch(service: "a") {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  category {
-                    details
-                  }
-                }
-              }
-            },
-          },
-          Flatten(path: "productFromD") {
-            Fetch(service: "b") {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  category {
-                    __typename
-                    id
-                  }
-                }
-              }
-            },
-          },
-        },
-        Flatten(path: "productFromD.category") {
-          Fetch(service: "c") {
-            {
-              ... on Category {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Category {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] d               -
+      [5] a               [2]
+      [3] b               [2]
+      [4] c               [3]
+
+    [2] d
+      out
+        { productFromD(id: "1") { __typename id name } }
+
+    [5] a   after [2]
+      merge
+        productFromD
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { category { details } }
+
+    [3] b   after [2]
+      merge
+        productFromD
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { category { __typename id } }
+
+    [4] c   after [3]
+      merge
+        productFromD.category
+      in
+        ... on Category { __typename id }
+      out
+        ... on Category { name }
     "#);
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
@@ -485,63 +416,33 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "products") {
-          {
-            topProducts {
-              products {
-                __typename
-                id
-                category {
-                  tag
-                  id
-                }
-              }
-            }
-          }
-        },
-        Flatten(path: "topProducts.products.@") {
-          Fetch(service: "link") {
-            {
-              ... on Product {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                pid
-              }
-            }
-          },
-        },
-        Flatten(path: "topProducts.products.@") {
-          Fetch(service: "price") {
-            {
-              ... on Product {
-                __typename
-                id
-                pid
-                category {
-                  id
-                  tag
-                }
-              }
-            } =>
-            {
-              ... on Product {
-                price {
-                  price
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] products        -
+      [4] link            [2]
+      [3] price           [4]
+
+    [2] products
+      out
+        { topProducts { products { __typename id category { tag id } } } }
+
+    [4] link   after [2]
+      merge
+        topProducts.products.@
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { pid }
+
+    [3] price   after [4]
+      merge
+        topProducts.products.@
+      in
+        ... on Product { __typename id pid category { id tag } }
+      out
+        ... on Product { price { price } }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -672,83 +573,42 @@ fn entities_inside_lists_of_lists() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "catalog") {
-          {
-            grid {
-              ...a
-            }
-            cube {
-              ...a
-            }
-          }
-          fragment a on Product {
-            __typename
-            id
-          }
-        },
-        BatchFetch(service: "products") {
-          {
-            _e0 {
-              paths: [
-                "cube.@.@.@"
-              ]
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              }
-            }
-            _e1 {
-              paths: [
-                "grid.@.@"
-              ]
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-          {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on Product {
-                name
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on Product {
-                name
-                reviews {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-        },
-        Flatten(path: "grid.@.@.reviews.@.@") {
-          Fetch(service: "reviews") {
-            {
-              ... on Review {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Review {
-                body
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] catalog         -
+      [5] products        [2]
+      [4] reviews         [5]
+
+    [2] catalog
+      out
+        { grid { ...a } cube { ...a } }
+        fragment a on Product { __typename id }
+
+    [5] products   after [2]
+      alias _e0
+        merge
+          cube.@.@.@
+        in
+          ... on Product { __typename id }
+        out
+          ... on Product { name }
+      alias _e1
+        merge
+          grid.@.@
+        in
+          ... on Product { __typename id }
+        out
+          ... on Product { name reviews { __typename id } }
+
+    [4] reviews   after [5]
+      merge
+        grid.@.@.reviews.@.@
+      in
+        ... on Review { __typename id }
+      out
+        ... on Review { body }
+    ");
 
     Ok(())
 }

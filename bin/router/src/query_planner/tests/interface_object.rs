@@ -36,34 +36,24 @@ fn interface_object_field_local() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            anotherUsers {
-              __typename
-              id
-              username
-            }
-          }
-        },
-        Flatten(path: "anotherUsers.@") {
-          Fetch(service: "a") {
-            {
-              ... on NodeWithName {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on NodeWithName {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] b               -
+      [3] a               [2]
+
+    [2] b
+      out
+        { anotherUsers { __typename id username } }
+
+    [3] a   after [2]
+      merge
+        anotherUsers.@
+      in
+        ... on NodeWithName { __typename id }
+      out
+        ... on NodeWithName { name }
+      rewrite in
+        [NodeWithName]/__typename = "NodeWithName"
     "#);
 
     Ok(())
@@ -92,34 +82,24 @@ fn interface_object_field_remote() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            users {
-              __typename
-              id
-              name
-            }
-          }
-        },
-        Flatten(path: "users.@") {
-          Fetch(service: "b") {
-            {
-              ... on NodeWithName {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on NodeWithName {
-                username
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] a               -
+      [3] b               [2]
+
+    [2] a
+      out
+        { users { __typename id name } }
+
+    [3] b   after [2]
+      merge
+        users.@
+      in
+        ... on NodeWithName { __typename id }
+      out
+        ... on NodeWithName { username }
+      rewrite in
+        [NodeWithName]/__typename = "NodeWithName"
     "#);
 
     Ok(())
@@ -156,36 +136,24 @@ fn interface_object_field_local_object_type() -> Result<(), Box<dyn Error>> {
     // and perform an entity call to the entity interface type,
     // and simply pass the query there.
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            anotherUsers {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "anotherUsers.@") {
-          Fetch(service: "a") {
-            {
-              ... on NodeWithName {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on NodeWithName {
-                __typename
-                ... on User {
-                  age
-                }
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] b               -
+      [3] a               [2]
+
+    [2] b
+      out
+        { anotherUsers { __typename id } }
+
+    [3] a   after [2]
+      merge
+        anotherUsers.@
+      in
+        ... on NodeWithName { __typename id }
+      out
+        ... on NodeWithName { __typename ... on User { age } }
+      rewrite in
+        [NodeWithName]/__typename = "NodeWithName"
     "#);
 
     Ok(())
@@ -215,20 +183,15 @@ fn interface_to_object_type_locally() -> Result<(), Box<dyn Error>> {
     // that is an entity interface (has @key).
     // Because it's an interface, and not a fake inteface defined as type @interfaceObject,
     // we're able to resolve the object types implementing it.
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        {
-          users {
-            __typename
-            ... on User {
-              age
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { users { __typename ... on User { age } } }
+    ");
 
     Ok(())
 }
@@ -260,48 +223,35 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field_simple
     // To resolve the User part, we need to confirm correct __typename.
     // To resolve `User.username`, we need to call the NodeWithName interfaceObject,
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            anotherUsers {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "anotherUsers.@") {
-          Fetch(service: "a") {
-            {
-              ... on NodeWithName {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on NodeWithName {
-                __typename
-              }
-            }
-          },
-        },
-        Flatten(path: "anotherUsers.@") {
-          Fetch(service: "b") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on NodeWithName {
-                username
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] b               -
+      [5] a               [2]
+      [3] b               [5]
+
+    [2] b
+      out
+        { anotherUsers { __typename id } }
+
+    [5] a   after [2]
+      merge
+        anotherUsers.@
+      in
+        ... on NodeWithName { __typename id }
+      out
+        ... on NodeWithName { __typename }
+      rewrite in
+        [NodeWithName]/__typename = "NodeWithName"
+
+    [3] b   after [5]
+      merge
+        anotherUsers.@
+      in
+        ... on User { __typename id }
+      out
+        ... on NodeWithName { username }
+      rewrite in
+        [NodeWithName]/__typename = "NodeWithName"
     "#);
 
     Ok(())
@@ -344,54 +294,35 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
     //
     // To resolve `User.username`, we need to call the NodeWithName interfaceObject,
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            anotherUsers {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "anotherUsers.@") {
-          Fetch(service: "a") {
-            {
-              ... on NodeWithName {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on NodeWithName {
-                __typename
-                ... on User {
-                  age
-                  name
-                  id
-                }
-                name
-              }
-            }
-          },
-        },
-        Flatten(path: "anotherUsers.@") {
-          Fetch(service: "b") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on NodeWithName {
-                username
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] b               -
+      [6] a               [2]
+      [4] b               [6]
+
+    [2] b
+      out
+        { anotherUsers { __typename id } }
+
+    [6] a   after [2]
+      merge
+        anotherUsers.@
+      in
+        ... on NodeWithName { __typename id }
+      out
+        ... on NodeWithName { __typename ... on User { age name id } name }
+      rewrite in
+        [NodeWithName]/__typename = "NodeWithName"
+
+    [4] b   after [6]
+      merge
+        anotherUsers.@
+      in
+        ... on User { __typename id }
+      out
+        ... on NodeWithName { username }
+      rewrite in
+        [NodeWithName]/__typename = "NodeWithName"
     "#);
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
@@ -541,40 +472,24 @@ fn interface_field_with_inline_fragment_resolving_remote_interface_object_field(
     // The `NodeWithName.name` and `NodeWithName.id` can also be resolved locally.
     // To resolve the `User.username` we need to call the interfaceObject in another subgraph.
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            users {
-              __typename
-              ... on User {
-                __typename
-                age
-                name
-                id
-              }
-              id
-              name
-            }
-          }
-        },
-        Flatten(path: "users.@|[User]") {
-          Fetch(service: "b") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on NodeWithName {
-                username
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] a               -
+      [3] b               [2]
+
+    [2] a
+      out
+        { users { __typename ... on User { __typename age name id } id name } }
+
+    [3] b   after [2]
+      merge
+        users.@|[User]
+      in
+        ... on User { __typename id }
+      out
+        ... on NodeWithName { username }
+      rewrite in
+        [NodeWithName]/__typename = "NodeWithName"
     "#);
 
     Ok(())
@@ -602,17 +517,15 @@ fn interface_object_field_local_direct_resolution() -> Result<(), Box<dyn Error>
     // The interfaceObject resolves `name`.
     // Because there are no type conditions, we can resolve `Account.name` directly,
     // with no extra hops.
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "b") {
-        {
-          accounts {
-            name
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+
+    [2] b
+      out
+        { accounts { name } }
+    ");
 
     Ok(())
 }
@@ -647,48 +560,35 @@ fn interface_object_field_with_inline_fragment_requiring_typename_check(
     // If the `__typename` equals to `Admin`, then we're able to call the interfaceObject,
     // and resolve the `name`.
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            accounts {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "accounts.@") {
-          Fetch(service: "a") {
-            {
-              ... on Account {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Account {
-                __typename
-              }
-            }
-          },
-        },
-        Flatten(path: "accounts.@") {
-          Fetch(service: "b") {
-            {
-              ... on Admin {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Account {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] b               -
+      [5] a               [2]
+      [3] b               [5]
+
+    [2] b
+      out
+        { accounts { __typename id } }
+
+    [5] a   after [2]
+      merge
+        accounts.@
+      in
+        ... on Account { __typename id }
+      out
+        ... on Account { __typename }
+      rewrite in
+        [Account]/__typename = "Account"
+
+    [3] b   after [5]
+      merge
+        accounts.@
+      in
+        ... on Admin { __typename id }
+      out
+        ... on Account { name }
+      rewrite in
+        [Account]/__typename = "Account"
     "#);
 
     Ok(())
@@ -721,34 +621,24 @@ fn interface_object_field_local_with_remote_typename() -> Result<(), Box<dyn Err
     // Because it's a fake interface type (actually object type),
     // we need to resolve it via entity call to the Accounts entity interface.
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            accounts {
-              __typename
-              name
-              id
-            }
-          }
-        },
-        Flatten(path: "accounts.@") {
-          Fetch(service: "a") {
-            {
-              ... on Account {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Account {
-                __typename
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] b               -
+      [3] a               [2]
+
+    [2] b
+      out
+        { accounts { __typename name id } }
+
+    [3] a   after [2]
+      merge
+        accounts.@
+      in
+        ... on Account { __typename id }
+      out
+        ... on Account { __typename }
+      rewrite in
+        [Account]/__typename = "Account"
     "#);
 
     Ok(())
@@ -783,36 +673,24 @@ fn interface_object_inline_fragment_with_remote_typename() -> Result<(), Box<dyn
     // and it needs to have all object types implementing Account,
     // next to it, within the subgraph.
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            accounts {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "accounts.@") {
-          Fetch(service: "a") {
-            {
-              ... on Account {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Account {
-                __typename
-                ... on Admin {
-                  __typename
-                }
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] b               -
+      [3] a               [2]
+
+    [2] b
+      out
+        { accounts { __typename id } }
+
+    [3] a   after [2]
+      merge
+        accounts.@
+      in
+        ... on Account { __typename id }
+      out
+        ... on Account { __typename ... on Admin { __typename } }
+      rewrite in
+        [Account]/__typename = "Account"
     "#);
 
     Ok(())
@@ -841,33 +719,24 @@ fn interface_object_local_id_remote_field() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            accounts {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "accounts.@") {
-          Fetch(service: "c") {
-            {
-              ... on Account {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Account {
-                isActive
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] b               -
+      [3] c               [2]
+
+    [2] b
+      out
+        { accounts { __typename id } }
+
+    [3] c   after [2]
+      merge
+        accounts.@
+      in
+        ... on Account { __typename id }
+      out
+        ... on Account { isActive }
+      rewrite in
+        [Account]/__typename = "Account"
     "#);
 
     Ok(())
@@ -901,36 +770,24 @@ fn interface_object_local_id_remote_field_with_inline_fragment() -> Result<(), B
     // To collect it, we perform an entity call to the interface entity,
     // and also make sure `isActive` belongs to `Admin` type.
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            accounts {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "accounts.@") {
-          Fetch(service: "a") {
-            {
-              ... on Account {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Account {
-                __typename
-                ... on Admin {
-                  isActive
-                }
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] b               -
+      [3] a               [2]
+
+    [2] b
+      out
+        { accounts { __typename id } }
+
+    [3] a   after [2]
+      merge
+        accounts.@
+      in
+        ... on Account { __typename id }
+      out
+        ... on Account { __typename ... on Admin { isActive } }
+      rewrite in
+        [Account]/__typename = "Account"
     "#);
 
     Ok(())
@@ -966,39 +823,24 @@ fn interface_object_list_field_with_type_condition() -> Result<(), Box<dyn Error
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "social") {
-          {
-            me {
-              friends {
-                __typename
-                id
-                credits
-              }
-            }
-          }
-        },
-        Flatten(path: "me.friends.@") {
-          Fetch(service: "users") {
-            {
-              ... on Account {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Account {
-                __typename
-                ... on User {
-                  name
-                }
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] social          -
+      [3] users           [2]
+
+    [2] social
+      out
+        { me { friends { __typename id credits } } }
+
+    [3] users   after [2]
+      merge
+        me.friends.@
+      in
+        ... on Account { __typename id }
+      out
+        ... on Account { __typename ... on User { name } }
+      rewrite in
+        [Account]/__typename = "Account"
     "#);
 
     Ok(())
@@ -1025,36 +867,24 @@ fn interface_object_type_condition_on_root_field() -> Result<(), Box<dyn Error>>
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "social") {
-          {
-            me {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "me") {
-          Fetch(service: "users") {
-            {
-              ... on Account {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Account {
-                __typename
-                ... on User {
-                  name
-                }
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] social          -
+      [3] users           [2]
+
+    [2] social
+      out
+        { me { __typename id } }
+
+    [3] users   after [2]
+      merge
+        me
+      in
+        ... on Account { __typename id }
+      out
+        ... on Account { __typename ... on User { name } }
+      rewrite in
+        [Account]/__typename = "Account"
     "#);
 
     Ok(())
@@ -1085,22 +915,20 @@ fn conditional_same_type_fragment_under_a_type_condition_on_an_interface_object(
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        query ($v:Boolean!) {
-          users {
-            __typename
-            ... on User {
-              ... on User @skip(if: $v) {
-                age
-              }
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $v: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { users { __typename ... on User { ... on User @skip(if: $v) { age } } } }
+      vars
+        $v
+    ");
 
     Ok(())
 }
@@ -1128,22 +956,20 @@ fn included_same_type_fragment_under_a_type_condition_on_an_interface_object(
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        query ($v:Boolean!) {
-          users {
-            __typename
-            ... on User {
-              ... on User @include(if: $v) {
-                age
-              }
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $v: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { users { __typename ... on User { ... on User @include(if: $v) { age } } } }
+      vars
+        $v
+    ");
 
     Ok(())
 }

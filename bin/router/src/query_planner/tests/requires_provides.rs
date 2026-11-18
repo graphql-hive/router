@@ -29,60 +29,33 @@ fn simple_requires_provides() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "accounts") {
-          {
-            me {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "me") {
-          Fetch(service: "reviews") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                reviews {
-                  id
-                  author {
-                    id
-                    username
-                  }
-                  product {
-                    __typename
-                    upc
-                  }
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "me.reviews.@.product") {
-          Fetch(service: "inventory") {
-            {
-              ... on Product {
-                __typename
-                upc
-              }
-            } =>
-            {
-              ... on Product {
-                inStock
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] accounts        -
+      [3] reviews         [2]
+      [4] inventory       [3]
+
+    [2] accounts
+      out
+        { me { __typename id } }
+
+    [3] reviews   after [2]
+      merge
+        me
+      in
+        ... on User { __typename id }
+      out
+        ... on User { reviews { id author { id username } product { __typename upc } } }
+
+    [4] inventory   after [3]
+      merge
+        me.reviews.@.product
+      in
+        ... on Product { __typename upc }
+      out
+        ... on Product { inStock }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -189,54 +162,33 @@ fn provides_fieldset_with_typename_and_requires() -> Result<(), Box<dyn Error>> 
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "reviews") {
-          {
-            review {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "review") {
-          Fetch(service: "secrets") {
-            {
-              ... on Review {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Review {
-                secret
-              }
-            }
-          },
-        },
-        Flatten(path: "review") {
-          Fetch(service: "reviews") {
-            {
-              ... on Review {
-                __typename
-                secret
-                id
-              }
-            } =>
-            {
-              ... on Review {
-                author {
-                  __typename
-                  username
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] reviews         -
+      [4] secrets         [2]
+      [3] reviews         [4]
+
+    [2] reviews
+      out
+        { review { __typename id } }
+
+    [4] secrets   after [2]
+      merge
+        review
+      in
+        ... on Review { __typename id }
+      out
+        ... on Review { secret }
+
+    [3] reviews   after [4]
+      merge
+        review
+      in
+        ... on Review { __typename secret id }
+      out
+        ... on Review { author { __typename username } }
+    ");
     Ok(())
 }
 
@@ -261,69 +213,42 @@ fn requires_on_same_type_nested_in_entity_call() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "users") {
-          {
-            user {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "user") {
-          Fetch(service: "social") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                other {
-                  __typename
-                  id
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "user.other") {
-          Fetch(service: "names") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                name
-              }
-            }
-          },
-        },
-        Flatten(path: "user.other") {
-          Fetch(service: "social") {
-            {
-              ... on User {
-                __typename
-                name
-                id
-              }
-            } =>
-            {
-              ... on User {
-                label
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] users           -
+      [3] social          [2]
+      [5] names           [3]
+      [4] social          [5]
+
+    [2] users
+      out
+        { user { __typename id } }
+
+    [3] social   after [2]
+      merge
+        user
+      in
+        ... on User { __typename id }
+      out
+        ... on User { other { __typename id } }
+
+    [5] names   after [3]
+      merge
+        user.other
+      in
+        ... on User { __typename id }
+      out
+        ... on User { name }
+
+    [4] social   after [5]
+      merge
+        user.other
+      in
+        ... on User { __typename name id }
+      out
+        ... on User { label }
+    ");
 
     Ok(())
 }
@@ -351,71 +276,42 @@ fn requires_on_same_type_nested_under_provides() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "users") {
-          {
-            user {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "user") {
-          Fetch(service: "social") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                related {
-                  other {
-                    __typename
-                    id
-                  }
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "user.related.other") {
-          Fetch(service: "names") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                name
-              }
-            }
-          },
-        },
-        Flatten(path: "user.related.other") {
-          Fetch(service: "social") {
-            {
-              ... on User {
-                __typename
-                name
-                id
-              }
-            } =>
-            {
-              ... on User {
-                label
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] users           -
+      [3] social          [2]
+      [5] names           [3]
+      [4] social          [5]
+
+    [2] users
+      out
+        { user { __typename id } }
+
+    [3] social   after [2]
+      merge
+        user
+      in
+        ... on User { __typename id }
+      out
+        ... on User { related { other { __typename id } } }
+
+    [5] names   after [3]
+      merge
+        user.related.other
+      in
+        ... on User { __typename id }
+      out
+        ... on User { name }
+
+    [4] social   after [5]
+      merge
+        user.related.other
+      in
+        ... on User { __typename name id }
+      out
+        ... on User { label }
+    ");
 
     Ok(())
 }
@@ -451,62 +347,35 @@ fn provided_union_keeps_members_that_are_not_provided() -> Result<(), Box<dyn Er
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "users") {
-          {
-            user {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "user") {
-          Fetch(service: "orders") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                orders {
-                  item {
-                    __typename
-                    ... on Book {
-                      isbn
-                      stock
-                    }
-                    ... on Movie {
-                      __typename
-                      id
-                    }
-                  }
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "user.orders.@.item|[Movie]") {
-          Fetch(service: "catalog") {
-            {
-              ... on Movie {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Movie {
-                title
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] users           -
+      [3] orders          [2]
+      [4] catalog         [3]
+
+    [2] users
+      out
+        { user { __typename id } }
+
+    [3] orders   after [2]
+      merge
+        user
+      in
+        ... on User { __typename id }
+      out
+        ... on User {
+          orders { item { __typename ... on Book { isbn stock } ... on Movie { __typename id } } }
+        }
+
+    [4] catalog   after [3]
+      merge
+        user.orders.@.item|[Movie]
+      in
+        ... on Movie { __typename id }
+      out
+        ... on Movie { title }
+    ");
 
     Ok(())
 }
@@ -534,54 +403,33 @@ fn provides_does_not_leak_to_another_parent() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "catalog") {
-          {
-            store {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "store") {
-          Fetch(service: "orders") {
-            {
-              ... on Store {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Store {
-                orders {
-                  __typename
-                  id
-                  weight
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "store.orders.@") {
-          Fetch(service: "catalog") {
-            {
-              ... on Order {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Order {
-                sku
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] catalog         -
+      [3] orders          [2]
+      [4] catalog         [3]
+
+    [2] catalog
+      out
+        { store { __typename id } }
+
+    [3] orders   after [2]
+      merge
+        store
+      in
+        ... on Store { __typename id }
+      out
+        ... on Store { orders { __typename id weight } }
+
+    [4] catalog   after [3]
+      merge
+        store.orders.@
+      in
+        ... on Order { __typename id }
+      out
+        ... on Order { sku }
+    ");
 
     Ok(())
 }
@@ -606,53 +454,33 @@ fn provides_does_not_apply_to_another_field() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "users") {
-          {
-            user {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "user") {
-          Fetch(service: "orders") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                pastOrders {
-                  __typename
-                  id
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "user.pastOrders.@") {
-          Fetch(service: "catalog") {
-            {
-              ... on Order {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Order {
-                sku
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] users           -
+      [3] orders          [2]
+      [4] catalog         [3]
+
+    [2] users
+      out
+        { user { __typename id } }
+
+    [3] orders   after [2]
+      merge
+        user
+      in
+        ... on User { __typename id }
+      out
+        ... on User { pastOrders { __typename id } }
+
+    [4] catalog   after [3]
+      merge
+        user.pastOrders.@
+      in
+        ... on Order { __typename id }
+      out
+        ... on Order { sku }
+    ");
 
     Ok(())
 }
@@ -682,40 +510,24 @@ fn provides_reaches_copies_made_earlier() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "users") {
-          {
-            user {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "user") {
-          Fetch(service: "orders") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                orders {
-                  sku
-                  product {
-                    name
-                  }
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] users           -
+      [3] orders          [2]
+
+    [2] users
+      out
+        { user { __typename id } }
+
+    [3] orders   after [2]
+      merge
+        user
+      in
+        ... on User { __typename id }
+      out
+        ... on User { orders { sku product { name } } }
+    ");
 
     Ok(())
 }
@@ -745,38 +557,24 @@ fn requires_provided_after_entity_hop() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "users") {
-          {
-            user {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "user") {
-          Fetch(service: "orders") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                orders {
-                  sku
-                  name
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] users           -
+      [3] orders          [2]
+
+    [2] users
+      out
+        { user { __typename id } }
+
+    [3] orders   after [2]
+      merge
+        user
+      in
+        ... on User { __typename id }
+      out
+        ... on User { orders { sku name } }
+    ");
 
     Ok(())
 }
@@ -808,71 +606,51 @@ fn requires_partly_provided_after_entity_hop() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "users") {
-          {
-            user {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "user") {
-          Fetch(service: "orders") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            ($x:Boolean!) {
-              ... on User {
-                orders {
-                  __typename
-                  id
-                  sku @include(if: $x)
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "user.orders.@") {
-          Fetch(service: "catalog", if: $x) {
-            {
-              ... on Order {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Order {
-                weight
-              }
-            }
-          },
-        },
-        Flatten(path: "user.orders.@") {
-          Fetch(service: "orders", if: $x) {
-            {
-              ... on Order {
-                __typename
-                sku
-                weight
-                id
-              }
-            } =>
-            {
-              ... on Order {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $x: Boolean!
+
+    fetches
+      fetch               after
+      [2] users           -
+      [3] orders          [2]
+      [5] catalog         [3]
+      [4] orders          [5]
+
+    [2] users
+      out
+        { user { __typename id } }
+
+    [3] orders   after [2]
+      merge
+        user
+      in
+        ... on User { __typename id }
+      out
+        ... on User { orders { __typename id sku @include(if: $x) } }
+      vars
+        $x
+
+    [5] catalog   after [3]
+      if
+        $x
+      merge
+        user.orders.@
+      in
+        ... on Order { __typename id }
+      out
+        ... on Order { weight }
+
+    [4] orders   after [5]
+      if
+        $x
+      merge
+        user.orders.@
+      in
+        ... on Order { __typename sku weight id }
+      out
+        ... on Order { name }
+    ");
 
     Ok(())
 }
@@ -900,43 +678,24 @@ fn requires_provided_through_type_condition() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "users") {
-          {
-            user {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "user") {
-          Fetch(service: "orders") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                orders {
-                  item {
-                    __typename
-                    ... on Book {
-                      isbn
-                    }
-                  }
-                  label
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] users           -
+      [3] orders          [2]
+
+    [2] users
+      out
+        { user { __typename id } }
+
+    [3] orders   after [2]
+      merge
+        user
+      in
+        ... on User { __typename id }
+      out
+        ... on User { orders { item { __typename ... on Book { isbn } } label } }
+    ");
 
     Ok(())
 }
@@ -963,43 +722,24 @@ fn requires_provided_through_interface_condition() -> Result<(), Box<dyn Error>>
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "users") {
-          {
-            user {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "user") {
-          Fetch(service: "orders") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                orders {
-                  media {
-                    __typename
-                    ... on Book {
-                      isbn
-                    }
-                  }
-                  mediaLabel
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] users           -
+      [3] orders          [2]
+
+    [2] users
+      out
+        { user { __typename id } }
+
+    [3] orders   after [2]
+      merge
+        user
+      in
+        ... on User { __typename id }
+      out
+        ... on User { orders { media { __typename ... on Book { isbn } } mediaLabel } }
+    ");
 
     Ok(())
 }
@@ -1029,59 +769,33 @@ fn provides_on_field_returning_its_own_type() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "users") {
-          {
-            user {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "user") {
-          Fetch(service: "names") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                name
-              }
-            }
-          },
-        },
-        Flatten(path: "user") {
-          Fetch(service: "social") {
-            {
-              ... on User {
-                __typename
-                id
-                name
-              }
-            } =>
-            {
-              ... on User {
-                related {
-                  name
-                  label
-                  related {
-                    name
-                    label
-                  }
-                }
-                label
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] users           -
+      [5] names           [2]
+      [3] social          [5]
+
+    [2] users
+      out
+        { user { __typename id } }
+
+    [5] names   after [2]
+      merge
+        user
+      in
+        ... on User { __typename id }
+      out
+        ... on User { name }
+
+    [3] social   after [5]
+      merge
+        user
+      in
+        ... on User { __typename id name }
+      out
+        ... on User { related { name label related { name label } } label }
+    ");
 
     Ok(())
 }

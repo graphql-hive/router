@@ -21,17 +21,15 @@ fn single_simple_overrides() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "b") {
-        {
-          feed {
-            createdAt
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+
+    [2] b
+      out
+        { feed { createdAt } }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -65,44 +63,29 @@ fn two_fields_simple_overrides() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Parallel {
-          Fetch(service: "b") {
-            {
-              bFeed {
-                createdAt
-              }
-            }
-          },
-          Fetch(service: "a") {
-            {
-              aFeed {
-                __typename
-                id
-              }
-            }
-          },
-        },
-        Flatten(path: "aFeed.@") {
-          Fetch(service: "b") {
-            {
-              ... on Post {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Post {
-                createdAt
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [4] b               -
+      [2] a               -
+      [3] b               [2]
+
+    [4] b
+      out
+        { bFeed { createdAt } }
+
+    [2] a
+      out
+        { aFeed { __typename id } }
+
+    [3] b   after [2]
+      merge
+        aFeed.@
+      in
+        ... on Post { __typename id }
+      out
+        ... on Post { createdAt }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -182,39 +165,24 @@ fn override_object_field_but_interface_is_requested() -> Result<(), Box<dyn Erro
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            feed {
-              __typename
-              id
-              ... on ImagePost {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "feed.@|[ImagePost]") {
-          Fetch(service: "b") {
-            {
-              ... on ImagePost {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on ImagePost {
-                createdAt
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [3] b               [2]
+
+    [2] a
+      out
+        { feed { __typename id ... on ImagePost { __typename id } } }
+
+    [3] b   after [2]
+      merge
+        feed.@|[ImagePost]
+      in
+        ... on ImagePost { __typename id }
+      out
+        ... on ImagePost { createdAt }
+    ");
     Ok(())
 }
 
@@ -241,44 +209,29 @@ fn progressive_override_percentage_test() -> Result<(), Box<dyn Error>> {
         Default::default(),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Parallel {
-          Fetch(service: "b") {
-            {
-              bFeed {
-                createdAt
-              }
-            }
-          },
-          Fetch(service: "a") {
-            {
-              aFeed {
-                __typename
-                id
-              }
-            }
-          },
-        },
-        Flatten(path: "aFeed.@") {
-          Fetch(service: "b") {
-            {
-              ... on Post {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Post {
-                createdAt
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [4] b               -
+      [2] a               -
+      [3] b               [2]
+
+    [4] b
+      out
+        { bFeed { createdAt } }
+
+    [2] a
+      out
+        { aFeed { __typename id } }
+
+    [3] b   after [2]
+      merge
+        aFeed.@
+      in
+        ... on Post { __typename id }
+      out
+        ... on Post { createdAt }
+    ");
 
     let query_plan = build_query_plan(
         "fixture/tests/simple-progressive-overrides.supergraph.graphql",
@@ -288,44 +241,29 @@ fn progressive_override_percentage_test() -> Result<(), Box<dyn Error>> {
         Default::default(),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Parallel {
-          Fetch(service: "b") {
-            {
-              bFeed {
-                __typename
-                id
-              }
-            }
-          },
-          Fetch(service: "a") {
-            {
-              aFeed {
-                createdAt
-              }
-            }
-          },
-        },
-        Flatten(path: "bFeed.@") {
-          Fetch(service: "a") {
-            {
-              ... on Post {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Post {
-                createdAt
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [3] b               -
+      [2] a               -
+      [4] a               [3]
+
+    [3] b
+      out
+        { bFeed { __typename id } }
+
+    [2] a
+      out
+        { aFeed { createdAt } }
+
+    [4] a   after [3]
+      merge
+        bFeed.@
+      in
+        ... on Post { __typename id }
+      out
+        ... on Post { createdAt }
+    ");
     Ok(())
 }
 
@@ -349,17 +287,15 @@ fn progressive_override_flag_test() -> Result<(), Box<dyn Error>> {
         Default::default(),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "b") {
-        {
-          feed {
-            id
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+
+    [2] b
+      out
+        { feed { id } }
+    ");
 
     let query_plan = build_query_plan(
         "fixture/tests/simple-progressive-overrides.supergraph.graphql",
@@ -369,17 +305,15 @@ fn progressive_override_flag_test() -> Result<(), Box<dyn Error>> {
         Default::default(),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        {
-          feed {
-            id
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { feed { id } }
+    ");
     Ok(())
 }
 
@@ -413,25 +347,15 @@ fn progressive_override_of_union_field() -> Result<(), Box<dyn Error>> {
         Default::default(),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "b") {
-        {
-          me {
-            media {
-              __typename
-              ... on Book {
-                id
-              }
-              ... on Movie {
-                id
-              }
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+
+    [2] b
+      out
+        { me { media { __typename ... on Book { id } ... on Movie { id } } } }
+    ");
 
     // flag off: a still owns `media`
     let query_plan = build_query_plan(
@@ -441,43 +365,24 @@ fn progressive_override_of_union_field() -> Result<(), Box<dyn Error>> {
         Default::default(),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            me {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "me") {
-          Fetch(service: "a") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                media {
-                  __typename
-                  ... on Book {
-                    id
-                  }
-                  ... on Movie {
-                    id
-                  }
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+      [3] a               [2]
+
+    [2] b
+      out
+        { me { __typename id } }
+
+    [3] a   after [2]
+      merge
+        me
+      in
+        ... on User { __typename id }
+      out
+        ... on User { media { __typename ... on Book { id } ... on Movie { id } } }
+    ");
 
     Ok(())
 }
@@ -506,19 +411,15 @@ fn progressive_override_of_provides_field() -> Result<(), Box<dyn Error>> {
         Default::default(),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "b") {
-        {
-          me {
-            orders {
-              sku
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+
+    [2] b
+      out
+        { me { orders { sku } } }
+    ");
 
     // flag off: a still owns `orders`, so b's @provides path can't be used
     let query_plan = build_query_plan(
@@ -528,37 +429,24 @@ fn progressive_override_of_provides_field() -> Result<(), Box<dyn Error>> {
         Default::default(),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            me {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "me") {
-          Fetch(service: "a") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                orders {
-                  sku
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+      [3] a               [2]
+
+    [2] b
+      out
+        { me { __typename id } }
+
+    [3] a   after [2]
+      merge
+        me
+      in
+        ... on User { __typename id }
+      out
+        ... on User { orders { sku } }
+    ");
 
     Ok(())
 }
@@ -594,25 +482,15 @@ fn progressive_override_of_provides_union_field() -> Result<(), Box<dyn Error>> 
         Default::default(),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "b") {
-        {
-          me {
-            media {
-              __typename
-              ... on Book {
-                title
-              }
-              ... on Movie {
-                title
-              }
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+
+    [2] b
+      out
+        { me { media { __typename ... on Book { title } ... on Movie { title } } } }
+    ");
 
     // flag off: a still owns `media`
     let query_plan = build_query_plan(
@@ -622,43 +500,24 @@ fn progressive_override_of_provides_union_field() -> Result<(), Box<dyn Error>> 
         Default::default(),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            me {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "me") {
-          Fetch(service: "a") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                media {
-                  __typename
-                  ... on Book {
-                    title
-                  }
-                  ... on Movie {
-                    title
-                  }
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+      [3] a               [2]
+
+    [2] b
+      out
+        { me { __typename id } }
+
+    [3] a   after [2]
+      merge
+        me
+      in
+        ... on User { __typename id }
+      out
+        ... on User { media { __typename ... on Book { title } ... on Movie { title } } }
+    ");
 
     Ok(())
 }

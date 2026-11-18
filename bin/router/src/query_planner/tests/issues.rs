@@ -29,17 +29,22 @@ fn issue_1189_variable_skip_is_preserved_in_subgraph_operation() -> Result<(), B
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a", if: !$v) {
-        query ($v:Boolean!) {
-          product @skip(if: $v) {
-            price
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $v: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      if
+        !$v
+      out
+        { product @skip(if: $v) { price } }
+      vars
+        $v
+    ");
 
     Ok(())
 }
@@ -74,107 +79,59 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/issues/281.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            viewer {
-              review {
-                __typename
-                ... on AnonymousReview {
-                  __typename
-                  product {
-                    ...a
-                  }
-                }
-                ... on UserReview {
-                  __typename
-                  product {
-                    ...a
-                  }
-                }
-              }
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [5] b               [2]
+      [6] d               [5]
+      [4] c               [5]
+
+    [2] a
+      out
+        {
+          viewer {
+            review {
+              __typename
+              ... on AnonymousReview { __typename product { ...a } }
+              ... on UserReview { __typename product { ...a } }
             }
           }
-          fragment a on Product {
-            __typename
-            id
-          }
-        },
-        BatchFetch(service: "b") {
-          {
-            _e0 {
-              paths: [
-                "viewer.review|[UserReview].product"
-              ]
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              }
-            }
-            _e1 {
-              paths: [
-                "viewer.review|[AnonymousReview].product"
-              ]
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-          {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on Product {
-                pid
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on Product {
-                b
-              }
-            }
-          }
-        },
-        Parallel {
-          Flatten(path: "viewer.review|[UserReview].product") {
-            Fetch(service: "d") {
-              {
-                ... on Product {
-                  __typename
-                  pid
-                }
-              } =>
-              {
-                ... on Product {
-                  d
-                }
-              }
-            },
-          },
-          Flatten(path: "viewer.review|[UserReview].product") {
-            Fetch(service: "c") {
-              {
-                ... on Product {
-                  __typename
-                  pid
-                }
-              } =>
-              {
-                ... on Product {
-                  c
-                }
-              }
-            },
-          },
-        },
-      },
-    },
-    "#);
+        }
+        fragment a on Product { __typename id }
+
+    [5] b   after [2]
+      alias _e0
+        merge
+          viewer.review|[UserReview].product
+        in
+          ... on Product { __typename id }
+        out
+          ... on Product { pid }
+      alias _e1
+        merge
+          viewer.review|[AnonymousReview].product
+        in
+          ... on Product { __typename id }
+        out
+          ... on Product { b }
+
+    [6] d   after [5]
+      merge
+        viewer.review|[UserReview].product
+      in
+        ... on Product { __typename pid }
+      out
+        ... on Product { d }
+
+    [4] c   after [5]
+      merge
+        viewer.review|[UserReview].product
+      in
+        ... on Product { __typename pid }
+      out
+        ... on Product { c }
+    ");
 
     Ok(())
 }
@@ -206,24 +163,28 @@ fn issue_190_test() -> Result<(), Box<dyn Error>> {
     );
     let query_plan =
         build_query_plan_with_defaults("fixture/issues/190.supergraph.graphql", document)?;
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "recommender", if: $included) {
-        query ($included:Boolean!) {
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $included: Boolean!
+
+    fetches
+      fetch               after
+      [2] recommender     -
+
+    [2] recommender
+      if
+        $included
+      out
+        {
           recommender @include(if: $included) {
             __typename
             id
-            results {
-              __typename
-              ... on Product {
-                id
-              }
-            }
+            results { __typename ... on Product { id } }
           }
         }
-      },
-    },
-    "#);
+      vars
+        $included
+    ");
 
     // Without __typename version
     let document = parse_operation(
@@ -246,23 +207,22 @@ fn issue_190_test() -> Result<(), Box<dyn Error>> {
     );
     let query_plan =
         build_query_plan_with_defaults("fixture/issues/190.supergraph.graphql", document)?;
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "recommender", if: $included) {
-        query ($included:Boolean!) {
-          recommender @include(if: $included) {
-            id
-            results {
-              __typename
-              ... on Product {
-                id
-              }
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $included: Boolean!
+
+    fetches
+      fetch               after
+      [2] recommender     -
+
+    [2] recommender
+      if
+        $included
+      out
+        { recommender @include(if: $included) { id results { __typename ... on Product { id } } } }
+      vars
+        $included
+    ");
 
     // Inline fragment version
     let document = parse_operation(
@@ -283,23 +243,22 @@ fn issue_190_test() -> Result<(), Box<dyn Error>> {
     );
     let query_plan =
         build_query_plan_with_defaults("fixture/issues/190.supergraph.graphql", document)?;
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "recommender", if: $included) {
-        query ($included:Boolean!) {
-          recommender @include(if: $included) {
-            id
-            results {
-              __typename
-              ... on Product {
-                id
-              }
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $included: Boolean!
+
+    fetches
+      fetch               after
+      [2] recommender     -
+
+    [2] recommender
+      if
+        $included
+      out
+        { recommender @include(if: $included) { id results { __typename ... on Product { id } } } }
+      vars
+        $included
+    ");
 
     Ok(())
 }
@@ -371,25 +330,24 @@ fn issue_939_test() -> Result<(), Box<dyn Error>> {
         format!("{}", inline_fragment_plan)
     );
 
-    insta::assert_snapshot!(format!("{}", inline_fragment_plan), @r#"
-    QueryPlan {
-      Fetch(service: "content") {
-        query ($id:ID!) {
+    insta::assert_snapshot!(format!("{}", inline_fragment_plan), @r"
+    variables
+      $id: ID!
+
+    fetches
+      fetch               after
+      [2] content         -
+
+    [2] content
+      out
+        {
           node(id: $id) {
             __typename
             ... on MyNode {
               content {
                 __typename
-                ... on TextContent {
-                  fragments {
-                    ...a
-                  }
-                }
-                ... on TextGroupContent {
-                  fragments {
-                    ...a
-                  }
-                }
+                ... on TextContent { fragments { ...a } }
+                ... on TextGroupContent { fragments { ...a } }
               }
             }
           }
@@ -398,18 +356,14 @@ fn issue_939_test() -> Result<(), Box<dyn Error>> {
           contentNode {
             content {
               __typename
-              ... on TextContent {
-                id
-              }
-              ... on TextGroupContent {
-                id
-              }
+              ... on TextContent { id }
+              ... on TextGroupContent { id }
             }
           }
         }
-      },
-    },
-    "#);
+      vars
+        $id
+    ");
 
     Ok(())
 }
@@ -440,28 +394,27 @@ fn experimental_abstract_type_folding_folds_object_fragments_into_interface(
     let query_plan =
         build_query_plan_with_defaults("fixture/issues/939.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "content") {
-        query ($id:ID!) {
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $id: ID!
+
+    fetches
+      fetch               after
+      [2] content         -
+
+    [2] content
+      out
+        {
           node(id: $id) {
             __typename
             ... on MyNode {
-              content {
-                __typename
-                ... on TextContent {
-                  id
-                }
-                ... on TextGroupContent {
-                  id
-                }
-              }
+              content { __typename ... on TextContent { id } ... on TextGroupContent { id } }
             }
           }
         }
-      },
-    },
-    "#);
+      vars
+        $id
+    ");
 
     let document = parse_operation(
         r#"
@@ -491,25 +444,25 @@ fn experimental_abstract_type_folding_folds_object_fragments_into_interface(
         },
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "content") {
-        query ($id:ID!) {
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $id: ID!
+
+    fetches
+      fetch               after
+      [2] content         -
+
+    [2] content
+      out
+        {
           node(id: $id) {
             __typename
-            ... on MyNode {
-              content {
-                __typename
-                ... on ITextContent {
-                  id
-                }
-              }
-            }
+            ... on MyNode { content { __typename ... on ITextContent { id } } }
           }
         }
-      },
-    },
-    "#);
+      vars
+        $id
+    ");
 
     Ok(())
 }
@@ -563,29 +516,23 @@ fn issue_965_test() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", concrete_named_fragment_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        {
-          account(id: "a1") {
-            id
-            username
-          }
-        }
-      },
-    },
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { account(id: "a1") { id username } }
     "#);
 
     insta::assert_snapshot!(format!("{}", abstract_named_fragment_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        {
-          account(id: "a1") {
-            id
-            username
-          }
-        }
-      },
-    },
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { account(id: "a1") { id username } }
     "#);
 
     Ok(())
@@ -652,41 +599,43 @@ fn issue_965_mixed_nested_fragments_with_directives_test() -> Result<(), Box<dyn
     )?;
 
     insta::assert_snapshot!(format!("{}", concrete_named_fragment_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        query ($inner:Boolean!,$outer:Boolean!,$skip:Boolean!) {
+    variables
+      $inner: Boolean!, $outer: Boolean!, $skip: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        {
           account(id: "a1") {
-            ... on Account @include(if: $outer) {
-              ... on Account @include(if: $inner) {
-                id
-              }
-            }
-            ... on Account @skip(if: $skip) {
-              username
-            }
+            ... on Account @include(if: $outer) { ... on Account @include(if: $inner) { id } }
+            ... on Account @skip(if: $skip) { username }
           }
         }
-      },
-    },
+      vars
+        $inner, $outer, $skip
     "#);
 
     insta::assert_snapshot!(format!("{}", abstract_named_fragment_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        query ($inner:Boolean!,$outer:Boolean!,$skip:Boolean!) {
+    variables
+      $inner: Boolean!, $outer: Boolean!, $skip: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        {
           account(id: "a1") {
-            ... on Account @include(if: $outer) {
-              ... on Account @include(if: $inner) {
-                id
-              }
-            }
-            ... on Account @skip(if: $skip) {
-              username
-            }
+            ... on Account @include(if: $outer) { ... on Account @include(if: $inner) { id } }
+            ... on Account @skip(if: $skip) { username }
           }
         }
-      },
-    },
+      vars
+        $inner, $outer, $skip
     "#);
 
     Ok(())
@@ -710,17 +659,15 @@ fn issue_interface_object_typename() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "s3") {
-        {
-          me {
-            __typename
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] s3              -
+
+    [2] s3
+      out
+        { me { __typename } }
+    ");
 
     Ok(())
 }
@@ -839,45 +786,24 @@ fn requires_self_dependency_false_positive() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "library") {
-          {
-            books {
-              __typename
-              edition {
-                book {
-                  catalogId
-                }
-                isbn
-              }
-            }
-          }
-        },
-        Flatten(path: "books.@") {
-          Fetch(service: "recommender") {
-            {
-              ... on BookListing {
-                __typename
-                edition {
-                  book {
-                    catalogId
-                  }
-                  isbn
-                }
-              }
-            } =>
-            {
-              ... on BookListing {
-                isRecommended
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", plan), @r"
+    fetches
+      fetch               after
+      [2] library         -
+      [4] recommender     [2]
+
+    [2] library
+      out
+        { books { __typename edition { book { catalogId } isbn } } }
+
+    [4] recommender   after [2]
+      merge
+        books.@
+      in
+        ... on BookListing { __typename edition { book { catalogId } isbn } }
+      out
+        ... on BookListing { isRecommended }
+    ");
 
     Ok(())
 }
@@ -903,55 +829,33 @@ fn issue_1539_requires_after_entity_hop() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/issues/1539.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "users") {
-          {
-            user {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "user") {
-          Fetch(service: "orders") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                orders {
-                  __typename
-                  id
-                  sku
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "user.orders.@") {
-          Fetch(service: "catalog") {
-            {
-              ... on Order {
-                __typename
-                sku
-                id
-              }
-            } =>
-            {
-              ... on Order {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] users           -
+      [3] orders          [2]
+      [5] catalog         [3]
+
+    [2] users
+      out
+        { user { __typename id } }
+
+    [3] orders   after [2]
+      merge
+        user
+      in
+        ... on User { __typename id }
+      out
+        ... on User { orders { __typename id sku } }
+
+    [5] catalog   after [3]
+      merge
+        user.orders.@
+      in
+        ... on Order { __typename sku id }
+      out
+        ... on Order { name }
+    ");
 
     Ok(())
 }
@@ -975,55 +879,33 @@ fn issue_1539_requires_after_entity_hop_with_explicit_requirement() -> Result<()
     let query_plan =
         build_query_plan_with_defaults("fixture/issues/1539.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "users") {
-          {
-            user {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "user") {
-          Fetch(service: "orders") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                orders {
-                  __typename
-                  sku
-                  id
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "user.orders.@") {
-          Fetch(service: "catalog") {
-            {
-              ... on Order {
-                __typename
-                sku
-                id
-              }
-            } =>
-            {
-              ... on Order {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] users           -
+      [3] orders          [2]
+      [5] catalog         [3]
+
+    [2] users
+      out
+        { user { __typename id } }
+
+    [3] orders   after [2]
+      merge
+        user
+      in
+        ... on User { __typename id }
+      out
+        ... on User { orders { __typename sku id } }
+
+    [5] catalog   after [3]
+      merge
+        user.orders.@
+      in
+        ... on Order { __typename sku id }
+      out
+        ... on Order { name }
+    ");
 
     Ok(())
 }
@@ -1046,37 +928,24 @@ fn issue_1539_requires_on_root_parent() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/issues/1539.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "orders") {
-          {
-            order {
-              __typename
-              id
-              sku
-            }
-          }
-        },
-        Flatten(path: "order") {
-          Fetch(service: "catalog") {
-            {
-              ... on Order {
-                __typename
-                sku
-                id
-              }
-            } =>
-            {
-              ... on Order {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] orders          -
+      [4] catalog         [2]
+
+    [2] orders
+      out
+        { order { __typename id sku } }
+
+    [4] catalog   after [2]
+      merge
+        order
+      in
+        ... on Order { __typename sku id }
+      out
+        ... on Order { name }
+    ");
 
     Ok(())
 }
@@ -1103,55 +972,33 @@ fn issue_1539_requires_on_self_referential_entity() -> Result<(), Box<dyn Error>
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "users") {
-          {
-            order {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "order") {
-          Fetch(service: "orders") {
-            {
-              ... on Order {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Order {
-                related {
-                  __typename
-                  id
-                  sku
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "order.related") {
-          Fetch(service: "catalog") {
-            {
-              ... on Order {
-                __typename
-                sku
-                id
-              }
-            } =>
-            {
-              ... on Order {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] users           -
+      [3] orders          [2]
+      [5] catalog         [3]
+
+    [2] users
+      out
+        { order { __typename id } }
+
+    [3] orders   after [2]
+      merge
+        order
+      in
+        ... on Order { __typename id }
+      out
+        ... on Order { related { __typename id sku } }
+
+    [5] catalog   after [3]
+      merge
+        order.related
+      in
+        ... on Order { __typename sku id }
+      out
+        ... on Order { name }
+    ");
 
     Ok(())
 }
@@ -1205,94 +1052,57 @@ fn issue_1308_conditional_rank_keeps_concrete_requires_types() -> Result<(), Box
     );
     let query_plan =
         build_query_plan_with_defaults("fixture/issues/1308.supergraph.graphql", document)?;
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "catalog") {
-          {
-            cage {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "cage") {
-          Fetch(service: "search") {
-            {
-              ... on Cage {
-                __typename
-                id
-              }
-            } =>
-            ($includeRank:Boolean!) {
-              ... on Cage {
-                listings {
-                  __typename
-                  id
-                  ... on Listing @include(if: $includeRank) {
-                    pet {
-                      __typename
-                      id
-                    }
-                  }
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "cage.listings.@.pet") {
-          Fetch(service: "catalog", if: $includeRank) {
-            {
-              ... on Animal {
-                __typename
-                ... on Cat {
-                  id
-                }
-                ... on Dog {
-                  id
-                }
-              }
-            } =>
-            {
-              ... on Animal {
-                __typename
-                ... on Cat {
-                  whiskers
-                }
-                ... on Dog {
-                  tricks
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "cage.listings.@") {
-          Fetch(service: "ranking", if: $includeRank) {
-            {
-              ... on Listing {
-                __typename
-                pet {
-                  __typename
-                  ... on Dog {
-                    tricks
-                  }
-                  ... on Cat {
-                    whiskers
-                  }
-                }
-                id
-              }
-            } =>
-            {
-              ... on Listing {
-                rank
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $includeRank: Boolean!
+
+    fetches
+      fetch               after
+      [2] catalog         -
+      [3] search          [2]
+      [7] catalog         [3]
+      [5] ranking         [7]
+
+    [2] catalog
+      out
+        { cage { __typename id } }
+
+    [3] search   after [2]
+      merge
+        cage
+      in
+        ... on Cage { __typename id }
+      out
+        ... on Cage {
+          listings { __typename id ... on Listing @include(if: $includeRank) { pet { __typename id } } }
+        }
+      vars
+        $includeRank
+
+    [7] catalog   after [3]
+      if
+        $includeRank
+      merge
+        cage.listings.@.pet
+      in
+        ... on Animal { __typename ... on Cat { id } ... on Dog { id } }
+      out
+        ... on Animal { __typename ... on Cat { whiskers } ... on Dog { tricks } }
+
+    [5] ranking   after [7]
+      if
+        $includeRank
+      merge
+        cage.listings.@
+      in
+        ... on Listing {
+          __typename
+          pet { __typename ... on Dog { tricks } ... on Cat { whiskers } }
+          id
+        }
+      out
+        ... on Listing { rank }
+    ");
 
     Ok(())
 }
@@ -1315,74 +1125,37 @@ fn issue_1309_requires_through_entity_interface() -> Result<(), Box<dyn Error>> 
     );
     let query_plan =
         build_query_plan_with_defaults("fixture/issues/1309.supergraph.graphql", document)?;
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "search") {
-          {
-            listings {
-              __typename
-              id
-              pet {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "listings.@.pet") {
-          Fetch(service: "catalog") {
-            {
-              ... on Animal {
-                __typename
-                ... on Cat {
-                  id
-                }
-                ... on Dog {
-                  id
-                }
-              }
-            } =>
-            {
-              ... on Animal {
-                __typename
-                ... on Cat {
-                  whiskers
-                }
-                ... on Dog {
-                  tricks
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "listings.@") {
-          Fetch(service: "ranking") {
-            {
-              ... on Listing {
-                __typename
-                pet {
-                  __typename
-                  ... on Dog {
-                    tricks
-                  }
-                  ... on Cat {
-                    whiskers
-                  }
-                }
-                id
-              }
-            } =>
-            {
-              ... on Listing {
-                rank
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] search          -
+      [6] catalog         [2]
+      [4] ranking         [6]
+
+    [2] search
+      out
+        { listings { __typename id pet { __typename id } } }
+
+    [6] catalog   after [2]
+      merge
+        listings.@.pet
+      in
+        ... on Animal { __typename ... on Cat { id } ... on Dog { id } }
+      out
+        ... on Animal { __typename ... on Cat { whiskers } ... on Dog { tricks } }
+
+    [4] ranking   after [6]
+      merge
+        listings.@
+      in
+        ... on Listing {
+          __typename
+          pet { __typename ... on Dog { tricks } ... on Cat { whiskers } }
+          id
+        }
+      out
+        ... on Listing { rank }
+    ");
 
     Ok(())
 }
@@ -1485,46 +1258,37 @@ fn issue_1647_include_on_field_after_conditional_entity_call() -> Result<(), Box
     let query_plan =
         build_query_plan_with_defaults("fixture/issues/1647.supergraph.graphql", document)?;
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "accounts") {
-          query ($id:ID!="",$term:String!="",$withDetails:Boolean!) {
-            record(id: $id) @include(if: $withDetails) {
+    variables
+      $id: ID! = "", $term: String! = "", $withDetails: Boolean!
+
+    fetches
+      fetch               after
+      [2] accounts        -
+      [3] billing         [2]
+
+    [2] accounts
+      out
+        {
+          record(id: $id) @include(if: $withDetails) { __typename ... on User { __typename id email } }
+          listed: catalog {
+            search(kind: "item", source: "store", term: $term) @include(if: $withDetails) {
               __typename
-              ... on User {
-                __typename
-                id
-                email
-              }
-            }
-            listed: catalog {
-              search(kind: "item", source: "store", term: $term) @include(if: $withDetails) {
-                __typename
-                ... on Item {
-                  id
-                  label
-                }
-              }
+              ... on Item { id label }
             }
           }
-        },
-        Flatten(path: "record|[User]") {
-          Fetch(service: "billing", if: $withDetails) {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                invoices
-              }
-            }
-          },
-        },
-      },
-    },
+        }
+      vars
+        $id, $term, $withDetails
+
+    [3] billing   after [2]
+      if
+        $withDetails
+      merge
+        record|[User]
+      in
+        ... on User { __typename id }
+      out
+        ... on User { invoices }
     "#);
 
     Ok(())
@@ -1562,48 +1326,38 @@ fn issue_1647_include_on_fragment_after_conditional_entity_call() -> Result<(), 
     let query_plan =
         build_query_plan_with_defaults("fixture/issues/1647.supergraph.graphql", document)?;
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "accounts", if: $withDetails) {
-          query ($id:ID!="",$term:String!="",$withDetails:Boolean!) {
-            record(id: $id) @include(if: $withDetails) {
-              __typename
-              ... on User {
-                __typename
-                id
-                email
-              }
-            }
-            ... on Query @include(if: $withDetails) {
-              listed: catalog {
-                search(kind: "item", source: "store", term: $term) {
-                  __typename
-                  ... on Item {
-                    id
-                    label
-                  }
-                }
-              }
+    variables
+      $id: ID! = "", $term: String! = "", $withDetails: Boolean!
+
+    fetches
+      fetch               after
+      [2] accounts        -
+      [3] billing         [2]
+
+    [2] accounts
+      if
+        $withDetails
+      out
+        {
+          record(id: $id) @include(if: $withDetails) { __typename ... on User { __typename id email } }
+          ... on Query @include(if: $withDetails) {
+            listed: catalog {
+              search(kind: "item", source: "store", term: $term) { __typename ... on Item { id label } }
             }
           }
-        },
-        Flatten(path: "record|[User]") {
-          Fetch(service: "billing", if: $withDetails) {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                invoices
-              }
-            }
-          },
-        },
-      },
-    },
+        }
+      vars
+        $id, $term, $withDetails
+
+    [3] billing   after [2]
+      if
+        $withDetails
+      merge
+        record|[User]
+      in
+        ... on User { __typename id }
+      out
+        ... on User { invoices }
     "#);
 
     Ok(())
@@ -1631,48 +1385,24 @@ fn requires_sends_the_key_of_its_own_subgraph() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "source") {
-          {
-            list {
-              items {
-                __typename
-                group {
-                  tag
-                  id
-                }
-                tag {
-                  id
-                }
-              }
-            }
-          }
-        },
-        Flatten(path: "list.items.@") {
-          Fetch(service: "nested-field-key") {
-            {
-              ... on Item {
-                __typename
-                tag {
-                  id
-                }
-                group {
-                  tag
-                }
-              }
-            } =>
-            {
-              ... on Item {
-                valueNestedField
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch                 after
+      [2] source            -
+      [4] nested-field-key  [2]
+
+    [2] source
+      out
+        { list { items { __typename group { tag id } tag { id } } } }
+
+    [4] nested-field-key   after [2]
+      merge
+        list.items.@
+      in
+        ... on Item { __typename tag { id } group { tag } }
+      out
+        ... on Item { valueNestedField }
+    ");
 
     Ok(())
 }
@@ -1697,52 +1427,33 @@ fn requires_jump_key_comes_from_the_subgraph_holding_the_objects() -> Result<(),
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "source") {
-          {
-            items {
-              __typename
-              code
-              id
-            }
-          }
-        },
-        Flatten(path: "items.@") {
-          Fetch(service: "other") {
-            {
-              ... on Item {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Item {
-                weight
-              }
-            }
-          },
-        },
-        Flatten(path: "items.@") {
-          Fetch(service: "head") {
-            {
-              ... on Item {
-                __typename
-                weight
-                code
-              }
-            } =>
-            {
-              ... on Item {
-                price
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] source          -
+      [5] other           [2]
+      [4] head            [5]
+
+    [2] source
+      out
+        { items { __typename code id } }
+
+    [5] other   after [2]
+      merge
+        items.@
+      in
+        ... on Item { __typename id }
+      out
+        ... on Item { weight }
+
+    [4] head   after [5]
+      merge
+        items.@
+      in
+        ... on Item { __typename weight code }
+      out
+        ... on Item { price }
+    ");
 
     Ok(())
 }
@@ -1766,67 +1477,42 @@ fn requires_jump_key_only_in_the_requiring_subgraph() -> Result<(), Box<dyn Erro
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "source") {
-          {
-            items {
-              __typename
-              code
-            }
-          }
-        },
-        Flatten(path: "items.@") {
-          Fetch(service: "head") {
-            {
-              ... on Item {
-                __typename
-                code
-              }
-            } =>
-            {
-              ... on Item {
-                __typename
-                id
-              }
-            }
-          },
-        },
-        Flatten(path: "items.@") {
-          Fetch(service: "other") {
-            {
-              ... on Item {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Item {
-                weight
-              }
-            }
-          },
-        },
-        Flatten(path: "items.@") {
-          Fetch(service: "head") {
-            {
-              ... on Item {
-                __typename
-                weight
-                code
-              }
-            } =>
-            {
-              ... on Item {
-                price
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] source          -
+      [5] head            [2]
+      [6] other           [5]
+      [4] head            [6]
+
+    [2] source
+      out
+        { items { __typename code } }
+
+    [5] head   after [2]
+      merge
+        items.@
+      in
+        ... on Item { __typename code }
+      out
+        ... on Item { __typename id }
+
+    [6] other   after [5]
+      merge
+        items.@
+      in
+        ... on Item { __typename id }
+      out
+        ... on Item { weight }
+
+    [4] head   after [6]
+      merge
+        items.@
+      in
+        ... on Item { __typename weight code }
+      out
+        ... on Item { price }
+    ");
 
     Ok(())
 }
@@ -1842,52 +1528,33 @@ fn requires_jump_key_provided_to_the_subgraph_holding_the_objects() -> Result<()
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "source") {
-          {
-            items {
-              __typename
-              code
-              id
-            }
-          }
-        },
-        Flatten(path: "items.@") {
-          Fetch(service: "other") {
-            {
-              ... on Item {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Item {
-                weight
-              }
-            }
-          },
-        },
-        Flatten(path: "items.@") {
-          Fetch(service: "head") {
-            {
-              ... on Item {
-                __typename
-                weight
-                code
-              }
-            } =>
-            {
-              ... on Item {
-                price
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] source          -
+      [5] other           [2]
+      [4] head            [5]
+
+    [2] source
+      out
+        { items { __typename code id } }
+
+    [5] other   after [2]
+      merge
+        items.@
+      in
+        ... on Item { __typename id }
+      out
+        ... on Item { weight }
+
+    [4] head   after [5]
+      merge
+        items.@
+      in
+        ... on Item { __typename weight code }
+      out
+        ... on Item { price }
+    ");
 
     Ok(())
 }
@@ -1908,115 +1575,71 @@ fn requires_jump_key_follows_progressive_override() -> Result<(), Box<dyn Error>
     };
 
     let query_plan = plan(PlannerOverrideContext::from_flag("id_in_source".into()))?;
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "source") {
-          {
-            items {
-              __typename
-              code
-              id
-            }
-          }
-        },
-        Flatten(path: "items.@") {
-          Fetch(service: "other") {
-            {
-              ... on Item {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Item {
-                weight
-              }
-            }
-          },
-        },
-        Flatten(path: "items.@") {
-          Fetch(service: "head") {
-            {
-              ... on Item {
-                __typename
-                weight
-                code
-              }
-            } =>
-            {
-              ... on Item {
-                price
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] source          -
+      [5] other           [2]
+      [4] head            [5]
+
+    [2] source
+      out
+        { items { __typename code id } }
+
+    [5] other   after [2]
+      merge
+        items.@
+      in
+        ... on Item { __typename id }
+      out
+        ... on Item { weight }
+
+    [4] head   after [5]
+      merge
+        items.@
+      in
+        ... on Item { __typename weight code }
+      out
+        ... on Item { price }
+    ");
 
     let query_plan = plan(PlannerOverrideContext::from_flag("different_flag".into()))?;
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "source") {
-          {
-            items {
-              __typename
-              code
-            }
-          }
-        },
-        Flatten(path: "items.@") {
-          Fetch(service: "head") {
-            {
-              ... on Item {
-                __typename
-                code
-              }
-            } =>
-            {
-              ... on Item {
-                __typename
-                id
-              }
-            }
-          },
-        },
-        Flatten(path: "items.@") {
-          Fetch(service: "other") {
-            {
-              ... on Item {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Item {
-                weight
-              }
-            }
-          },
-        },
-        Flatten(path: "items.@") {
-          Fetch(service: "head") {
-            {
-              ... on Item {
-                __typename
-                weight
-                code
-              }
-            } =>
-            {
-              ... on Item {
-                price
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] source          -
+      [5] head            [2]
+      [6] other           [5]
+      [4] head            [6]
+
+    [2] source
+      out
+        { items { __typename code } }
+
+    [5] head   after [2]
+      merge
+        items.@
+      in
+        ... on Item { __typename code }
+      out
+        ... on Item { __typename id }
+
+    [6] other   after [5]
+      merge
+        items.@
+      in
+        ... on Item { __typename id }
+      out
+        ... on Item { weight }
+
+    [4] head   after [6]
+      merge
+        items.@
+      in
+        ... on Item { __typename weight code }
+      out
+        ... on Item { price }
+    ");
 
     Ok(())
 }

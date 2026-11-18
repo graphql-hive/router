@@ -35,146 +35,76 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Parallel {
-          Fetch(service: "c") {
-            {
-              userInC {
-                __typename
-                id
-              }
-            }
-          },
-          Fetch(service: "b") {
-            {
-              userInB {
-                __typename
-                id
-                name
-              }
-            }
-          },
-          Fetch(service: "a") {
-            {
-              userInA {
-                __typename
-                id
-              }
-            }
-          },
-        },
-        Parallel {
-          BatchFetch(service: "b") {
-            {
-              _e0 {
-                paths: [
-                  "userInC"
-                  "userInA"
-                ]
-                {
-                  ... on User {
-                    __typename
-                    id
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on User {
-                  name
-                }
-              }
-            }
-          },
-          Flatten(path: "userInB") {
-            Fetch(service: "a") {
-              {
-                ... on User {
-                  __typename
-                  name
-                  id
-                }
-              } =>
-              {
-                ... on User {
-                  aName
-                }
-              }
-            },
-          },
-          Flatten(path: "userInB") {
-            Fetch(service: "c") {
-              {
-                ... on User {
-                  __typename
-                  name
-                  id
-                }
-              } =>
-              {
-                ... on User {
-                  cName
-                }
-              }
-            },
-          },
-        },
-        Parallel {
-          BatchFetch(service: "c") {
-            {
-              _e0 {
-                paths: [
-                  "userInC"
-                  "userInA"
-                ]
-                {
-                  ... on User {
-                    __typename
-                    name
-                    id
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on User {
-                  cName
-                }
-              }
-            }
-          },
-          BatchFetch(service: "a") {
-            {
-              _e0 {
-                paths: [
-                  "userInC"
-                  "userInA"
-                ]
-                {
-                  ... on User {
-                    __typename
-                    name
-                    id
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on User {
-                  aName
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [14] c              -
+      [8] b               -
+      [2] a               -
+      [18] b              [14], [2]
+      [10] a              [8]
+      [13] c              [8]
+      [19] c              [18]
+      [17] a              [18]
+
+    [14] c
+      out
+        { userInC { __typename id } }
+
+    [8] b
+      out
+        { userInB { __typename id name } }
+
+    [2] a
+      out
+        { userInA { __typename id } }
+
+    [18] b   after [14], [2]
+      alias _e0
+        merge
+          userInC
+          userInA
+        in
+          ... on User { __typename id }
+        out
+          ... on User { name }
+
+    [10] a   after [8]
+      merge
+        userInB
+      in
+        ... on User { __typename name id }
+      out
+        ... on User { aName }
+
+    [13] c   after [8]
+      merge
+        userInB
+      in
+        ... on User { __typename name id }
+      out
+        ... on User { cName }
+
+    [19] c   after [18]
+      alias _e0
+        merge
+          userInC
+          userInA
+        in
+          ... on User { __typename name id }
+        out
+          ... on User { cName }
+
+    [17] a   after [18]
+      alias _e0
+        merge
+          userInC
+          userInA
+        in
+          ... on User { __typename name id }
+        out
+          ... on User { aName }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -439,51 +369,33 @@ fn override_with_requires_cname_in_c() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "c") {
-          {
-            userInC {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "userInC") {
-          Fetch(service: "b") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                name
-              }
-            }
-          },
-        },
-        Flatten(path: "userInC") {
-          Fetch(service: "c") {
-            {
-              ... on User {
-                __typename
-                name
-                id
-              }
-            } =>
-            {
-              ... on User {
-                cName
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] c               -
+      [4] b               [2]
+      [3] c               [4]
+
+    [2] c
+      out
+        { userInC { __typename id } }
+
+    [4] b   after [2]
+      merge
+        userInC
+      in
+        ... on User { __typename id }
+      out
+        ... on User { name }
+
+    [3] c   after [4]
+      merge
+        userInC
+      in
+        ... on User { __typename name id }
+      out
+        ... on User { cName }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -583,51 +495,33 @@ fn override_with_requires_cname_in_a() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            userInA {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "userInA") {
-          Fetch(service: "b") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                name
-              }
-            }
-          },
-        },
-        Flatten(path: "userInA") {
-          Fetch(service: "c") {
-            {
-              ... on User {
-                __typename
-                name
-                id
-              }
-            } =>
-            {
-              ... on User {
-                cName
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [5] b               [2]
+      [4] c               [5]
+
+    [2] a
+      out
+        { userInA { __typename id } }
+
+    [5] b   after [2]
+      merge
+        userInA
+      in
+        ... on User { __typename id }
+      out
+        ... on User { name }
+
+    [4] c   after [5]
+      merge
+        userInA
+      in
+        ... on User { __typename name id }
+      out
+        ... on User { cName }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -727,51 +621,33 @@ fn override_with_requires_aname_in_a() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            userInA {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "userInA") {
-          Fetch(service: "b") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                name
-              }
-            }
-          },
-        },
-        Flatten(path: "userInA") {
-          Fetch(service: "a") {
-            {
-              ... on User {
-                __typename
-                name
-                id
-              }
-            } =>
-            {
-              ... on User {
-                aName
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+      [3] a               [4]
+
+    [2] a
+      out
+        { userInA { __typename id } }
+
+    [4] b   after [2]
+      merge
+        userInA
+      in
+        ... on User { __typename id }
+      out
+        ... on User { name }
+
+    [3] a   after [4]
+      merge
+        userInA
+      in
+        ... on User { __typename name id }
+      out
+        ... on User { aName }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",

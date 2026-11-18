@@ -44,16 +44,13 @@ fn query_on_renamed_root_query_type() -> Result<(), Box<dyn Error>> {
     );
 
     insta::assert_snapshot!(display, @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        {
-          product(id: "1") {
-            name
-            price
-          }
-        }
-      },
-    },
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { product(id: "1") { name price } }
     "#);
 
     Ok(())
@@ -97,37 +94,23 @@ fn mutation_on_renamed_root_mutation_type() -> Result<(), Box<dyn Error>> {
     );
 
     insta::assert_snapshot!(display, @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          mutation {
-            addProduct(input: {name: "new", price: 599.99}) {
-              __typename
-              name
-              price
-              id
-            }
-          }
-        },
-        Flatten(path: "addProduct") {
-          Fetch(service: "b") {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-                isAvailable
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+
+    [2] a
+      out
+        { addProduct(input: {name: "new", price: 599.99}) { __typename name price id } }
+      mutation
+
+    [4] b   after [2]
+      merge
+        addProduct
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isExpensive isAvailable }
     "#);
 
     Ok(())

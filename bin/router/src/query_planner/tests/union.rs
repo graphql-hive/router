@@ -26,20 +26,15 @@ fn union_member_resolvable() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        {
-          media {
-            __typename
-            ... on Book {
-              title
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { media { __typename ... on Book { title } } }
+    ");
 
     Ok(())
 }
@@ -64,17 +59,15 @@ fn union_member_unresolvable() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        {
-          media {
-            __typename
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { media { __typename } }
+    ");
 
     Ok(())
 }
@@ -100,20 +93,15 @@ fn union_member_mix() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        {
-          media {
-            __typename
-            ... on Book {
-              title
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { media { __typename ... on Book { title } } }
+    ");
 
     Ok(())
 }
@@ -141,40 +129,24 @@ fn union_member_entity_call() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            aMedia {
-              __typename
-              ... on Book {
-                __typename
-                title
-                aTitle
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "aMedia|[Book]") {
-          Fetch(service: "b") {
-            {
-              ... on Book {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Book {
-                bTitle
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [3] b               [2]
+
+    [2] a
+      out
+        { aMedia { __typename ... on Book { __typename title aTitle id } } }
+
+    [3] b   after [2]
+      merge
+        aMedia|[Book]
+      in
+        ... on Book { __typename id }
+      out
+        ... on Book { bTitle }
+    ");
 
     Ok(())
 }
@@ -212,46 +184,28 @@ fn union_member_entity_call_many_local() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            viewer {
-              song {
-                __typename
-                ... on Song {
-                  title
-                  aTitle
-                }
-                ... on Book {
-                  __typename
-                  title
-                  aTitle
-                  id
-                }
-              }
-            }
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [3] b               [2]
+
+    [2] a
+      out
+        {
+          viewer {
+            song { __typename ... on Song { title aTitle } ... on Book { __typename title aTitle id } }
           }
-        },
-        Flatten(path: "viewer.song|[Book]") {
-          Fetch(service: "b") {
-            {
-              ... on Book {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Book {
-                bTitle
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+        }
+
+    [3] b   after [2]
+      merge
+        viewer.song|[Book]
+      in
+        ... on Book { __typename id }
+      out
+        ... on Book { bTitle }
+    ");
 
     Ok(())
 }
@@ -321,79 +275,37 @@ fn union_member_entity_call_many() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Parallel {
-          Fetch(service: "b") {
-            {
-              viewer {
-                media {
-                  ...a
-                }
-                book {
-                  ...a
-                }
-              }
-            }
-            fragment a on ViewerMedia {
-              __typename
-              ... on Book {
-                bTitle
-              }
-            }
-          },
-          Fetch(service: "a") {
-            {
-              viewer {
-                media {
-                  ...a
-                }
-                book {
-                  ...a
-                }
-                song {
-                  __typename
-                  ... on Song {
-                    title
-                    aTitle
-                  }
-                  ... on Book {
-                    __typename
-                    title
-                    aTitle
-                    id
-                  }
-                }
-              }
-            }
-            fragment a on ViewerMedia {
-              __typename
-              ... on Book {
-                aTitle
-                title
-              }
-            }
-          },
-        },
-        Flatten(path: "viewer.song|[Book]") {
-          Fetch(service: "b") {
-            {
-              ... on Book {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Book {
-                bTitle
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [4] b               -
+      [2] a               -
+      [3] b               [2]
+
+    [4] b
+      out
+        { viewer { media { ...a } book { ...a } } }
+        fragment a on ViewerMedia { __typename ... on Book { bTitle } }
+
+    [2] a
+      out
+        {
+          viewer {
+            media { ...a }
+            book { ...a }
+            song { __typename ... on Song { title aTitle } ... on Book { __typename title aTitle id } }
+          }
+        }
+        fragment a on ViewerMedia { __typename ... on Book { aTitle title } }
+
+    [3] b   after [2]
+      merge
+        viewer.song|[Book]
+      in
+        ... on Book { __typename id }
+      out
+        ... on Book { bTitle }
+    ");
 
     Ok(())
 }
@@ -432,33 +344,25 @@ fn partial_union_member_only_in_one_subgraph() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/partial-union.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
         {
           getResponse {
             message
             actions {
               __typename
-              ... on Alpha {
-                id
-                value
-              }
-              ... on Beta {
-                id
-                name
-                details
-              }
-              ... on Gamma {
-                id
-                label
-              }
+              ... on Alpha { id value }
+              ... on Beta { id name details }
+              ... on Gamma { id label }
             }
           }
         }
-      },
-    },
-    "#);
+    ");
 
     Ok(())
 }
@@ -488,25 +392,15 @@ fn partial_union_members_missing_from_other_subgraph_only() -> Result<(), Box<dy
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/partial-union.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        {
-          getResponse {
-            actions {
-              __typename
-              ... on Beta {
-                name
-              }
-              ... on Gamma {
-                label
-              }
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { getResponse { actions { __typename ... on Beta { name } ... on Gamma { label } } } }
+    ");
 
     Ok(())
 }
@@ -543,24 +437,15 @@ fn nested_partial_union_entity_representable_a_path_keeps_only_common_members(
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        {
-          rootA {
-            wrapper {
-              actions {
-                __typename
-                ... on Common {
-                  label
-                }
-              }
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { rootA { wrapper { actions { __typename ... on Common { label } } } } }
+    ");
 
     Ok(())
 }
@@ -597,24 +482,15 @@ fn nested_partial_union_entity_representable_b_path_keeps_only_common_members(
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "b") {
-        {
-          rootB {
-            wrapper {
-              actions {
-                __typename
-                ... on Common {
-                  label
-                }
-              }
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+
+    [2] b
+      out
+        { rootB { wrapper { actions { __typename ... on Common { label } } } } }
+    ");
 
     Ok(())
 }
@@ -645,21 +521,15 @@ fn nested_partial_union_missing_member_from_pinned_path_falls_back_to_typename(
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        {
-          rootA {
-            wrapper {
-              actions {
-                __typename
-              }
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { rootA { wrapper { actions { __typename } } } }
+    ");
 
     Ok(())
 }
@@ -696,24 +566,15 @@ fn nested_partial_union_ambiguous_shareable_path_keeps_only_common_members(
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        {
-          shared {
-            wrapper {
-              actions {
-                __typename
-                ... on Common {
-                  label
-                }
-              }
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { shared { wrapper { actions { __typename ... on Common { label } } } } }
+    ");
 
     Ok(())
 }
@@ -756,45 +617,26 @@ fn nested_partial_union_uses_members_from_subgraph_reached_by_entity_move(
     assert!(query_plan.contains("... on OnlyB"));
     assert!(!query_plan.contains("... on OnlyA"));
 
-    insta::assert_snapshot!(query_plan, @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            rootA {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "rootA") {
-          Fetch(service: "b") {
-            {
-              ... on Container {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Container {
-                bWrapper {
-                  actions {
-                    __typename
-                    ... on Common {
-                      label
-                    }
-                    ... on OnlyB {
-                      b
-                    }
-                  }
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(query_plan, @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [3] b               [2]
+
+    [2] a
+      out
+        { rootA { __typename id } }
+
+    [3] b   after [2]
+      merge
+        rootA
+      in
+        ... on Container { __typename id }
+      out
+        ... on Container {
+          bWrapper { actions { __typename ... on Common { label } ... on OnlyB { b } } }
+        }
+    ");
 
     Ok(())
 }
@@ -827,80 +669,49 @@ fn union_overfetching_test() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            review {
-              __typename
-              ... on AnonymousReview {
-                product {
-                  ...a
-                }
-              }
-              ... on UserReview {
-                product {
-                  ...a
-                }
-              }
-            }
-          }
-          fragment a on Product {
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [5] d               [2]
+      [4] c               [2]
+      [3] b               [2]
+
+    [2] a
+      out
+        {
+          review {
             __typename
-            id
+            ... on AnonymousReview { product { ...a } }
+            ... on UserReview { product { ...a } }
           }
-        },
-        Parallel {
-          Flatten(path: "review|[UserReview].product") {
-            Fetch(service: "d") {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  d
-                }
-              }
-            },
-          },
-          Flatten(path: "review|[UserReview].product") {
-            Fetch(service: "c") {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  c
-                }
-              }
-            },
-          },
-          Flatten(path: "review|[AnonymousReview].product") {
-            Fetch(service: "b") {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  b
-                }
-              }
-            },
-          },
-        },
-      },
-    },
-    "#);
+        }
+        fragment a on Product { __typename id }
+
+    [5] d   after [2]
+      merge
+        review|[UserReview].product
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { d }
+
+    [4] c   after [2]
+      merge
+        review|[UserReview].product
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { c }
+
+    [3] b   after [2]
+      merge
+        review|[AnonymousReview].product
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { b }
+    ");
 
     Ok(())
 }
@@ -941,57 +752,39 @@ fn union_list_test() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/union-list.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            orders {
-              __typename
-              ... on OrdersPageConnections {
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+
+    [2] a
+      out
+        {
+          orders {
+            __typename
+            ... on OrdersPageConnections {
+              items {
+                id
                 items {
-                  id
-                  items {
-                    __typename
-                    ... on PaperBook {
-                      product {
-                        ...a
-                      }
-                    }
-                    ... on DigitalBook {
-                      product {
-                        ...a
-                      }
-                    }
-                  }
+                  __typename
+                  ... on PaperBook { product { ...a } }
+                  ... on DigitalBook { product { ...a } }
                 }
               }
             }
           }
-          fragment a on Product {
-            __typename
-            id
-          }
-        },
-        Flatten(path: "orders|[OrdersPageConnections].items.@.items.@.product") {
-          Fetch(service: "b") {
-            {
-              ... on Product {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                name
-                slug
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+        }
+        fragment a on Product { __typename id }
+
+    [4] b   after [2]
+      merge
+        orders|[OrdersPageConnections].items.@.items.@.product
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { name slug }
+    ");
 
     Ok(())
 }
@@ -1023,75 +816,52 @@ fn conditional_union_type_condition_on_its_own_field_include_mixed_members(
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "card") {
-          query ($v:Boolean!) {
-            card {
-              components {
-                ... on Component @include(if: $v) {
-                  __typename
-                  ... on ComponentA {
-                    product {
-                      ...a
-                    }
-                  }
-                  ... on ComponentC {
-                    product {
-                      ...a
-                    }
-                  }
-                }
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $v: Boolean!
+
+    fetches
+      fetch               after
+      [2] card            -
+      [4] product         [2]
+
+    [2] card
+      out
+        {
+          card {
+            components {
+              ... on Component @include(if: $v) {
+                __typename
+                ... on ComponentA { product { ...a } }
+                ... on ComponentC { product { ...a } }
               }
             }
           }
-          fragment a on Product {
-            __typename
-            id
-          }
-        },
-        BatchFetch(service: "product") {
-          {
-            _e0(if: $v) {
-              paths: [
-                "card.components.@|[Component]|[ComponentC].product"
-              ]
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              }
-            }
-            _e1(if: $v) {
-              paths: [
-                "card.components.@|[Component]|[ComponentA].product"
-              ]
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-          {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on Product {
-                c
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on Product {
-                a
-              }
-            }
-          }
-        },
-      },
-    },
-    "#);
+        }
+        fragment a on Product { __typename id }
+      vars
+        $v
+
+    [4] product   after [2]
+      alias _e0
+        if
+          $v
+        merge
+          card.components.@|[Component]|[ComponentC].product
+        in
+          ... on Product { __typename id }
+        out
+          ... on Product { c }
+      alias _e1
+        if
+          $v
+        merge
+          card.components.@|[Component]|[ComponentA].product
+        in
+          ... on Product { __typename id }
+        out
+          ... on Product { a }
+    ");
 
     Ok(())
 }
@@ -1120,44 +890,40 @@ fn conditional_member_inside_a_conditional_union_type_condition() -> Result<(), 
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "card") {
-          query ($a:Boolean!,$b:Boolean!) {
-            card {
-              components {
-                ... on Component @skip(if: $a) {
-                  __typename
-                  ... on ComponentC {
-                    product @skip(if: $b) {
-                      __typename
-                      id
-                    }
-                  }
-                }
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $a: Boolean!, $b: Boolean!
+
+    fetches
+      fetch               after
+      [2] card            -
+      [3] product         [2]
+
+    [2] card
+      out
+        {
+          card {
+            components {
+              ... on Component @skip(if: $a) {
+                __typename
+                ... on ComponentC { product @skip(if: $b) { __typename id } }
               }
             }
           }
-        },
-        Flatten(path: "card.components.@|[Component]|[ComponentC].product") {
-          Fetch(service: "product", if: !$a && !$b) {
-            {
-              ... on Product {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                b
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+        }
+      vars
+        $a, $b
+
+    [3] product   after [2]
+      if
+        !$a && !$b
+      merge
+        card.components.@|[Component]|[ComponentC].product
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { b }
+    ");
 
     Ok(())
 }
@@ -1195,26 +961,24 @@ fn conditional_union_type_condition_keeps_only_common_members() -> Result<(), Bo
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        query ($v:Boolean!) {
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $v: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        {
           rootA {
-            wrapper {
-              actions {
-                ... on Action @skip(if: $v) {
-                  __typename
-                  ... on Common {
-                    label
-                  }
-                }
-              }
-            }
+            wrapper { actions { ... on Action @skip(if: $v) { __typename ... on Common { label } } } }
           }
         }
-      },
-    },
-    "#);
+      vars
+        $v
+    ");
 
     Ok(())
 }
@@ -1243,94 +1007,49 @@ fn union_members_ask_only_for_their_own_entity_fields() -> Result<(), Box<dyn Er
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "card") {
-          {
-            card {
-              components {
-                __typename
-                ... on ComponentA {
-                  product {
-                    ...a
-                  }
-                }
-                ... on ComponentB {
-                  product {
-                    ...a
-                  }
-                }
-                ... on ComponentC {
-                  product {
-                    ...a
-                  }
-                }
-              }
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] card            -
+      [5] product         [2]
+
+    [2] card
+      out
+        {
+          card {
+            components {
+              __typename
+              ... on ComponentA { product { ...a } }
+              ... on ComponentB { product { ...a } }
+              ... on ComponentC { product { ...a } }
             }
           }
-          fragment a on Product {
-            __typename
-            id
-          }
-        },
-        BatchFetch(service: "product") {
-          {
-            _e0 {
-              paths: [
-                "card.components.@|[ComponentC].product"
-              ]
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              }
-            }
-            _e1 {
-              paths: [
-                "card.components.@|[ComponentB].product"
-              ]
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              }
-            }
-            _e2 {
-              paths: [
-                "card.components.@|[ComponentA].product"
-              ]
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-          {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on Product {
-                c
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on Product {
-                b
-              }
-            }
-            _e2: _entities(representations: $__batch_reps_2) {
-              ... on Product {
-                a
-              }
-            }
-          }
-        },
-      },
-    },
-    "#);
+        }
+        fragment a on Product { __typename id }
+
+    [5] product   after [2]
+      alias _e0
+        merge
+          card.components.@|[ComponentC].product
+        in
+          ... on Product { __typename id }
+        out
+          ... on Product { c }
+      alias _e1
+        merge
+          card.components.@|[ComponentB].product
+        in
+          ... on Product { __typename id }
+        out
+          ... on Product { b }
+      alias _e2
+        merge
+          card.components.@|[ComponentA].product
+        in
+          ... on Product { __typename id }
+        out
+          ... on Product { a }
+    ");
 
     Ok(())
 }

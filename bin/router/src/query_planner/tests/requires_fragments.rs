@@ -21,58 +21,43 @@ fn requires_with_fragments_on_interfaces() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            userFromA {
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+
+    [2] a
+      out
+        {
+          userFromA {
+            __typename
+            id
+            profile {
               __typename
-              id
-              profile {
-                __typename
-                displayName
-                ... on GuestAccount {
-                  guestToken
-                  accountType
-                }
-                ... on AdminAccount {
-                  adminLevel
-                  accountType
-                }
-              }
+              displayName
+              ... on GuestAccount { guestToken accountType }
+              ... on AdminAccount { adminLevel accountType }
             }
           }
-        },
-        Flatten(path: "userFromA") {
-          Fetch(service: "b") {
-            {
-              ... on User {
-                __typename
-                profile {
-                  displayName
-                  ... on AdminAccount {
-                    accountType
-                    adminLevel
-                  }
-                  ... on GuestAccount {
-                    accountType
-                    guestToken
-                  }
-                }
-                id
-              }
-            } =>
-            {
-              ... on User {
-                permissions
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+        }
+
+    [4] b   after [2]
+      merge
+        userFromA
+      in
+        ... on User {
+          __typename
+          profile {
+            displayName
+            ... on AdminAccount { accountType adminLevel }
+            ... on GuestAccount { accountType guestToken }
+          }
+          id
+        }
+      out
+        ... on User { permissions }
+    ");
 
     Ok(())
 }
@@ -96,41 +81,24 @@ fn requires_with_union_type_condition() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "catalog") {
-          {
-            products {
-              __typename
-              id
-              book {
-                title
-              }
-            }
-          }
-        },
-        Flatten(path: "products.@") {
-          Fetch(service: "pricing") {
-            {
-              ... on Product {
-                __typename
-                book {
-                  title
-                }
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                price
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] catalog         -
+      [4] pricing         [2]
+
+    [2] catalog
+      out
+        { products { __typename id book { title } } }
+
+    [4] pricing   after [2]
+      merge
+        products.@
+      in
+        ... on Product { __typename book { title } id }
+      out
+        ... on Product { price }
+    ");
 
     Ok(())
 }
@@ -151,37 +119,24 @@ fn requires_root_fragment_on_inapplicable_type() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "products") {
-          {
-            products {
-              __typename
-              upc
-              price
-            }
-          }
-        },
-        Flatten(path: "products.@") {
-          Fetch(service: "inventory") {
-            {
-              ... on Product {
-                __typename
-                price
-                upc
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] products        -
+      [4] inventory       [2]
+
+    [2] products
+      out
+        { products { __typename upc price } }
+
+    [4] inventory   after [2]
+      merge
+        products.@
+      in
+        ... on Product { __typename price upc }
+      out
+        ... on Product { isExpensive }
+    ");
 
     Ok(())
 }
@@ -208,92 +163,63 @@ fn conditional_requires_stay_out_of_an_unconditional_call() -> Result<(), Box<dy
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($skip:Boolean!) {
-            userFromA {
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $skip: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+
+    [2] a
+      out
+        {
+          userFromA {
+            __typename
+            id
+            ... on User @skip(if: $skip) {
               __typename
-              id
-              ... on User @skip(if: $skip) {
-                __typename
-                profile {
-                  __typename
-                  displayName
-                  ... on GuestAccount {
-                    guestToken
-                    accountType
-                  }
-                  ... on AdminAccount {
-                    adminLevel
-                    accountType
-                  }
-                }
-                id
-              }
               profile {
                 __typename
                 displayName
+                ... on GuestAccount { guestToken accountType }
+                ... on AdminAccount { adminLevel accountType }
               }
+              id
             }
+            profile { __typename displayName }
           }
-        },
-        BatchFetch(service: "b") {
-          {
-            _e0 {
-              paths: [
-                "userFromA"
-              ]
-              {
-                ... on User {
-                  __typename
-                  profile {
-                    displayName
-                  }
-                  id
-                }
-              }
+        }
+      vars
+        $skip
+
+    [4] b   after [2]
+      alias _e0
+        merge
+          userFromA
+        in
+          ... on User { __typename profile { displayName } id }
+        out
+          ... on User { basicPermissions }
+      alias _e1
+        if
+          !$skip
+        merge
+          userFromA
+        in
+          ... on User {
+            __typename
+            profile {
+              displayName
+              ... on AdminAccount { accountType adminLevel }
+              ... on GuestAccount { accountType guestToken }
             }
-            _e1(if: !$skip) {
-              paths: [
-                "userFromA"
-              ]
-              {
-                ... on User {
-                  __typename
-                  profile {
-                    displayName
-                    ... on AdminAccount {
-                      accountType
-                      adminLevel
-                    }
-                    ... on GuestAccount {
-                      accountType
-                      guestToken
-                    }
-                  }
-                  id
-                }
-              }
-            }
+            id
           }
-          {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on User {
-                basicPermissions
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on User {
-                permissions
-              }
-            }
-          }
-        },
-      },
-    },
-    "#);
+        out
+          ... on User { permissions }
+    ");
 
     Ok(())
 }
@@ -322,128 +248,84 @@ fn merged_conditional_requires_stay_out_of_an_unconditional_call() -> Result<(),
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($include:Boolean!,$skip:Boolean!) {
-            userFromA {
-              __typename
-              id
-              ... on User @skip(if: $skip) {
-                ...a
-              }
-              profile {
-                __typename
-                displayName
-              }
-            }
-            userFromA @include(if: $include) {
-              ...a
-            }
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $include: Boolean!, $skip: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+
+    [2] a
+      out
+        {
+          userFromA {
+            __typename
+            id
+            ... on User @skip(if: $skip) { ...a }
+            profile { __typename displayName }
           }
-          fragment a on User {
+          userFromA @include(if: $include) { ...a }
+        }
+        fragment a on User {
+          __typename
+          profile {
+            __typename
+            displayName
+            ... on GuestAccount { guestToken accountType }
+            ... on AdminAccount { adminLevel accountType }
+          }
+          id
+        }
+      vars
+        $include, $skip
+
+    [4] b   after [2]
+      alias _e0
+        merge
+          userFromA
+        in
+          ... on User { __typename profile { displayName } id }
+        out
+          ... on User { basicPermissions }
+      alias _e1
+        if
+          !$skip
+        merge
+          userFromA
+        in
+          ... on User {
             __typename
             profile {
-              __typename
               displayName
-              ... on GuestAccount {
-                guestToken
-                accountType
-              }
-              ... on AdminAccount {
-                adminLevel
-                accountType
-              }
+              ... on AdminAccount { accountType adminLevel }
+              ... on GuestAccount { accountType guestToken }
             }
             id
           }
-        },
-        BatchFetch(service: "b") {
-          {
-            _e0 {
-              paths: [
-                "userFromA"
-              ]
-              {
-                ... on User {
-                  __typename
-                  profile {
-                    displayName
-                  }
-                  id
-                }
-              }
+        out
+          ... on User { ...a }
+      alias _e2
+        if
+          $include
+        merge
+          userFromA
+        in
+          ... on User {
+            __typename
+            profile {
+              displayName
+              ... on AdminAccount { accountType adminLevel }
+              ... on GuestAccount { accountType guestToken }
             }
-            _e1(if: !$skip) {
-              paths: [
-                "userFromA"
-              ]
-              {
-                ... on User {
-                  __typename
-                  profile {
-                    displayName
-                    ... on AdminAccount {
-                      accountType
-                      adminLevel
-                    }
-                    ... on GuestAccount {
-                      accountType
-                      guestToken
-                    }
-                  }
-                  id
-                }
-              }
-            }
-            _e2(if: $include) {
-              paths: [
-                "userFromA"
-              ]
-              {
-                ... on User {
-                  __typename
-                  profile {
-                    displayName
-                    ... on AdminAccount {
-                      accountType
-                      adminLevel
-                    }
-                    ... on GuestAccount {
-                      accountType
-                      guestToken
-                    }
-                  }
-                  id
-                }
-              }
-            }
+            id
           }
-          {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on User {
-                basicPermissions
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on User {
-                ...a
-              }
-            }
-            _e2: _entities(representations: $__batch_reps_2) {
-              ... on User {
-                ...a
-              }
-            }
-          }
-          fragment a on User {
-            permissions
-          }
-        },
-      },
-    },
-    "#);
+        out
+          ... on User { ...a }
+      fragments
+        fragment a on User { permissions }
+    ");
 
     Ok(())
 }
@@ -467,103 +349,70 @@ fn merged_conditional_inputs_stay_out_of_an_unconditional_call() -> Result<(), B
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($include:Boolean!,$skip:Boolean!) {
-            userFromA {
-              __typename
-              id
-              ... on User @include(if: $include) {
-                ...a
-              }
-              ... on User @skip(if: $skip) {
-                ...a
-              }
-              profile {
-                __typename
-                displayName
-              }
-            }
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $include: Boolean!, $skip: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+
+    [2] a
+      out
+        {
+          userFromA {
+            __typename
+            id
+            ... on User @include(if: $include) { ...a }
+            ... on User @skip(if: $skip) { ...a }
+            profile { __typename displayName }
           }
-          fragment a on User {
+        }
+        fragment a on User {
+          __typename
+          profile {
+            __typename
+            displayName
+            ... on GuestAccount { guestToken accountType }
+            ... on AdminAccount { adminLevel accountType }
+          }
+          id
+        }
+      vars
+        $include, $skip
+
+    [4] b   after [2]
+      alias _e0
+        merge
+          userFromA
+        in
+          ... on User { __typename profile { displayName } id }
+        out
+          ... on User { basicPermissions }
+      alias _e1
+        if
+          !$skip || $include
+        merge
+          userFromA
+        in
+          ... on User {
             __typename
             profile {
-              __typename
               displayName
-              ... on GuestAccount {
-                guestToken
-                accountType
-              }
-              ... on AdminAccount {
-                adminLevel
-                accountType
-              }
+              ... on AdminAccount { accountType adminLevel }
+              ... on GuestAccount { accountType guestToken }
             }
             id
           }
-        },
-        BatchFetch(service: "b") {
-          {
-            _e0 {
-              paths: [
-                "userFromA"
-              ]
-              {
-                ... on User {
-                  __typename
-                  profile {
-                    displayName
-                  }
-                  id
-                }
-              }
-            }
-            _e1(if: !$skip || $include) {
-              paths: [
-                "userFromA"
-              ]
-              {
-                ... on User {
-                  __typename
-                  profile {
-                    displayName
-                    ... on AdminAccount {
-                      accountType
-                      adminLevel
-                    }
-                    ... on GuestAccount {
-                      accountType
-                      guestToken
-                    }
-                  }
-                  id
-                }
-              }
-            }
+        out
+          ... on User {
+            ... on User @skip(if: $skip) { permissions }
+            ... on User @include(if: $include) { other: permissions }
           }
-          ($include:Boolean!,$skip:Boolean!) {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on User {
-                basicPermissions
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on User {
-                ... on User @skip(if: $skip) {
-                  permissions
-                }
-                ... on User @include(if: $include) {
-                  other: permissions
-                }
-              }
-            }
-          }
-        },
-      },
-    },
-    "#);
+      vars
+        $include, $skip
+    ");
 
     Ok(())
 }
