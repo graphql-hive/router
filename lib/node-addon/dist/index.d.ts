@@ -30,8 +30,8 @@ export interface FetchNode {
   serviceName: string;
   variableUsages?: string[];
   operationKind?: "query" | "mutation" | "subscription";
-  operationName?: string;
   operation: string;
+  customScalarPaths?: CustomScalarPaths;
   requires?: RequiresSelection[];
   inputRewrites?: InputRewrite[];
   outputRewrites?: OutputRewrite[];
@@ -39,6 +39,15 @@ export interface FetchNode {
   contextVariables?: string[];
   /** The fetch runs when any of these holds, always when missing. */
   runIf?: ConditionGroup[];
+}
+
+/**
+ * The response paths, under the fetch's response data, that hold custom scalar values.
+ * A `terminal` path is a custom scalar itself.
+ */
+export interface CustomScalarPaths {
+  children?: Record<string, CustomScalarPaths>;
+  terminal?: boolean;
 }
 
 /** Holds when every `includeIf` variable is `true` and no `skipIf` one is. */
@@ -52,8 +61,8 @@ export interface BatchFetchNode {
   serviceName: string;
   variableUsages?: string[];
   operationKind?: "query" | "mutation" | "subscription";
-  operationName?: string;
   operation: string;
+  customScalarPaths?: CustomScalarPaths;
   entityBatch: EntityBatch;
 }
 
@@ -116,6 +125,7 @@ export interface FieldRequiresNode {
   name: string;
   alias?: string;
   selections?: RequiresSelection[];
+  omit_from_response?: boolean;
 }
 
 export interface FragmentSpreadRequiresNode {
