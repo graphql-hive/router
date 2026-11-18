@@ -179,7 +179,11 @@ pub struct FieldSelection {
     /// due to a field being `@skip(if: true)` or `@include(if: false)`,
     /// and used to avoid sending empty selection sets,
     /// and to project an empty object.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(
+        rename = "omitFromResponse",
+        default,
+        skip_serializing_if = "std::ops::Not::not"
+    )]
     pub omit_from_response: bool,
 }
 

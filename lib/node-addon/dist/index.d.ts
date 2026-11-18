@@ -144,7 +144,7 @@ export interface FieldRequiresNode {
   name: string;
   alias?: string;
   selections?: RequiresSelection[];
-  omit_from_response?: boolean;
+  omitFromResponse?: boolean;
 }
 
 export type RequiresSelection = InlineFragmentRequiresNode | FieldRequiresNode;
