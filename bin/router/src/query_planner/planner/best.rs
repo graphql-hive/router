@@ -18,8 +18,7 @@
 //! 1.  The query is broken down into independent decision points.
 //!     For each point, there is a set of `Alternatives`, and each alternative is a
 //!     `Candidate` plan fragment. The goal is to pick exactly one `Candidate` from
-//!     each set of `Alternatives`. Leaves with a single way to get them are in every plan,
-//!     so they're merged up front into a `BasePlan`.
+//!     each set of `Alternatives`. Leaves with one way to get them go in a `BasePlan`.
 //!
 //! 2.  Before the main search, a fast greedy search (`Search::greedy`)
 //!     is run to find a "good enough" initial plan.
@@ -126,7 +125,7 @@ pub fn find_best_combination(
     // A strong initial `best_cost` is critical for effective pruning.
     search.greedy(base.tree.clone(), base.cost());
 
-    // The same bounds the search would check on its way through the single leaves.
+    // the bounds the search would check on the single leaves
     for (index, pair) in base.costs_before.windows(2).enumerate() {
         if pair[0] + min_remaining_costs[index] >= search.best_cost || pair[1] >= search.best_cost {
             return search.best_tree.ok_or(QueryPlanError::EmptyPlan);
@@ -141,9 +140,8 @@ pub fn find_best_combination(
 
 /// The ways to get each leaf of the query.
 struct Leaves<'graph> {
-    /// Leaves with one way to get them, in the order they came in.
     singles: Vec<PathAndPosition<'graph>>,
-    /// The ways to get each of the other leaves, the leaves with fewest ways first.
+    /// Fewest ways first.
     groups: Vec<Vec<PathAndPosition<'graph>>>,
 }
 
@@ -177,16 +175,12 @@ impl<'graph> Leaves<'graph> {
     }
 }
 
-/// The leaves with one way to get them, merged into one tree, as they're in every plan.
-///
-/// Merged once, into a tree nobody else holds, so merging doesn't copy nodes. Searching
-/// through them instead keeps a version of the tree per leaf, and every merge copies the
-/// nodes it goes through.
+/// The leaves with one way to get them are in every plan, so they're merged once, in place,
+/// instead of copying the tree on every search step.
 struct BasePlan {
     tree: Option<QueryTree>,
     /// The cost before each leaf is merged, and after the last one.
     costs_before: Vec<u64>,
-    /// What each leaf costs on its own.
     leaf_costs: Vec<u64>,
 }
 
@@ -230,24 +224,18 @@ impl BasePlan {
     }
 }
 
-/// A potential piece of the final query plan.
-/// It represents one of many possible ways to resolve a part of the query.
-///
-/// Costing and merging work on the path itself. Its `QueryTree` is built only if the search
-/// gets to it, which it rarely does, and building one per candidate was most of the memory.
+/// One way to get a leaf. Costed and merged from its path, its `QueryTree` is built only
+/// when the search needs it.
 struct Candidate<'graph> {
     path: OperationPath<'graph>,
     mutation_field_position: MutationFieldPosition,
-    /// Paths with `@fromContext` requirements always go through their `QueryTree`,
-    /// the context trees merge into each other.
+    /// `@fromContext` paths always go through their `QueryTree`.
     uses_context: bool,
-    /// What the tree of this path costs on its own.
     cost: u64,
     tree: OnceCell<QueryTree>,
 }
 
-/// Represents a set of alternative Candidates to satisfy a single leaf in the query.
-/// The final plan must choose exactly one candidate from each set.
+/// The ways to get one leaf, the plan picks one.
 type Alternatives<'graph> = Vec<Candidate<'graph>>;
 
 impl<'graph> Candidate<'graph> {
@@ -277,8 +265,7 @@ impl<'graph> Candidate<'graph> {
         })
     }
 
-    /// The candidates for one leaf, cheapest first, as trying cheaper options first is more
-    /// likely to lead to better solutions sooner.
+    /// Cheapest first, so good plans show up sooner.
     fn alternatives(
         graph: &Graph<'_>,
         paths: Vec<PathAndPosition<'graph>>,
@@ -325,12 +312,8 @@ impl<'graph> Candidate<'graph> {
     }
 }
 
-/// Pre-compute a "suffix lower bound" (LB) to enable effective pruning.
-/// `min_remaining_costs[i]` stores an optimistic "best-case" cost for completing the
-/// plan from leaf `i` to the end, from the best-case cost of each leaf.
-/// In `Search::explore`, we can then check:
-/// `cost_so_far + min_remaining_costs[depth] >= best_cost_so_far`.
-/// If this is true, we know the current path is a dead end and can be abandoned.
+/// `min_remaining_costs[i]` is the best-case cost from leaf `i` to the end, what
+/// `Search::explore` prunes with.
 fn calculate_min_remaining_costs(best_case_cost_per_leaf: &[u64]) -> Vec<u64> {
     let mut min_remaining_costs = vec![0; best_case_cost_per_leaf.len() + 1];
     for i in (0..best_case_cost_per_leaf.len()).rev() {
@@ -351,15 +334,13 @@ struct Search<'a, 'graph> {
 }
 
 impl Search<'_, '_> {
-    /// A fast search that finds a good, but not best plan.
-    /// It works by making the "locally best" choice at each step.
+    /// A fast, good-enough plan: per leaf, the candidate that adds the least.
     fn greedy(&mut self, mut current_tree: Option<QueryTree>, mut current_cost: u64) {
         let graph = self.graph;
         for alternatives in self.groups {
             let mut best_delta = u64::MAX;
             let mut best_candidate: Option<&Candidate> = None;
 
-            // At each step, pick the candidate that adds the smallest cost to the current plan
             for candidate in alternatives {
                 let delta = match current_tree.as_ref() {
                     Some(tree) => match candidate.added_cost(graph, &tree.root) {
@@ -412,16 +393,12 @@ impl Search<'_, '_> {
     ) -> Result<(), QueryPlanError> {
         self.cancellation_token.bail_if_cancelled()?;
 
-        // This is the most critical optimization.
-        // If the current path's cost + the absolute best-case cost
-        // for all remaining choices is already worse than our
-        // best solution, we can abandon this entire search branch.
+        // even the best case from here can't beat the best plan
         if cost_so_far + self.min_remaining_costs[group_index] >= self.best_cost {
             return Ok(());
         }
 
-        // If we've made a choice for every set of alternatives, we have a complete plan,
-        // and it's the best one so far.
+        // a complete plan, and the best one so far
         let Some(alternatives) = self.groups.get(group_index) else {
             self.best_cost = cost_so_far;
             self.best_tree = tree_so_far;
@@ -437,7 +414,6 @@ impl Search<'_, '_> {
                 None => costs.tree(&candidate_tree.root),
             };
             let next_cost = cost_so_far + added_cost;
-            // If the next step alone is too expensive, skip it.
             if next_cost >= self.best_cost {
                 continue;
             }
@@ -458,8 +434,7 @@ impl Search<'_, '_> {
     }
 }
 
-/// Where the node of `segment` is among the children of `node`, compared like
-/// `QueryTreeNode::eq` does. A node made from a path has no context coordinate.
+/// The child of `node` made from `segment`, compared like `QueryTreeNode::eq`.
 fn find_path_child(
     node: &QueryTreeNode,
     tail_node_index: NodeIndex,
@@ -476,10 +451,7 @@ fn find_path_child(
     })
 }
 
-/// Merges the tree of one path into `root`, without building that tree first.
-/// Same as merging `QueryTree::from_path`, which makes a node per segment just to find most
-/// of them in `root` already and drop them.
-/// Only for paths without `@fromContext` requirements, their trees merge into each other.
+/// Merges a path into `root` without building its `QueryTree` first. Not for `@fromContext`.
 fn merge_path(
     graph: &Graph<'_>,
     root: &mut QueryTreeNode,
@@ -489,7 +461,6 @@ fn merge_path(
     let mut node = root;
     for (index, segment) in segments.iter().enumerate() {
         let tail_node_index = graph.get_edge_tail(&segment.edge_index)?;
-        // Only the first node of the path has the position
         let position = mutation_field_position.filter(|_| index == 0);
 
         let Some(existing) = find_path_child(node, tail_node_index, segment, position) else {
@@ -509,7 +480,7 @@ fn merge_path(
     Ok(())
 }
 
-/// The cost model: what a tree costs, and what merging something into a tree adds to it.
+/// What a tree costs, and what a merge adds to it.
 #[derive(Clone, Copy)]
 struct Costs<'a>(&'a Graph<'a>);
 
@@ -554,8 +525,7 @@ impl Costs<'_> {
         }
     }
 
-    /// What the nodes of these segments cost, with the edge into the first one. For a whole path
-    /// it's `tree` of its tree, without the root. No `@fromContext` here.
+    /// What these segments cost as nodes, like `tree` without the root.
     fn of_segments(self, segments: &[&PathSegment]) -> Result<u64, GraphError> {
         let mut cost = 0;
         for segment in segments {
@@ -603,11 +573,8 @@ impl Costs<'_> {
         Ok(added_cost)
     }
 
-    /// How much `source` adds when merged into `target`.
-    ///
-    /// Only nodes missing from `target`, and their missing descendants and requirements,
-    /// contribute additional cost. This avoids re-costing the entire merged tree while
-    /// retaining the same cost as a full merge followed by `tree`.
+    /// How much `source` adds when merged into `target`, same as `tree` after the merge minus
+    /// before, without costing the whole tree.
     fn added_by_merge(self, target: &QueryTreeNode, source: &QueryTreeNode) -> u64 {
         // context trees merge like requirements, but `tree` charges no hop for them,
         // just one hop for having any resolved context at all
