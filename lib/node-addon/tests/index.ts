@@ -127,3 +127,26 @@ it("should expose possible types of interfaces and unions", async (t) => {
     Similar: ["Book", "Magazine"],
   });
 });
+
+it("should order root mutation fields with dependencies", async (t) => {
+  const supergraph = await fs.readFile(
+    "../../bin/router/fixture/tests/mutations.supergraph.graphql",
+    "utf-8",
+  );
+  const plan = new QueryPlanner(supergraph).plan(
+    `mutation {
+      addProduct(input: { name: "new", price: 599.99 }) { isExpensive }
+      five: add(num: 5)
+      ten: multiply(by: 2)
+    }`,
+    undefined,
+    new Set(),
+    0,
+  );
+  const [addProduct, isExpensive, five, ten] = collectFetches(plan.node);
+  t.assert.deepStrictEqual(addProduct.dependsOn, []);
+  t.assert.deepStrictEqual(isExpensive.dependsOn, [addProduct.id]);
+  // the next field waits for every fetch of the one before it, entity calls included
+  t.assert.deepStrictEqual(five.dependsOn, [isExpensive.id]);
+  t.assert.deepStrictEqual(ten.dependsOn, [five.id]);
+});
