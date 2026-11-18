@@ -492,9 +492,7 @@ fn raise_open_files_limit() {
     }
     limit.rlim_cur = target;
     // SAFETY: setrlimit only reads `limit`
-    if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) } == 0 {
-        info!(target: targets::CORE, previous, current = target, "raised the open files limit");
-    } else {
+    if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) } != 0 {
         warn!(target: targets::CORE, limit = previous, error = %std::io::Error::last_os_error(), "failed to raise the open files limit");
     }
 }
