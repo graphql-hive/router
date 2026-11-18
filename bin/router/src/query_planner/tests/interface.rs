@@ -1066,3 +1066,174 @@ fn nested_interface_field_with_redundant_inline_fragments_other_type_order(
 
     Ok(())
 }
+
+/// `Product` isn't an entity and lives only in `a`, but `ProductDimension.weight` is only in `b`.
+/// The planner has to go through `Book` and `Magazine`, each jumps to `b` by its key.
+#[test]
+fn interface_field_value_type_from_another_subgraph() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          products {
+            dimensions {
+              size
+              weight
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-value-type-explosion.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            products {
+              __typename
+              ... on Book {
+                __typename
+                dimensions {
+                  ...a
+                }
+                id
+              }
+              ... on Magazine {
+                __typename
+                dimensions {
+                  ...a
+                }
+                id
+              }
+            }
+          }
+          fragment a on ProductDimension {
+            size
+          }
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "b") {
+            {
+              ... on Book {
+                __typename
+                id
+              }
+              ... on Magazine {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Book {
+                dimensions {
+                  ...a
+                }
+              }
+              ... on Magazine {
+                dimensions {
+                  ...a
+                }
+              }
+            }
+            fragment a on ProductDimension {
+              weight
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Same as above, but `Product` lives in `a` and `b`. `b` has `ProductDimension.weight`, `a` doesn't.
+/// `Query.products` is only in `a`, so the planner reaches `Product` in `a` and has to go
+/// through `Book` and `Magazine` to get to `b`.
+#[test]
+fn interface_in_two_subgraphs_field_value_type_from_one_of_them() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          products {
+            dimensions {
+              size
+              weight
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-value-type-explosion-shared-interface.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            products {
+              __typename
+              ... on Book {
+                __typename
+                dimensions {
+                  ...a
+                }
+                id
+              }
+              ... on Magazine {
+                __typename
+                dimensions {
+                  ...a
+                }
+                id
+              }
+            }
+          }
+          fragment a on ProductDimension {
+            size
+          }
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "b") {
+            {
+              ... on Book {
+                __typename
+                id
+              }
+              ... on Magazine {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Book {
+                dimensions {
+                  ...a
+                }
+              }
+              ... on Magazine {
+                dimensions {
+                  ...a
+                }
+              }
+            }
+            fragment a on ProductDimension {
+              weight
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
