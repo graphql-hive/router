@@ -25,6 +25,12 @@ export type PlanNode =
   | SubscriptionNode
   | DeferNode;
 
+/**
+ * A fetch's number in its plan. Fetches name the fetches they wait for by it, in `dependsOn`.
+ * It's not the fetch's position in the plan.
+ */
+export type FetchId = number;
+
 export interface FetchNode {
   kind: "Fetch";
   serviceName: string;
@@ -39,6 +45,13 @@ export interface FetchNode {
   contextVariables?: string[];
   /** The fetch runs when any of these holds, always when missing. */
   runIf?: ConditionGroup[];
+  id: FetchId;
+  /**
+   * The fetches whose data this fetch reads, it can start once they're all done. Empty for a
+   * fetch that reads nothing another fetch brings, like a root fetch. An id merged into a
+   * batch fetch stands for that batch, see `BatchFetchNode.completes`.
+   */
+  dependsOn: FetchId[];
 }
 
 /**
@@ -64,6 +77,14 @@ export interface BatchFetchNode {
   operation: string;
   customScalarPaths?: CustomScalarPaths;
   entityBatch: EntityBatch;
+  /** The first of the ids in `completes`. */
+  id: FetchId;
+  /** What the fetches merged into this batch waited for, without those fetches themselves. */
+  dependsOn: FetchId[];
+  /**
+   * Every fetch merged into this batch. A fetch that depends on any of them depends on the batch.
+   */
+  completes: FetchId[];
 }
 
 export interface EntityBatch {
