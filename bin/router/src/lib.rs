@@ -450,6 +450,58 @@ fn cpuset_cpu_count() -> Option<std::num::NonZeroUsize> {
     None
 }
 
+/// Raises the soft open files limit up to the hard one on start
+#[cfg(unix)]
+fn raise_open_files_limit() {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: getrlimit only writes into `limit`
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
+        return;
+    }
+    let previous = limit.rlim_cur;
+    // capped at 1<<20 like Node, Bun and Deno: an unlimited hard limit can't be the soft one, and
+    // a huge soft limit breaks programs that read it into an int
+    #[allow(unused_mut)]
+    let mut target = limit.rlim_max.min(1 << 20);
+
+    // macOS refuses anything above kern.maxfilesperproc, even when the hard limit is unlimited
+    #[cfg(target_os = "macos")]
+    {
+        let mut max: libc::c_int = 0;
+        let mut len = std::mem::size_of::<libc::c_int>();
+        // SAFETY: the name is nul-terminated and `max` and `len` describe a c_int buffer
+        let ok = unsafe {
+            libc::sysctlbyname(
+                c"kern.maxfilesperproc".as_ptr(),
+                (&mut max as *mut libc::c_int).cast(),
+                &mut len,
+                std::ptr::null_mut(),
+                0,
+            )
+        } == 0;
+        if ok && max > 0 {
+            target = target.min(max as libc::rlim_t);
+        }
+    }
+
+    if target <= previous {
+        return;
+    }
+    limit.rlim_cur = target;
+    // SAFETY: setrlimit only reads `limit`
+    if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) } == 0 {
+        info!(target: targets::CORE, previous, current = target, "raised the open files limit");
+    } else {
+        warn!(target: targets::CORE, limit = previous, error = %std::io::Error::last_os_error(), "failed to raise the open files limit");
+    }
+}
+
+#[cfg(not(unix))]
+fn raise_open_files_limit() {}
+
 pub fn build_http_service_config(router_config: &HiveRouterConfig) -> HttpServiceConfig {
     let keep_alive = to_ntex_keep_alive(router_config.keep_alive());
     let header_read_timeout =
@@ -500,6 +552,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
         .as_ref()
         .and_then(|prom| prom.to_attached());
     info!(target: targets::CORE, version = ROUTER_VERSION, "hive-router starting...");
+    raise_open_files_limit();
     let addr = router_config.address();
     let graphql_path = router_config.graphql_path().to_string();
     let websocket_path = router_config.websocket_path().map(|p| p.to_string());
