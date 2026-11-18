@@ -39,6 +39,7 @@ use crate::executor::{
     executors::{
         common::{SubgraphExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
         error::SubgraphExecutorError,
+        h1_pool::H1PoolConfig,
         http::{HTTPSubgraphExecutor, HttpClientProvider, SubgraphHttpResponse},
         http_callback::{CallbackSubscriptionsMap, HttpCallbackSubgraphExecutor},
         tls::{build_https_client_config, build_https_connector, get_merged_tls_config},
@@ -198,7 +199,14 @@ impl SubgraphExecutorMap {
         client_builder
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(config.traffic_shaping.all.pool_idle_timeout)
-            .pool_max_idle_per_host(config.traffic_shaping.max_connections_per_host);
+            .pool_max_idle_per_host(config.traffic_shaping.max_connections_per_host)
+            .http1_max_buf_size(
+                config
+                    .traffic_shaping
+                    .all
+                    .http1_max_read_buffer_size
+                    .to_bytes() as usize,
+            );
         if config.traffic_shaping.all.allow_only_http2 {
             client_builder.http2_only(true);
         }
@@ -206,6 +214,16 @@ impl SubgraphExecutorMap {
             config.traffic_shaping.http_client_mode,
             client_builder,
             build_https_connector(config.traffic_shaping.all.tls.as_ref())?,
+            (config.traffic_shaping.experimental_http1_pool
+                && !config.traffic_shaping.all.allow_only_http2)
+                .then_some(H1PoolConfig {
+                    idle_timeout: config.traffic_shaping.all.pool_idle_timeout,
+                    max_read_buffer_size: config
+                        .traffic_shaping
+                        .all
+                        .http1_max_read_buffer_size
+                        .to_bytes() as usize,
+                }),
         );
 
         let max_connections_per_host = config.traffic_shaping.max_connections_per_host;
@@ -994,6 +1012,10 @@ impl SubgraphExecutorMap {
         };
 
         let pool_idle_timeout = self.config.traffic_shaping.pool_idle_timeout(subgraph_name);
+        let http1_max_read_buffer_size = self
+            .config
+            .traffic_shaping
+            .http1_max_read_buffer_size(subgraph_name);
         // A separate client is needed when connection lifetime or protocol settings differ.
         let subgraph_allow_only_http2 = subgraph_config
             .allow_only_http2
@@ -1001,6 +1023,13 @@ impl SubgraphExecutorMap {
         if pool_idle_timeout != self.config.traffic_shaping.all.pool_idle_timeout
             || subgraph_config.tls.is_some()
             || subgraph_allow_only_http2 != self.config.traffic_shaping.all.allow_only_http2
+            || http1_max_read_buffer_size
+                != self
+                    .config
+                    .traffic_shaping
+                    .all
+                    .http1_max_read_buffer_size
+                    .to_bytes() as usize
         {
             let tls_config = get_merged_tls_config(
                 self.config.traffic_shaping.all.tls.as_ref(),
@@ -1010,7 +1039,8 @@ impl SubgraphExecutorMap {
             client_builder
                 .pool_timer(TokioTimer::new())
                 .pool_idle_timeout(pool_idle_timeout)
-                .pool_max_idle_per_host(self.max_connections_per_host);
+                .pool_max_idle_per_host(self.max_connections_per_host)
+                .http1_max_buf_size(http1_max_read_buffer_size);
             if subgraph_allow_only_http2 {
                 client_builder.http2_only(true);
             }
@@ -1018,6 +1048,11 @@ impl SubgraphExecutorMap {
                 self.config.traffic_shaping.http_client_mode,
                 client_builder,
                 build_https_connector(tls_config.as_ref())?,
+                (self.config.traffic_shaping.experimental_http1_pool && !subgraph_allow_only_http2)
+                    .then_some(H1PoolConfig {
+                        idle_timeout: pool_idle_timeout,
+                        max_read_buffer_size: http1_max_read_buffer_size,
+                    }),
             ));
         }
 

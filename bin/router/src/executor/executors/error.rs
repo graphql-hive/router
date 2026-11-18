@@ -37,6 +37,10 @@ pub enum SubgraphExecutorError {
     #[error("Failed to send request to subgraph: {0}")]
     #[strum(serialize = "SUBREQUEST_HTTP_ERROR")]
     RequestFailure(#[from] hyper_util::client::legacy::Error),
+    // worded like hyper's client error, so both clients read the same
+    #[error("Failed to send request to subgraph: client error (Connect)")]
+    #[strum(serialize = "SUBREQUEST_HTTP_ERROR")]
+    ConnectFailure(#[source] std::io::Error),
     #[error("Failed to receive response: {0}")]
     #[strum(serialize = "SUBGRAPH_RESPONSE_FAILURE")]
     ResponseFailure(#[from] hyper::Error),
