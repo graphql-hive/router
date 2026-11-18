@@ -150,3 +150,60 @@ it("should order root mutation fields with dependencies", async (t) => {
   t.assert.deepStrictEqual(five.dependsOn, [isExpensive.id]);
   t.assert.deepStrictEqual(ten.dependsOn, [five.id]);
 });
+
+it("should expose the response projection", async (t) => {
+  const planner = new QueryPlanner(/* GraphQL */ `
+    enum join__Graph {
+      PETS @join__graph(name: "pets", url: "")
+    }
+    type Query @join__type(graph: PETS) {
+      owner: Owner
+    }
+    type Owner @join__type(graph: PETS) {
+      grid: [[Int!]]!
+      pets: [Pet!]
+      favorite: Animal
+    }
+    interface Pet @join__type(graph: PETS) {
+      name: String!
+    }
+    type Dog implements Pet
+      @join__type(graph: PETS)
+      @join__implements(graph: PETS, interface: "Pet") {
+      name: String!
+      breed: Breed
+    }
+    type Cat implements Pet
+      @join__type(graph: PETS)
+      @join__implements(graph: PETS, interface: "Pet") {
+      name: String!
+      lives: Int
+    }
+    union Animal
+      @join__type(graph: PETS)
+      @join__unionMember(graph: PETS, member: "Dog")
+      @join__unionMember(graph: PETS, member: "Cat") = Dog | Cat
+    enum Breed @join__type(graph: PETS) {
+      LAB
+      POODLE
+    }
+  `);
+  const plan = planner.plan(
+    `query ($withPets: Boolean!) {
+      owner {
+        __typename
+        grid
+        pets @include(if: $withPets) {
+          name
+          ... on Dog { kind: breed }
+          ... on Cat { lives }
+        }
+        favorite { ... on Dog { breed } }
+      }
+    }`,
+    undefined,
+    new Set(),
+    0,
+  );
+  t.assert.snapshot(plan.projection);
+});

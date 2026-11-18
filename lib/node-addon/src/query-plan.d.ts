@@ -1,7 +1,67 @@
 export interface QueryPlan {
   kind: "QueryPlan";
   node?: PlanNode;
+  /** How the router shapes the operation's response out of the data the fetches brought. */
+  projection: ResponseProjection;
 }
+
+/**
+ * The operation's selections, merged by response key and with fragments resolved into type
+ * conditions, the way the router walks them to write the response. Each field is projected from
+ * the object of its parent type, in order:
+ *
+ * - A field with `parentTypes` is left out when the parent object is of none of them.
+ * - A field with a `condition` that fails is left out, or is `null` for a failing `fieldType`
+ *   or `enumValues` (the latter with a "Value is not a valid enum value" error).
+ * - A `typename` field is the name of the parent type.
+ * - A field with `selections` projects those from its object, or from each of its list's items.
+ *   Other fields keep their value as it is.
+ * - A missing field is `null`. A `null` in a `nonNull` field, or in a list whose `itemNonNull`
+ *   says the items are non-null, makes the parent `null` instead, up to the nearest nullable one.
+ *
+ * A parent object's type is its `__typename`, or the schema type of the field holding it, or
+ * `rootType` at the root.
+ */
+export interface ResponseProjection {
+  /** The operation's root type, the parent type of the root `fields`. */
+  rootType: string;
+  fields: ProjectionField[];
+}
+
+export interface ProjectionField {
+  /** The field's name in the schema. */
+  name: string;
+  /** Where the field goes in the response, when not under `name`. */
+  alias?: string;
+  /** The field is `__typename`. */
+  typename?: true;
+  nonNull?: true;
+  /**
+   * For a list field, whether the items of each list level are non-null, from the outside in:
+   * `[false, true]` for `[[Int!]]`.
+   */
+  itemNonNull?: boolean[];
+  /** The field applies only to a parent object of one of these types. */
+  parentTypes?: string[];
+  condition?: ProjectionCondition;
+  selections?: ProjectionField[];
+}
+
+/**
+ * When a field is projected. `include` and `skip` are `@include(if:)` and `@skip(if:)` with the
+ * variable's name. `parentType` holds when the parent object is of one of the types, `fieldType`
+ * when the field's value is. `enumValues` holds when the field's value isn't a string or is one
+ * of the values. `and` holds when both do, failing like the first that fails. `or` holds when
+ * either does, failing like the right one when neither does.
+ */
+export type ProjectionCondition =
+  | { include: string }
+  | { skip: string }
+  | { parentType: string[] }
+  | { fieldType: string[] }
+  | { enumValues: string[] }
+  | { and: [ProjectionCondition, ProjectionCondition] }
+  | { or: [ProjectionCondition, ProjectionCondition] };
 
 export type PlanNode =
   | FetchNode

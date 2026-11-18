@@ -1,7 +1,7 @@
 #![deny(clippy::all)]
 
 mod query_plan;
-use hive_router::executor::introspection::schema::SchemaWithMetadata;
+use hive_router::executor::introspection::schema::{SchemaMetadata, SchemaWithMetadata};
 use hive_router::query_planner::graph::PERCENTAGE_SCALE_FACTOR;
 use hive_router::query_planner::planner::Planner;
 use hive_router::query_planner::utils::cancellation::CancellationToken;
@@ -12,11 +12,12 @@ use napi_derive::napi;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
-use crate::query_plan::{JsQueryPlan, QueryPlanError, QueryPlanTask};
+use crate::query_plan::{QueryPlanError, QueryPlanTask};
 
 #[napi]
 pub struct QueryPlanner {
     planner: Planner,
+    metadata: SchemaMetadata,
     pub consumer_schema: String,
     pub override_labels: Vec<String>,
     pub override_percentages: Vec<f64>,
@@ -86,6 +87,7 @@ impl QueryPlanner {
 
         Ok(QueryPlanner {
             planner,
+            metadata,
             consumer_schema,
             override_labels,
             override_percentages,
@@ -150,6 +152,7 @@ impl QueryPlanner {
         let cancellation_token = create_cancellation_token(&signal);
         let query_plan = query_plan::query_plan(
             &self.planner,
+            &self.metadata,
             query.as_str(),
             operation_name.as_deref(),
             active_labels,
@@ -157,7 +160,7 @@ impl QueryPlanner {
             &cancellation_token,
         )?;
 
-        env.to_js_value(&JsQueryPlan(&query_plan))
+        env.to_js_value(&query_plan)
     }
 
     #[napi(ts_return_type = "Promise<QueryPlan>")]
@@ -173,6 +176,7 @@ impl QueryPlanner {
         AsyncTask::with_optional_signal(
             QueryPlanTask {
                 planner: &self.planner,
+                metadata: &self.metadata,
                 query,
                 operation_name,
                 active_labels,
