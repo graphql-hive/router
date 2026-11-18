@@ -224,6 +224,11 @@ impl SubgraphExecutorMap {
             config.traffic_shaping.all.tls.as_ref(),
             config.traffic_shaping.all.pool_idle_timeout,
             config.traffic_shaping.all.allow_only_http2,
+            config
+                .traffic_shaping
+                .all
+                .http1_max_read_buffer_size
+                .to_bytes() as usize,
         )?;
 
         let max_connections_per_host = config.traffic_shaping.max_connections_per_host;
@@ -1007,6 +1012,10 @@ impl SubgraphExecutorMap {
         };
 
         let pool_idle_timeout = self.config.traffic_shaping.pool_idle_timeout(subgraph_name);
+        let http1_max_read_buffer_size = self
+            .config
+            .traffic_shaping
+            .http1_max_read_buffer_size(subgraph_name);
         // A separate client is needed when connection lifetime or protocol settings differ.
         let subgraph_allow_only_http2 = subgraph_config
             .allow_only_http2
@@ -1014,6 +1023,13 @@ impl SubgraphExecutorMap {
         if pool_idle_timeout != self.config.traffic_shaping.all.pool_idle_timeout
             || subgraph_config.tls.is_some()
             || subgraph_allow_only_http2 != self.config.traffic_shaping.all.allow_only_http2
+            || http1_max_read_buffer_size
+                != self
+                    .config
+                    .traffic_shaping
+                    .all
+                    .http1_max_read_buffer_size
+                    .to_bytes() as usize
         {
             let tls_config = get_merged_tls_config(
                 self.config.traffic_shaping.all.tls.as_ref(),
@@ -1024,6 +1040,7 @@ impl SubgraphExecutorMap {
                 tls_config.as_ref(),
                 pool_idle_timeout,
                 subgraph_allow_only_http2,
+                http1_max_read_buffer_size,
             )?);
         }
 

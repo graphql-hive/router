@@ -8,6 +8,7 @@ use crate::config::traffic_shaping::{
     SupergraphTrafficShapingConfig, TrafficShapingSubgraphRequestCompressionConfig,
 };
 use crate::executor::executors::dedupe::unique_leader_fingerprint;
+use crate::executor::executors::h1_pool::{H1Pool, H1PoolConfig};
 use crate::executor::executors::inflight::{InFlightClaim, InFlightRole};
 use crate::executor::executors::map::InflightRequestsMap;
 use crate::executor::executors::multipart_subscribe;
@@ -222,10 +223,20 @@ pub type HttpClient = Client<HttpsConnector<AgedConnector>, Full<Bytes>>;
 
 pub struct HttpClientProvider {
     clients: HttpClients,
+    /// Our own pools for plain `http://` subgraphs, see [`H1Pool`].
+    /// `None` leaves those subgraphs to hyper's client too.
+    pools: Option<H1Pools>,
     /// On when `max_connection_age` is set. Only then do requests pay for the age check.
     retire_old_connections: bool,
     /// Plain HTTP only speaks HTTP/2 when this forces it.
     http2_only: bool,
+}
+
+/// Follows [`HttpClientMode`], like the clients.
+#[allow(clippy::large_enum_variant)]
+enum H1Pools {
+    Shared(H1Pool),
+    PerWorker(H1PoolConfig, ThreadLocal<H1Pool>),
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -250,6 +261,7 @@ impl HttpClientProvider {
         tls_config: Option<&ClientTLSConfig>,
         pool_idle_timeout: Duration,
         http2_only: bool,
+        http1_max_read_buffer_size: usize,
     ) -> Result<Self, SubgraphExecutorError> {
         let all = &traffic_shaping.all;
         let mut builder = Client::builder(TokioExecutor::new());
@@ -257,6 +269,7 @@ impl HttpClientProvider {
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(pool_idle_timeout)
             .pool_max_idle_per_host(max_idle_per_host(traffic_shaping.max_connections_per_host))
+            .http1_max_buf_size(http1_max_read_buffer_size)
             .http2_only(http2_only);
         if let Some(interval) = all.http2_keep_alive_interval {
             // HTTP/2 pings need their own timer
@@ -267,6 +280,17 @@ impl HttpClientProvider {
         }
         let connector =
             build_https_connector(tls_config, all.max_connection_age, all.tcp_keepalive)?;
+        let pool_config = H1PoolConfig {
+            idle_timeout: pool_idle_timeout,
+            max_read_buffer_size: http1_max_read_buffer_size,
+        };
+        let pools =
+            (traffic_shaping.experimental_http1_pool && !http2_only).then(|| match traffic_shaping
+                .http_client_mode
+            {
+                HttpClientMode::Shared => H1Pools::Shared(H1Pool::new(pool_config)),
+                HttpClientMode::PerWorker => H1Pools::PerWorker(pool_config, ThreadLocal::new()),
+            });
         let clients = match traffic_shaping.http_client_mode {
             HttpClientMode::Shared => HttpClients::Shared(builder.build(connector)),
             HttpClientMode::PerWorker => HttpClients::PerWorker(WorkerLocalClients {
@@ -277,9 +301,18 @@ impl HttpClientProvider {
         };
         Ok(Self {
             clients,
+            pools,
             retire_old_connections: all.max_connection_age.is_some(),
             http2_only,
         })
+    }
+
+    /// The pool for the current thread, when the pool is on.
+    fn pool(&self) -> Option<&H1Pool> {
+        match self.pools.as_ref()? {
+            H1Pools::Shared(pool) => Some(pool),
+            H1Pools::PerWorker(config, pools) => Some(pools.get_or(|| H1Pool::new(*config))),
+        }
     }
 
     /// The client for the current thread.
@@ -733,7 +766,16 @@ async fn send_request<'a>(
 
         // one deadline for the headers and the body, so a subgraph can't stall mid-body forever
         let deadline = timeout.map(|timeout| tokio::time::Instant::now() + timeout);
-        let res = http_client.request(req, timeout).await??;
+        let pool = http_client
+            .pool()
+            .filter(|_| endpoint.scheme() == Some(&http::uri::Scheme::HTTP));
+        let (res, lease) = match pool {
+            Some(pool) => {
+                let (res, lease) = until(deadline, pool.request(req)).await??;
+                (res, Some(lease))
+            }
+            None => (http_client.request(req, timeout).await??, None),
+        };
 
         http_request_span.record_response(&res);
         http_request_capture.set_status_code(res.status().as_u16());
@@ -749,7 +791,12 @@ async fn send_request<'a>(
         let (parts, body) = res.into_parts();
 
         let body = match until(deadline, read_body(body)).await? {
-            Ok(body) => body,
+            Ok(body) => {
+                if let Some(lease) = lease {
+                    lease.release();
+                }
+                body
+            }
             Err(err) => {
                 return Err(SubgraphExecutorError::ResponseBodyReadFailure(
                     endpoint.to_string(),

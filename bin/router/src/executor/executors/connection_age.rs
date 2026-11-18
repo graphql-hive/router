@@ -248,7 +248,15 @@ mod tests {
             ..Default::default()
         };
         let pool_idle_timeout = traffic_shaping.all.pool_idle_timeout;
-        HttpClientProvider::new(&traffic_shaping, None, pool_idle_timeout, http2).unwrap()
+        let read_buffer = traffic_shaping.all.http1_max_read_buffer_size.to_bytes() as usize;
+        HttpClientProvider::new(
+            &traffic_shaping,
+            None,
+            pool_idle_timeout,
+            http2,
+            read_buffer,
+        )
+        .unwrap()
     }
 
     async fn get(client: &HttpClientProvider, url: &str) {

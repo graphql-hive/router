@@ -3,6 +3,7 @@ pub mod connection_age;
 pub mod dedupe;
 pub mod error;
 pub mod graphql_transport_ws;
+pub mod h1_pool;
 pub mod http;
 pub mod http_callback;
 pub mod inflight;
