@@ -115,3 +115,15 @@ it("should expose each subgraph's resolvable entity keys", async (t) => {
     petsearch: { FavoritesPage: [[]] },
   });
 });
+
+it("should expose possible types of interfaces and unions", async (t) => {
+  const supergraph = await fs.readFile(
+    "../../bin/router/fixture/tests/abstract-types.supergraph.graphql",
+    "utf-8",
+  );
+  t.assert.deepStrictEqual(new QueryPlanner(supergraph).possibleTypes, {
+    Product: ["Book", "Magazine"],
+    PublisherType: ["Agency", "Group", "Self"],
+    Similar: ["Book", "Magazine"],
+  });
+});

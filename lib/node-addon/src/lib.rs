@@ -1,6 +1,7 @@
 #![deny(clippy::all)]
 
 mod query_plan;
+use hive_router::executor::introspection::schema::SchemaWithMetadata;
 use hive_router::query_planner::graph::PERCENTAGE_SCALE_FACTOR;
 use hive_router::query_planner::planner::Planner;
 use hive_router::query_planner::utils::cancellation::CancellationToken;
@@ -20,6 +21,7 @@ pub struct QueryPlanner {
     pub override_labels: Vec<String>,
     pub override_percentages: Vec<f64>,
     entity_keys: BTreeMap<String, BTreeMap<String, Vec<Vec<String>>>>,
+    possible_types: BTreeMap<String, Vec<String>>,
 }
 
 // TODO: Did not find struct `QueryPlanner` parsed before expand #[napi] for impl?
@@ -66,12 +68,29 @@ impl QueryPlanner {
             })
             .collect();
 
+        let metadata = planner.consumer_schema.schema_metadata();
+        let possible_types = metadata
+            .interface_types
+            .iter()
+            .chain(&metadata.union_types)
+            .filter_map(|abstract_type| {
+                let mut types: Vec<String> = metadata
+                    .get_possible_types(abstract_type)?
+                    .iter()
+                    .cloned()
+                    .collect();
+                types.sort_unstable();
+                Some((abstract_type.clone(), types))
+            })
+            .collect();
+
         Ok(QueryPlanner {
             planner,
             consumer_schema,
             override_labels,
             override_percentages,
             entity_keys,
+            possible_types,
         })
     }
 
@@ -84,6 +103,17 @@ impl QueryPlanner {
     #[napi(getter)]
     pub fn entity_keys(&self) -> BTreeMap<String, BTreeMap<String, Vec<Vec<String>>>> {
         self.entity_keys.clone()
+    }
+
+    /// The types of each interface and union of the consumer schema that has any, sorted: the
+    /// object types that implement an interface or belong to a union, and the interfaces that
+    /// implement an interface. The router's executor checks type conditions with it. An object of
+    /// type `T` satisfies the type condition `C` when `T` is `C` or `possibleTypes[C]` has `T`.
+    /// For `requires` inline fragments it also accepts the other way around, `possibleTypes[T]`
+    /// having `C`.
+    #[napi(getter)]
+    pub fn possible_types(&self) -> BTreeMap<String, Vec<String>> {
+        self.possible_types.clone()
     }
 
     #[napi]

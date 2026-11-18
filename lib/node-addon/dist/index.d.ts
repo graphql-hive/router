@@ -15,6 +15,15 @@ export declare class QueryPlanner {
    * misses any field is left out.
    */
   get entityKeys(): Record<string, Record<string, Array<Array<string>>>>
+  /**
+   * The types of each interface and union of the consumer schema that has any, sorted: the
+   * object types that implement an interface or belong to a union, and the interfaces that
+   * implement an interface. The router's executor checks type conditions with it. An object of
+   * type `T` satisfies the type condition `C` when `T` is `C` or `possibleTypes[C]` has `T`.
+   * For `requires` inline fragments it also accepts the other way around, `possibleTypes[T]`
+   * having `C`.
+   */
+  get possibleTypes(): Record<string, Array<string>>
   computeCacheKey(query: string, operationName: string | undefined | null, activeLabels: Set<string>, percentageValue: number): string
   plan(query: string, operationName: string | undefined | null, activeLabels: Set<string>, percentageValue: number, signal?: AbortSignal | undefined | null): QueryPlan
   planAsync(query: string, operationName: string | undefined | null, activeLabels: Set<string>, percentageValue: number, signal?: AbortSignal | undefined | null): Promise<QueryPlan>
