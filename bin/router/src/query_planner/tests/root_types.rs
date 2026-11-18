@@ -32,45 +32,25 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/shared-root.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Parallel {
-        Fetch(service: "price") {
-          {
-            product {
-              price {
-                id
-                amount
-                currency
-              }
-            }
-          }
-        },
-        Fetch(service: "category") {
-          {
-            product {
-              category {
-                id
-                name
-              }
-              id
-            }
-          }
-        },
-        Fetch(service: "name") {
-          {
-            product {
-              name {
-                id
-                brand
-                model
-              }
-            }
-          }
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [4] price           -
+      [3] category        -
+      [2] name            -
+
+    [4] price
+      out
+        { product { price { id amount currency } } }
+
+    [3] category
+      out
+        { product { category { id name } id } }
+
+    [2] name
+      out
+        { product { name { id brand model } } }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",

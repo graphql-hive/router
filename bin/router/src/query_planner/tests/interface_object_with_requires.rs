@@ -24,49 +24,35 @@ fn interface_object_requiring_interface_fields() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            anotherUsers {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "anotherUsers.@") {
-          Fetch(service: "a") {
-            {
-              ... on NodeWithName {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on NodeWithName {
-                name
-              }
-            }
-          },
-        },
-        Flatten(path: "anotherUsers.@") {
-          Fetch(service: "b") {
-            {
-              ... on NodeWithName {
-                __typename
-                name
-                id
-              }
-            } =>
-            {
-              ... on NodeWithName {
-                username
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] b               -
+      [6] a               [2]
+      [4] b               [6]
+
+    [2] b
+      out
+        { anotherUsers { __typename id } }
+
+    [6] a   after [2]
+      merge
+        anotherUsers.@
+      in
+        ... on NodeWithName { __typename id }
+      out
+        ... on NodeWithName { name }
+      rewrite in
+        [NodeWithName]/__typename = "NodeWithName"
+
+    [4] b   after [6]
+      merge
+        anotherUsers.@
+      in
+        ... on NodeWithName { __typename name id }
+      out
+        ... on NodeWithName { username }
+      rewrite in
+        [NodeWithName]/__typename = "NodeWithName"
     "#);
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
@@ -209,35 +195,26 @@ fn interface_field_from_remote_graph_with_requires() -> Result<(), Box<dyn Error
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            users {
-              __typename
-              id
-              name
-            }
-          }
-        },
-        Flatten(path: "users.@") {
-          Fetch(service: "b") {
-            {
-              ... on NodeWithName {
-                __typename
-                name
-                id
-              }
-            } =>
-            {
-              ... on NodeWithName {
-                username
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+
+    [2] a
+      out
+        { users { __typename id name } }
+      rewrite in
+        [NodeWithName]/__typename = "NodeWithName"
+
+    [4] b   after [2]
+      merge
+        users.@
+      in
+        ... on NodeWithName { __typename name id }
+      out
+        ... on NodeWithName { username }
+      rewrite in
+        [NodeWithName]/__typename = "NodeWithName"
     "#);
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
@@ -349,36 +326,24 @@ fn inline_fragment_on_interface_object_for_remote_type_field() -> Result<(), Box
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            anotherUsers {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "anotherUsers.@") {
-          Fetch(service: "a") {
-            {
-              ... on NodeWithName {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on NodeWithName {
-                __typename
-                ... on User {
-                  age
-                }
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] b               -
+      [3] a               [2]
+
+    [2] b
+      out
+        { anotherUsers { __typename id } }
+
+    [3] a   after [2]
+      merge
+        anotherUsers.@
+      in
+        ... on NodeWithName { __typename id }
+      out
+        ... on NodeWithName { __typename ... on User { age } }
+      rewrite in
+        [NodeWithName]/__typename = "NodeWithName"
     "#);
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
@@ -468,20 +433,15 @@ fn inline_fragment_on_local_type_behind_interface() -> Result<(), Box<dyn Error>
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        {
-          users {
-            __typename
-            ... on User {
-              age
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { users { __typename ... on User { age } } }
+    ");
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
@@ -523,55 +483,35 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            anotherUsers {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "anotherUsers.@") {
-          Fetch(service: "a") {
-            {
-              ... on NodeWithName {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on NodeWithName {
-                __typename
-                name
-                ... on User {
-                  age
-                  name
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "anotherUsers.@") {
-          Fetch(service: "b") {
-            {
-              ... on NodeWithName {
-                __typename
-                name
-                id
-              }
-            } =>
-            {
-              ... on NodeWithName {
-                username
-                id
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] b               -
+      [6] a               [2]
+      [7] b               [6]
+
+    [2] b
+      out
+        { anotherUsers { __typename id } }
+
+    [6] a   after [2]
+      merge
+        anotherUsers.@
+      in
+        ... on NodeWithName { __typename id }
+      out
+        ... on NodeWithName { __typename name ... on User { age name } }
+      rewrite in
+        [NodeWithName]/__typename = "NodeWithName"
+
+    [7] b   after [6]
+      merge
+        anotherUsers.@
+      in
+        ... on NodeWithName { __typename name id }
+      out
+        ... on NodeWithName { username id }
+      rewrite in
+        [NodeWithName]/__typename = "NodeWithName"
     "#);
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
@@ -720,41 +660,26 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            users {
-              __typename
-              ... on User {
-                __typename
-                age
-                id
-                name
-              }
-              id
-              name
-            }
-          }
-        },
-        Flatten(path: "users.@|[User]") {
-          Fetch(service: "b") {
-            {
-              ... on NodeWithName {
-                __typename
-                name
-                id
-              }
-            } =>
-            {
-              ... on NodeWithName {
-                username
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+
+    [2] a
+      out
+        { users { __typename ... on User { __typename age id name } id name } }
+      rewrite in
+        [NodeWithName]/__typename = "NodeWithName"
+
+    [4] b   after [2]
+      merge
+        users.@|[User]
+      in
+        ... on NodeWithName { __typename name id }
+      out
+        ... on NodeWithName { username }
+      rewrite in
+        [NodeWithName]/__typename = "NodeWithName"
     "#);
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
@@ -874,22 +799,20 @@ fn conditional_same_type_fragment_under_a_type_condition() -> Result<(), Box<dyn
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        query ($v:Boolean!) {
-          users {
-            __typename
-            ... on User {
-              ... on User @skip(if: $v) {
-                id
-              }
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $v: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { users { __typename ... on User { ... on User @skip(if: $v) { id } } } }
+      vars
+        $v
+    ");
 
     Ok(())
 }
@@ -916,22 +839,20 @@ fn conditional_type_condition_inside_a_conditional_fragment() -> Result<(), Box<
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        query ($a:Boolean!,$b:Boolean!) {
-          users {
-            __typename
-            ... on User @skip(if: $a) {
-              ... on User @skip(if: $b) {
-                id
-              }
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $a: Boolean!, $b: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { users { __typename ... on User @skip(if: $a) { ... on User @skip(if: $b) { id } } } }
+      vars
+        $a, $b
+    ");
 
     Ok(())
 }

@@ -25,37 +25,23 @@ fn mutations() -> Result<(), Box<dyn Error>> {
         build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          mutation {
-            addProduct(input: {name: "new", price: 599.99}) {
-              __typename
-              name
-              price
-              id
-            }
-          }
-        },
-        Flatten(path: "addProduct") {
-          Fetch(service: "b") {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-                isAvailable
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+
+    [2] a
+      out
+        { addProduct(input: {name: "new", price: 599.99}) { __typename name price id } }
+      mutation
+
+    [4] b   after [2]
+      merge
+        addProduct
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isExpensive isAvailable }
     "#);
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
@@ -127,32 +113,34 @@ fn many_fields_two_same_graph() -> Result<(), Box<dyn Error>> {
     );
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "c") {
-          mutation {
-            five: add(num: 5)
-          }
-        },
-        Fetch(service: "a") {
-          mutation {
-            ten: multiply(by: 2)
-          }
-        },
-        Fetch(service: "c") {
-          mutation {
-            twelve: add(num: 2)
-          }
-        },
-        Fetch(service: "b") {
-          mutation {
-            final: delete
-          }
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] c               -
+      [3] a               [2]
+      [4] c               [3]
+      [5] b               [4]
+
+    [2] c
+      out
+        { five: add(num: 5) }
+      mutation
+
+    [3] a   after [2]
+      out
+        { ten: multiply(by: 2) }
+      mutation
+
+    [4] c   after [3]
+      out
+        { twelve: add(num: 2) }
+      mutation
+
+    [5] b   after [4]
+      out
+        { final: delete }
+      mutation
+    ");
 
     let document = parse_operation(
         r#"
@@ -168,33 +156,34 @@ fn many_fields_two_same_graph() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "c") {
-          mutation {
-            five: add(num: 5)
-            seven: add(num: 2)
-          }
-        },
-        Fetch(service: "a") {
-          mutation {
-            fourteen: multiply(by: 2)
-          }
-        },
-        Fetch(service: "c") {
-          mutation {
-            sixteen: add(num: 2)
-          }
-        },
-        Fetch(service: "b") {
-          mutation {
-            final: delete
-          }
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] c               -
+      [4] a               [2]
+      [5] c               [4]
+      [6] b               [5]
+
+    [2] c
+      out
+        { five: add(num: 5) seven: add(num: 2) }
+      mutation
+
+    [4] a   after [2]
+      out
+        { fourteen: multiply(by: 2) }
+      mutation
+
+    [5] c   after [4]
+      out
+        { sixteen: add(num: 2) }
+      mutation
+
+    [6] b   after [5]
+      out
+        { final: delete }
+      mutation
+    ");
 
     Ok(())
 }
@@ -217,24 +206,22 @@ fn three_fields_in_a_row_same_graph() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "c") {
-          mutation {
-            one: add(num: 1)
-            two: add(num: 2)
-            three: add(num: 3)
-          }
-        },
-        Fetch(service: "b") {
-          mutation {
-            final: delete
-          }
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] c               -
+      [5] b               [2]
+
+    [2] c
+      out
+        { one: add(num: 1) two: add(num: 2) three: add(num: 3) }
+      mutation
+
+    [5] b   after [2]
+      out
+        { final: delete }
+      mutation
+    ");
 
     Ok(())
 }
@@ -257,40 +244,29 @@ fn next_field_waits_for_entity_fetch_of_previous_one() -> Result<(), Box<dyn Err
         build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          mutation {
-            create: addProduct(input: {name: "new", price: 599.99}) {
-              __typename
-              id
-              price
-            }
-          }
-        },
-        Flatten(path: "create") {
-          Fetch(service: "b") {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-        Fetch(service: "c") {
-          mutation {
-            count: add(num: 1)
-          }
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+      [7] c               [4]
+
+    [2] a
+      out
+        { create: addProduct(input: {name: "new", price: 599.99}) { __typename id price } }
+      mutation
+
+    [4] b   after [2]
+      merge
+        create
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isExpensive }
+
+    [7] c   after [4]
+      out
+        { count: add(num: 1) }
+      mutation
     "#);
 
     Ok(())
@@ -316,42 +292,40 @@ fn next_field_waits_for_conditional_entity_fetch_of_previous_one() -> Result<(),
         build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          mutation ($includeRemote:Boolean!) {
-            create: addProduct(input: {name: "new", price: 599.99}) {
-              ... on Product @include(if: $includeRemote) {
-                __typename
-                id
-                price
-              }
-            }
+    variables
+      $includeRemote: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+      [7] c               [4]
+
+    [2] a
+      out
+        {
+          create: addProduct(input: {name: "new", price: 599.99}) {
+            ... on Product @include(if: $includeRemote) { __typename id price }
           }
-        },
-        Flatten(path: "create|[Product]") {
-          Fetch(service: "b", if: $includeRemote) {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-        Fetch(service: "c") {
-          mutation {
-            count: add(num: 1)
-          }
-        },
-      },
-    },
+        }
+      vars
+        $includeRemote
+      mutation
+
+    [4] b   after [2]
+      if
+        $includeRemote
+      merge
+        create|[Product]
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isExpensive }
+
+    [7] c   after [4]
+      out
+        { count: add(num: 1) }
+      mutation
     "#);
 
     Ok(())
@@ -377,36 +351,26 @@ fn neighbours_in_one_graph_share_a_fetch_when_first_needs_another_fetch(
         build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          mutation {
-            create: addProduct(input: {name: "new", price: 599.99}) {
-              __typename
-              id
-              price
-            }
-            double: multiply(by: 2)
-          }
-        },
-        Flatten(path: "create") {
-          Fetch(service: "b") {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+
+    [2] a
+      out
+        {
+          create: addProduct(input: {name: "new", price: 599.99}) { __typename id price }
+          double: multiply(by: 2)
+        }
+      mutation
+
+    [4] b   after [2]
+      merge
+        create
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isExpensive }
     "#);
 
     Ok(())
@@ -432,41 +396,32 @@ fn next_graph_waits_for_entity_fetch_of_the_group() -> Result<(), Box<dyn Error>
         build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          mutation {
-            create: addProduct(input: {name: "new", price: 599.99}) {
-              __typename
-              id
-              price
-            }
-            double: multiply(by: 2)
-          }
-        },
-        Flatten(path: "create") {
-          Fetch(service: "b") {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-        Fetch(service: "c") {
-          mutation {
-            count: add(num: 1)
-          }
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+      [8] c               [4]
+
+    [2] a
+      out
+        {
+          create: addProduct(input: {name: "new", price: 599.99}) { __typename id price }
+          double: multiply(by: 2)
+        }
+      mutation
+
+    [4] b   after [2]
+      merge
+        create
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isExpensive }
+
+    [8] c   after [4]
+      out
+        { count: add(num: 1) }
+      mutation
     "#);
 
     Ok(())
@@ -491,41 +446,32 @@ fn next_graph_waits_for_entity_fetch_of_a_later_field_in_the_group() -> Result<(
         build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          mutation {
-            double: multiply(by: 2)
-            create: addProduct(input: {name: "new", price: 599.99}) {
-              __typename
-              id
-              price
-            }
-          }
-        },
-        Flatten(path: "create") {
-          Fetch(service: "b") {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-        Fetch(service: "c") {
-          mutation {
-            count: add(num: 1)
-          }
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] a               -
+      [5] b               [2]
+      [8] c               [5]
+
+    [2] a
+      out
+        {
+          double: multiply(by: 2)
+          create: addProduct(input: {name: "new", price: 599.99}) { __typename id price }
+        }
+      mutation
+
+    [5] b   after [2]
+      merge
+        create
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isExpensive }
+
+    [8] c   after [5]
+      out
+        { count: add(num: 1) }
+      mutation
     "#);
 
     Ok(())
@@ -551,41 +497,32 @@ fn next_graph_waits_for_entity_fetch_to_the_same_graph() -> Result<(), Box<dyn E
         build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          mutation {
-            create: addProduct(input: {name: "new", price: 599.99}) {
-              __typename
-              id
-              price
-            }
-            double: multiply(by: 2)
-          }
-        },
-        Flatten(path: "create") {
-          Fetch(service: "b") {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-        Fetch(service: "b") {
-          mutation {
-            final: delete
-          }
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+      [8] b               [4]
+
+    [2] a
+      out
+        {
+          create: addProduct(input: {name: "new", price: 599.99}) { __typename id price }
+          double: multiply(by: 2)
+        }
+      mutation
+
+    [4] b   after [2]
+      merge
+        create
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isExpensive }
+
+    [8] b   after [4]
+      out
+        { final: delete }
+      mutation
     "#);
 
     Ok(())
@@ -610,45 +547,35 @@ fn fields_of_one_graph_with_another_graph_between_stay_apart() -> Result<(), Box
         build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "c") {
-          mutation {
-            one: add(num: 1)
-          }
-        },
-        Fetch(service: "a") {
-          mutation {
-            create: addProduct(input: {name: "new", price: 599.99}) {
-              __typename
-              id
-              price
-            }
-          }
-        },
-        Flatten(path: "create") {
-          Fetch(service: "b") {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-        Fetch(service: "c") {
-          mutation {
-            two: add(num: 2)
-          }
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] c               -
+      [3] a               [2]
+      [5] b               [3]
+      [8] c               [5]
+
+    [2] c
+      out
+        { one: add(num: 1) }
+      mutation
+
+    [3] a   after [2]
+      out
+        { create: addProduct(input: {name: "new", price: 599.99}) { __typename id price } }
+      mutation
+
+    [5] b   after [3]
+      merge
+        create
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isExpensive }
+
+    [8] c   after [5]
+      out
+        { two: add(num: 2) }
+      mutation
     "#);
 
     Ok(())
@@ -669,16 +596,21 @@ fn conditional_field_stays_in_its_group() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "c") {
-        mutation ($x:Boolean!) {
-          one: add(num: 1) @include(if: $x)
-          two: add(num: 2)
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $x: Boolean!
+
+    fetches
+      fetch               after
+      [2] c               -
+
+    [2] c
+      out
+        { one: add(num: 1) @include(if: $x) two: add(num: 2) }
+      vars
+        $x
+      mutation
+    ");
 
     Ok(())
 }

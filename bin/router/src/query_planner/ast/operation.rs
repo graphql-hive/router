@@ -13,10 +13,7 @@ use crate::query_planner::{
 use graphql_tools::parser::query as parser;
 use serde::{Deserialize, Serialize};
 
-use crate::query_planner::{
-    state::supergraph_state::OperationKind,
-    utils::pretty_display::{get_indent, PrettyDisplay},
-};
+use crate::query_planner::state::supergraph_state::OperationKind;
 
 use super::{selection_item::SelectionItem, selection_set::SelectionSet, shrink::ShrinkMemory};
 
@@ -559,19 +556,6 @@ impl AsRef<SubgraphFetchOperation> for PlanningFetchOperation {
     }
 }
 
-/// Skips the `_entities` wrapper when printing a selection that is sent to a subgraph.
-pub(crate) fn inner_selection_set(document: &Document) -> &SelectionSet {
-    if document.operation.selection_set.items.len() == 1 {
-        if let SelectionItem::Field(field) = &document.operation.selection_set.items[0] {
-            if field.name == "_entities" && field.alias.is_none() {
-                return &field.selections;
-            }
-        }
-    }
-
-    &document.operation.selection_set
-}
-
 /// Puts `__typename` first in every selection set, so the response parser knows an object's type
 /// before reading its other fields. The router projects the final response by the client's
 /// operation, so the order of fields in a subgraph query doesn't matter.
@@ -641,70 +625,6 @@ impl Serialize for SubgraphFetchOperation {
 impl Serialize for PlanningFetchOperation {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         self.operation.serialize(serializer)
-    }
-}
-
-impl PrettyDisplay for SubgraphFetchOperation {
-    fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
-        writeln!(f, "{}  {}", get_indent(depth), self.document_str)
-    }
-}
-
-impl PrettyDisplay for PlanningFetchOperation {
-    fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
-        let indent = get_indent(depth);
-        let document = &self.document;
-        // TODO: improve
-        let has_variables = document
-            .operation
-            .variable_definitions
-            .as_ref()
-            .is_some_and(|defs| {
-                !defs.is_empty() && defs.iter().all(|v| v.variable_type.inner_type() != "_Any")
-            });
-        let kind: &str = match &document.operation.operation_kind {
-            Some(kind) => match kind {
-                OperationKind::Query => match has_variables {
-                    true => "query ",
-                    false => "",
-                },
-                OperationKind::Mutation => "mutation ",
-                OperationKind::Subscription => "subscription ",
-            },
-            None => "",
-        };
-        let variables = if let Some(variables) = document.operation.variable_definitions.as_ref() {
-            let representationless = variables
-                .iter()
-                .filter(|v| v.variable_type.inner_type() != "_Any")
-                .collect::<Vec<_>>();
-
-            if representationless.is_empty() {
-                "".to_string()
-            } else {
-                format!(
-                    "({}) ",
-                    representationless
-                        .iter()
-                        .map(|v| v.to_string())
-                        .collect::<Vec<String>>()
-                        .join(",")
-                )
-            }
-        } else {
-            "".to_string()
-        };
-        writeln!(f, "{indent}  {kind}{variables}{{")?;
-        inner_selection_set(document).pretty_fmt(f, depth + 2)?;
-        writeln!(f, "{indent}  }}")?;
-
-        if !document.fragments.is_empty() {
-            for fragment in &document.fragments {
-                fragment.pretty_fmt(f, depth)?;
-            }
-        }
-
-        Ok(())
     }
 }
 

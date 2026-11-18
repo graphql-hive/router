@@ -148,64 +148,46 @@ fn mutation_results_supply_context_in_root_field_order() -> Result<(), Box<dyn E
         ),
     )?;
     insta::assert_snapshot!(plan.to_string(), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          mutation {
-            first: updateUser(id: "1") {
-              __typename
-              currency
-              txs {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "first.txs.@") {
-          Fetch(service: "a") {
-            {
-              ... on Transaction {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:String) {
-              ... on Transaction {
-                amount(code: $__context_0)
-              }
-            }
-          },
-        },
-        Fetch(service: "a") {
-          mutation {
-            second: updateUser(id: "2") {
-              __typename
-              currency
-              txs {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "second.txs.@") {
-          Fetch(service: "a") {
-            {
-              ... on Transaction {
-                __typename
-                id
-              }
-            } =>
-            ($__context_1:String) {
-              ... on Transaction {
-                amount(code: $__context_1)
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] a               -
+      [3] a               [2]
+      [4] a               [3]
+      [5] a               [4]
+
+    [2] a
+      out
+        { first: updateUser(id: "1") { __typename currency txs { __typename id } } }
+      mutation
+
+    [3] a   after [2]
+      merge
+        first.txs.@
+      in
+        ... on Transaction { __typename id }
+      out
+        ... on Transaction { amount(code: $__context_0) }
+      vars
+        $__context_0
+      context
+        $__context_0 = ..|[User]/currency
+
+    [4] a   after [3]
+      out
+        { second: updateUser(id: "2") { __typename currency txs { __typename id } } }
+      mutation
+
+    [5] a   after [4]
+      merge
+        second.txs.@
+      in
+        ... on Transaction { __typename id }
+      out
+        ... on Transaction { amount(code: $__context_1) }
+      vars
+        $__context_1
+      context
+        $__context_1 = ..|[User]/currency
     "#);
     Ok(())
 }
@@ -216,57 +198,44 @@ fn multi_type_fetch_preserves_contexts_from_different_ancestors() -> Result<(), 
         "fixture/tests/context-outer.supergraph.graphql",
         parse_operation("{ outer { user { entries { ... on Transaction { amount } ... on Adjustment { amount } } } } }"),
     )?;
-    insta::assert_snapshot!(plan.to_string(), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            outer {
+    insta::assert_snapshot!(plan.to_string(), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [4] a               [2]
+
+    [2] a
+      out
+        {
+          outer {
+            __typename
+            code
+            user {
               __typename
-              code
-              user {
+              currency
+              entries {
                 __typename
-                currency
-                entries {
-                  __typename
-                  ... on Transaction {
-                    __typename
-                    id
-                  }
-                  ... on Adjustment {
-                    __typename
-                    id
-                  }
-                }
+                ... on Transaction { __typename id }
+                ... on Adjustment { __typename id }
               }
             }
           }
-        },
-        Flatten(path: "outer.user.entries.@") {
-          Fetch(service: "a") {
-            {
-              ... on Adjustment {
-                __typename
-                id
-              }
-              ... on Transaction {
-                __typename
-                id
-              }
-            } =>
-            ($__context_1:String,$__context_0:String) {
-              ... on Adjustment {
-                amount(code: $__context_1)
-              }
-              ... on Transaction {
-                amount(code: $__context_0)
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+        }
+
+    [4] a   after [2]
+      merge
+        outer.user.entries.@
+      in
+        ... on Adjustment { __typename id } ... on Transaction { __typename id }
+      out
+        ... on Adjustment { amount(code: $__context_1) }
+        ... on Transaction { amount(code: $__context_0) }
+      vars
+        $__context_0, $__context_1
+      context
+        $__context_1 = ../..|[Outer]/code
+        $__context_0 = ..|[User]/currency
+    ");
     insta::assert_json_snapshot!(plan, @r#"
     {
       "kind": "QueryPlan",
@@ -383,72 +352,57 @@ fn context_variables_do_not_collide_with_client_variables_or_requires() -> Resul
         "fixture/tests/context-basic.supergraph.graphql",
         parse_operation("query($__context_0: Int = 2, $__context_1: Boolean!, $__context_3: Int) { users { txs { required(multiplier: $__context_0) @include(if: $__context_1) amount(multiplier: $__context_3) } } }"),
     )?;
-    insta::assert_snapshot!(plan.to_string(), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            users {
-              __typename
-              currency
-              txs {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Parallel {
-          Flatten(path: "users.@.txs.@") {
-            Fetch(service: "b", if: $__context_1) {
-              {
-                ... on Transaction {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Transaction {
-                  base
-                }
-              }
-            },
-          },
-          Flatten(path: "users.@.txs.@") {
-            Fetch(service: "a") {
-              {
-                ... on Transaction {
-                  __typename
-                  id
-                }
-              } =>
-              ($__context_3:Int,$__context_4:String) {
-                ... on Transaction {
-                  amount(code: $__context_4, multiplier: $__context_3)
-                }
-              }
-            },
-          },
-        },
-        Flatten(path: "users.@.txs.@") {
-          Fetch(service: "a", if: $__context_1) {
-            {
-              ... on Transaction {
-                __typename
-                base
-                id
-              }
-            } =>
-            ($__context_0:Int=2,$__context_2:String) {
-              ... on Transaction {
-                required(code: $__context_2, multiplier: $__context_0)
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(plan.to_string(), @r"
+    variables
+      $__context_0: Int = 2, $__context_1, $__context_3: Int
+
+    fetches
+      fetch               after
+      [2] a               -
+      [5] b               [2]
+      [6] a               [2]
+      [3] a               [5]
+
+    [2] a
+      out
+        { users { __typename currency txs { __typename id } } }
+
+    [5] b   after [2]
+      if
+        $__context_1
+      merge
+        users.@.txs.@
+      in
+        ... on Transaction { __typename id }
+      out
+        ... on Transaction { base }
+
+    [6] a   after [2]
+      merge
+        users.@.txs.@
+      in
+        ... on Transaction { __typename id }
+      out
+        ... on Transaction { amount(code: $__context_4, multiplier: $__context_3) }
+      vars
+        $__context_3, $__context_4
+      context
+        $__context_4 = ..|[User]/currency
+
+    [3] a   after [5]
+      if
+        $__context_1
+      merge
+        users.@.txs.@
+      in
+        ... on Transaction { __typename base id }
+      out
+        ... on Transaction { required(code: $__context_2, multiplier: $__context_0) }
+      vars
+        $__context_0, $__context_2
+      context
+        $__context_2 = ..|[User]/currency
+    ");
     Ok(())
 }
 
@@ -458,68 +412,42 @@ fn batch_context_variables_do_not_collide_with_client_variables() -> Result<(), 
         "fixture/tests/context-basic.supergraph.graphql",
         parse_operation("query($__context_0: Int!, $__batch_reps_0: Int!) { users { txs { amount(multiplier: $__context_0) } } secondUsers { txs { amount(multiplier: $__batch_reps_0) } } }"),
     )?;
-    insta::assert_snapshot!(plan.to_string(), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            users {
-              ...a
-            }
-            secondUsers {
-              ...a
-            }
-          }
-          fragment a on User {
-            __typename
-            currency
-            txs {
-              __typename
-              id
-            }
-          }
-        },
-        BatchFetch(service: "a") {
-          {
-            _e0 {
-              paths: [
-                "secondUsers.@.txs.@"
-              ]
-              {
-                ... on Transaction {
-                  __typename
-                  id
-                }
-              }
-            }
-            _e1 {
-              paths: [
-                "users.@.txs.@"
-              ]
-              {
-                ... on Transaction {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-          ($__batch_reps_0:Int!,$__context_2:String,$__context_0:Int!,$__context_1:String) {
-            _e0: _entities(representations: $__batch_reps_1) {
-              ... on Transaction {
-                amount(code: $__context_2, multiplier: $__batch_reps_0)
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_2) {
-              ... on Transaction {
-                amount(code: $__context_1, multiplier: $__context_0)
-              }
-            }
-          }
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(plan.to_string(), @r"
+    variables
+      $__batch_reps_0: Int!, $__context_0: Int!
+
+    fetches
+      fetch               after
+      [2] a               -
+      [4] a               [2]
+
+    [2] a
+      out
+        { users { ...a } secondUsers { ...a } }
+        fragment a on User { __typename currency txs { __typename id } }
+
+    [4] a   after [2]
+      alias _e0
+        merge
+          secondUsers.@.txs.@
+        in
+          ... on Transaction { __typename id }
+        out
+          ... on Transaction { amount(code: $__context_2, multiplier: $__batch_reps_0) }
+        context
+          $__context_2 = ..|[User]/currency
+      alias _e1
+        merge
+          users.@.txs.@
+        in
+          ... on Transaction { __typename id }
+        out
+          ... on Transaction { amount(code: $__context_1, multiplier: $__context_0) }
+        context
+          $__context_1 = ..|[User]/currency
+      vars
+        $__batch_reps_0, $__context_0, $__context_1, $__context_2
+    ");
     Ok(())
 }
 
@@ -529,75 +457,60 @@ fn context_under_conditional_ancestor_fragments() -> Result<(), Box<dyn Error>> 
         "fixture/tests/context-basic.supergraph.graphql",
         parse_operation("query($skip: Boolean!, $include: Boolean!) { viewer { ... on User @include(if: $include) { txs { fromUnion @skip(if: $skip) } } ... on Other @skip(if: $skip) { txs { fromUnion @include(if: $include) } } } }"),
     )?;
-    insta::assert_snapshot!(plan.to_string(), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($include:Boolean!,$skip:Boolean!) {
-            viewer {
-              __typename
-              ... on User {
-                __typename
-                currency @include(if: $include)
-                txs @include(if: $include) {
-                  ...a
-                }
-              }
-              ... on Other {
-                __typename
-                currency @skip(if: $skip)
-                txs @skip(if: $skip) {
-                  ...a
-                }
-              }
-            }
-          }
-          fragment a on Transaction {
+    insta::assert_snapshot!(plan.to_string(), @r"
+    variables
+      $include: Boolean!, $skip: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+      [4] a               [2]
+
+    [2] a
+      out
+        {
+          viewer {
             __typename
-            id
+            ... on User {
+              __typename
+              currency @include(if: $include)
+              txs @include(if: $include) { ...a }
+            }
+            ... on Other { __typename currency @skip(if: $skip) txs @skip(if: $skip) { ...a } }
           }
-        },
-        BatchFetch(service: "a") {
-          {
-            _e0(if: $include && !$skip) {
-              paths: [
-                "viewer|[Other].txs.@"
-              ]
-              {
-                ... on Transaction {
-                  __typename
-                  id
-                }
-              }
-            }
-            _e1(if: $include && !$skip) {
-              paths: [
-                "viewer|[User].txs.@"
-              ]
-              {
-                ... on Transaction {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-          ($__context_1:String,$__context_0:String) {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on Transaction {
-                fromUnion(code: $__context_1)
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on Transaction {
-                fromUnion(code: $__context_0)
-              }
-            }
-          }
-        },
-      },
-    },
-    "#);
+        }
+        fragment a on Transaction { __typename id }
+      vars
+        $include, $skip
+
+    [4] a   after [2]
+      alias _e0
+        if
+          $include && !$skip
+        merge
+          viewer|[Other].txs.@
+        in
+          ... on Transaction { __typename id }
+        out
+          ... on Transaction { fromUnion(code: $__context_1) }
+        context
+          $__context_1 = ..|[User]/currency
+          $__context_1 = ..|[Other]/currency
+      alias _e1
+        if
+          $include && !$skip
+        merge
+          viewer|[User].txs.@
+        in
+          ... on Transaction { __typename id }
+        out
+          ... on Transaction { fromUnion(code: $__context_0) }
+        context
+          $__context_0 = ..|[User]/currency
+          $__context_0 = ..|[Other]/currency
+      vars
+        $__context_0, $__context_1
+    ");
     Ok(())
 }
 
@@ -633,39 +546,28 @@ fn single_subgraph_nearest_ancestor() -> Result<(), Box<dyn Error>> {
         parse_operation(r#"{ users { txs { amount } } }"#),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            users {
-              __typename
-              currency
-              txs {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "users.@.txs.@") {
-          Fetch(service: "a") {
-            {
-              ... on Transaction {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:String) {
-              ... on Transaction {
-                amount(code: $__context_0)
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [3] a               [2]
+
+    [2] a
+      out
+        { users { __typename currency txs { __typename id } } }
+
+    [3] a   after [2]
+      merge
+        users.@.txs.@
+      in
+        ... on Transaction { __typename id }
+      out
+        ... on Transaction { amount(code: $__context_0) }
+      vars
+        $__context_0
+      context
+        $__context_0 = ..|[User]/currency
+    ");
     insta::assert_json_snapshot!(query_plan, @r#"
     {
       "kind": "QueryPlan",
@@ -750,41 +652,28 @@ fn nested_ancestor_picks_nearest() -> Result<(), Box<dyn Error>> {
         parse_operation(r#"{ users { child { txs { amount } } } }"#),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            users {
-              child {
-                __typename
-                currency
-                txs {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-        },
-        Flatten(path: "users.@.child.txs.@") {
-          Fetch(service: "a") {
-            {
-              ... on Transaction {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:String) {
-              ... on Transaction {
-                amount(code: $__context_0)
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [3] a               [2]
+
+    [2] a
+      out
+        { users { child { __typename currency txs { __typename id } } } }
+
+    [3] a   after [2]
+      merge
+        users.@.child.txs.@
+      in
+        ... on Transaction { __typename id }
+      out
+        ... on Transaction { amount(code: $__context_0) }
+      vars
+        $__context_0
+      context
+        $__context_0 = ..|[User]/currency
+    ");
 
     Ok(())
 }
@@ -796,41 +685,28 @@ fn ancestor_through_non_context_wrapper() -> Result<(), Box<dyn Error>> {
         parse_operation(r#"{ users { wrapper { txs { amount } } } }"#),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            users {
-              __typename
-              currency
-              wrapper {
-                txs {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-        },
-        Flatten(path: "users.@.wrapper.txs.@") {
-          Fetch(service: "a") {
-            {
-              ... on Transaction {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:String) {
-              ... on Transaction {
-                amount(code: $__context_0)
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [3] a               [2]
+
+    [2] a
+      out
+        { users { __typename currency wrapper { txs { __typename id } } } }
+
+    [3] a   after [2]
+      merge
+        users.@.wrapper.txs.@
+      in
+        ... on Transaction { __typename id }
+      out
+        ... on Transaction { amount(code: $__context_0) }
+      vars
+        $__context_0
+      context
+        $__context_0 = ../..|[User]/currency
+    ");
 
     Ok(())
 }
@@ -842,39 +718,28 @@ fn interface_context() -> Result<(), Box<dyn Error>> {
         parse_operation(r#"{ account { txs { fromInterface } } }"#),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            account {
-              __typename
-              currency
-              txs {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "account.txs.@") {
-          Fetch(service: "a") {
-            {
-              ... on Transaction {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:String) {
-              ... on Transaction {
-                fromInterface(code: $__context_0)
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [3] a               [2]
+
+    [2] a
+      out
+        { account { __typename currency txs { __typename id } } }
+
+    [3] a   after [2]
+      merge
+        account.txs.@
+      in
+        ... on Transaction { __typename id }
+      out
+        ... on Transaction { fromInterface(code: $__context_0) }
+      vars
+        $__context_0
+      context
+        $__context_0 = ..|[Account]/currency
+    ");
 
     insta::assert_json_snapshot!(query_plan, @r#"
     {
@@ -958,54 +823,37 @@ fn remote_context_producer_precedes_consumer() -> Result<(), Box<dyn Error>> {
         "fixture/tests/context-remote-producer.supergraph.graphql",
         parse_operation("{ t { u { id field } } }"),
     )?;
-    insta::assert_snapshot!(plan.to_string(), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            t {
-              __typename
-              id
-              u {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "t") {
-          Fetch(service: "b") {
-            {
-              ... on T {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on T {
-                prop
-              }
-            }
-          },
-        },
-        Flatten(path: "t.u") {
-          Fetch(service: "a") {
-            {
-              ... on U {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:String) {
-              ... on U {
-                field(a: $__context_0)
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(plan.to_string(), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [3] b               [2]
+      [4] a               [3]
+
+    [2] a
+      out
+        { t { __typename id u { __typename id } } }
+
+    [3] b   after [2]
+      merge
+        t
+      in
+        ... on T { __typename id }
+      out
+        ... on T { prop }
+
+    [4] a   after [3]
+      merge
+        t.u
+      in
+        ... on U { __typename id }
+      out
+        ... on U { field(a: $__context_0) }
+      vars
+        $__context_0
+      context
+        $__context_0 = ..|[T]/prop
+    ");
     insta::assert_json_snapshot!(plan.into_executable(&read_supergraph_state("fixture/tests/context-remote-producer.supergraph.graphql")), @r#"
     {
       "kind": "QueryPlan",
@@ -1116,77 +964,46 @@ fn context_selection_crosses_subgraphs_multiple_times() -> Result<(), Box<dyn Er
         "fixture/tests/context-multi-hop.supergraph.graphql",
         parse_operation("{ t { u { field } } }"),
     )?;
-    insta::assert_snapshot!(plan.to_string(), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            t {
-              __typename
-              a {
-                __typename
-                id
-              }
-              u {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "t.a") {
-          Fetch(service: "b") {
-            {
-              ... on A {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on A {
-                b {
-                  __typename
-                  id
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "t.a.b") {
-          Fetch(service: "a") {
-            {
-              ... on B {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on B {
-                c {
-                  prop
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "t.u") {
-          Fetch(service: "a") {
-            {
-              ... on U {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:String) {
-              ... on U {
-                field(a: $__context_0)
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(plan.to_string(), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [3] b               [2]
+      [4] a               [3]
+      [5] a               [4]
+
+    [2] a
+      out
+        { t { __typename a { __typename id } u { __typename id } } }
+
+    [3] b   after [2]
+      merge
+        t.a
+      in
+        ... on A { __typename id }
+      out
+        ... on A { b { __typename id } }
+
+    [4] a   after [3]
+      merge
+        t.a.b
+      in
+        ... on B { __typename id }
+      out
+        ... on B { c { prop } }
+
+    [5] a   after [4]
+      merge
+        t.u
+      in
+        ... on U { __typename id }
+      out
+        ... on U { field(a: $__context_0) }
+      vars
+        $__context_0
+      context
+        $__context_0 = ..|[T]/a/b/c/prop
+    ");
     insta::assert_json_snapshot!(plan.into_executable(&read_supergraph_state("fixture/tests/context-multi-hop.supergraph.graphql")), @r#"
     {
       "kind": "QueryPlan",
@@ -1345,39 +1162,28 @@ fn query_root_context_selects_a_sibling_field() -> Result<(), Box<dyn Error>> {
         "fixture/tests/context-query-root.supergraph.graphql",
         parse_operation("{ product { price } }"),
     )?;
-    insta::assert_snapshot!(plan.to_string(), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            __typename
-            me {
-              locale
-            }
-            product {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "product") {
-          Fetch(service: "a") {
-            {
-              ... on Product {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:String) {
-              ... on Product {
-                price(locale: $__context_0)
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(plan.to_string(), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [3] a               [2]
+
+    [2] a
+      out
+        { __typename me { locale } product { __typename id } }
+
+    [3] a   after [2]
+      merge
+        product
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { price(locale: $__context_0) }
+      vars
+        $__context_0
+      context
+        $__context_0 = ..|[Query]/me/locale
+    ");
     insta::assert_json_snapshot!(plan.into_executable(&read_supergraph_state("fixture/tests/context-query-root.supergraph.graphql")), @r#"
     {
       "kind": "QueryPlan",
@@ -1458,41 +1264,28 @@ fn context_is_resolved_before_a_key_transition() -> Result<(), Box<dyn Error>> {
         "fixture/tests/context-before-key-transition.supergraph.graphql",
         parse_operation("{ customer { child { id prop } } }"),
     )?;
-    insta::assert_snapshot!(plan.to_string(), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            customer {
-              __typename
-              identifiers {
-                legacyUserId
-              }
-              child {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "customer.child") {
-          Fetch(service: "b") {
-            {
-              ... on Child {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:ID) {
-              ... on Child {
-                prop(legacyUserId: $__context_0)
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(plan.to_string(), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+
+    [2] a
+      out
+        { customer { __typename identifiers { legacyUserId } child { __typename id } } }
+
+    [4] b   after [2]
+      merge
+        customer.child
+      in
+        ... on Child { __typename id }
+      out
+        ... on Child { prop(legacyUserId: $__context_0) }
+      vars
+        $__context_0
+      context
+        $__context_0 = ..|[Customer]/identifiers/legacyUserId
+    ");
     insta::assert_json_snapshot!(plan.into_executable(&read_supergraph_state("fixture/tests/context-before-key-transition.supergraph.graphql")), @r#"
     {
       "kind": "QueryPlan",
@@ -1576,39 +1369,28 @@ fn context_value_reuses_an_existing_fetch() -> Result<(), Box<dyn Error>> {
         "fixture/tests/context-existing-fetch.supergraph.graphql",
         parse_operation("{ t { u { id field } } }"),
     )?;
-    insta::assert_snapshot!(plan.to_string(), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            t {
-              __typename
-              prop
-              u {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "t.u") {
-          Fetch(service: "b") {
-            {
-              ... on U {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:String) {
-              ... on U {
-                field(a: $__context_0)
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(plan.to_string(), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [4] b               [2]
+
+    [2] a
+      out
+        { t { __typename prop u { __typename id } } }
+
+    [4] b   after [2]
+      merge
+        t.u
+      in
+        ... on U { __typename id }
+      out
+        ... on U { field(a: $__context_0) }
+      vars
+        $__context_0
+      context
+        $__context_0 = ..|[T]/prop
+    ");
     insta::assert_json_snapshot!(plan.into_executable(&read_supergraph_state("fixture/tests/context-existing-fetch.supergraph.graphql")), @r#"
     {
       "kind": "QueryPlan",
@@ -1689,39 +1471,28 @@ fn list_context_argument_preserves_its_type() -> Result<(), Box<dyn Error>> {
         "fixture/tests/context-list-argument.supergraph.graphql",
         parse_operation("{ t { u { field } } }"),
     )?;
-    insta::assert_snapshot!(plan.to_string(), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            t {
-              __typename
-              prop
-              u {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "t.u") {
-          Fetch(service: "a") {
-            {
-              ... on U {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:[String]) {
-              ... on U {
-                field(a: $__context_0)
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(plan.to_string(), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [3] a               [2]
+
+    [2] a
+      out
+        { t { __typename prop u { __typename id } } }
+
+    [3] a   after [2]
+      merge
+        t.u
+      in
+        ... on U { __typename id }
+      out
+        ... on U { field(a: $__context_0) }
+      vars
+        $__context_0
+      context
+        $__context_0 = ..|[T]/prop
+    ");
     insta::assert_json_snapshot!(plan.into_executable(&read_supergraph_state("fixture/tests/context-list-argument.supergraph.graphql")), @r#"
     {
       "kind": "QueryPlan",
@@ -1802,47 +1573,33 @@ fn multiple_context_arguments_merge_into_an_ancestor_fetch() -> Result<(), Box<d
         "fixture/tests/context-merged-arguments.supergraph.graphql",
         parse_operation("{ customer { accounts { foo { id } } } }"),
     )?;
-    insta::assert_snapshot!(plan.to_string(), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            customer {
-              __typename
-              id
-              identifiers {
-                id5
-              }
-              mid
-            }
-          }
-        },
-        Flatten(path: "customer") {
-          Fetch(service: "c") {
-            {
-              ... on Customer {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:ID,$__context_1:ID) {
-              ... on Customer {
-                __typename
-                id
-                accounts {
-                  __typename
-                  id
-                  foo(ctx_id5: $__context_0, ctx_mid: $__context_1) {
-                    id
-                  }
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(plan.to_string(), @r"
+    fetches
+      fetch               after
+      [2] b               -
+      [3] c               [2]
+
+    [2] b
+      out
+        { customer { __typename id identifiers { id5 } mid } }
+
+    [3] c   after [2]
+      merge
+        customer
+      in
+        ... on Customer { __typename id }
+      out
+        ... on Customer {
+          __typename
+          id
+          accounts { __typename id foo(ctx_id5: $__context_0, ctx_mid: $__context_1) { id } }
+        }
+      vars
+        $__context_0, $__context_1
+      context
+        $__context_0 = [Customer]/identifiers/id5
+        $__context_1 = [Customer]/mid
+    ");
     insta::assert_json_snapshot!(plan.into_executable(&read_supergraph_state("fixture/tests/context-merged-arguments.supergraph.graphql")), @r#"
     {
       "kind": "QueryPlan",
@@ -1937,72 +1694,39 @@ fn unrelated_objects_share_a_context_name() -> Result<(), Box<dyn Error>> {
         "fixture/tests/context-shared-duck.supergraph.graphql",
         parse_operation("{ foo { u { field } } bar { u { field } } }"),
     )?;
-    insta::assert_snapshot!(plan.to_string(), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            foo {
-              __typename
-              prop
-              u {
-                ...a
-              }
-            }
-            bar {
-              __typename
-              prop
-              u {
-                ...a
-              }
-            }
-          }
-          fragment a on U {
-            __typename
-            id
-          }
-        },
-        BatchFetch(service: "a") {
-          {
-            _e0 {
-              paths: [
-                "bar.u"
-              ]
-              {
-                ... on U {
-                  __typename
-                  id
-                }
-              }
-            }
-            _e1 {
-              paths: [
-                "foo.u"
-              ]
-              {
-                ... on U {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-          ($__context_1:String,$__context_0:String) {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on U {
-                field(a: $__context_1)
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on U {
-                field(a: $__context_0)
-              }
-            }
-          }
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(plan.to_string(), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [4] a               [2]
+
+    [2] a
+      out
+        { foo { __typename prop u { ...a } } bar { __typename prop u { ...a } } }
+        fragment a on U { __typename id }
+
+    [4] a   after [2]
+      alias _e0
+        merge
+          bar.u
+        in
+          ... on U { __typename id }
+        out
+          ... on U { field(a: $__context_1) }
+        context
+          $__context_1 = ..|[Bar]/prop
+      alias _e1
+        merge
+          foo.u
+        in
+          ... on U { __typename id }
+        out
+          ... on U { field(a: $__context_0) }
+        context
+          $__context_0 = ..|[Foo]/prop
+      vars
+        $__context_0, $__context_1
+    ");
     insta::assert_json_snapshot!(plan.into_executable(&read_supergraph_state("fixture/tests/context-shared-duck.supergraph.graphql")), @r#"
     {
       "kind": "QueryPlan",
@@ -2140,72 +1864,39 @@ fn shared_context_name_selects_fields_by_type() -> Result<(), Box<dyn Error>> {
         "fixture/tests/context-shared-conditions.supergraph.graphql",
         parse_operation("{ foo { u { field } } bar { u { field } } }"),
     )?;
-    insta::assert_snapshot!(plan.to_string(), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            foo {
-              __typename
-              prop
-              u {
-                ...a
-              }
-            }
-            bar {
-              __typename
-              prop2
-              u {
-                ...a
-              }
-            }
-          }
-          fragment a on U {
-            __typename
-            id
-          }
-        },
-        BatchFetch(service: "a") {
-          {
-            _e0 {
-              paths: [
-                "bar.u"
-              ]
-              {
-                ... on U {
-                  __typename
-                  id
-                }
-              }
-            }
-            _e1 {
-              paths: [
-                "foo.u"
-              ]
-              {
-                ... on U {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-          ($__context_1:String,$__context_0:String) {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on U {
-                field(a: $__context_1)
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on U {
-                field(a: $__context_0)
-              }
-            }
-          }
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(plan.to_string(), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [4] a               [2]
+
+    [2] a
+      out
+        { foo { __typename prop u { ...a } } bar { __typename prop2 u { ...a } } }
+        fragment a on U { __typename id }
+
+    [4] a   after [2]
+      alias _e0
+        merge
+          bar.u
+        in
+          ... on U { __typename id }
+        out
+          ... on U { field(a: $__context_1) }
+        context
+          $__context_1 = ..|[Bar]/prop2
+      alias _e1
+        merge
+          foo.u
+        in
+          ... on U { __typename id }
+        out
+          ... on U { field(a: $__context_0) }
+        context
+          $__context_0 = ..|[Foo]/prop
+      vars
+        $__context_0, $__context_1
+    ");
     insta::assert_json_snapshot!(plan.into_executable(&read_supergraph_state("fixture/tests/context-shared-conditions.supergraph.graphql")), @r#"
     {
       "kind": "QueryPlan",
@@ -2346,75 +2037,47 @@ fn union_context_with_type_conditions() -> Result<(), Box<dyn Error>> {
         ),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            viewer {
-              __typename
-              ... on User {
-                __typename
-                currency
-                txs {
-                  ...a
-                }
-              }
-              ... on Other {
-                __typename
-                currency
-                txs {
-                  ...a
-                }
-              }
-            }
-          }
-          fragment a on Transaction {
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [4] a               [2]
+
+    [2] a
+      out
+        {
+          viewer {
             __typename
-            id
+            ... on User { __typename currency txs { ...a } }
+            ... on Other { __typename currency txs { ...a } }
           }
-        },
-        BatchFetch(service: "a") {
-          {
-            _e0 {
-              paths: [
-                "viewer|[Other].txs.@"
-              ]
-              {
-                ... on Transaction {
-                  __typename
-                  id
-                }
-              }
-            }
-            _e1 {
-              paths: [
-                "viewer|[User].txs.@"
-              ]
-              {
-                ... on Transaction {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-          ($__context_1:String,$__context_0:String) {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on Transaction {
-                fromUnion(code: $__context_1)
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on Transaction {
-                fromUnion(code: $__context_0)
-              }
-            }
-          }
-        },
-      },
-    },
-    "#);
+        }
+        fragment a on Transaction { __typename id }
+
+    [4] a   after [2]
+      alias _e0
+        merge
+          viewer|[Other].txs.@
+        in
+          ... on Transaction { __typename id }
+        out
+          ... on Transaction { fromUnion(code: $__context_1) }
+        context
+          $__context_1 = ..|[User]/currency
+          $__context_1 = ..|[Other]/currency
+      alias _e1
+        merge
+          viewer|[User].txs.@
+        in
+          ... on Transaction { __typename id }
+        out
+          ... on Transaction { fromUnion(code: $__context_0) }
+        context
+          $__context_0 = ..|[User]/currency
+          $__context_0 = ..|[Other]/currency
+      vars
+        $__context_0, $__context_1
+    ");
     insta::assert_json_snapshot!(query_plan, @r#"
     {
       "kind": "QueryPlan",
@@ -2594,43 +2257,29 @@ fn multiple_arguments_from_different_ancestors() -> Result<(), Box<dyn Error>> {
         parse_operation(r#"{ outer { user { txs { multiple } } } }"#),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            outer {
-              __typename
-              code
-              user {
-                __typename
-                currency
-                txs {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-        },
-        Flatten(path: "outer.user.txs.@") {
-          Fetch(service: "a") {
-            {
-              ... on Transaction {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:String,$__context_1:String) {
-              ... on Transaction {
-                multiple(code: $__context_0, outer: $__context_1)
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [3] a               [2]
+
+    [2] a
+      out
+        { outer { __typename code user { __typename currency txs { __typename id } } } }
+
+    [3] a   after [2]
+      merge
+        outer.user.txs.@
+      in
+        ... on Transaction { __typename id }
+      out
+        ... on Transaction { multiple(code: $__context_0, outer: $__context_1) }
+      vars
+        $__context_0, $__context_1
+      context
+        $__context_0 = ..|[User]/currency
+        $__context_1 = ../..|[Outer]/code
+    ");
 
     Ok(())
 }
@@ -2642,55 +2291,37 @@ fn requires_and_context_on_one_field() -> Result<(), Box<dyn Error>> {
         parse_operation(r#"{ users { txs { required } } }"#),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            users {
-              __typename
-              currency
-              txs {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "users.@.txs.@") {
-          Fetch(service: "b") {
-            {
-              ... on Transaction {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Transaction {
-                base
-              }
-            }
-          },
-        },
-        Flatten(path: "users.@.txs.@") {
-          Fetch(service: "a") {
-            {
-              ... on Transaction {
-                __typename
-                base
-                id
-              }
-            } =>
-            ($__context_0:String) {
-              ... on Transaction {
-                required(code: $__context_0)
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [5] b               [2]
+      [3] a               [5]
+
+    [2] a
+      out
+        { users { __typename currency txs { __typename id } } }
+
+    [5] b   after [2]
+      merge
+        users.@.txs.@
+      in
+        ... on Transaction { __typename id }
+      out
+        ... on Transaction { base }
+
+    [3] a   after [5]
+      merge
+        users.@.txs.@
+      in
+        ... on Transaction { __typename base id }
+      out
+        ... on Transaction { required(code: $__context_0) }
+      vars
+        $__context_0
+      context
+        $__context_0 = ..|[User]/currency
+    ");
 
     Ok(())
 }
@@ -2704,39 +2335,33 @@ fn context_field_under_include() -> Result<(), Box<dyn Error>> {
         ),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            users {
-              __typename
-              currency
-              txs {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "users.@.txs.@") {
-          Fetch(service: "a", if: $include) {
-            {
-              ... on Transaction {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:String) {
-              ... on Transaction {
-                amount(code: $__context_0)
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $include
+
+    fetches
+      fetch               after
+      [2] a               -
+      [3] a               [2]
+
+    [2] a
+      out
+        { users { __typename currency txs { __typename id } } }
+
+    [3] a   after [2]
+      if
+        $include
+      merge
+        users.@.txs.@
+      in
+        ... on Transaction { __typename id }
+      out
+        ... on Transaction { amount(code: $__context_0) }
+      vars
+        $__context_0
+      context
+        $__context_0 = ..|[User]/currency
+    ");
 
     Ok(())
 }
@@ -2748,40 +2373,28 @@ fn client_alias_colliding_with_context_key() -> Result<(), Box<dyn Error>> {
         parse_operation(r#"{ users { currency: id txs { amount } } }"#),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            users {
-              __typename
-              currency: id
-              _internal_qp_alias_0: currency
-              txs {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "users.@.txs.@") {
-          Fetch(service: "a") {
-            {
-              ... on Transaction {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:String) {
-              ... on Transaction {
-                amount(code: $__context_0)
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [3] a               [2]
+
+    [2] a
+      out
+        { users { __typename currency: id _internal_qp_alias_0: currency txs { __typename id } } }
+
+    [3] a   after [2]
+      merge
+        users.@.txs.@
+      in
+        ... on Transaction { __typename id }
+      out
+        ... on Transaction { amount(code: $__context_0) }
+      vars
+        $__context_0
+      context
+        $__context_0 = ..|[User]/_internal_qp_alias_0
+    ");
 
     Ok(())
 }
@@ -2793,68 +2406,39 @@ fn two_root_fields_batch_into_one_fetch() -> Result<(), Box<dyn Error>> {
         parse_operation(r#"{ users { txs { amount } } secondUsers { txs { amount } } }"#),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            users {
-              ...a
-            }
-            secondUsers {
-              ...a
-            }
-          }
-          fragment a on User {
-            __typename
-            currency
-            txs {
-              __typename
-              id
-            }
-          }
-        },
-        BatchFetch(service: "a") {
-          {
-            _e0 {
-              paths: [
-                "secondUsers.@.txs.@"
-              ]
-              {
-                ... on Transaction {
-                  __typename
-                  id
-                }
-              }
-            }
-            _e1 {
-              paths: [
-                "users.@.txs.@"
-              ]
-              {
-                ... on Transaction {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-          ($__context_1:String,$__context_0:String) {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on Transaction {
-                amount(code: $__context_1)
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on Transaction {
-                amount(code: $__context_0)
-              }
-            }
-          }
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [4] a               [2]
+
+    [2] a
+      out
+        { users { ...a } secondUsers { ...a } }
+        fragment a on User { __typename currency txs { __typename id } }
+
+    [4] a   after [2]
+      alias _e0
+        merge
+          secondUsers.@.txs.@
+        in
+          ... on Transaction { __typename id }
+        out
+          ... on Transaction { amount(code: $__context_1) }
+        context
+          $__context_1 = ..|[User]/currency
+      alias _e1
+        merge
+          users.@.txs.@
+        in
+          ... on Transaction { __typename id }
+        out
+          ... on Transaction { amount(code: $__context_0) }
+        context
+          $__context_0 = ..|[User]/currency
+      vars
+        $__context_0, $__context_1
+    ");
 
     Ok(())
 }
@@ -2869,15 +2453,9 @@ fn multi_type_fetch_does_not_require_contexts_from_mutually_exclusive_ancestors(
         ),
     )?;
     let plan = plan.to_string();
-    assert!(!plan.contains("BatchFetch"));
-    assert!(
-        plan.contains("Flatten(path: \"viewer|[User].txs.@\")"),
-        "{plan}"
-    );
-    assert!(
-        plan.contains("Flatten(path: \"viewer|[Other].txs.@\")"),
-        "{plan}"
-    );
+    assert!(!plan.contains("alias _e"));
+    assert!(plan.contains("merge\n    viewer|[User].txs.@\n"), "{plan}");
+    assert!(plan.contains("merge\n    viewer|[Other].txs.@\n"), "{plan}");
     Ok(())
 }
 
@@ -2888,39 +2466,33 @@ fn context_field_under_skip() -> Result<(), Box<dyn Error>> {
         parse_operation(r#"query($skip: Boolean!) { users { txs { amount @skip(if: $skip) } } }"#),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            users {
-              __typename
-              currency
-              txs {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "users.@.txs.@") {
-          Fetch(service: "a", if: !$skip) {
-            {
-              ... on Transaction {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:String) {
-              ... on Transaction {
-                amount(code: $__context_0)
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $skip
+
+    fetches
+      fetch               after
+      [2] a               -
+      [3] a               [2]
+
+    [2] a
+      out
+        { users { __typename currency txs { __typename id } } }
+
+    [3] a   after [2]
+      if
+        !$skip
+      merge
+        users.@.txs.@
+      in
+        ... on Transaction { __typename id }
+      out
+        ... on Transaction { amount(code: $__context_0) }
+      vars
+        $__context_0
+      context
+        $__context_0 = ..|[User]/currency
+    ");
 
     Ok(())
 }
@@ -2932,39 +2504,28 @@ fn client_alias_on_ancestor_field() -> Result<(), Box<dyn Error>> {
         parse_operation(r#"{ renamed: users { txs { amount } } }"#),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            renamed: users {
-              __typename
-              currency
-              txs {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "renamed.@.txs.@") {
-          Fetch(service: "a") {
-            {
-              ... on Transaction {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:String) {
-              ... on Transaction {
-                amount(code: $__context_0)
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [3] a               [2]
+
+    [2] a
+      out
+        { renamed: users { __typename currency txs { __typename id } } }
+
+    [3] a   after [2]
+      merge
+        renamed.@.txs.@
+      in
+        ... on Transaction { __typename id }
+      out
+        ... on Transaction { amount(code: $__context_0) }
+      vars
+        $__context_0
+      context
+        $__context_0 = ..|[User]/currency
+    ");
 
     Ok(())
 }
@@ -2976,44 +2537,32 @@ fn cross_subgraph_merges_into_two_fetches() -> Result<(), Box<dyn Error>> {
         parse_operation(r#"{ user { lastTransaction { amountInUserCurrency } } }"#),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            user {
-              __typename
-              id
-              userCurrency {
-                isoCode
-              }
-            }
-          }
-        },
-        Flatten(path: "user") {
-          Fetch(service: "b") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:String) {
-              ... on User {
-                __typename
-                id
-                lastTransaction {
-                  __typename
-                  id
-                  amountInUserCurrency(currencyCode: $__context_0)
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [3] b               [2]
+
+    [2] a
+      out
+        { user { __typename id userCurrency { isoCode } } }
+
+    [3] b   after [2]
+      merge
+        user
+      in
+        ... on User { __typename id }
+      out
+        ... on User {
+          __typename
+          id
+          lastTransaction { __typename id amountInUserCurrency(currencyCode: $__context_0) }
+        }
+      vars
+        $__context_0
+      context
+        $__context_0 = [User]/userCurrency/isoCode
+    ");
     insta::assert_json_snapshot!(query_plan, @r#"
     {
       "kind": "QueryPlan",
@@ -3191,44 +2740,31 @@ fn context_from_the_implementation_of_an_interface_ancestor() -> Result<(), Box<
         parse_operation("{ accounts { wallet { discount } } }"),
     )?;
 
-    insta::assert_snapshot!(plan.to_string(), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            accounts {
-              __typename
-              ... on Member {
-                plan
-              }
-              ... on Guest {
-                plan
-              }
-              wallet {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "accounts.@.wallet") {
-          Fetch(service: "a") {
-            {
-              ... on Wallet {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:String) {
-              ... on Wallet {
-                discount(plan: $__context_0)
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(plan.to_string(), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [3] a               [2]
+
+    [2] a
+      out
+        {
+          accounts { __typename ... on Member { plan } ... on Guest { plan } wallet { __typename id } }
+        }
+
+    [3] a   after [2]
+      merge
+        accounts.@.wallet
+      in
+        ... on Wallet { __typename id }
+      out
+        ... on Wallet { discount(plan: $__context_0) }
+      vars
+        $__context_0
+      context
+        $__context_0 = ..|[Member]/plan
+        $__context_0 = ..|[Guest]/plan
+    ");
     let plan = serde_json::to_value(plan)?;
     assert_eq!(
         plan["node"]["nodes"][1]["node"]["contextRewrites"],
@@ -3262,115 +2798,73 @@ fn requires_selection_that_sets_its_own_context() -> Result<(), Box<dyn Error>> 
     // `b` requires `offer { value }`, and `value` reads the context of `plan`, which is the
     // parent of the requiring field
     let plan = plan_composed("context-with-directives", "{ plan { discount } }")?;
-    insta::assert_snapshot!(plan, @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            plan {
-              __typename
-              id
-              tier
-              offer {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "plan.offer") {
-          Fetch(service: "a") {
-            {
-              ... on Offer {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:String) {
-              ... on Offer {
-                value(tier: $__context_0)
-              }
-            }
-          },
-        },
-        Flatten(path: "plan") {
-          Fetch(service: "b") {
-            {
-              ... on Plan {
-                __typename
-                offer {
-                  value
-                }
-                id
-              }
-            } =>
-            {
-              ... on Plan {
-                discount
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(plan, @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [7] a               [2]
+      [4] b               [7]
+
+    [2] a
+      out
+        { plan { __typename id tier offer { __typename id } } }
+
+    [7] a   after [2]
+      merge
+        plan.offer
+      in
+        ... on Offer { __typename id }
+      out
+        ... on Offer { value(tier: $__context_0) }
+      vars
+        $__context_0
+      context
+        $__context_0 = ..|[Plan]/tier
+
+    [4] b   after [7]
+      merge
+        plan
+      in
+        ... on Plan { __typename offer { value } id }
+      out
+        ... on Plan { discount }
+    ");
     // the client selects the same contextual field the requirement selects
     let plan = plan_composed(
         "context-with-directives",
         "{ plan { discount offer { value } } }",
     )?;
-    insta::assert_snapshot!(plan, @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            plan {
-              __typename
-              id
-              tier
-              offer {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "plan.offer") {
-          Fetch(service: "a") {
-            {
-              ... on Offer {
-                __typename
-                id
-              }
-            } =>
-            ($__context_0:String) {
-              ... on Offer {
-                value(tier: $__context_0)
-              }
-            }
-          },
-        },
-        Flatten(path: "plan") {
-          Fetch(service: "b") {
-            {
-              ... on Plan {
-                __typename
-                offer {
-                  value
-                }
-                id
-              }
-            } =>
-            {
-              ... on Plan {
-                discount
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(plan, @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [7] a               [2]
+      [4] b               [7]
+
+    [2] a
+      out
+        { plan { __typename id tier offer { __typename id } } }
+
+    [7] a   after [2]
+      merge
+        plan.offer
+      in
+        ... on Offer { __typename id }
+      out
+        ... on Offer { value(tier: $__context_0) }
+      vars
+        $__context_0
+      context
+        $__context_0 = ..|[Plan]/tier
+
+    [4] b   after [7]
+      merge
+        plan
+      in
+        ... on Plan { __typename offer { value } id }
+      out
+        ... on Plan { discount }
+    ");
     Ok(())
 }
 
@@ -3402,101 +2896,65 @@ fn per_type_contextual_fields_under_other_aliases_stay_apart() -> Result<(), Box
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{query_plan}"), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($v15:Boolean!=false) {
-            accounts {
-              __typename
-              ... on Guest {
-                __typename
-                plan @skip(if: $v15)
-                wallet @skip(if: $v15) {
-                  ...a
-                }
-              }
-              ... on Member {
-                __typename
-                plan @skip(if: $v15)
-                wallet @skip(if: $v15) {
-                  ...a
-                }
-              }
-            }
-          }
-          fragment a on Wallet {
+    insta::assert_snapshot!(format!("{query_plan}"), @r"
+    variables
+      $v15: Boolean! = false, $v4: Boolean!, $v6: Boolean! = false
+
+    fetches
+      fetch               after
+      [2] a               -
+      [8] a               [2]
+
+    [2] a
+      out
+        {
+          accounts {
             __typename
-            id
+            ... on Guest { __typename plan @skip(if: $v15) wallet @skip(if: $v15) { ...a } }
+            ... on Member { __typename plan @skip(if: $v15) wallet @skip(if: $v15) { ...a } }
           }
-        },
-        BatchFetch(service: "a") {
-          {
-            _e0(if: !$v15) {
-              paths: [
-                "accounts.@|[Member].wallet"
-              ]
-              {
-                ... on Wallet {
-                  __typename
-                  id
-                }
-              }
-            }
-            _e1(if: !$v15) {
-              paths: [
-                "accounts.@|[Guest].wallet"
-              ]
-              {
-                ... on Wallet {
-                  __typename
-                  id
-                }
-              }
-            }
+        }
+        fragment a on Wallet { __typename id }
+      vars
+        $v15
+
+    [8] a   after [2]
+      alias _e0
+        if
+          !$v15
+        merge
+          accounts.@|[Member].wallet
+        in
+          ... on Wallet { __typename id }
+        out
+          ... on Wallet {
+            ... on Wallet @skip(if: $v4) { ...a }
+            ... on Wallet @skip(if: $v6) { a3_discount: discount(plan: $__context_1) }
+            ... on Wallet @skip(if: $v15) { ...a }
           }
-          ($v15:Boolean!=false,$v4:Boolean!,$v6:Boolean!=false,$__context_1:String,$__context_0:String) {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on Wallet {
-                ... on Wallet @skip(if: $v4) {
-                  ...a
-                }
-                ... on Wallet @skip(if: $v6) {
-                  a3_discount: discount(plan: $__context_1)
-                }
-                ... on Wallet @skip(if: $v15) {
-                  ...a
-                }
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on Wallet {
-                ... on Wallet @skip(if: $v4) {
-                  ...b
-                }
-                ... on Wallet @skip(if: $v6) {
-                  a3_discount: discount(plan: $__context_0)
-                }
-                ... on Wallet @skip(if: $v15) {
-                  ...b
-                }
-              }
-            }
+        context
+          $__context_1 = ..|[Member]/plan
+      alias _e1
+        if
+          !$v15
+        merge
+          accounts.@|[Guest].wallet
+        in
+          ... on Wallet { __typename id }
+        out
+          ... on Wallet {
+            ... on Wallet @skip(if: $v4) { ...b }
+            ... on Wallet @skip(if: $v6) { a3_discount: discount(plan: $__context_0) }
+            ... on Wallet @skip(if: $v15) { ...b }
           }
-          fragment a on Wallet {
-            ... on Wallet {
-              discount(plan: $__context_1)
-            }
-          }
-          fragment b on Wallet {
-            ... on Wallet {
-              discount(plan: $__context_0)
-            }
-          }
-        },
-      },
-    },
-    "#);
+        context
+          $__context_0 = ..|[Guest]/plan
+      fragments
+        fragment a on Wallet { ... on Wallet { discount(plan: $__context_1) } }
+        fragment b on Wallet { ... on Wallet { discount(plan: $__context_0) } }
+      vars
+        $__context_0, $__context_1, $v15, $v4, $v6
+    ");
 
     Ok(())
 }
@@ -3525,58 +2983,43 @@ fn same_context_value_under_a_condition_shares_its_variable() -> Result<(), Box<
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/context-cross.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{query_plan}"), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            user {
+    insta::assert_snapshot!(format!("{query_plan}"), @r"
+    variables
+      $a: Boolean!, $b: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+      [3] b               [2]
+
+    [2] a
+      out
+        { user { __typename id userCurrency { isoCode } } }
+
+    [3] b   after [2]
+      merge
+        user
+      in
+        ... on User { __typename id }
+      out
+        ... on User {
+          __typename
+          id
+          lastTransaction {
+            ... on Transaction @include(if: $a) {
               __typename
               id
-              userCurrency {
-                isoCode
-              }
+              ... on Transaction @include(if: $a) { ...a }
             }
+            ... on Transaction @skip(if: $b) { __typename id ... on Transaction @skip(if: $b) { ...a } }
           }
-        },
-        Flatten(path: "user") {
-          Fetch(service: "b") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            ($a:Boolean!,$b:Boolean!,$__context_0:String) {
-              ... on User {
-                __typename
-                id
-                lastTransaction {
-                  ... on Transaction @include(if: $a) {
-                    __typename
-                    id
-                    ... on Transaction @include(if: $a) {
-                      ...a
-                    }
-                  }
-                  ... on Transaction @skip(if: $b) {
-                    __typename
-                    id
-                    ... on Transaction @skip(if: $b) {
-                      ...a
-                    }
-                  }
-                }
-              }
-            }
-            fragment a on Transaction {
-              amountInUserCurrency(currencyCode: $__context_0)
-            }
-          },
-        },
-      },
-    },
-    "#);
+        }
+        fragment a on Transaction { amountInUserCurrency(currencyCode: $__context_0) }
+      vars
+        $__context_0, $a, $b
+      context
+        $__context_0 = [User]/userCurrency/isoCode
+    ");
 
     Ok(())
 }

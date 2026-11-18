@@ -21,76 +21,41 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "inventory") {
-          {
-            products {
-              __typename
-              upc
-            }
-          }
-        },
-        Flatten(path: "products.@") {
-          Fetch(service: "products") {
-            {
-              ... on Product {
-                __typename
-                upc
-              }
-            } =>
-            {
-              ... on Product {
-                price(withDiscount: true)
-                _internal_qp_alias_0: price(withDiscount: false)
-              }
-            }
-          },
-        },
-        BatchFetch(service: "inventory") {
-          {
-            _e0 {
-              paths: [
-                "products.@"
-              ]
-              {
-                ... on Product {
-                  __typename
-                  price: _internal_qp_alias_0
-                  upc
-                }
-              }
-            }
-            _e1 {
-              paths: [
-                "products.@"
-              ]
-              {
-                ... on Product {
-                  __typename
-                  price
-                  upc
-                }
-              }
-            }
-          }
-          {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on Product {
-                reducedPrice
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on Product {
-                isExpensive
-              }
-            }
-          }
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] inventory       -
+      [5] products        [2]
+      [6] inventory       [5]
+
+    [2] inventory
+      out
+        { products { __typename upc } }
+
+    [5] products   after [2]
+      merge
+        products.@
+      in
+        ... on Product { __typename upc }
+      out
+        ... on Product { price(withDiscount: true) _internal_qp_alias_0: price(withDiscount: false) }
+
+    [6] inventory   after [5]
+      alias _e0
+        merge
+          products.@
+        in
+          ... on Product { __typename price: _internal_qp_alias_0 upc }
+        out
+          ... on Product { reducedPrice }
+      alias _e1
+        merge
+          products.@
+        in
+          ... on Product { __typename price upc }
+        out
+          ... on Product { isExpensive }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -232,51 +197,33 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "inventory") {
-          {
-            products {
-              __typename
-              upc
-            }
-          }
-        },
-        Flatten(path: "products.@") {
-          Fetch(service: "products") {
-            {
-              ... on Product {
-                __typename
-                upc
-              }
-            } =>
-            {
-              ... on Product {
-                price(withDiscount: true)
-              }
-            }
-          },
-        },
-        Flatten(path: "products.@") {
-          Fetch(service: "inventory") {
-            {
-              ... on Product {
-                __typename
-                price
-                upc
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] inventory       -
+      [5] products        [2]
+      [3] inventory       [5]
+
+    [2] inventory
+      out
+        { products { __typename upc } }
+
+    [5] products   after [2]
+      merge
+        products.@
+      in
+        ... on Product { __typename upc }
+      out
+        ... on Product { price(withDiscount: true) }
+
+    [3] inventory   after [5]
+      merge
+        products.@
+      in
+        ... on Product { __typename price upc }
+      out
+        ... on Product { isExpensive }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -378,37 +325,24 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "products") {
-          {
-            products {
-              __typename
-              upc
-              price
-            }
-          }
-        },
-        Flatten(path: "products.@") {
-          Fetch(service: "inventory") {
-            {
-              ... on Product {
-                __typename
-                price
-                upc
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] products        -
+      [4] inventory       [2]
+
+    [2] products
+      out
+        { products { __typename upc price } }
+
+    [4] inventory   after [2]
+      merge
+        products.@
+      in
+        ... on Product { __typename price upc }
+      out
+        ... on Product { isExpensive }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -480,38 +414,24 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "products") {
-          {
-            products {
-              __typename
-              upc
-              price
-            }
-          }
-        },
-        Flatten(path: "products.@") {
-          Fetch(service: "inventory") {
-            {
-              ... on Product {
-                __typename
-                price
-                upc
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-                isAvailable
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] products        -
+      [4] inventory       [2]
+
+    [2] products
+      out
+        { products { __typename upc price } }
+
+    [4] inventory   after [2]
+      merge
+        products.@
+      in
+        ... on Product { __typename price upc }
+      out
+        ... on Product { isExpensive isAvailable }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -582,39 +502,24 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "products") {
-          {
-            products {
-              __typename
-              upc
-              price
-              weight
-            }
-          }
-        },
-        Flatten(path: "products.@") {
-          Fetch(service: "inventory") {
-            {
-              ... on Product {
-                __typename
-                price
-                weight
-                upc
-              }
-            } =>
-            {
-              ... on Product {
-                shippingEstimate
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] products        -
+      [4] inventory       [2]
+
+    [2] products
+      out
+        { products { __typename upc price weight } }
+
+    [4] inventory   after [2]
+      merge
+        products.@
+      in
+        ... on Product { __typename price weight upc }
+      out
+        ... on Product { shippingEstimate }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -690,40 +595,24 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "products") {
-          {
-            products {
-              __typename
-              upc
-              price
-              weight
-            }
-          }
-        },
-        Flatten(path: "products.@") {
-          Fetch(service: "inventory") {
-            {
-              ... on Product {
-                __typename
-                price
-                weight
-                upc
-              }
-            } =>
-            {
-              ... on Product {
-                shippingEstimate2
-                shippingEstimate
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] products        -
+      [7] inventory       [2]
+
+    [2] products
+      out
+        { products { __typename upc price weight } }
+
+    [7] inventory   after [2]
+      merge
+        products.@
+      in
+        ... on Product { __typename price weight upc }
+      out
+        ... on Product { shippingEstimate2 shippingEstimate }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -800,41 +689,24 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "products") {
-          {
-            products {
-              __typename
-              upc
-              price
-              weight
-            }
-          }
-        },
-        Flatten(path: "products.@") {
-          Fetch(service: "inventory") {
-            {
-              ... on Product {
-                __typename
-                price
-                weight
-                upc
-              }
-            } =>
-            {
-              ... on Product {
-                shippingEstimate {
-                  price
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] products        -
+      [4] inventory       [2]
+
+    [2] products
+      out
+        { products { __typename upc price weight } }
+
+    [4] inventory   after [2]
+      merge
+        products.@
+      in
+        ... on Product { __typename price weight upc }
+      out
+        ... on Product { shippingEstimate { price } }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -912,62 +784,33 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/keys-mashup.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            b {
-              id
-              a {
-                __typename
-                id
-                compositeId {
-                  two
-                  three
-                }
-              }
-            }
-          }
-        },
-        Flatten(path: "b.a.@") {
-          Fetch(service: "a") {
-            {
-              ... on A {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on A {
-                name
-              }
-            }
-          },
-        },
-        Flatten(path: "b.a.@") {
-          Fetch(service: "b") {
-            {
-              ... on A {
-                __typename
-                name
-                id
-                compositeId {
-                  two
-                  three
-                }
-              }
-            } =>
-            {
-              ... on A {
-                nameInB
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+      [6] a               [2]
+      [4] b               [6]
+
+    [2] b
+      out
+        { b { id a { __typename id compositeId { two three } } } }
+
+    [6] a   after [2]
+      merge
+        b.a.@
+      in
+        ... on A { __typename id }
+      out
+        ... on A { name }
+
+    [4] b   after [6]
+      merge
+        b.a.@
+      in
+        ... on A { __typename name id compositeId { two three } }
+      out
+        ... on A { nameInB }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -1089,73 +932,42 @@ fn deep_requires() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/deep-requires.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            feed {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "feed.@") {
-          Fetch(service: "b") {
-            {
-              ... on Post {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Post {
-                comments(limit: 3) {
-                  __typename
-                  id
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "feed.@.comments.@") {
-          Fetch(service: "a") {
-            {
-              ... on Comment {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Comment {
-                authorId
-              }
-            }
-          },
-        },
-        Flatten(path: "feed.@") {
-          Fetch(service: "b") {
-            {
-              ... on Post {
-                __typename
-                comments {
-                  authorId
-                }
-                id
-              }
-            } =>
-            {
-              ... on Post {
-                author {
-                  id
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [5] b               [2]
+      [6] a               [5]
+      [4] b               [6]
+
+    [2] a
+      out
+        { feed { __typename id } }
+
+    [5] b   after [2]
+      merge
+        feed.@
+      in
+        ... on Post { __typename id }
+      out
+        ... on Post { comments(limit: 3) { __typename id } }
+
+    [6] a   after [5]
+      merge
+        feed.@.comments.@
+      in
+        ... on Comment { __typename id }
+      out
+        ... on Comment { authorId }
+
+    [4] b   after [6]
+      merge
+        feed.@
+      in
+        ... on Post { __typename comments { authorId } id }
+      out
+        ... on Post { author { id } }
+    ");
 
     Ok(())
 }
@@ -1182,56 +994,39 @@ fn requires_reentry_selects_entity_typename() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "subgraph-a") {
-          {
-            productSearchResult(partialCriteria: "partialCriteria") {
-              __typename
-              searchCriteria {
-                __typename
-                partialCriteria
-              }
-            }
+    fetches
+      fetch               after
+      [2] subgraph-a      -
+      [5] subgraph-b      [2]
+      [3] subgraph-a      [5]
+
+    [2] subgraph-a
+      out
+        {
+          productSearchResult(partialCriteria: "partialCriteria") {
+            __typename
+            searchCriteria { __typename partialCriteria }
           }
-        },
-        Flatten(path: "productSearchResult.searchCriteria") {
-          Fetch(service: "subgraph-b") {
-            {
-              ... on ProductSearchCriteria {
-                __typename
-                partialCriteria
-              }
-            } =>
-            {
-              ... on ProductSearchCriteria {
-                fullCriteria
-              }
-            }
-          },
-        },
-        Flatten(path: "productSearchResult") {
-          Fetch(service: "subgraph-a") {
-            {
-              ... on ProductSearchResultResponse {
-                __typename
-                searchCriteria {
-                  fullCriteria
-                  partialCriteria
-                }
-              }
-            } =>
-            {
-              ... on ProductSearchResultResponse {
-                bestOffer {
-                  price
-                }
-              }
-            }
-          },
-        },
-      },
-    },
+        }
+
+    [5] subgraph-b   after [2]
+      merge
+        productSearchResult.searchCriteria
+      in
+        ... on ProductSearchCriteria { __typename partialCriteria }
+      out
+        ... on ProductSearchCriteria { fullCriteria }
+
+    [3] subgraph-a   after [5]
+      merge
+        productSearchResult
+      in
+        ... on ProductSearchResultResponse {
+          __typename
+          searchCriteria { fullCriteria partialCriteria }
+        }
+      out
+        ... on ProductSearchResultResponse { bestOffer { price } }
     "#);
 
     Ok(())
@@ -1261,71 +1056,42 @@ fn chained_requires_after_entity_hop() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "users") {
-          {
-            user {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "user") {
-          Fetch(service: "orders") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                orders {
-                  __typename
-                  id
-                  sku
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "user.orders.@") {
-          Fetch(service: "grading") {
-            {
-              ... on Order {
-                __typename
-                sku
-                id
-              }
-            } =>
-            {
-              ... on Order {
-                grade
-              }
-            }
-          },
-        },
-        Flatten(path: "user.orders.@") {
-          Fetch(service: "catalog") {
-            {
-              ... on Order {
-                __typename
-                grade
-                id
-              }
-            } =>
-            {
-              ... on Order {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] users           -
+      [3] orders          [2]
+      [8] grading         [3]
+      [5] catalog         [8]
+
+    [2] users
+      out
+        { user { __typename id } }
+
+    [3] orders   after [2]
+      merge
+        user
+      in
+        ... on User { __typename id }
+      out
+        ... on User { orders { __typename id sku } }
+
+    [8] grading   after [3]
+      merge
+        user.orders.@
+      in
+        ... on Order { __typename sku id }
+      out
+        ... on Order { grade }
+
+    [5] catalog   after [8]
+      merge
+        user.orders.@
+      in
+        ... on Order { __typename grade id }
+      out
+        ... on Order { name }
+    ");
 
     Ok(())
 }
@@ -1355,71 +1121,42 @@ fn requires_from_two_subgraphs_after_entity_hop() -> Result<(), Box<dyn Error>> 
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "users") {
-          {
-            user {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "user") {
-          Fetch(service: "orders") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                orders {
-                  __typename
-                  id
-                  sku
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "user.orders.@") {
-          Fetch(service: "warehouse") {
-            {
-              ... on Order {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Order {
-                weight
-              }
-            }
-          },
-        },
-        Flatten(path: "user.orders.@") {
-          Fetch(service: "catalog") {
-            {
-              ... on Order {
-                __typename
-                sku
-                weight
-                id
-              }
-            } =>
-            {
-              ... on Order {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] users           -
+      [3] orders          [2]
+      [8] warehouse       [3]
+      [5] catalog         [8]
+
+    [2] users
+      out
+        { user { __typename id } }
+
+    [3] orders   after [2]
+      merge
+        user
+      in
+        ... on User { __typename id }
+      out
+        ... on User { orders { __typename id sku } }
+
+    [8] warehouse   after [3]
+      merge
+        user.orders.@
+      in
+        ... on Order { __typename id }
+      out
+        ... on Order { weight }
+
+    [5] catalog   after [8]
+      merge
+        user.orders.@
+      in
+        ... on Order { __typename sku weight id }
+      out
+        ... on Order { name }
+    ");
 
     Ok(())
 }
@@ -1449,73 +1186,42 @@ fn requires_after_two_entity_hops() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            user {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "user") {
-          Fetch(service: "b") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                cart {
-                  __typename
-                  id
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "user.cart") {
-          Fetch(service: "c") {
-            {
-              ... on Cart {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Cart {
-                orders {
-                  __typename
-                  id
-                  sku
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "user.cart.orders.@") {
-          Fetch(service: "catalog") {
-            {
-              ... on Order {
-                __typename
-                sku
-                id
-              }
-            } =>
-            {
-              ... on Order {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [3] b               [2]
+      [4] c               [3]
+      [6] catalog         [4]
+
+    [2] a
+      out
+        { user { __typename id } }
+
+    [3] b   after [2]
+      merge
+        user
+      in
+        ... on User { __typename id }
+      out
+        ... on User { cart { __typename id } }
+
+    [4] c   after [3]
+      merge
+        user.cart
+      in
+        ... on Cart { __typename id }
+      out
+        ... on Cart { orders { __typename id sku } }
+
+    [6] catalog   after [4]
+      merge
+        user.cart.orders.@
+      in
+        ... on Order { __typename sku id }
+      out
+        ... on Order { name }
+    ");
 
     Ok(())
 }

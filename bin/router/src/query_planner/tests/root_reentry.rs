@@ -25,32 +25,23 @@ pub fn mutation_referencing_query() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/root-reentry.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "two") {
-          mutation {
-            doSomething {
-              ok
-              query {
-                __typename
-                healthCheck
-              }
-            }
-          }
-        },
-        Flatten(path: "doSomething.query") {
-          Fetch(service: "one") {
-            {
-              user(id: 1) {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] two             -
+      [3] one             [2]
+
+    [2] two
+      out
+        { doSomething { ok query { __typename healthCheck } } }
+      mutation
+
+    [3] one   after [2]
+      merge
+        doSomething.query
+      out
+        { user(id: 1) { name } }
+    ");
 
     Ok(())
 }
@@ -76,32 +67,23 @@ pub fn mutation_referencing_query_with_alias() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/root-reentry.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "two") {
-          mutation {
-            doSomething {
-              ok
-              info: query {
-                __typename
-                healthCheck
-              }
-            }
-          }
-        },
-        Flatten(path: "doSomething.info") {
-          Fetch(service: "one") {
-            {
-              user(id: 1) {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] two             -
+      [3] one             [2]
+
+    [2] two
+      out
+        { doSomething { ok info: query { __typename healthCheck } } }
+      mutation
+
+    [3] one   after [2]
+      merge
+        doSomething.info
+      out
+        { user(id: 1) { name } }
+    ");
 
     Ok(())
 }
@@ -127,32 +109,30 @@ pub fn mutation_referencing_query_with_condition() -> Result<(), Box<dyn Error>>
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/root-reentry.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "two") {
-          mutation ($withQuery:Boolean!) {
-            doSomething {
-              ok
-              query @include(if: $withQuery) {
-                __typename
-                healthCheck
-              }
-            }
-          }
-        },
-        Flatten(path: "doSomething.query") {
-          Fetch(service: "one", if: $withQuery) {
-            {
-              user(id: 1) {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $withQuery: Boolean!
+
+    fetches
+      fetch               after
+      [2] two             -
+      [3] one             [2]
+
+    [2] two
+      out
+        { doSomething { ok query @include(if: $withQuery) { __typename healthCheck } } }
+      vars
+        $withQuery
+      mutation
+
+    [3] one   after [2]
+      if
+        $withQuery
+      merge
+        doSomething.query
+      out
+        { user(id: 1) { name } }
+    ");
 
     Ok(())
 }
@@ -176,27 +156,20 @@ pub fn query_referencing_query() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/root-reentry.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Parallel {
-        Fetch(service: "one") {
-          {
-            user(id: 1) {
-              name
-            }
-          }
-        },
-        Fetch(service: "two") {
-          {
-            healthCheck
-            system {
-              healthCheck
-            }
-          }
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [3] one             -
+      [2] two             -
+
+    [3] one
+      out
+        { user(id: 1) { name } }
+
+    [2] two
+      out
+        { healthCheck system { healthCheck } }
+    ");
 
     Ok(())
 }
@@ -232,46 +205,21 @@ pub fn query_referencing_query_cross_subgraphs() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/root-reentry.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Parallel {
-        Fetch(service: "one") {
-          {
-            user(id: 1) {
-              ...a
-            }
-            system {
-              user(id: 1) {
-                ...a
-              }
-              system {
-                user(id: 1) {
-                  ...a
-                }
-              }
-            }
-          }
-          fragment a on User {
-            name
-          }
-        },
-        Fetch(service: "two") {
-          {
-            healthCheck
-            system {
-              healthCheck
-              system {
-                healthCheck
-                system {
-                  healthCheck
-                }
-              }
-            }
-          }
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [3] one             -
+      [2] two             -
+
+    [3] one
+      out
+        { user(id: 1) { ...a } system { user(id: 1) { ...a } system { user(id: 1) { ...a } } } }
+        fragment a on User { name }
+
+    [2] two
+      out
+        { healthCheck system { healthCheck system { healthCheck system { healthCheck } } } }
+    ");
 
     Ok(())
 }
@@ -311,56 +259,28 @@ pub fn query_referncing_through_inner() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/root-reentry.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Parallel {
-          Fetch(service: "two") {
-            {
-              inner {
-                toMutation {
-                  doSomething {
-                    ok
-                    query {
-                      __typename
-                      healthCheck
-                    }
-                  }
-                }
-              }
-            }
-          },
-          Fetch(service: "one") {
-            {
-              user(id: 1) {
-                ...a
-              }
-              inner {
-                toQuery {
-                  user(id: 1) {
-                    ...a
-                  }
-                }
-              }
-            }
-            fragment a on User {
-              id
-              name
-            }
-          },
-        },
-        Flatten(path: "inner.toMutation.doSomething.query") {
-          Fetch(service: "one") {
-            {
-              user(id: 1) {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [3] two             -
+      [2] one             -
+      [4] one             [3]
+
+    [3] two
+      out
+        { inner { toMutation { doSomething { ok query { __typename healthCheck } } } } }
+
+    [2] one
+      out
+        { user(id: 1) { ...a } inner { toQuery { user(id: 1) { ...a } } } }
+        fragment a on User { id name }
+
+    [4] one   after [3]
+      merge
+        inner.toMutation.doSomething.query
+      out
+        { user(id: 1) { name } }
+    ");
 
     Ok(())
 }
@@ -385,30 +305,23 @@ pub fn mutation_then_full_reentry_jump() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/root-reentry.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "two") {
-          mutation {
-            doSomething {
-              query {
-                __typename
-              }
-            }
-          }
-        },
-        Flatten(path: "doSomething.query") {
-          Fetch(service: "one") {
-            {
-              user(id: 1) {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] two             -
+      [3] one             [2]
+
+    [2] two
+      out
+        { doSomething { query { __typename } } }
+      mutation
+
+    [3] one   after [2]
+      merge
+        doSomething.query
+      out
+        { user(id: 1) { name } }
+    ");
 
     Ok(())
 }
@@ -435,32 +348,23 @@ pub fn mutation_then_mixed_query() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/root-reentry.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "two") {
-          mutation {
-            doSomething {
-              ok
-              query {
-                __typename
-                healthCheck
-              }
-            }
-          }
-        },
-        Flatten(path: "doSomething.query") {
-          Fetch(service: "one") {
-            {
-              user(id: 1) {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] two             -
+      [3] one             [2]
+
+    [2] two
+      out
+        { doSomething { ok query { __typename healthCheck } } }
+      mutation
+
+    [3] one   after [2]
+      merge
+        doSomething.query
+      out
+        { user(id: 1) { name } }
+    ");
 
     Ok(())
 }

@@ -26,71 +26,40 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            products {
-              __typename
-              upc
-              name
-              price(currency: "USD")
-              weight
-              _internal_qp_alias_0: price(currency: "EUR")
-              category {
-                averagePrice(currency: "USD")
-              }
-            }
+    fetches
+      fetch               after
+      [2] b               -
+      [12] a              [2]
+
+    [2] b
+      out
+        {
+          products {
+            __typename
+            upc
+            name
+            price(currency: "USD")
+            weight
+            _internal_qp_alias_0: price(currency: "EUR")
+            category { averagePrice(currency: "USD") }
           }
-        },
-        BatchFetch(service: "a") {
-          {
-            _e0 {
-              paths: [
-                "products.@"
-              ]
-              {
-                ... on Product {
-                  __typename
-                  category {
-                    averagePrice
-                  }
-                  upc
-                  price: _internal_qp_alias_0
-                  weight
-                }
-              }
-            }
-            _e1 {
-              paths: [
-                "products.@"
-              ]
-              {
-                ... on Product {
-                  __typename
-                  price
-                  weight
-                  upc
-                }
-              }
-            }
-          }
-          {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on Product {
-                isExpensiveCategory
-                shippingEstimateEUR
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on Product {
-                shippingEstimate
-              }
-            }
-          }
-        },
-      },
-    },
+        }
+
+    [12] a   after [2]
+      alias _e0
+        merge
+          products.@
+        in
+          ... on Product { __typename category { averagePrice } upc price: _internal_qp_alias_0 weight }
+        out
+          ... on Product { isExpensiveCategory shippingEstimateEUR }
+      alias _e1
+        merge
+          products.@
+        in
+          ... on Product { __typename price weight upc }
+        out
+          ... on Product { shippingEstimate }
     "#);
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
@@ -230,76 +199,45 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "c") {
-          {
-            feed {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "feed.@") {
-          Fetch(service: "d") {
-            {
-              ... on Post {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Post {
-                _internal_qp_alias_0: comments(limit: 3) {
-                  __typename
-                  id
-                }
-                comments(limit: 1) {
-                  id
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "feed.@._internal_qp_alias_0.@") {
-          Fetch(service: "c") {
-            {
-              ... on Comment {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Comment {
-                authorId
-              }
-            }
-          },
-        },
-        Flatten(path: "feed.@") {
-          Fetch(service: "d") {
-            {
-              ... on Post {
-                __typename
-                comments: _internal_qp_alias_0 {
-                  authorId
-                }
-                id
-              }
-            } =>
-            {
-              ... on Post {
-                author {
-                  id
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] c               -
+      [5] d               [2]
+      [6] c               [5]
+      [4] d               [6]
+
+    [2] c
+      out
+        { feed { __typename id } }
+
+    [5] d   after [2]
+      merge
+        feed.@
+      in
+        ... on Post { __typename id }
+      out
+        ... on Post {
+          _internal_qp_alias_0: comments(limit: 3) { __typename id }
+          comments(limit: 1) { id }
+        }
+
+    [6] c   after [5]
+      merge
+        feed.@._internal_qp_alias_0.@
+      in
+        ... on Comment { __typename id }
+      out
+        ... on Comment { authorId }
+
+    [4] d   after [6]
+      merge
+        feed.@
+      in
+        ... on Post { __typename comments: _internal_qp_alias_0 { authorId } id }
+      out
+        ... on Post { author { id } }
+    ");
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
@@ -452,76 +390,50 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "c") {
-          {
-            feed {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "feed.@") {
-          Fetch(service: "d") {
-            {
-              ... on Post {
-                __typename
-                id
-              }
-            } =>
-            ($limit:Int=1) {
-              ... on Post {
-                _internal_qp_alias_0: comments(limit: 3) {
-                  __typename
-                  id
-                }
-                comments(limit: $limit) {
-                  id
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "feed.@._internal_qp_alias_0.@") {
-          Fetch(service: "c") {
-            {
-              ... on Comment {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Comment {
-                authorId
-              }
-            }
-          },
-        },
-        Flatten(path: "feed.@") {
-          Fetch(service: "d") {
-            {
-              ... on Post {
-                __typename
-                comments: _internal_qp_alias_0 {
-                  authorId
-                }
-                id
-              }
-            } =>
-            {
-              ... on Post {
-                author {
-                  id
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $limit: Int = 1
+
+    fetches
+      fetch               after
+      [2] c               -
+      [5] d               [2]
+      [6] c               [5]
+      [4] d               [6]
+
+    [2] c
+      out
+        { feed { __typename id } }
+
+    [5] d   after [2]
+      merge
+        feed.@
+      in
+        ... on Post { __typename id }
+      out
+        ... on Post {
+          _internal_qp_alias_0: comments(limit: 3) { __typename id }
+          comments(limit: $limit) { id }
+        }
+      vars
+        $limit
+
+    [6] c   after [5]
+      merge
+        feed.@._internal_qp_alias_0.@
+      in
+        ... on Comment { __typename id }
+      out
+        ... on Comment { authorId }
+
+    [4] d   after [6]
+      merge
+        feed.@
+      in
+        ... on Post { __typename comments: _internal_qp_alias_0 { authorId } id }
+      out
+        ... on Post { author { id } }
+    ");
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
@@ -688,76 +600,50 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "c") {
-          {
-            feed {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "feed.@") {
-          Fetch(service: "d") {
-            {
-              ... on Post {
-                __typename
-                id
-              }
-            } =>
-            ($limit:Int=1) {
-              ... on Post {
-                _internal_qp_alias_0: comments(limit: 3) {
-                  __typename
-                  id
-                }
-                comments(limit: $limit) {
-                  id
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "feed.@._internal_qp_alias_0.@") {
-          Fetch(service: "c") {
-            {
-              ... on Comment {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Comment {
-                authorId
-              }
-            }
-          },
-        },
-        Flatten(path: "feed.@") {
-          Fetch(service: "d") {
-            {
-              ... on Post {
-                __typename
-                comments: _internal_qp_alias_0 {
-                  authorId
-                }
-                id
-              }
-            } =>
-            {
-              ... on Post {
-                author {
-                  id
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $limit: Int = 1
+
+    fetches
+      fetch               after
+      [2] c               -
+      [5] d               [2]
+      [6] c               [5]
+      [4] d               [6]
+
+    [2] c
+      out
+        { feed { __typename id } }
+
+    [5] d   after [2]
+      merge
+        feed.@
+      in
+        ... on Post { __typename id }
+      out
+        ... on Post {
+          _internal_qp_alias_0: comments(limit: 3) { __typename id }
+          comments(limit: $limit) { id }
+        }
+      vars
+        $limit
+
+    [6] c   after [5]
+      merge
+        feed.@._internal_qp_alias_0.@
+      in
+        ... on Comment { __typename id }
+      out
+        ... on Comment { authorId }
+
+    [4] d   after [6]
+      merge
+        feed.@
+      in
+        ... on Post { __typename comments: _internal_qp_alias_0 { authorId } id }
+      out
+        ... on Post { author { id } }
+    ");
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
@@ -912,76 +798,41 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            test {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "test") {
-          Fetch(service: "b") {
-            {
-              ... on Test {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Test {
-                otherField(arg: 2)
-                _internal_qp_alias_0: otherField(arg: 3)
-              }
-            }
-          },
-        },
-        BatchFetch(service: "a") {
-          {
-            _e0 {
-              paths: [
-                "test"
-              ]
-              {
-                ... on Test {
-                  __typename
-                  otherField: _internal_qp_alias_0
-                  id
-                }
-              }
-            }
-            _e1 {
-              paths: [
-                "test"
-              ]
-              {
-                ... on Test {
-                  __typename
-                  otherField
-                  id
-                }
-              }
-            }
-          }
-          {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on Test {
-                anotherWithRequiresAndArgs
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on Test {
-                fieldWithRequiresAndArgs
-              }
-            }
-          }
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [5] b               [2]
+      [6] a               [5]
+
+    [2] a
+      out
+        { test { __typename id } }
+
+    [5] b   after [2]
+      merge
+        test
+      in
+        ... on Test { __typename id }
+      out
+        ... on Test { otherField(arg: 2) _internal_qp_alias_0: otherField(arg: 3) }
+
+    [6] a   after [5]
+      alias _e0
+        merge
+          test
+        in
+          ... on Test { __typename otherField: _internal_qp_alias_0 id }
+        out
+          ... on Test { anotherWithRequiresAndArgs }
+      alias _e1
+        merge
+          test
+        in
+          ... on Test { __typename otherField id }
+        out
+          ... on Test { fieldWithRequiresAndArgs }
+    ");
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
@@ -1129,77 +980,45 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            test {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "test") {
-          Fetch(service: "b") {
-            {
-              ... on Test {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Test {
-                _internal_qp_alias_0: otherField(arg: 2)
-                _internal_qp_alias_1: otherField(arg: 3)
-                otherField(arg: 1)
-              }
-            }
-          },
-        },
-        BatchFetch(service: "a") {
-          {
-            _e0 {
-              paths: [
-                "test"
-              ]
-              {
-                ... on Test {
-                  __typename
-                  otherField: _internal_qp_alias_1
-                  id
-                }
-              }
-            }
-            _e1 {
-              paths: [
-                "test"
-              ]
-              {
-                ... on Test {
-                  __typename
-                  otherField: _internal_qp_alias_0
-                  id
-                }
-              }
-            }
-          }
-          {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on Test {
-                anotherWithRequiresAndArgs
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on Test {
-                fieldWithRequiresAndArgs
-              }
-            }
-          }
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [5] b               [2]
+      [6] a               [5]
+
+    [2] a
+      out
+        { test { __typename id } }
+
+    [5] b   after [2]
+      merge
+        test
+      in
+        ... on Test { __typename id }
+      out
+        ... on Test {
+          _internal_qp_alias_0: otherField(arg: 2)
+          _internal_qp_alias_1: otherField(arg: 3)
+          otherField(arg: 1)
+        }
+
+    [6] a   after [5]
+      alias _e0
+        merge
+          test
+        in
+          ... on Test { __typename otherField: _internal_qp_alias_1 id }
+        out
+          ... on Test { anotherWithRequiresAndArgs }
+      alias _e1
+        merge
+          test
+        in
+          ... on Test { __typename otherField: _internal_qp_alias_0 id }
+        out
+          ... on Test { fieldWithRequiresAndArgs }
+    ");
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
@@ -1347,51 +1166,33 @@ fn multiple_plain_field_and_requires_with_args_that_does_not_conflicts_should_me
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            test {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "test") {
-          Fetch(service: "b") {
-            {
-              ... on Test {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Test {
-                otherField(arg: 2)
-              }
-            }
-          },
-        },
-        Flatten(path: "test") {
-          Fetch(service: "a") {
-            {
-              ... on Test {
-                __typename
-                otherField
-                id
-              }
-            } =>
-            {
-              ... on Test {
-                fieldWithRequiresAndArgs
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [5] b               [2]
+      [3] a               [5]
+
+    [2] a
+      out
+        { test { __typename id } }
+
+    [5] b   after [2]
+      merge
+        test
+      in
+        ... on Test { __typename id }
+      out
+        ... on Test { otherField(arg: 2) }
+
+    [3] a   after [5]
+      merge
+        test
+      in
+        ... on Test { __typename otherField id }
+      out
+        ... on Test { fieldWithRequiresAndArgs }
+    ");
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
@@ -1494,51 +1295,33 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            test {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "test") {
-          Fetch(service: "b") {
-            {
-              ... on Test {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Test {
-                otherField(arg: 2)
-              }
-            }
-          },
-        },
-        Flatten(path: "test") {
-          Fetch(service: "a") {
-            {
-              ... on Test {
-                __typename
-                otherField
-                id
-              }
-            } =>
-            {
-              ... on Test {
-                fieldWithRequiresAndArgs
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [5] b               [2]
+      [3] a               [5]
+
+    [2] a
+      out
+        { test { __typename id } }
+
+    [5] b   after [2]
+      merge
+        test
+      in
+        ... on Test { __typename id }
+      out
+        ... on Test { otherField(arg: 2) }
+
+    [3] a   after [5]
+      merge
+        test
+      in
+        ... on Test { __typename otherField id }
+      out
+        ... on Test { fieldWithRequiresAndArgs }
+    ");
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
@@ -1642,73 +1425,42 @@ fn requires_with_arguments() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            feed {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "feed.@") {
-          Fetch(service: "b") {
-            {
-              ... on Post {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Post {
-                comments(limit: 3) {
-                  __typename
-                  id
-                }
-              }
-            }
-          },
-        },
-        Flatten(path: "feed.@.comments.@") {
-          Fetch(service: "a") {
-            {
-              ... on Comment {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Comment {
-                somethingElse
-              }
-            }
-          },
-        },
-        Flatten(path: "feed.@") {
-          Fetch(service: "b") {
-            {
-              ... on Post {
-                __typename
-                comments {
-                  somethingElse
-                }
-                id
-              }
-            } =>
-            {
-              ... on Post {
-                author {
-                  id
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [5] b               [2]
+      [6] a               [5]
+      [4] b               [6]
+
+    [2] a
+      out
+        { feed { __typename id } }
+
+    [5] b   after [2]
+      merge
+        feed.@
+      in
+        ... on Post { __typename id }
+      out
+        ... on Post { comments(limit: 3) { __typename id } }
+
+    [6] a   after [5]
+      merge
+        feed.@.comments.@
+      in
+        ... on Comment { __typename id }
+      out
+        ... on Comment { somethingElse }
+
+    [4] b   after [6]
+      merge
+        feed.@
+      in
+        ... on Post { __typename comments { somethingElse } id }
+      out
+        ... on Post { author { id } }
+    ");
 
     Ok(())
 }
@@ -1738,24 +1490,20 @@ fn arguments_in_different_levels() -> Result<(), Box<dyn Error>> {
         build_query_plan_with_defaults("fixture/spotify-supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "spotify") {
+    fetches
+      fetch               after
+      [2] spotify         -
+
+    [2] spotify
+      out
         {
           album(id: "5") {
             albumType
             name
             genres
-            tracks(limit: 5, offset: 10) {
-              edges {
-                node {
-                  name
-                }
-              }
-            }
+            tracks(limit: 5, offset: 10) { edges { node { name } } }
           }
         }
-      },
-    },
     "#);
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
@@ -1797,26 +1545,27 @@ fn arguments_and_variables() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/spotify-supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "spotify") {
-        query ($id:ID!,$limit:Int) {
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $id: ID!, $limit: Int
+
+    fetches
+      fetch               after
+      [2] spotify         -
+
+    [2] spotify
+      out
+        {
           album(id: $id) {
             albumType
             name
             genres
-            tracks(limit: $limit, offset: 10) {
-              edges {
-                node {
-                  name
-                }
-              }
-            }
+            tracks(limit: $limit, offset: 10) { edges { node { name } } }
           }
         }
-      },
-    },
-    "#);
+      vars
+        $id, $limit
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -1867,101 +1616,47 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "d") {
-          {
-            firstProduct: productFromD(id: "1") {
-              ...a
-            }
-            secondProduct: productFromD(id: "2") {
-              ...a
-            }
-          }
-          fragment a on Product {
-            __typename
-            id
-            name
-          }
-        },
-        Parallel {
-          BatchFetch(service: "a") {
-            {
-              _e0 {
-                paths: [
-                  "secondProduct"
-                  "firstProduct"
-                ]
-                {
-                  ... on Product {
-                    __typename
-                    id
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Product {
-                  category {
-                    details
-                  }
-                }
-              }
-            }
-          },
-          BatchFetch(service: "b") {
-            {
-              _e0 {
-                paths: [
-                  "secondProduct"
-                  "firstProduct"
-                ]
-                {
-                  ... on Product {
-                    __typename
-                    id
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Product {
-                  category {
-                    __typename
-                    id
-                  }
-                }
-              }
-            }
-          },
-        },
-        BatchFetch(service: "c") {
-          {
-            _e0 {
-              paths: [
-                "secondProduct.category"
-                "firstProduct.category"
-              ]
-              {
-                ... on Category {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-          {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on Category {
-                name
-              }
-            }
-          }
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] d               -
+      [8] a               [2]
+      [6] b               [2]
+      [7] c               [6]
+
+    [2] d
+      out
+        { firstProduct: productFromD(id: "1") { ...a } secondProduct: productFromD(id: "2") { ...a } }
+        fragment a on Product { __typename id name }
+
+    [8] a   after [2]
+      alias _e0
+        merge
+          secondProduct
+          firstProduct
+        in
+          ... on Product { __typename id }
+        out
+          ... on Product { category { details } }
+
+    [6] b   after [2]
+      alias _e0
+        merge
+          secondProduct
+          firstProduct
+        in
+          ... on Product { __typename id }
+        out
+          ... on Product { category { __typename id } }
+
+    [7] c   after [6]
+      alias _e0
+        merge
+          secondProduct.category
+          firstProduct.category
+        in
+          ... on Category { __typename id }
+        out
+          ... on Category { name }
     "#);
     Ok(())
 }
@@ -1998,101 +1693,55 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "d") {
-          query ($secondProductId:ID!) {
-            firstProduct: productFromD(id: "1") {
-              ...a
-            }
-            secondProduct: productFromD(id: $secondProductId) {
-              ...a
-            }
-          }
-          fragment a on Product {
-            __typename
-            id
-            name
-          }
-        },
-        Parallel {
-          BatchFetch(service: "a") {
-            {
-              _e0 {
-                paths: [
-                  "secondProduct"
-                  "firstProduct"
-                ]
-                {
-                  ... on Product {
-                    __typename
-                    id
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Product {
-                  category {
-                    details
-                  }
-                }
-              }
-            }
-          },
-          BatchFetch(service: "b") {
-            {
-              _e0 {
-                paths: [
-                  "secondProduct"
-                  "firstProduct"
-                ]
-                {
-                  ... on Product {
-                    __typename
-                    id
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Product {
-                  category {
-                    __typename
-                    id
-                  }
-                }
-              }
-            }
-          },
-        },
-        BatchFetch(service: "c") {
-          {
-            _e0 {
-              paths: [
-                "secondProduct.category"
-                "firstProduct.category"
-              ]
-              {
-                ... on Category {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-          {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on Category {
-                name
-              }
-            }
-          }
-        },
-      },
-    },
+    variables
+      $secondProductId: ID!
+
+    fetches
+      fetch               after
+      [2] d               -
+      [8] a               [2]
+      [6] b               [2]
+      [7] c               [6]
+
+    [2] d
+      out
+        {
+          firstProduct: productFromD(id: "1") { ...a }
+          secondProduct: productFromD(id: $secondProductId) { ...a }
+        }
+        fragment a on Product { __typename id name }
+      vars
+        $secondProductId
+
+    [8] a   after [2]
+      alias _e0
+        merge
+          secondProduct
+          firstProduct
+        in
+          ... on Product { __typename id }
+        out
+          ... on Product { category { details } }
+
+    [6] b   after [2]
+      alias _e0
+        merge
+          secondProduct
+          firstProduct
+        in
+          ... on Product { __typename id }
+        out
+          ... on Product { category { __typename id } }
+
+    [7] c   after [6]
+      alias _e0
+        merge
+          secondProduct.category
+          firstProduct.category
+        in
+          ... on Category { __typename id }
+        out
+          ... on Category { name }
     "#);
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
@@ -2285,78 +1934,41 @@ fn requires_with_argument_conflict_after_entity_hop() -> Result<(), Box<dyn Erro
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "users") {
-          {
-            user {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "user") {
-          Fetch(service: "orders") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                orders {
-                  __typename
-                  id
-                  price(currency: "USD")
-                  _internal_qp_alias_0: price(currency: "EUR")
-                }
-              }
-            }
-          },
-        },
-        BatchFetch(service: "catalog") {
-          {
-            _e0 {
-              paths: [
-                "user.orders.@"
-              ]
-              {
-                ... on Order {
-                  __typename
-                  price: _internal_qp_alias_0
-                  id
-                }
-              }
-            }
-            _e1 {
-              paths: [
-                "user.orders.@"
-              ]
-              {
-                ... on Order {
-                  __typename
-                  price
-                  id
-                }
-              }
-            }
-          }
-          {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on Order {
-                eur
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on Order {
-                usd
-              }
-            }
-          }
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] users           -
+      [3] orders          [2]
+      [8] catalog         [3]
+
+    [2] users
+      out
+        { user { __typename id } }
+
+    [3] orders   after [2]
+      merge
+        user
+      in
+        ... on User { __typename id }
+      out
+        ... on User {
+          orders { __typename id price(currency: "USD") _internal_qp_alias_0: price(currency: "EUR") }
+        }
+
+    [8] catalog   after [3]
+      alias _e0
+        merge
+          user.orders.@
+        in
+          ... on Order { __typename price: _internal_qp_alias_0 id }
+        out
+          ... on Order { eur }
+      alias _e1
+        merge
+          user.orders.@
+        in
+          ... on Order { __typename price id }
+        out
+          ... on Order { usd }
     "#);
 
     Ok(())
@@ -2388,69 +2000,40 @@ fn requires_with_nested_argument_conflict() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            products {
-              __typename
-              upc
-              usdAverage: category {
-                averagePrice(currency: "USD")
-              }
-              category {
-                averagePrice(currency: "USD")
-                _internal_qp_alias_0: averagePrice(currency: "EUR")
-              }
+    fetches
+      fetch               after
+      [2] b               -
+      [7] a               [2]
+
+    [2] b
+      out
+        {
+          products {
+            __typename
+            upc
+            usdAverage: category { averagePrice(currency: "USD") }
+            category {
+              averagePrice(currency: "USD")
+              _internal_qp_alias_0: averagePrice(currency: "EUR")
             }
           }
-        },
-        BatchFetch(service: "a") {
-          {
-            _e0 {
-              paths: [
-                "products.@"
-              ]
-              {
-                ... on Product {
-                  __typename
-                  category {
-                    averagePrice: _internal_qp_alias_0
-                  }
-                  upc
-                }
-              }
-            }
-            _e1 {
-              paths: [
-                "products.@"
-              ]
-              {
-                ... on Product {
-                  __typename
-                  category {
-                    averagePrice
-                  }
-                  upc
-                }
-              }
-            }
-          }
-          {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on Product {
-                expensiveEurCategory
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on Product {
-                expensiveUsdCategory
-              }
-            }
-          }
-        },
-      },
-    },
+        }
+
+    [7] a   after [2]
+      alias _e0
+        merge
+          products.@
+        in
+          ... on Product { __typename category { averagePrice: _internal_qp_alias_0 } upc }
+        out
+          ... on Product { expensiveEurCategory }
+      alias _e1
+        merge
+          products.@
+        in
+          ... on Product { __typename category { averagePrice } upc }
+        out
+          ... on Product { expensiveUsdCategory }
     "#);
 
     Ok(())
@@ -2477,40 +2060,22 @@ fn requires_with_same_nested_arguments_share_a_call() -> Result<(), Box<dyn Erro
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            products {
-              __typename
-              upc
-              category {
-                averagePrice(currency: "USD")
-              }
-            }
-          }
-        },
-        Flatten(path: "products.@") {
-          Fetch(service: "a") {
-            {
-              ... on Product {
-                __typename
-                category {
-                  averagePrice
-                }
-                upc
-              }
-            } =>
-            {
-              ... on Product {
-                cheapUsdCategory
-                expensiveUsdCategory
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] b               -
+      [7] a               [2]
+
+    [2] b
+      out
+        { products { __typename upc category { averagePrice(currency: "USD") } } }
+
+    [7] a   after [2]
+      merge
+        products.@
+      in
+        ... on Product { __typename category { averagePrice } upc }
+      out
+        ... on Product { cheapUsdCategory expensiveUsdCategory }
     "#);
 
     Ok(())

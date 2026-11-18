@@ -35,16 +35,13 @@ fn multiple_inline_fragments_on_same_concrete_type_within_interface_fragment(
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        {
-          account(id: "a1") {
-            id
-            username
-          }
-        }
-      },
-    },
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { account(id: "a1") { id username } }
     "#);
 
     Ok(())
@@ -77,19 +74,22 @@ fn nested_same_name_directives_on_abstract_and_concrete_fragments() -> Result<()
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        query ($child:Boolean!,$parent:Boolean!) {
+    variables
+      $child: Boolean!, $parent: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        {
           account(id: "a1") {
-            ... on Account @include(if: $parent) {
-              ... on Account @include(if: $child) {
-                username
-              }
-            }
+            ... on Account @include(if: $parent) { ... on Account @include(if: $child) { username } }
           }
         }
-      },
-    },
+      vars
+        $child, $parent
     "#);
 
     Ok(())
@@ -121,17 +121,18 @@ fn nested_same_directive_same_arg_on_abstract_and_concrete_fragments() -> Result
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        query ($cond:Boolean!) {
-          account(id: "a1") {
-            ... on Account @include(if: $cond) {
-              username
-            }
-          }
-        }
-      },
-    },
+    variables
+      $cond: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { account(id: "a1") { ... on Account @include(if: $cond) { username } } }
+      vars
+        $cond
     "#);
 
     Ok(())
@@ -172,17 +173,18 @@ fn nested_different_directives_on_abstract_and_concrete_fragments() -> Result<()
     );
 
     insta::assert_snapshot!(plan_str, @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        query ($include:Boolean!,$skip:Boolean!) {
-          account(id: "a1") {
-            ... on Account @skip(if: $skip) @include(if: $include) {
-              username
-            }
-          }
-        }
-      },
-    },
+    variables
+      $include: Boolean!, $skip: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { account(id: "a1") { ... on Account @skip(if: $skip) @include(if: $include) { username } } }
+      vars
+        $include, $skip
     "#);
 
     Ok(())
@@ -212,17 +214,18 @@ fn parent_directive_only_on_abstract_fragment() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        query ($parent:Boolean!) {
-          account(id: "a1") {
-            ... on Account @include(if: $parent) {
-              username
-            }
-          }
-        }
-      },
-    },
+    variables
+      $parent: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { account(id: "a1") { ... on Account @include(if: $parent) { username } } }
+      vars
+        $parent
     "#);
 
     Ok(())
@@ -254,23 +257,24 @@ fn reusable_fragment_with_mixed_include_conditions_on_concrete_parent() -> Resul
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        query ($first:Boolean!,$second:Boolean!) {
+    variables
+      $first: Boolean!, $second: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        {
           account(id: "a1") {
-            ... on Account @include(if: $first) {
-              ...a
-            }
-            ... on Account @include(if: $second) {
-              ...a
-            }
+            ... on Account @include(if: $first) { ...a }
+            ... on Account @include(if: $second) { ...a }
           }
         }
-        fragment a on Account {
-          username
-        }
-      },
-    },
+        fragment a on Account { username }
+      vars
+        $first, $second
     "#);
 
     Ok(())
@@ -304,23 +308,24 @@ fn reusable_fragment_with_mixed_include_conditions_on_abstract_parent() -> Resul
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        query ($first:Boolean!,$second:Boolean!) {
+    variables
+      $first: Boolean!, $second: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        {
           account(id: "a1") {
-            ... on Account @include(if: $first) {
-              ...a
-            }
-            ... on Account @include(if: $second) {
-              ...a
-            }
+            ... on Account @include(if: $first) { ...a }
+            ... on Account @include(if: $second) { ...a }
           }
         }
-        fragment a on Account {
-          username
-        }
-      },
-    },
+        fragment a on Account { username }
+      vars
+        $first, $second
     "#);
 
     Ok(())
@@ -346,54 +351,33 @@ fn simple_inline_fragment() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/testing.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "store") {
-          {
-            products {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "products") {
-          Fetch(service: "info") {
-            {
-              ... on Product {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isAvailable
-                uuid
-              }
-            }
-          },
-        },
-        Flatten(path: "products") {
-          Fetch(service: "cost") {
-            {
-              ... on Product {
-                __typename
-                uuid
-              }
-            } =>
-            {
-              ... on Product {
-                price {
-                  amount
-                  currency
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] store           -
+      [5] info            [2]
+      [3] cost            [5]
+
+    [2] store
+      out
+        { products { __typename id } }
+
+    [5] info   after [2]
+      merge
+        products
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { isAvailable uuid }
+
+    [3] cost   after [5]
+      merge
+        products
+      in
+        ... on Product { __typename uuid }
+      out
+        ... on Product { price { amount currency } }
+    ");
 
     Ok(())
 }
@@ -420,54 +404,33 @@ fn fragment_spread() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/testing.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "store") {
-          {
-            products {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "products") {
-          Fetch(service: "info") {
-            {
-              ... on Product {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isAvailable
-                uuid
-              }
-            }
-          },
-        },
-        Flatten(path: "products") {
-          Fetch(service: "cost") {
-            {
-              ... on Product {
-                __typename
-                uuid
-              }
-            } =>
-            {
-              ... on Product {
-                price {
-                  amount
-                  currency
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] store           -
+      [5] info            [2]
+      [3] cost            [5]
+
+    [2] store
+      out
+        { products { __typename id } }
+
+    [5] info   after [2]
+      merge
+        products
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { isAvailable uuid }
+
+    [3] cost   after [5]
+      merge
+        products
+      in
+        ... on Product { __typename uuid }
+      out
+        ... on Product { price { amount currency } }
+    ");
 
     Ok(())
 }

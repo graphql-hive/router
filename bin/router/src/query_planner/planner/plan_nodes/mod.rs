@@ -16,7 +16,6 @@ use crate::query_planner::{
         QueryPlannerOptions,
     },
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
-    utils::pretty_display::{get_indent, PrettyDisplay},
 };
 use serde::{Deserialize, Serialize};
 
@@ -47,6 +46,7 @@ impl Display for FetchId {
     }
 }
 
+mod display;
 mod prepare;
 
 pub mod planning {
@@ -970,177 +970,6 @@ impl PlanNode<Planning> {
         } else {
             PlanNode::Fetch(Box::new(fetch))
         })
-    }
-}
-
-impl<S: PlanState> Display for QueryPlan<S> {
-    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
-        self.pretty_fmt(f, 0)
-    }
-}
-
-impl<S: PlanState> Display for PlanNode<S> {
-    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
-        self.pretty_fmt(f, 0)
-    }
-}
-
-impl<S: PlanState> Display for FetchNode<S> {
-    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
-        self.pretty_fmt(f, 0)
-    }
-}
-
-impl<S: PlanState> Display for BatchFetchNode<S> {
-    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
-        self.pretty_fmt(f, 0)
-    }
-}
-
-impl<S: PlanState> Display for FlattenNode<S> {
-    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
-        self.pretty_fmt(f, 0)
-    }
-}
-
-impl<S: PlanState> Display for SubscriptionNode<S> {
-    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
-        self.pretty_fmt(f, 0)
-    }
-}
-
-impl<S: PlanState> PrettyDisplay for QueryPlan<S> {
-    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
-        let indent = get_indent(depth);
-        writeln!(f, "{indent}QueryPlan {{",)?;
-        if let Some(node) = &self.node {
-            node.pretty_fmt(f, depth + 1)?;
-        } else {
-            writeln!(f, "{indent}  None,")?;
-        }
-        writeln!(f, "{indent}}},")?;
-        Ok(())
-    }
-}
-
-impl<S: PlanState> PrettyDisplay for FetchNode<S> {
-    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
-        let indent = get_indent(depth);
-        match &self.run_if {
-            None => writeln!(f, "{indent}Fetch(service: \"{}\") {{", self.service_name)?,
-            Some(run_if) => writeln!(
-                f,
-                "{indent}Fetch(service: \"{}\", if: {}) {{",
-                self.service_name,
-                display_run_if(run_if)
-            )?,
-        }
-        if let Some(requires) = &self.requires {
-            writeln!(f, "{indent}  {{")?;
-            requires.pretty_fmt(f, depth + 2)?;
-            writeln!(f, "{indent}  }} =>")?;
-        }
-        self.operation.pretty_fmt(f, depth)?;
-        writeln!(f, "{indent}}},")?;
-
-        Ok(())
-    }
-}
-
-impl<S: PlanState> PrettyDisplay for BatchFetchNode<S> {
-    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
-        let indent = get_indent(depth);
-        writeln!(
-            f,
-            "{indent}BatchFetch(service: \"{}\") {{",
-            self.service_name
-        )?;
-        writeln!(f, "{indent}  {{")?;
-        for alias in &self.entity_batch.aliases {
-            match &alias.run_if {
-                None => writeln!(f, "{indent}    {} {{", alias.alias)?,
-                Some(run_if) => writeln!(
-                    f,
-                    "{indent}    {}(if: {}) {{",
-                    alias.alias,
-                    display_run_if(run_if)
-                )?,
-            }
-            writeln!(f, "{indent}      paths: [")?;
-            for merge_path in alias.merge_paths.iter() {
-                writeln!(f, "{indent}        \"{}\"", merge_path)?;
-            }
-            writeln!(f, "{indent}      ]")?;
-            writeln!(f, "{indent}      {{")?;
-            alias.requires.pretty_fmt(f, depth + 4)?;
-            writeln!(f, "{indent}      }}")?;
-            writeln!(f, "{indent}    }}")?;
-        }
-        writeln!(f, "{indent}  }}")?;
-        self.operation.pretty_fmt(f, depth)?;
-        writeln!(f, "{indent}}},")?;
-
-        Ok(())
-    }
-}
-
-impl<S: PlanState> PrettyDisplay for FlattenNode<S> {
-    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
-        let indent = get_indent(depth);
-
-        writeln!(f, "{indent}Flatten(path: \"{}\") {{", self.path)?;
-        self.node.pretty_fmt(f, depth + 1)?;
-        writeln!(f, "{indent}}},")?;
-
-        Ok(())
-    }
-}
-
-impl<S: PlanState> PrettyDisplay for SequenceNode<S> {
-    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
-        let indent = get_indent(depth);
-        writeln!(f, "{indent}Sequence {{")?;
-        for node in &self.nodes {
-            node.pretty_fmt(f, depth + 1)?;
-        }
-        writeln!(f, "{indent}}},")?;
-        Ok(())
-    }
-}
-
-impl<S: PlanState> PrettyDisplay for ParallelNode<S> {
-    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
-        let indent = get_indent(depth);
-        writeln!(f, "{indent}Parallel {{")?;
-        for node in &self.nodes {
-            node.pretty_fmt(f, depth + 1)?;
-        }
-        writeln!(f, "{indent}}},")?;
-        Ok(())
-    }
-}
-
-impl<S: PlanState> PrettyDisplay for SubscriptionNode<S> {
-    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
-        let indent = get_indent(depth);
-        writeln!(f, "{indent}Subscription {{")?;
-        self.primary.pretty_fmt(f, depth + 1)?;
-        writeln!(f, "{indent}}},")?;
-        Ok(())
-    }
-}
-
-impl<S: PlanState> PrettyDisplay for PlanNode<S> {
-    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
-        match self {
-            PlanNode::Fetch(node) => node.pretty_fmt(f, depth),
-            PlanNode::BatchFetch(node) => node.pretty_fmt(f, depth),
-            PlanNode::Flatten(node) => node.pretty_fmt(f, depth),
-            PlanNode::Sequence(node) => node.pretty_fmt(f, depth),
-            PlanNode::Parallel(node) => node.pretty_fmt(f, depth),
-            PlanNode::Subscription(node) => node.pretty_fmt(f, depth),
-            _ => Ok(()),
-        }
     }
 }
 

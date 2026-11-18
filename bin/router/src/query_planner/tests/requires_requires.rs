@@ -14,90 +14,56 @@ fn overlapping_requires_chains_survive_fetch_step_merges() -> Result<(), Box<dyn
         "fixture/tests/requires_requires.supergraph.graphql",
         document,
     )?;
-    insta::assert_snapshot!(format!("{query_plan}"), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            product {
-              __typename
-              id
-              hasDiscount
-            }
-          }
-        },
-        Parallel {
-          Flatten(path: "product") {
-            Fetch(service: "c") {
-              {
-                ... on Product {
-                  __typename
-                  hasDiscount
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  isExpensiveWithDiscount
-                }
-              }
-            },
-          },
-          Flatten(path: "product") {
-            Fetch(service: "a") {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  price
-                }
-              }
-            },
-          },
-        },
-        Flatten(path: "product") {
-          Fetch(service: "c") {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-        Flatten(path: "product") {
-          Fetch(service: "d") {
-            {
-              ... on Product {
-                __typename
-                isExpensive
-                id
-                isExpensiveWithDiscount
-              }
-            } =>
-            {
-              ... on Product {
-                canAfford
-                requestedB: canAffordWithAndWithoutDiscount
-                canAffordWithAndWithoutDiscount
-                requestedA: canAffordWithAndWithoutDiscount
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{query_plan}"), @r"
+    fetches
+      fetch               after
+      [2] b               -
+      [7] c               [2]
+      [36] a              [2]
+      [10] c              [36]
+      [22] d              [7], [10]
+
+    [2] b
+      out
+        { product { __typename id hasDiscount } }
+
+    [7] c   after [2]
+      merge
+        product
+      in
+        ... on Product { __typename hasDiscount id }
+      out
+        ... on Product { isExpensiveWithDiscount }
+
+    [36] a   after [2]
+      merge
+        product
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { price }
+
+    [10] c   after [36]
+      merge
+        product
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isExpensive }
+
+    [22] d   after [7], [10]
+      merge
+        product
+      in
+        ... on Product { __typename isExpensive id isExpensiveWithDiscount }
+      out
+        ... on Product {
+          canAfford
+          requestedB: canAffordWithAndWithoutDiscount
+          canAffordWithAndWithoutDiscount
+          requestedA: canAffordWithAndWithoutDiscount
+        }
+    ");
 
     Ok(())
 }
@@ -118,53 +84,33 @@ fn one() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            product {
-              __typename
-              id
-              hasDiscount
-            }
-          }
-        },
-        Flatten(path: "product") {
-          Fetch(service: "c") {
-            {
-              ... on Product {
-                __typename
-                hasDiscount
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensiveWithDiscount
-              }
-            }
-          },
-        },
-        Flatten(path: "product") {
-          Fetch(service: "d") {
-            {
-              ... on Product {
-                __typename
-                isExpensiveWithDiscount
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                canAffordWithDiscount
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+      [7] c               [2]
+      [4] d               [7]
+
+    [2] b
+      out
+        { product { __typename id hasDiscount } }
+
+    [7] c   after [2]
+      merge
+        product
+      in
+        ... on Product { __typename hasDiscount id }
+      out
+        ... on Product { isExpensiveWithDiscount }
+
+    [4] d   after [7]
+      merge
+        product
+      in
+        ... on Product { __typename isExpensiveWithDiscount id }
+      out
+        ... on Product { canAffordWithDiscount }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -269,54 +215,33 @@ fn one_with_one_local() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            product {
-              __typename
-              id
-              hasDiscount
-            }
-          }
-        },
-        Flatten(path: "product") {
-          Fetch(service: "c") {
-            {
-              ... on Product {
-                __typename
-                hasDiscount
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensiveWithDiscount
-              }
-            }
-          },
-        },
-        Flatten(path: "product") {
-          Fetch(service: "d") {
-            {
-              ... on Product {
-                __typename
-                id
-                isExpensiveWithDiscount
-              }
-            } =>
-            {
-              ... on Product {
-                fieldInD
-                canAffordWithDiscount
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+      [7] c               [2]
+      [3] d               [7]
+
+    [2] b
+      out
+        { product { __typename id hasDiscount } }
+
+    [7] c   after [2]
+      merge
+        product
+      in
+        ... on Product { __typename hasDiscount id }
+      out
+        ... on Product { isExpensiveWithDiscount }
+
+    [3] d   after [7]
+      merge
+        product
+      in
+        ... on Product { __typename id isExpensiveWithDiscount }
+      out
+        ... on Product { fieldInD canAffordWithDiscount }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -421,54 +346,33 @@ fn two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            product {
-              __typename
-              id
-              hasDiscount
-            }
-          }
-        },
-        Flatten(path: "product") {
-          Fetch(service: "c") {
-            {
-              ... on Product {
-                __typename
-                hasDiscount
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensiveWithDiscount
-              }
-            }
-          },
-        },
-        Flatten(path: "product") {
-          Fetch(service: "d") {
-            {
-              ... on Product {
-                __typename
-                isExpensiveWithDiscount
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                canAffordWithDiscount2
-                canAffordWithDiscount
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+      [7] c               [2]
+      [10] d              [7]
+
+    [2] b
+      out
+        { product { __typename id hasDiscount } }
+
+    [7] c   after [2]
+      merge
+        product
+      in
+        ... on Product { __typename hasDiscount id }
+      out
+        ... on Product { isExpensiveWithDiscount }
+
+    [10] d   after [7]
+      merge
+        product
+      in
+        ... on Product { __typename isExpensiveWithDiscount id }
+      out
+        ... on Product { canAffordWithDiscount2 canAffordWithDiscount }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -572,67 +476,42 @@ fn one_more() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            product {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "product") {
-          Fetch(service: "a") {
-            {
-              ... on Product {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                price
-              }
-            }
-          },
-        },
-        Flatten(path: "product") {
-          Fetch(service: "c") {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-        Flatten(path: "product") {
-          Fetch(service: "d") {
-            {
-              ... on Product {
-                __typename
-                isExpensive
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                canAfford
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+      [9] a               [2]
+      [7] c               [9]
+      [4] d               [7]
+
+    [2] b
+      out
+        { product { __typename id } }
+
+    [9] a   after [2]
+      merge
+        product
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { price }
+
+    [7] c   after [9]
+      merge
+        product
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isExpensive }
+
+    [4] d   after [7]
+      merge
+        product
+      in
+        ... on Product { __typename isExpensive id }
+      out
+        ... on Product { canAfford }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -767,68 +646,42 @@ fn another_two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>>
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            product {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "product") {
-          Fetch(service: "a") {
-            {
-              ... on Product {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                price
-              }
-            }
-          },
-        },
-        Flatten(path: "product") {
-          Fetch(service: "c") {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-        Flatten(path: "product") {
-          Fetch(service: "d") {
-            {
-              ... on Product {
-                __typename
-                isExpensive
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                canAfford2
-                canAfford
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+      [15] a              [2]
+      [7] c               [15]
+      [10] d              [7]
+
+    [2] b
+      out
+        { product { __typename id } }
+
+    [15] a   after [2]
+      merge
+        product
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { price }
+
+    [7] c   after [15]
+      merge
+        product
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isExpensive }
+
+    [10] d   after [7]
+      merge
+        product
+      in
+        ... on Product { __typename isExpensive id }
+      out
+        ... on Product { canAfford2 canAfford }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -963,88 +816,51 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            product {
-              __typename
-              id
-              hasDiscount
-            }
-          }
-        },
-        Parallel {
-          Flatten(path: "product") {
-            Fetch(service: "c") {
-              {
-                ... on Product {
-                  __typename
-                  hasDiscount
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  isExpensiveWithDiscount
-                }
-              }
-            },
-          },
-          Flatten(path: "product") {
-            Fetch(service: "a") {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  price
-                }
-              }
-            },
-          },
-        },
-        Flatten(path: "product") {
-          Fetch(service: "c") {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-        Flatten(path: "product") {
-          Fetch(service: "d") {
-            {
-              ... on Product {
-                __typename
-                isExpensiveWithDiscount
-                id
-                isExpensive
-              }
-            } =>
-            {
-              ... on Product {
-                canAffordWithDiscount
-                canAfford
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+      [7] c               [2]
+      [15] a              [2]
+      [13] c              [15]
+      [4] d               [7], [13]
+
+    [2] b
+      out
+        { product { __typename id hasDiscount } }
+
+    [7] c   after [2]
+      merge
+        product
+      in
+        ... on Product { __typename hasDiscount id }
+      out
+        ... on Product { isExpensiveWithDiscount }
+
+    [15] a   after [2]
+      merge
+        product
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { price }
+
+    [13] c   after [15]
+      merge
+        product
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isExpensive }
+
+    [4] d   after [7], [13]
+      merge
+        product
+      in
+        ... on Product { __typename isExpensiveWithDiscount id isExpensive }
+      out
+        ... on Product { canAffordWithDiscount canAfford }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -1222,88 +1038,51 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            product {
-              __typename
-              id
-              hasDiscount
-            }
-          }
-        },
-        Parallel {
-          Flatten(path: "product") {
-            Fetch(service: "c") {
-              {
-                ... on Product {
-                  __typename
-                  hasDiscount
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  isExpensiveWithDiscount
-                }
-              }
-            },
-          },
-          Flatten(path: "product") {
-            Fetch(service: "a") {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  price
-                }
-              }
-            },
-          },
-        },
-        Flatten(path: "product") {
-          Fetch(service: "c") {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-        Flatten(path: "product") {
-          Fetch(service: "d") {
-            {
-              ... on Product {
-                __typename
-                isExpensive
-                isExpensiveWithDiscount
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                canAffordWithAndWithoutDiscount2
-                canAffordWithAndWithoutDiscount
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+      [7] c               [2]
+      [18] a              [2]
+      [10] c              [18]
+      [13] d              [7], [10]
+
+    [2] b
+      out
+        { product { __typename id hasDiscount } }
+
+    [7] c   after [2]
+      merge
+        product
+      in
+        ... on Product { __typename hasDiscount id }
+      out
+        ... on Product { isExpensiveWithDiscount }
+
+    [18] a   after [2]
+      merge
+        product
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { price }
+
+    [10] c   after [18]
+      merge
+        product
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isExpensive }
+
+    [13] d   after [7], [10]
+      merge
+        product
+      in
+        ... on Product { __typename isExpensive isExpensiveWithDiscount id }
+      out
+        ... on Product { canAffordWithAndWithoutDiscount2 canAffordWithAndWithoutDiscount }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -1488,90 +1267,51 @@ fn many() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            product {
-              __typename
-              id
-              hasDiscount
-            }
-          }
-        },
-        Parallel {
-          Flatten(path: "product") {
-            Fetch(service: "c") {
-              {
-                ... on Product {
-                  __typename
-                  hasDiscount
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  isExpensiveWithDiscount
-                }
-              }
-            },
-          },
-          Flatten(path: "product") {
-            Fetch(service: "a") {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  price
-                }
-              }
-            },
-          },
-        },
-        Flatten(path: "product") {
-          Fetch(service: "c") {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                isExpensive
-              }
-            }
-          },
-        },
-        Flatten(path: "product") {
-          Fetch(service: "d") {
-            {
-              ... on Product {
-                __typename
-                isExpensive
-                id
-                isExpensiveWithDiscount
-              }
-            } =>
-            {
-              ... on Product {
-                canAfford2
-                canAfford
-                canAffordWithDiscount2
-                canAffordWithDiscount
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+      [8] c               [2]
+      [23] a              [2]
+      [5] c               [23]
+      [18] d              [8], [5]
+
+    [2] b
+      out
+        { product { __typename id hasDiscount } }
+
+    [8] c   after [2]
+      merge
+        product
+      in
+        ... on Product { __typename hasDiscount id }
+      out
+        ... on Product { isExpensiveWithDiscount }
+
+    [23] a   after [2]
+      merge
+        product
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { price }
+
+    [5] c   after [23]
+      merge
+        product
+      in
+        ... on Product { __typename price id }
+      out
+        ... on Product { isExpensive }
+
+    [18] d   after [8], [5]
+      merge
+        product
+      in
+        ... on Product { __typename isExpensive id isExpensiveWithDiscount }
+      out
+        ... on Product { canAfford2 canAfford canAffordWithDiscount2 canAffordWithDiscount }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",

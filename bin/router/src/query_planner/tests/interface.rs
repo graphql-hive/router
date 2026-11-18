@@ -29,21 +29,14 @@ fn node_query_with_aliases_on_interface_field() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        {
-          account: node(id: "a1") {
-            ...a
-          }
-          chat: node(id: "c1") {
-            ...a
-          }
-        }
-        fragment a on Node {
-          __typename
-        }
-      },
-    },
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { account: node(id: "a1") { ...a } chat: node(id: "c1") { ...a } }
+        fragment a on Node { __typename }
     "#);
 
     Ok(())
@@ -78,32 +71,18 @@ fn node_query_with_inline_fragments_on_object_types() -> Result<(), Box<dyn Erro
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Parallel {
-        Fetch(service: "b") {
-          {
-            chat: node(id: "c1") {
-              __typename
-              ... on Chat {
-                id
-                text
-              }
-            }
-          }
-        },
-        Fetch(service: "a") {
-          {
-            account: node(id: "a1") {
-              __typename
-              ... on Account {
-                id
-                username
-              }
-            }
-          }
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [3] b               -
+      [2] a               -
+
+    [3] b
+      out
+        { chat: node(id: "c1") { __typename ... on Chat { id text } } }
+
+    [2] a
+      out
+        { account: node(id: "a1") { __typename ... on Account { id username } } }
     "#);
 
     Ok(())
@@ -136,30 +115,18 @@ fn node_query_with_cross_type_inline_fragments() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Parallel {
-        Fetch(service: "a") {
-          {
-            chat: node(id: "c1") {
-              __typename
-              ... on Account {
-                id
-              }
-            }
-          }
-        },
-        Fetch(service: "b") {
-          {
-            account: node(id: "a1") {
-              __typename
-              ... on Chat {
-                id
-              }
-            }
-          }
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [3] a               -
+      [2] b               -
+
+    [3] a
+      out
+        { chat: node(id: "c1") { __typename ... on Account { id } } }
+
+    [2] b
+      out
+        { account: node(id: "a1") { __typename ... on Chat { id } } }
     "#);
 
     Ok(())
@@ -194,30 +161,18 @@ fn node_query_with_typename_and_cross_type_fragments() -> Result<(), Box<dyn Err
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Parallel {
-        Fetch(service: "a") {
-          {
-            chat: node(id: "c1") {
-              __typename
-              ... on Account {
-                id
-              }
-            }
-          }
-        },
-        Fetch(service: "b") {
-          {
-            account: node(id: "a1") {
-              __typename
-              ... on Chat {
-                id
-              }
-            }
-          }
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [3] a               -
+      [2] b               -
+
+    [3] a
+      out
+        { chat: node(id: "c1") { __typename ... on Account { id } } }
+
+    [2] b
+      out
+        { account: node(id: "a1") { __typename ... on Chat { id } } }
     "#);
 
     Ok(())
@@ -243,15 +198,13 @@ fn direct_object_query_chat_by_id() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "b") {
-        {
-          chat(id: "c1") {
-            id
-          }
-        }
-      },
-    },
+    fetches
+      fetch               after
+      [2] b               -
+
+    [2] b
+      out
+        { chat(id: "c1") { id } }
     "#);
 
     Ok(())
@@ -277,15 +230,13 @@ fn direct_object_query_account_by_id() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        {
-          account(id: "a1") {
-            id
-          }
-        }
-      },
-    },
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { account(id: "a1") { id } }
     "#);
 
     Ok(())
@@ -315,36 +266,22 @@ fn object_query_with_nested_object_field() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            chat(id: "c1") {
-              __typename
-              id
-              text
-            }
-          }
-        },
-        Flatten(path: "chat") {
-          Fetch(service: "a") {
-            {
-              ... on Chat {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Chat {
-                account {
-                  id
-                }
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] b               -
+      [3] a               [2]
+
+    [2] b
+      out
+        { chat(id: "c1") { __typename id text } }
+
+    [3] a   after [2]
+      merge
+        chat
+      in
+        ... on Chat { __typename id }
+      out
+        ... on Chat { account { id } }
     "#);
 
     Ok(())
@@ -374,36 +311,22 @@ fn object_query_with_nested_list_field() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            account(id: "a1") {
-              __typename
-              id
-              username
-            }
-          }
-        },
-        Flatten(path: "account") {
-          Fetch(service: "b") {
-            {
-              ... on Account {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Account {
-                chats {
-                  id
-                }
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] a               -
+      [3] b               [2]
+
+    [2] a
+      out
+        { account(id: "a1") { __typename id username } }
+
+    [3] b   after [2]
+      merge
+        account
+      in
+        ... on Account { __typename id }
+      out
+        ... on Account { chats { id } }
     "#);
 
     Ok(())
@@ -520,49 +443,25 @@ fn type_expand_interface_field() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "products") {
-          {
-            products {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "products.@") {
-          Fetch(service: "reviews") {
-            {
-              ... on Book {
-                __typename
-                id
-              }
-              ... on Magazine {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Book {
-                reviews {
-                  ...a
-                }
-              }
-              ... on Magazine {
-                reviews {
-                  ...a
-                }
-              }
-            }
-            fragment a on Review {
-              id
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] products        -
+      [4] reviews         [2]
+
+    [2] products
+      out
+        { products { __typename id } }
+
+    [4] reviews   after [2]
+      merge
+        products.@
+      in
+        ... on Book { __typename id } ... on Magazine { __typename id }
+      out
+        ... on Book { reviews { ...a } } ... on Magazine { reviews { ...a } }
+        fragment a on Review { id }
+    ");
 
     Ok(())
 }
@@ -599,77 +498,31 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "products") {
-          {
-            book: similar(id: "p1") {
-              ...a
-            }
-            magazine: similar(id: "p2") {
-              ...a
-            }
-          }
-          fragment a on Product {
-            __typename
-            id
-            sku
-            dimensions {
-              weight
-              size
-            }
-          }
-        },
-        BatchFetch(service: "inventory") {
-          {
-            _e0 {
-              paths: [
-                "magazine.@"
-                "book.@"
-              ]
-              {
-                ... on Book {
-                  __typename
-                  dimensions {
-                    size
-                    weight
-                  }
-                  id
-                }
-                ... on Magazine {
-                  __typename
-                  dimensions {
-                    size
-                    weight
-                  }
-                  id
-                }
-              }
-            }
-          }
-          {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on Book {
-                delivery(zip: "1234") {
-                  ...a
-                }
-              }
-              ... on Magazine {
-                delivery(zip: "1234") {
-                  ...a
-                }
-              }
-            }
-          }
-          fragment a on DeliveryEstimates {
-            ... on DeliveryEstimates {
-              fastestDelivery
-              estimatedDelivery
-            }
-          }
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] products        -
+      [16] inventory      [2]
+
+    [2] products
+      out
+        { book: similar(id: "p1") { ...a } magazine: similar(id: "p2") { ...a } }
+        fragment a on Product { __typename id sku dimensions { weight size } }
+
+    [16] inventory   after [2]
+      alias _e0
+        merge
+          magazine.@
+          book.@
+        in
+          ... on Book { __typename dimensions { size weight } id }
+          ... on Magazine { __typename dimensions { size weight } id }
+        out
+          ... on Book { delivery(zip: "1234") { ...a } }
+          ... on Magazine { delivery(zip: "1234") { ...a } }
+      fragments
+        fragment a on DeliveryEstimates {
+          ... on DeliveryEstimates { fastestDelivery estimatedDelivery }
+        }
     "#);
 
     Ok(())
@@ -704,84 +557,48 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "products") {
-          {
-            products {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "products.@") {
-          Fetch(service: "reviews") {
-            {
-              ... on Book {
-                __typename
-                id
-              }
-              ... on Magazine {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Book {
-                reviews {
-                  ...a
-                }
-              }
-              ... on Magazine {
-                reviews {
-                  ...a
-                }
-              }
-            }
-            fragment a on Review {
-              product {
-                __typename
-                id
-              }
-            }
-          },
-        },
-        Parallel {
-          Flatten(path: "products.@.reviews.@.product|[Book]") {
-            Fetch(service: "books", if: $title) {
-              {
-                ... on Book {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Book {
-                  title
-                }
-              }
-            },
-          },
-          Flatten(path: "products.@.reviews.@.product|[Magazine]") {
-            Fetch(service: "products") {
-              {
-                ... on Magazine {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Magazine {
-                  sku
-                }
-              }
-            },
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $title
+
+    fetches
+      fetch               after
+      [2] products        -
+      [6] reviews         [2]
+      [4] books           [6]
+      [5] products        [6]
+
+    [2] products
+      out
+        { products { __typename id } }
+
+    [6] reviews   after [2]
+      merge
+        products.@
+      in
+        ... on Book { __typename id } ... on Magazine { __typename id }
+      out
+        ... on Book { reviews { ...a } } ... on Magazine { reviews { ...a } }
+        fragment a on Review { product { __typename id } }
+
+    [4] books   after [6]
+      if
+        $title
+      merge
+        products.@.reviews.@.product|[Book]
+      in
+        ... on Book { __typename id }
+      out
+        ... on Book { title }
+
+    [5] products   after [6]
+      merge
+        products.@.reviews.@.product|[Magazine]
+      in
+        ... on Magazine { __typename id }
+      out
+        ... on Magazine { sku }
+    ");
 
     Ok(())
 }
@@ -818,107 +635,58 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "products") {
-          {
-            products {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "products.@") {
-          Fetch(service: "reviews") {
-            {
-              ... on Book {
-                __typename
-                id
-              }
-              ... on Magazine {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Book {
-                reviews {
-                  ...a
-                }
-              }
-              ... on Magazine {
-                reviews {
-                  ...a
-                }
-              }
-            }
-            fragment a on Review {
-              product {
-                __typename
-                id
-              }
-            }
-          },
-        },
-        Parallel {
-          Flatten(path: "products.@.reviews.@.product|[Book]") {
-            Fetch(service: "books", if: $title) {
-              {
-                ... on Book {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Book {
-                  title
-                }
-              }
-            },
-          },
-          BatchFetch(service: "products") {
-            {
-              _e0(if: $title) {
-                paths: [
-                  "products.@.reviews.@.product|[Book]"
-                ]
-                {
-                  ... on Book {
-                    __typename
-                    id
-                  }
-                }
-              }
-              _e1 {
-                paths: [
-                  "products.@.reviews.@.product|[Magazine]"
-                ]
-                {
-                  ... on Magazine {
-                    __typename
-                    id
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Book {
-                  sku
-                }
-              }
-              _e1: _entities(representations: $__batch_reps_1) {
-                ... on Magazine {
-                  sku
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $title
+
+    fetches
+      fetch               after
+      [2] products        -
+      [7] reviews         [2]
+      [4] books           [7]
+      [5] products        [7]
+
+    [2] products
+      out
+        { products { __typename id } }
+
+    [7] reviews   after [2]
+      merge
+        products.@
+      in
+        ... on Book { __typename id } ... on Magazine { __typename id }
+      out
+        ... on Book { reviews { ...a } } ... on Magazine { reviews { ...a } }
+        fragment a on Review { product { __typename id } }
+
+    [4] books   after [7]
+      if
+        $title
+      merge
+        products.@.reviews.@.product|[Book]
+      in
+        ... on Book { __typename id }
+      out
+        ... on Book { title }
+
+    [5] products   after [7]
+      alias _e0
+        if
+          $title
+        merge
+          products.@.reviews.@.product|[Book]
+        in
+          ... on Book { __typename id }
+        out
+          ... on Book { sku }
+      alias _e1
+        merge
+          products.@.reviews.@.product|[Magazine]
+        in
+          ... on Magazine { __typename id }
+        out
+          ... on Magazine { sku }
+    ");
 
     Ok(())
 }
@@ -962,107 +730,58 @@ fn nested_interface_field_with_redundant_inline_fragments_other_type_order(
         Default::default(),
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "products") {
-          {
-            products {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "products.@") {
-          Fetch(service: "reviews") {
-            {
-              ... on Magazine {
-                __typename
-                id
-              }
-              ... on Tome {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Magazine {
-                reviews {
-                  ...a
-                }
-              }
-              ... on Tome {
-                reviews {
-                  ...a
-                }
-              }
-            }
-            fragment a on Review {
-              product {
-                __typename
-                id
-              }
-            }
-          },
-        },
-        Parallel {
-          Flatten(path: "products.@.reviews.@.product|[Tome]") {
-            Fetch(service: "books", if: $title) {
-              {
-                ... on Tome {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Tome {
-                  title
-                }
-              }
-            },
-          },
-          BatchFetch(service: "products") {
-            {
-              _e0(if: $title) {
-                paths: [
-                  "products.@.reviews.@.product|[Tome]"
-                ]
-                {
-                  ... on Tome {
-                    __typename
-                    id
-                  }
-                }
-              }
-              _e1 {
-                paths: [
-                  "products.@.reviews.@.product|[Magazine]"
-                ]
-                {
-                  ... on Magazine {
-                    __typename
-                    id
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Tome {
-                  sku
-                }
-              }
-              _e1: _entities(representations: $__batch_reps_1) {
-                ... on Magazine {
-                  sku
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    variables
+      $title
+
+    fetches
+      fetch               after
+      [2] products        -
+      [7] reviews         [2]
+      [4] books           [7]
+      [5] products        [7]
+
+    [2] products
+      out
+        { products { __typename id } }
+
+    [7] reviews   after [2]
+      merge
+        products.@
+      in
+        ... on Magazine { __typename id } ... on Tome { __typename id }
+      out
+        ... on Magazine { reviews { ...a } } ... on Tome { reviews { ...a } }
+        fragment a on Review { product { __typename id } }
+
+    [4] books   after [7]
+      if
+        $title
+      merge
+        products.@.reviews.@.product|[Tome]
+      in
+        ... on Tome { __typename id }
+      out
+        ... on Tome { title }
+
+    [5] products   after [7]
+      alias _e0
+        if
+          $title
+        merge
+          products.@.reviews.@.product|[Tome]
+        in
+          ... on Tome { __typename id }
+        out
+          ... on Tome { sku }
+      alias _e1
+        merge
+          products.@.reviews.@.product|[Magazine]
+        in
+          ... on Magazine { __typename id }
+        out
+          ... on Magazine { sku }
+    ");
 
     Ok(())
 }

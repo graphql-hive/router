@@ -584,32 +584,29 @@ mod tests {
             )
             .expect("query plan");
 
-        insta::assert_snapshot!(format!("{}", plan), @r#"
-        QueryPlan {
-          Fetch(service: "test") {
+        insta::assert_snapshot!(format!("{}", plan), @r"
+        fetches
+          fetch               after
+          [2] test            -
+
+        [2] test
+          out
             {
               interfaceThing {
                 __typename
-                ... on JsonInterfaceThing {
-                  meta
-                }
-                ... on StringInterfaceThing {
-                  _internal_qp_alias_0: meta
-                }
+                ... on JsonInterfaceThing { meta }
+                ... on StringInterfaceThing { _internal_qp_alias_0: meta }
               }
               unionThing {
                 __typename
-                ... on JsonUnionThing {
-                  meta
-                }
-                ... on StringUnionThing {
-                  _internal_qp_alias_0: meta
-                }
+                ... on JsonUnionThing { meta }
+                ... on StringUnionThing { _internal_qp_alias_0: meta }
               }
             }
-          },
-        },
-        "#);
+          rewrite out
+            interfaceThing|[StringInterfaceThing]/_internal_qp_alias_0 -> meta
+            unionThing|[StringUnionThing]/_internal_qp_alias_0 -> meta
+        ");
 
         let plan = plan.into_executable(&planner.supergraph);
         let custom_scalar_paths =

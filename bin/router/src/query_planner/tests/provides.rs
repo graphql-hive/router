@@ -24,39 +24,24 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "products") {
-          {
-            products {
-              __typename
-              upc
-            }
-          }
-        },
-        Flatten(path: "products.@") {
-          Fetch(service: "reviews") {
-            {
-              ... on Product {
-                __typename
-                upc
-              }
-            } =>
-            {
-              ... on Product {
-                reviews {
-                  author {
-                    username
-                  }
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] products        -
+      [3] reviews         [2]
+
+    [2] products
+      out
+        { products { __typename upc } }
+
+    [3] reviews   after [2]
+      merge
+        products.@
+      in
+        ... on Product { __typename upc }
+      out
+        ... on Product { reviews { author { username } } }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -127,21 +112,15 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "category") {
-        {
-          products {
-            id
-            categories {
-              id
-              name
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] category        -
+
+    [2] category
+      out
+        { products { id categories { id name } } }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -180,24 +159,15 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "b") {
-        {
-          media {
-            __typename
-            ... on Book {
-              title
-              id
-            }
-            ... on Movie {
-              id
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+
+    [2] b
+      out
+        { media { __typename ... on Book { title id } ... on Movie { id } } }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -231,42 +201,24 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            media {
-              __typename
-              ... on Book {
-                title
-                id
-              }
-              ... on Movie {
-                __typename
-                id
-              }
-            }
-          }
-        },
-        Flatten(path: "media.@|[Movie]") {
-          Fetch(service: "c") {
-            {
-              ... on Movie {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Movie {
-                title
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+      [3] c               [2]
+
+    [2] b
+      out
+        { media { __typename ... on Book { title id } ... on Movie { __typename id } } }
+
+    [3] c   after [2]
+      merge
+        media.@|[Movie]
+      in
+        ... on Movie { __typename id }
+      out
+        ... on Movie { title }
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -344,25 +296,15 @@ fn provides_on_interface_1_test() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "b") {
-        {
-          media {
-            __typename
-            ... on Book {
-              animals {
-                __typename
-                id
-                name
-              }
-            }
-            id
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+
+    [2] b
+      out
+        { media { __typename ... on Book { animals { __typename id name } } id } }
+    ");
 
     Ok(())
 }
@@ -387,20 +329,15 @@ fn provides_fieldset_with_typename() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "provider") {
-        {
-          holder {
-            item {
-              __typename
-              label
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] provider        -
+
+    [2] provider
+      out
+        { holder { item { __typename label } } }
+    ");
     Ok(())
 }
 
@@ -427,22 +364,15 @@ fn provides_external_union_field_with_typename() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "provider") {
-        {
-          holder {
-            media {
-              __typename
-              ... on Book {
-                title
-              }
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] provider        -
+
+    [2] provider
+      out
+        { holder { media { __typename ... on Book { title } } } }
+    ");
     Ok(())
 }
 
@@ -468,23 +398,15 @@ fn provides_fieldset_with_nested_typename() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "provider") {
-        {
-          holder {
-            item {
-              __typename
-              nested {
-                __typename
-                label
-              }
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] provider        -
+
+    [2] provider
+      out
+        { holder { item { __typename nested { __typename label } } } }
+    ");
     Ok(())
 }
 
@@ -507,20 +429,15 @@ fn provides_fieldset_with_typename_on_list() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "provider") {
-        {
-          holder {
-            items {
-              __typename
-              label
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] provider        -
+
+    [2] provider
+      out
+        { holder { items { __typename label } } }
+    ");
     Ok(())
 }
 
@@ -546,23 +463,15 @@ fn provides_fieldset_with_typename_on_interface() -> Result<(), Box<dyn Error>> 
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
-        {
-          book {
-            animals {
-              __typename
-              ... on Dog {
-                __typename
-                name
-              }
-            }
-          }
-        }
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { book { animals { __typename ... on Dog { __typename name } } } }
+    ");
     Ok(())
 }
 
@@ -590,49 +499,32 @@ fn provides_on_interface_2_test() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "b") {
-          {
-            media {
-              __typename
-              ... on Book {
-                animals {
-                  __typename
-                  ... on Cat {
-                    __typename
-                    id
-                    name
-                  }
-                  ... on Dog {
-                    id
-                    name
-                  }
-                }
-              }
-              id
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+      [3] c               [2]
+
+    [2] b
+      out
+        {
+          media {
+            __typename
+            ... on Book {
+              animals { __typename ... on Cat { __typename id name } ... on Dog { id name } }
             }
+            id
           }
-        },
-        Flatten(path: "media|[Book].animals.@|[Cat]") {
-          Fetch(service: "c") {
-            {
-              ... on Cat {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Cat {
-                age
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+        }
+
+    [3] c   after [2]
+      merge
+        media|[Book].animals.@|[Cat]
+      in
+        ... on Cat { __typename id }
+      out
+        ... on Cat { age }
+    ");
 
     Ok(())
 }

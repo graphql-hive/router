@@ -52,43 +52,34 @@ fn client_alias_named_internal_requires() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{query_plan}"), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "shop") {
-          {
-            things {
+    fetches
+      fetch               after
+      [2] shop            -
+      [4] pricing         [2]
+
+    [2] shop
+      out
+        {
+          things {
+            __typename
+            _internal_qp_alias_0: id
+            ... on Cat {
               __typename
-              _internal_qp_alias_0: id
-              ... on Cat {
-                __typename
-                price(currency: "GBP")
-                id
-                _internal_qp_alias_1: price(currency: "EUR")
-              }
-              ... on Dog {
-                price(currency: "GBP")
-              }
+              price(currency: "GBP")
+              id
+              _internal_qp_alias_1: price(currency: "EUR")
             }
+            ... on Dog { price(currency: "GBP") }
           }
-        },
-        Flatten(path: "things.@|[Cat]") {
-          Fetch(service: "pricing") {
-            {
-              ... on Cat {
-                __typename
-                price: _internal_qp_alias_1
-                id
-              }
-            } =>
-            {
-              ... on Cat {
-                eur
-              }
-            }
-          },
-        },
-      },
-    },
+        }
+
+    [4] pricing   after [2]
+      merge
+        things.@|[Cat]
+      in
+        ... on Cat { __typename price: _internal_qp_alias_1 id }
+      out
+        ... on Cat { eur }
     "#);
     Ok(())
 }
@@ -105,33 +96,22 @@ fn client_alias_named_like_a_key_field() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{query_plan}"), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "catalog") {
-          {
-            things {
-              __typename
-              _internal_qp_alias_0: id
-            }
-          }
-        },
-        Flatten(path: "things.@") {
-          Fetch(service: "shop") {
-            {
-              ... on Thing {
-                __typename
-                id: _internal_qp_alias_0
-              }
-            } =>
-            {
-              ... on Thing {
-                id: price(currency: "USD")
-              }
-            }
-          },
-        },
-      },
-    },
+    fetches
+      fetch               after
+      [2] catalog         -
+      [3] shop            [2]
+
+    [2] catalog
+      out
+        { things { __typename _internal_qp_alias_0: id } }
+
+    [3] shop   after [2]
+      merge
+        things.@
+      in
+        ... on Thing { __typename id: _internal_qp_alias_0 }
+      out
+        ... on Thing { id: price(currency: "USD") }
     "#);
     Ok(())
 }
@@ -150,58 +130,48 @@ fn client_alias_named_like_a_key_field_under_a_condition() -> Result<(), Box<dyn
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{query_plan}"), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          query ($x:Boolean!) {
-            userInA {
-              __typename
-              _internal_qp_alias_0: id
-              ... on User @include(if: $x) {
-                __typename
-                _internal_qp_alias_0: id
-              }
-            }
+    insta::assert_snapshot!(format!("{query_plan}"), @r"
+    variables
+      $x: Boolean!
+
+    fetches
+      fetch               after
+      [2] a               -
+      [6] b               [2]
+      [4] a               [6]
+
+    [2] a
+      out
+        {
+          userInA {
+            __typename
+            _internal_qp_alias_0: id
+            ... on User @include(if: $x) { __typename _internal_qp_alias_0: id }
           }
-        },
-        Flatten(path: "userInA") {
-          Fetch(service: "b") {
-            {
-              ... on User {
-                __typename
-                id: _internal_qp_alias_0
-              }
-            } =>
-            ($x:Boolean!) {
-              ... on User {
-                ... on User @include(if: $x) {
-                  name
-                }
-                id: name
-              }
-            }
-          },
-        },
-        Flatten(path: "userInA") {
-          Fetch(service: "a", if: $x) {
-            {
-              ... on User {
-                __typename
-                name
-                id: _internal_qp_alias_0
-              }
-            } =>
-            {
-              ... on User {
-                aName
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+        }
+      vars
+        $x
+
+    [6] b   after [2]
+      merge
+        userInA
+      in
+        ... on User { __typename id: _internal_qp_alias_0 }
+      out
+        ... on User { ... on User @include(if: $x) { name } id: name }
+      vars
+        $x
+
+    [4] a   after [6]
+      if
+        $x
+      merge
+        userInA
+      in
+        ... on User { __typename name id: _internal_qp_alias_0 }
+      out
+        ... on User { aName }
+    ");
     Ok(())
 }
 
@@ -225,30 +195,24 @@ fn composite_list_shape_mismatch_gets_wire_key() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{query_plan}"), @r#"
-    QueryPlan {
-      Fetch(service: "a") {
+    insta::assert_snapshot!(format!("{query_plan}"), @r"
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
         {
           things {
             __typename
-            ... on Box {
-              items {
-                ...a
-              }
-            }
-            ... on Bag {
-              _internal_qp_alias_0: items {
-                ...a
-              }
-            }
+            ... on Box { items { ...a } }
+            ... on Bag { _internal_qp_alias_0: items { ...a } }
           }
         }
-        fragment a on Item {
-          name
-        }
-      },
-    },
-    "#);
+        fragment a on Item { name }
+      rewrite out
+        things|[Bag]/_internal_qp_alias_0 -> items
+    ");
     Ok(())
 }
 
@@ -293,57 +257,35 @@ fn circular_reference_interface() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            product {
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+      [3] b               [2]
+
+    [2] a
+      out
+        {
+          product {
+            __typename
+            samePriceProduct {
               __typename
-              samePriceProduct {
-                __typename
-                ... on Book {
-                  ...a
-                }
-                samePriceProduct {
-                  __typename
-                  ... on Book {
-                    ...a
-                  }
-                }
-              }
-              ... on Book {
-                __typename
-                id
-                samePriceProduct {
-                  id
-                  price
-                }
-              }
+              ... on Book { ...a }
+              samePriceProduct { __typename ... on Book { ...a } }
             }
+            ... on Book { __typename id samePriceProduct { id price } }
           }
-          fragment a on Book {
-            id
-          }
-        },
-        Flatten(path: "product|[Book]") {
-          Fetch(service: "b") {
-            {
-              ... on Book {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Book {
-                price
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+        }
+        fragment a on Book { id }
+
+    [3] b   after [2]
+      merge
+        product|[Book]
+      in
+        ... on Book { __typename id }
+      out
+        ... on Book { price }
+    ");
 
     Ok(())
 }
@@ -371,23 +313,17 @@ fn conflict_list_type_in_interface() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/mismatch-mix.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r###"
-    QueryPlan {
-      Fetch(service: "a") {
-        {
-          i {
-            __typename
-            ... on TypeA {
-              strField
-            }
-            ... on TypeB {
-              _internal_qp_alias_0: strField
-            }
-          }
-        }
-      },
-    },
-    "###);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { i { __typename ... on TypeA { strField } ... on TypeB { _internal_qp_alias_0: strField } } }
+      rewrite out
+        i|[TypeB]/_internal_qp_alias_0 -> strField
+    ");
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
@@ -446,25 +382,24 @@ fn multiple_mismtaches_same_level() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/mismatch-mix.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r###"
-    QueryPlan {
-      Fetch(service: "a") {
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
         {
           i {
             __typename
-            ... on TypeA {
-              strField
-              strField2
-            }
-            ... on TypeB {
-              _internal_qp_alias_0: strField
-              _internal_qp_alias_1: strField2
-            }
+            ... on TypeA { strField strField2 }
+            ... on TypeB { _internal_qp_alias_0: strField _internal_qp_alias_1: strField2 }
           }
         }
-      },
-    },
-    "###);
+      rewrite out
+        i|[TypeB]/_internal_qp_alias_0 -> strField
+        i|[TypeB]/_internal_qp_alias_1 -> strField2
+    ");
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
@@ -537,54 +472,33 @@ fn aliasing_both_parent_and_leaf() -> Result<(), Box<dyn Error>> {
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/testing.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "store") {
-          {
-            allProducts: products {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "allProducts") {
-          Fetch(service: "info") {
-            {
-              ... on Product {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                available: isAvailable
-                uuid
-              }
-            }
-          },
-        },
-        Flatten(path: "allProducts") {
-          Fetch(service: "cost") {
-            {
-              ... on Product {
-                __typename
-                uuid
-              }
-            } =>
-            {
-              ... on Product {
-                price {
-                  pricing: amount
-                  currency
-                }
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] store           -
+      [5] info            [2]
+      [3] cost            [5]
+
+    [2] store
+      out
+        { allProducts: products { __typename id } }
+
+    [5] info   after [2]
+      merge
+        allProducts
+      in
+        ... on Product { __typename id }
+      out
+        ... on Product { available: isAvailable uuid }
+
+    [3] cost   after [5]
+      merge
+        allProducts
+      in
+        ... on Product { __typename uuid }
+      out
+        ... on Product { price { pricing: amount currency } }
+    ");
 
     Ok(())
 }
@@ -625,52 +539,33 @@ fn simple_mismatch_between_union_fields() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Parallel {
-          Fetch(service: "b") {
-            {
-              accounts {
-                __typename
-                ... on User {
-                  id
-                  name
-                }
-                ... on Admin {
-                  _internal_qp_alias_0: id
-                  name
-                }
-              }
-            }
-          },
-          Fetch(service: "a") {
-            {
-              users {
-                __typename
-                id
-              }
-            }
-          },
-        },
-        Flatten(path: "users.@") {
-          Fetch(service: "b") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [4] b               -
+      [2] a               -
+      [3] b               [2]
+
+    [4] b
+      out
+        {
+          accounts { __typename ... on User { id name } ... on Admin { _internal_qp_alias_0: id name } }
+        }
+      rewrite out
+        accounts|[Admin]/_internal_qp_alias_0 -> id
+
+    [2] a
+      out
+        { users { __typename id } }
+
+    [3] b   after [2]
+      merge
+        users.@
+      in
+        ... on User { __typename id }
+      out
+        ... on User { name }
+    ");
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
@@ -802,69 +697,44 @@ fn nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Parallel {
-          Fetch(service: "b") {
-            {
-              accounts {
-                __typename
-                ... on User {
-                  id
-                  name
-                  similarAccounts {
-                    ...a
-                  }
-                }
-                ... on Admin {
-                  _internal_qp_alias_0: id
-                  name
-                  similarAccounts {
-                    ...a
-                  }
-                }
-              }
-            }
-            fragment a on Account {
-              __typename
-              ... on User {
-                id
-                name
-              }
-              ... on Admin {
-                _internal_qp_alias_0: id
-                name
-              }
-            }
-          },
-          Fetch(service: "a") {
-            {
-              users {
-                __typename
-                id
-              }
-            }
-          },
-        },
-        Flatten(path: "users.@") {
-          Fetch(service: "b") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [4] b               -
+      [2] a               -
+      [3] b               [2]
+
+    [4] b
+      out
+        {
+          accounts {
+            __typename
+            ... on User { id name similarAccounts { ...a } }
+            ... on Admin { _internal_qp_alias_0: id name similarAccounts { ...a } }
+          }
+        }
+        fragment a on Account {
+          __typename
+          ... on User { id name }
+          ... on Admin { _internal_qp_alias_0: id name }
+        }
+      rewrite out
+        accounts|[User]/similarAccounts|[Admin]/_internal_qp_alias_0 -> id
+        accounts|[Admin]/_internal_qp_alias_0 -> id
+        accounts|[Admin]/similarAccounts|[Admin]/_internal_qp_alias_0 -> id
+
+    [2] a
+      out
+        { users { __typename id } }
+
+    [3] b   after [2]
+      merge
+        users.@
+      in
+        ... on User { __typename id }
+      out
+        ... on User { name }
+    ");
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
@@ -1088,86 +958,53 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Parallel {
-          Fetch(service: "b") {
-            {
-              accounts {
-                __typename
-                ... on User {
-                  id
-                  name
-                  similarAccounts {
-                    ...a
-                  }
-                }
-                ... on Admin {
-                  _internal_qp_alias_0: id
-                  name
-                  similarAccounts {
-                    ...a
-                  }
-                }
-              }
-            }
-            fragment a on Account {
-              __typename
-              ... on User {
-                id
-                name
-                similarAccounts {
-                  ...b
-                }
-              }
-              ... on Admin {
-                _internal_qp_alias_0: id
-                name
-                similarAccounts {
-                  ...b
-                }
-              }
-            }
-            fragment b on Account {
-              __typename
-              ... on User {
-                id
-                name
-              }
-              ... on Admin {
-                _internal_qp_alias_0: id
-                name
-              }
-            }
-          },
-          Fetch(service: "a") {
-            {
-              users {
-                __typename
-                id
-              }
-            }
-          },
-        },
-        Flatten(path: "users.@") {
-          Fetch(service: "b") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on User {
-                name
-              }
-            }
-          },
-        },
-      },
-    },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [4] b               -
+      [2] a               -
+      [3] b               [2]
+
+    [4] b
+      out
+        {
+          accounts {
+            __typename
+            ... on User { id name similarAccounts { ...a } }
+            ... on Admin { _internal_qp_alias_0: id name similarAccounts { ...a } }
+          }
+        }
+        fragment a on Account {
+          __typename
+          ... on User { id name similarAccounts { ...b } }
+          ... on Admin { _internal_qp_alias_0: id name similarAccounts { ...b } }
+        }
+        fragment b on Account {
+          __typename
+          ... on User { id name }
+          ... on Admin { _internal_qp_alias_0: id name }
+        }
+      rewrite out
+        accounts|[User]/similarAccounts|[User]/similarAccounts|[Admin]/_internal_qp_alias_0 -> id
+        accounts|[User]/similarAccounts|[Admin]/_internal_qp_alias_0 -> id
+        accounts|[User]/similarAccounts|[Admin]/similarAccounts|[Admin]/_internal_qp_alias_0 -> id
+        accounts|[Admin]/_internal_qp_alias_0 -> id
+        accounts|[Admin]/similarAccounts|[User]/similarAccounts|[Admin]/_internal_qp_alias_0 -> id
+        accounts|[Admin]/similarAccounts|[Admin]/_internal_qp_alias_0 -> id
+        accounts|[Admin]/similarAccounts|[Admin]/similarAccounts|[Admin]/_internal_qp_alias_0 -> id
+
+    [2] a
+      out
+        { users { __typename id } }
+
+    [3] b   after [2]
+      merge
+        users.@
+      in
+        ... on User { __typename id }
+      out
+        ... on User { name }
+    ");
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
@@ -1509,53 +1346,27 @@ fn deeply_nested_no_conflicts() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "b") {
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] b               -
+
+    [2] b
+      out
         {
           accounts {
             __typename
-            ... on User {
-              name
-              similarAccounts {
-                ...a
-              }
-            }
-            ... on Admin {
-              name
-              similarAccounts {
-                ...a
-              }
-            }
+            ... on User { name similarAccounts { ...a } }
+            ... on Admin { name similarAccounts { ...a } }
           }
         }
         fragment a on Account {
           __typename
-          ... on User {
-            name
-            similarAccounts {
-              ...b
-            }
-          }
-          ... on Admin {
-            name
-            similarAccounts {
-              ...b
-            }
-          }
+          ... on User { name similarAccounts { ...b } }
+          ... on Admin { name similarAccounts { ...b } }
         }
-        fragment b on Account {
-          __typename
-          ... on User {
-            name
-          }
-          ... on Admin {
-            name
-          }
-        }
-      },
-    },
-    "#);
+        fragment b on Account { __typename ... on User { name } ... on Admin { name } }
+    ");
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
@@ -1607,36 +1418,27 @@ fn multi_enum_mismatch_across_fragments() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-        QueryPlan {
-          Fetch(service: "service") {
-            {
-              getTypes {
-                __typename
-                id
-                identifier
-                code
-                metadata {
-                  value
-                  unit
-                }
-                ... on TypeA {
-                  field
-                }
-                ... on TypeB {
-                  typeBField: field
-                }
-                ... on TypeC {
-                  typeCField: field
-                }
-                ... on TypeD {
-                  typeDField: field
-                }
-              }
-            }
-          },
-        },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] service         -
+
+    [2] service
+      out
+        {
+          getTypes {
+            __typename
+            id
+            identifier
+            code
+            metadata { value unit }
+            ... on TypeA { field }
+            ... on TypeB { typeBField: field }
+            ... on TypeC { typeCField: field }
+            ... on TypeD { typeDField: field }
+          }
+        }
+    ");
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
         {
@@ -1688,36 +1490,27 @@ fn multi_scalar_mismatch_across_fragments() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-        QueryPlan {
-          Fetch(service: "service") {
-            {
-              getTypes {
-                __typename
-                id
-                identifier
-                code
-                metadata {
-                  value
-                  unit
-                }
-                ... on TypeA {
-                  isScalar
-                }
-                ... on TypeB {
-                  scalarB: isScalar
-                }
-                ... on TypeC {
-                  scalarC: isScalar
-                }
-                ... on TypeD {
-                  scalarD: isScalar
-                }
-              }
-            }
-          },
-        },
-    "#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] service         -
+
+    [2] service
+      out
+        {
+          getTypes {
+            __typename
+            id
+            identifier
+            code
+            metadata { value unit }
+            ... on TypeA { isScalar }
+            ... on TypeB { scalarB: isScalar }
+            ... on TypeC { scalarC: isScalar }
+            ... on TypeD { scalarD: isScalar }
+          }
+        }
+    ");
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
         {
@@ -1754,23 +1547,21 @@ fn conflict_list_type_in_interface_preserves_client_alias() -> Result<(), Box<dy
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/mismatch-mix.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r###"
-    QueryPlan {
-      Fetch(service: "a") {
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
         {
           i {
             __typename
-            ... on TypeA {
-              clientStrFieldA: strField
-            }
-            ... on TypeB {
-              clientStrFieldB: strField
-            }
+            ... on TypeA { clientStrFieldA: strField }
+            ... on TypeB { clientStrFieldB: strField }
           }
         }
-      },
-    },
-    "###);
+    ");
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
@@ -1807,23 +1598,15 @@ fn conflict_list_type_in_interface_with_distinct_response_keys() -> Result<(), B
     let query_plan =
         build_query_plan_with_defaults("fixture/tests/mismatch-mix.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r###"
-    QueryPlan {
-      Fetch(service: "a") {
-        {
-          i {
-            __typename
-            ... on TypeA {
-              typeAField: strField
-            }
-            ... on TypeB {
-              typeBField: strField
-            }
-          }
-        }
-      },
-    },
-    "###);
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] a               -
+
+    [2] a
+      out
+        { i { __typename ... on TypeA { typeAField: strField } ... on TypeB { typeBField: strField } } }
+    ");
 
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
@@ -1862,26 +1645,25 @@ fn mismatch_aliases_unique_across_sibling_fragments() -> Result<(), Box<dyn Erro
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Fetch(service: "service") {
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    fetches
+      fetch               after
+      [2] service         -
+
+    [2] service
+      out
         {
           getTypes {
             __typename
-            ... on TypeA {
-              isScalar
-            }
-            ... on TypeB {
-              _internal_qp_alias_0: isScalar
-            }
-            ... on TypeC {
-              _internal_qp_alias_1: isScalar
-            }
+            ... on TypeA { isScalar }
+            ... on TypeB { _internal_qp_alias_0: isScalar }
+            ... on TypeC { _internal_qp_alias_1: isScalar }
           }
         }
-      },
-    },
-    "#);
+      rewrite out
+        getTypes|[TypeB]/_internal_qp_alias_0 -> isScalar
+        getTypes|[TypeC]/_internal_qp_alias_1 -> isScalar
+    ");
     insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",

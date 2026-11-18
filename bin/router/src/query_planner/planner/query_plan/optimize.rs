@@ -1097,40 +1097,25 @@ mod tests {
 
         let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
-        insta::assert_snapshot!(format!("{query_plan}"), @r#"
-        QueryPlan {
-          Parallel {
-            Fetch(service: "products") {
-              {
-                products {
-                  upc
-                }
-              }
-            },
-            BatchFetch(service: "inventory") {
-              {
-                _e0 {
-                  paths: [
-                    "products.@"
-                  ]
-                  {
-                    ... on Product {
-                      upc
-                    }
-                  }
-                }
-              }
-              {
-                _e0: _entities(representations: $__batch_reps_0) {
-                  ... on Product {
-                    shippingEstimate
-                  }
-                }
-              }
-            },
-          },
-        },
-        "#);
+        insta::assert_snapshot!(format!("{query_plan}"), @r"
+        fetches
+          fetch               after
+          [100] products      -
+          [1] inventory       -
+
+        [100] products
+          out
+            { products { upc } }
+
+        [1] inventory
+          alias _e0
+            merge
+              products.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { shippingEstimate }
+        ");
     }
 
     /// Same variable name with incompatible types should block batching,
@@ -1184,40 +1169,35 @@ mod tests {
 
         let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
-        insta::assert_snapshot!(format!("{query_plan}"), @r#"
-        QueryPlan {
-          Parallel {
-            Flatten(path: "products.@") {
-              Fetch(service: "inventory") {
-                {
-                  ... on Product {
-                    upc
-                  }
-                } =>
-                ($locale:String) {
-                  ... on Product {
-                    shippingEstimate
-                  }
-                }
-              },
-            },
-            Flatten(path: "products.@") {
-              Fetch(service: "inventory") {
-                {
-                  ... on Product {
-                    upc
-                  }
-                } =>
-                ($locale:String!) {
-                  ... on Product {
-                    shippingEstimate
-                  }
-                }
-              },
-            },
-          },
-        },
-        "#);
+        insta::assert_snapshot!(format!("{query_plan}"), @r"
+        variables
+          $locale: String
+
+        fetches
+          fetch               after
+          [1] inventory       -
+          [2] inventory       -
+
+        [1] inventory
+          merge
+            products.@
+          in
+            ... on Product { upc }
+          out
+            ... on Product { shippingEstimate }
+          vars
+            $locale
+
+        [2] inventory
+          merge
+            products.@
+          in
+            ... on Product { upc }
+          out
+            ... on Product { shippingEstimate }
+          vars
+            $locale
+        ");
     }
 
     /// Generated `__batch_reps_*` variable must skip already-used operation variables,
@@ -1246,31 +1226,25 @@ mod tests {
 
         let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
-        insta::assert_snapshot!(format!("{query_plan}"), @r#"
-        QueryPlan {
-          BatchFetch(service: "inventory") {
-            {
-              _e0 {
-                paths: [
-                  "products.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-            }
-            ($__batch_reps_0:String) {
-              _e0: _entities(representations: $__batch_reps_1) {
-                ... on Product {
-                  shippingEstimate
-                }
-              }
-            }
-          },
-        },
-        "#);
+        insta::assert_snapshot!(format!("{query_plan}"), @r"
+        variables
+          $__batch_reps_0: String
+
+        fetches
+          fetch               after
+          [1] inventory       -
+
+        [1] inventory
+          alias _e0
+            merge
+              products.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { shippingEstimate }
+          vars
+            $__batch_reps_0
+        ");
     }
 
     /// Compatible entity fetches from different subgraphs must not be batched.
@@ -1308,40 +1282,28 @@ mod tests {
 
         let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
-        insta::assert_snapshot!(format!("{query_plan}"), @r#"
-        QueryPlan {
-          Parallel {
-            Flatten(path: "products.@") {
-              Fetch(service: "inventory") {
-                {
-                  ... on Product {
-                    upc
-                  }
-                } =>
-                {
-                  ... on Product {
-                    shippingEstimate
-                  }
-                }
-              },
-            },
-            Flatten(path: "products.@") {
-              Fetch(service: "products") {
-                {
-                  ... on Product {
-                    upc
-                  }
-                } =>
-                {
-                  ... on Product {
-                    shippingEstimate
-                  }
-                }
-              },
-            },
-          },
-        },
-        "#);
+        insta::assert_snapshot!(format!("{query_plan}"), @r"
+        fetches
+          fetch               after
+          [1] inventory       -
+          [2] products        -
+
+        [1] inventory
+          merge
+            products.@
+          in
+            ... on Product { upc }
+          out
+            ... on Product { shippingEstimate }
+
+        [2] products
+          merge
+            products.@
+          in
+            ... on Product { upc }
+          out
+            ... on Product { shippingEstimate }
+        ");
     }
 
     /// Candidates with the same shape should batch even when merge paths differ.
@@ -1379,32 +1341,21 @@ mod tests {
 
         let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
-        insta::assert_snapshot!(format!("{query_plan}"), @r#"
-        QueryPlan {
-          BatchFetch(service: "inventory") {
-            {
-              _e0 {
-                paths: [
-                  "products.@"
-                  "topProducts.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Product {
-                  shippingEstimate
-                }
-              }
-            }
-          },
-        },
-        "#);
+        insta::assert_snapshot!(format!("{query_plan}"), @r"
+        fetches
+          fetch               after
+          [1] inventory       -
+
+        [1] inventory
+          alias _e0
+            merge
+              products.@
+              topProducts.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { shippingEstimate }
+        ");
     }
 
     /// Different entities selections should not be merged into the same alias.
@@ -1451,46 +1402,27 @@ mod tests {
 
         let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
-        insta::assert_snapshot!(format!("{query_plan}"), @r#"
-        QueryPlan {
-          BatchFetch(service: "inventory") {
-            {
-              _e0 {
-                paths: [
-                  "products.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-              _e1 {
-                paths: [
-                  "topProducts.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Product {
-                  shippingEstimate
-                }
-              }
-              _e1: _entities(representations: $__batch_reps_1) {
-                ... on Product {
-                  inStock
-                }
-              }
-            }
-          },
-        },
-        "#);
+        insta::assert_snapshot!(format!("{query_plan}"), @r"
+        fetches
+          fetch               after
+          [1] inventory       -
+
+        [1] inventory
+          alias _e0
+            merge
+              products.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { shippingEstimate }
+          alias _e1
+            merge
+              topProducts.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { inStock }
+        ");
     }
 
     /// Splitting fetches with identical operations but different requirements must preserve
@@ -1850,62 +1782,36 @@ mod tests {
 
         let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
-        insta::assert_snapshot!(format!("{query_plan}"), @r#"
-        QueryPlan {
-          Parallel {
-            BatchFetch(service: "inventory") {
-              {
-                _e0 {
-                  paths: [
-                    "products.@"
-                  ]
-                  {
-                    ... on Product {
-                      upc
-                    }
-                  }
-                }
-                _e1 {
-                  paths: [
-                    "products.@"
-                  ]
-                  {
-                    ... on Product {
-                      upc
-                    }
-                  }
-                }
-              }
-              {
-                _e0: _entities(representations: $__batch_reps_0) {
-                  ... on Product {
-                    shippingEstimate
-                  }
-                }
-                _e1: _entities(representations: $__batch_reps_0) {
-                  ... on Product {
-                    inStock
-                  }
-                }
-              }
-            },
-            Flatten(path: "products.@") {
-              Fetch(service: "inventory") {
-                {
-                  ... on Product {
-                    name
-                  }
-                } =>
-                {
-                  ... on Product {
-                    shippingEstimate
-                  }
-                }
-              },
-            },
-          },
-        },
-        "#);
+        insta::assert_snapshot!(format!("{query_plan}"), @r"
+        fetches
+          fetch               after
+          [1] inventory       -
+          [3] inventory       -
+
+        [1] inventory
+          alias _e0
+            merge
+              products.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { shippingEstimate }
+          alias _e1
+            merge
+              products.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { inStock }
+
+        [3] inventory
+          merge
+            products.@
+          in
+            ... on Product { name }
+          out
+            ... on Product { shippingEstimate }
+        ");
     }
 
     /// Aliases with same input side and same paths can share one representations variable.
@@ -1942,46 +1848,27 @@ mod tests {
 
         let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
-        insta::assert_snapshot!(format!("{query_plan}"), @r#"
-        QueryPlan {
-          BatchFetch(service: "inventory") {
-            {
-              _e0 {
-                paths: [
-                  "products.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-              _e1 {
-                paths: [
-                  "products.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Product {
-                  shippingEstimate
-                }
-              }
-              _e1: _entities(representations: $__batch_reps_0) {
-                ... on Product {
-                  inStock
-                }
-              }
-            }
-          },
-        },
-        "#);
+        insta::assert_snapshot!(format!("{query_plan}"), @r"
+        fetches
+          fetch               after
+          [1] inventory       -
+
+        [1] inventory
+          alias _e0
+            merge
+              products.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { shippingEstimate }
+          alias _e1
+            merge
+              products.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { inStock }
+        ");
     }
 
     /// An alias per `run_if`. `c` and `d` only differ in `run_if`, so they don't share a list.
@@ -2016,65 +1903,44 @@ mod tests {
 
         let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
-        insta::assert_snapshot!(format!("{query_plan}"), @r#"
-        QueryPlan {
-          BatchFetch(service: "inventory") {
-            {
-              _e0(if: $a) {
-                paths: [
-                  "products.@"
-                  "topProducts.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-              _e1(if: !$b) {
-                paths: [
-                  "products.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-              _e2 {
-                paths: [
-                  "products.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Product {
-                  ...a
-                }
-              }
-              _e1: _entities(representations: $__batch_reps_1) {
-                ... on Product {
-                  ...a
-                }
-              }
-              _e2: _entities(representations: $__batch_reps_2) {
-                ... on Product {
-                  ...a
-                }
-              }
-            }
-            fragment a on Product {
-              inStock
-            }
-          },
-        },
-        "#);
+        insta::assert_snapshot!(format!("{query_plan}"), @r"
+        variables
+          $a, $b
+
+        fetches
+          fetch               after
+          [1] inventory       -
+
+        [1] inventory
+          alias _e0
+            if
+              $a
+            merge
+              products.@
+              topProducts.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { ...a }
+          alias _e1
+            if
+              !$b
+            merge
+              products.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { ...a }
+          alias _e2
+            merge
+              products.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { ...a }
+          fragments
+            fragment a on Product { inStock }
+        ");
     }
 
     #[test]
@@ -2159,49 +2025,29 @@ mod tests {
 
         let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
-        insta::assert_snapshot!(format!("{query_plan}"), @r#"
-        QueryPlan {
-          BatchFetch(service: "inventory") {
-            {
-              _e0 {
-                paths: [
-                  "products.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-              _e1 {
-                paths: [
-                  "products.@"
-                ]
-                {
-                  ... on Product {
-                    name
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Product {
-                  ...a
-                }
-              }
-              _e1: _entities(representations: $__batch_reps_1) {
-                ... on Product {
-                  ...a
-                }
-              }
-            }
-            fragment a on Product {
-              shippingEstimate
-            }
-          },
-        },
-        "#);
+        insta::assert_snapshot!(format!("{query_plan}"), @r"
+        fetches
+          fetch               after
+          [1] inventory       -
+
+        [1] inventory
+          alias _e0
+            merge
+              products.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { ...a }
+          alias _e1
+            merge
+              products.@
+            in
+              ... on Product { name }
+            out
+              ... on Product { ...a }
+          fragments
+            fragment a on Product { shippingEstimate }
+        ");
     }
 
     /// Different input rewrites should prevent sharing the representations variable.
@@ -2237,47 +2083,29 @@ mod tests {
         let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
-        QueryPlan {
-          BatchFetch(service: "inventory") {
-            {
-              _e0 {
-                paths: [
-                  "products.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-              _e1 {
-                paths: [
-                  "products.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Product {
-                  ...a
-                }
-              }
-              _e1: _entities(representations: $__batch_reps_1) {
-                ... on Product {
-                  ...a
-                }
-              }
-            }
-            fragment a on Product {
-              shippingEstimate
-            }
-          },
-        },
+        fetches
+          fetch               after
+          [1] inventory       -
+
+        [1] inventory
+          alias _e0
+            merge
+              products.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { ...a }
+          alias _e1
+            merge
+              products.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { ...a }
+            rewrite in
+              upc = "constant"
+          fragments
+            fragment a on Product { shippingEstimate }
         "#);
     }
 
@@ -2307,49 +2135,29 @@ mod tests {
 
         let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
-        insta::assert_snapshot!(format!("{query_plan}"), @r#"
-        QueryPlan {
-          BatchFetch(service: "inventory") {
-            {
-              _e0 {
-                paths: [
-                  "products.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-              _e1 {
-                paths: [
-                  "topProducts.@"
-                ]
-                {
-                  ... on Product {
-                    name
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Product {
-                  ...a
-                }
-              }
-              _e1: _entities(representations: $__batch_reps_1) {
-                ... on Product {
-                  ...a
-                }
-              }
-            }
-            fragment a on Product {
-              shippingEstimate
-            }
-          },
-        },
-        "#);
+        insta::assert_snapshot!(format!("{query_plan}"), @r"
+        fetches
+          fetch               after
+          [1] inventory       -
+
+        [1] inventory
+          alias _e0
+            merge
+              products.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { ...a }
+          alias _e1
+            merge
+              topProducts.@
+            in
+              ... on Product { name }
+            out
+              ... on Product { ...a }
+          fragments
+            fragment a on Product { shippingEstimate }
+        ");
     }
 
     /// Different input rewrites should split aliases.
@@ -2408,47 +2216,29 @@ mod tests {
         let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
-        QueryPlan {
-          BatchFetch(service: "inventory") {
-            {
-              _e0 {
-                paths: [
-                  "products.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-              _e1 {
-                paths: [
-                  "topProducts.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Product {
-                  ...a
-                }
-              }
-              _e1: _entities(representations: $__batch_reps_1) {
-                ... on Product {
-                  ...a
-                }
-              }
-            }
-            fragment a on Product {
-              shippingEstimate
-            }
-          },
-        },
+        fetches
+          fetch               after
+          [1] inventory       -
+
+        [1] inventory
+          alias _e0
+            merge
+              products.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { ...a }
+          alias _e1
+            merge
+              topProducts.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { ...a }
+            rewrite in
+              upc = "constant"
+          fragments
+            fragment a on Product { shippingEstimate }
         "#);
     }
 
@@ -2483,47 +2273,29 @@ mod tests {
         let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
-        QueryPlan {
-          BatchFetch(service: "inventory") {
-            {
-              _e0 {
-                paths: [
-                  "products.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-              _e1 {
-                paths: [
-                  "topProducts.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Product {
-                  ...a
-                }
-              }
-              _e1: _entities(representations: $__batch_reps_1) {
-                ... on Product {
-                  ...a
-                }
-              }
-            }
-            fragment a on Product {
-              shippingEstimate
-            }
-          },
-        },
+        fetches
+          fetch               after
+          [1] inventory       -
+
+        [1] inventory
+          alias _e0
+            merge
+              products.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { ...a }
+          alias _e1
+            merge
+              topProducts.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { ...a }
+            rewrite out
+              upc = "constant"
+          fragments
+            fragment a on Product { shippingEstimate }
         "#);
     }
 
@@ -2559,47 +2331,29 @@ mod tests {
         let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
-        QueryPlan {
-          BatchFetch(service: "inventory") {
-            {
-              _e0 {
-                paths: [
-                  "products.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-              _e1 {
-                paths: [
-                  "products.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Product {
-                  ...a
-                }
-              }
-              _e1: _entities(representations: $__batch_reps_0) {
-                ... on Product {
-                  ...a
-                }
-              }
-            }
-            fragment a on Product {
-              shippingEstimate
-            }
-          },
-        },
+        fetches
+          fetch               after
+          [1] inventory       -
+
+        [1] inventory
+          alias _e0
+            merge
+              products.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { ...a }
+          alias _e1
+            merge
+              products.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { ...a }
+            rewrite out
+              upc = "constant"
+          fragments
+            fragment a on Product { shippingEstimate }
         "#);
     }
 
@@ -2643,47 +2397,28 @@ mod tests {
 
         let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
-        insta::assert_snapshot!(format!("{query_plan}"), @r#"
-        QueryPlan {
-          BatchFetch(service: "inventory") {
-            {
-              _e0 {
-                paths: [
-                  "products.@"
-                  "products2.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-              _e1 {
-                paths: [
-                  "topProducts.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Product {
-                  shippingEstimate
-                }
-              }
-              _e1: _entities(representations: $__batch_reps_1) {
-                ... on Product {
-                  inStock
-                }
-              }
-            }
-          },
-        },
-        "#);
+        insta::assert_snapshot!(format!("{query_plan}"), @r"
+        fetches
+          fetch               after
+          [1] inventory       -
+
+        [1] inventory
+          alias _e0
+            merge
+              products.@
+              products2.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { shippingEstimate }
+          alias _e1
+            merge
+              topProducts.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { inStock }
+        ");
     }
 
     /// Entities queries with fragment spreads should still batch correctly.
@@ -2728,34 +2463,21 @@ mod tests {
 
         let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
-        insta::assert_snapshot!(format!("{query_plan}"), @r#"
-        QueryPlan {
-          BatchFetch(service: "inventory") {
-            {
-              _e0 {
-                paths: [
-                  "products.@"
-                  "topProducts.@"
-                ]
-                {
-                  ... on Product {
-                    upc
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Product {
-                  ... on Product {
-                    shippingEstimate
-                  }
-                }
-              }
-            }
-          },
-        },
-        "#);
+        insta::assert_snapshot!(format!("{query_plan}"), @r"
+        fetches
+          fetch               after
+          [1] inventory       -
+
+        [1] inventory
+          alias _e0
+            merge
+              products.@
+              topProducts.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { ... on Product { shippingEstimate } }
+        ");
     }
 
     /// If there are no entity candidates, optimizer must keep the original nodes.
@@ -2774,26 +2496,20 @@ mod tests {
 
         let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
-        insta::assert_snapshot!(format!("{query_plan}"), @r#"
-        QueryPlan {
-          Parallel {
-            Fetch(service: "products") {
-              {
-                products {
-                  upc
-                }
-              }
-            },
-            Fetch(service: "inventory") {
-              {
-                products {
-                  upc
-                }
-              }
-            },
-          },
-        },
-        "#);
+        insta::assert_snapshot!(format!("{query_plan}"), @r"
+        fetches
+          fetch               after
+          [1] products        -
+          [2] inventory       -
+
+        [1] products
+          out
+            { products { upc } }
+
+        [2] inventory
+          out
+            { products { upc } }
+        ");
     }
 
     /// One candidate in a service cannot form a batch.
@@ -2820,24 +2536,19 @@ mod tests {
 
         let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
-        insta::assert_snapshot!(format!("{query_plan}"), @r#"
-        QueryPlan {
-          Flatten(path: "products.@") {
-            Fetch(service: "inventory") {
-              {
-                ... on Product {
-                  upc
-                }
-              } =>
-              {
-                ... on Product {
-                  shippingEstimate
-                }
-              }
-            },
-          },
-        },
-        "#);
+        insta::assert_snapshot!(format!("{query_plan}"), @r"
+        fetches
+          fetch               after
+          [1] inventory       -
+
+        [1] inventory
+          merge
+            products.@
+          in
+            ... on Product { upc }
+          out
+            ... on Product { shippingEstimate }
+        ");
     }
 
     /// Optimizer can create separate BatchFetch nodes for different services.
@@ -2875,56 +2586,32 @@ mod tests {
 
         let query_plan = QueryPlan::new(Some(optimized)).expect("a valid plan");
 
-        insta::assert_snapshot!(format!("{query_plan}"), @r#"
-        QueryPlan {
-          Parallel {
-            BatchFetch(service: "inventory") {
-              {
-                _e0 {
-                  paths: [
-                    "products.@"
-                    "topProducts.@"
-                  ]
-                  {
-                    ... on Product {
-                      upc
-                    }
-                  }
-                }
-              }
-              {
-                _e0: _entities(representations: $__batch_reps_0) {
-                  ... on Product {
-                    shippingEstimate
-                  }
-                }
-              }
-            },
-            BatchFetch(service: "products") {
-              {
-                _e0 {
-                  paths: [
-                    "products.@"
-                    "topProducts.@"
-                  ]
-                  {
-                    ... on Product {
-                      upc
-                    }
-                  }
-                }
-              }
-              {
-                _e0: _entities(representations: $__batch_reps_0) {
-                  ... on Product {
-                    shippingEstimate
-                  }
-                }
-              }
-            },
-          },
-        },
-        "#);
+        insta::assert_snapshot!(format!("{query_plan}"), @r"
+        fetches
+          fetch               after
+          [1] inventory       -
+          [3] products        -
+
+        [1] inventory
+          alias _e0
+            merge
+              products.@
+              topProducts.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { shippingEstimate }
+
+        [3] products
+          alias _e0
+            merge
+              products.@
+              topProducts.@
+            in
+              ... on Product { upc }
+            out
+              ... on Product { shippingEstimate }
+        ");
     }
 
     fn test_supergraph_state() -> SupergraphState {

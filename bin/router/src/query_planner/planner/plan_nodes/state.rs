@@ -1,9 +1,6 @@
-use crate::query_planner::{
-    ast::{
-        operation::{PlanningFetchOperation, SubgraphFetchOperation},
-        selection_set::SelectionSet,
-    },
-    utils::pretty_display::PrettyDisplay,
+use crate::query_planner::ast::{
+    operation::{PlanningFetchOperation, SubgraphFetchOperation},
+    selection_set::SelectionSet,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use smallvec::SmallVec;
@@ -13,12 +10,7 @@ use super::FetchId;
 
 /// Defines what kind of operation a query plan stores
 pub trait PlanState: private::Sealed + Debug + Clone {
-    type Operation: Debug
-        + Clone
-        + Serialize
-        + DeserializeOwned
-        + PrettyDisplay
-        + AsRef<SubgraphFetchOperation>;
+    type Operation: Debug + Clone + Serialize + DeserializeOwned + AsRef<SubgraphFetchOperation>;
     type Requires: Debug + Clone + Default;
     /// Fetch ids a fetch depends on, or that a batch completes. Only the planner needs them: it
     /// turns them into the plan's schedule, executable nodes don't keep them.
