@@ -288,7 +288,7 @@ pub async fn execute_query_plan<'exec>(
                 &fetch_node.operation.document_str,
                 fetch_node.operation.query_hash(),
             )),
-            apq: true,
+            is_query: false,
         };
 
         // TODO: otel instrumentation and stuff
@@ -1940,7 +1940,7 @@ impl<'exec> Executor<'exec> {
                 response_shape: opts.operation.response_shape.as_deref(),
                 connection_fingerprint: self.connection_fingerprint,
                 query_hash: Some((&opts.operation.document_str, opts.operation.query_hash())),
-                apq: true,
+                is_query: matches!(opts.operation_kind, Some(OperationKind::Query)),
             };
 
             let client_document_hash_str = opts.operation.hash.to_string();

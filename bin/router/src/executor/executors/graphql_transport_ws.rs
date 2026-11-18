@@ -478,7 +478,7 @@ mod tests {
             response_shape: None,
             connection_fingerprint: None,
             query_hash: None,
-            apq: false,
+            is_query: false,
         }
     }
 

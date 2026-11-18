@@ -541,7 +541,8 @@ pub struct TrafficShapingExecutorGlobalConfig {
     /// Sends Automatic Persisted Queries (APQ) to subgraphs: the query's SHA-256 hash instead of
     /// the query, and both when the subgraph doesn't know the hash yet. A subgraph that answers
     /// `PERSISTED_QUERY_NOT_SUPPORTED`, or fails the hash but answers the same query sent in full
-    /// (a server without APQ), gets plain queries for the next 5 minutes.
+    /// (a server without APQ), gets plain queries for the next 5 minutes. Only queries detect a
+    /// server without APQ, so turn it off for a subgraph that lacks APQ and only gets mutations.
     ///
     /// Only turn it on for subgraphs that support APQ. Not used for subscriptions.
     ///

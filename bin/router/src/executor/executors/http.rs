@@ -174,7 +174,7 @@ fn query_hash<'a>(execution_request: &SubgraphExecutionRequest<'a>) -> Cow<'a, s
     }
 }
 
-/// An APQ error, but only if nothing ran (no data, no error path), so a mutation is never sent twice.
+/// An APQ error, but only if nothing ran (no data, no error path).
 fn apq_rejection(response: &SubgraphResponse<'_>) -> Option<ApqError> {
     if !response.data.is_null()
         || response
@@ -649,15 +649,22 @@ pub enum DeduplicationHint {
 }
 
 impl HTTPSubgraphExecutor {
-    /// One HTTP request. Gives the request back, without its headers.
+    /// One HTTP request. Gives the request back, without its headers, and whether a plugin
+    /// answered instead of the subgraph or replaced its answer.
     async fn attempt<'s, 'a: 's, 'p: 's>(
         &'s self,
         execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
         plugin_req_state: Option<&'p PluginRequestState<'p>>,
         apq: Apq<'_>,
-    ) -> Result<(SubgraphResponse<'static>, SubgraphExecutionRequest<'s>), SubgraphExecutorError>
-    {
+    ) -> Result<
+        (
+            SubgraphResponse<'static>,
+            SubgraphExecutionRequest<'s>,
+            bool,
+        ),
+        SubgraphExecutorError,
+    > {
         let mut execution_request: SubgraphExecutionRequest<'s> = execution_request;
         let mut body = build_request_body_with_apq(&execution_request, apq)?;
 
@@ -708,6 +715,7 @@ impl HTTPSubgraphExecutor {
 
         let mut deduplication_hint = DeduplicationHint::NotDeduped;
         let mut http_request_capture = None;
+        let mut answered_by_plugin = response.is_some();
 
         let mut response = match response {
             Some(resp) => resp,
@@ -829,6 +837,7 @@ impl HTTPSubgraphExecutor {
                     EndControlFlow::Proceed => { /* continue to next plugin */ }
                     EndControlFlow::EndWithResponse(early_response) => {
                         end_payload.response = early_response;
+                        answered_by_plugin = true;
                         // Break so other plugins are not called
                         break;
                     }
@@ -863,28 +872,33 @@ impl HTTPSubgraphExecutor {
             );
         }
 
-        response_result.map(|response| (response, execution_request))
+        response_result.map(|response| (response, execution_request, answered_by_plugin))
     }
 
     async fn send_hash_only<'s, 'a: 's, 'p: 's>(
         &'s self,
-        execution_request: SubgraphExecutionRequest<'a>,
+        mut execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
         plugin_req_state: Option<&'p PluginRequestState<'p>>,
         hash: &str,
     ) -> Result<HashOnlyResult<'s>, SubgraphExecutorError> {
-        // A retry starts from the request as it came in. Hooks can change any of it, so with
-        // hooks keep all of it, without them only the headers.
-        // ponytail: copied on every hash-only request, hits too
+        // a retry starts from the request as it came in, hooks can change all of it.
+        // The representations can be big, so the retry takes them from the first attempt
         let has_hooks = plugin_req_state.is_some_and(|state| !state.plugins.is_empty());
-        let original = has_hooks.then(|| execution_request.clone());
+        let original = has_hooks.then(|| {
+            let raw_variable_values = execution_request.raw_variable_values.take();
+            let original = execution_request.clone();
+            execution_request.raw_variable_values = raw_variable_values;
+            original
+        });
         let headers = if has_hooks {
             HeaderMap::new()
         } else {
             execution_request.headers.clone()
         };
 
-        let (response, execution_request) = self
+        let is_query = execution_request.is_query;
+        let (response, execution_request, answered_by_plugin) = self
             .attempt(
                 execution_request,
                 timeout,
@@ -892,13 +906,26 @@ impl HTTPSubgraphExecutor {
                 Apq::HashOnly(hash),
             )
             .await?;
-        let Some(apq_error) = apq_rejection(&response) else {
+        let apq_error = match apq_rejection(&response) {
+            // a plugin's answer is final
+            _ if answered_by_plugin => None,
+            // only an APQ error proves a mutation didn't run
+            Some(ApqError::Failed) if !is_query => None,
+            apq_error => apq_error,
+        };
+        let Some(apq_error) = apq_error else {
             return Ok(HashOnlyResult::Done(response));
         };
-        let retry = original.unwrap_or(SubgraphExecutionRequest {
-            headers,
-            ..execution_request
-        });
+        let retry = match original {
+            Some(original) => SubgraphExecutionRequest {
+                raw_variable_values: execution_request.raw_variable_values,
+                ..original
+            },
+            None => SubgraphExecutionRequest {
+                headers,
+                ..execution_request
+            },
+        };
         Ok(HashOnlyResult::Rejected(retry, apq_error))
     }
 
@@ -930,11 +957,11 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         timeout: Option<Duration>,
         plugin_req_state: Option<&'a PluginRequestState<'a>>,
     ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
-        if !execution_request.apq || !self.apq.should_send_hash() {
+        if !self.apq.should_send_hash() {
             return self
                 .attempt(execution_request, timeout, plugin_req_state, Apq::Off)
                 .await
-                .map(|(response, _)| response);
+                .map(|(response, ..)| response);
         }
 
         let started = Instant::now();
@@ -959,11 +986,10 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
         // both attempts share one timeout
         let timeout = timeout.map(|timeout| timeout.saturating_sub(started.elapsed()));
-        let (response, _) = self
+        let (response, ..) = self
             .attempt(execution_request, timeout, plugin_req_state, apq)
             .await?;
-        // the plain query worked where the hash didn't, so the subgraph ignores the hash.
-        // Other failures (auth, overload) fail both times and leave APQ on.
+        // the plain query worked where the hash didn't, so the subgraph ignores APQ
         if apq_error == ApqError::Failed && !response.data.is_null() {
             self.turn_apq_off();
         }
@@ -1295,7 +1321,7 @@ mod tests {
             response_shape: None,
             connection_fingerprint: None,
             query_hash: None,
-            apq: false,
+            is_query: false,
         };
 
         let body = build_request_body(&execution_request).expect("request body should serialize");
@@ -1329,7 +1355,7 @@ mod tests {
             response_shape: None,
             connection_fingerprint: None,
             query_hash: None,
-            apq: false,
+            is_query: false,
         };
         let hash = query_hash(&execution_request);
 

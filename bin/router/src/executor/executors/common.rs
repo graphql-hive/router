@@ -113,9 +113,8 @@ pub struct SubgraphExecutionRequest<'a> {
     pub connection_fingerprint: Option<ConnectionFingerprint>,
     /// The plan's query and its cached hash for APQ. Only used while `query` is that query.
     pub query_hash: Option<(&'a str, &'a QueryHash)>,
-    /// Lets this request use APQ, if the subgraph has it on. A plugin that rewrites the body in
-    /// `on_subgraph_http_request` should turn it off in `on_subgraph_execute`.
-    pub apq: bool,
+    /// Only a query is sent again after an error, a mutation may have run already.
+    pub is_query: bool,
 }
 
 /// SHA-256 (hex) of a plan's query, computed on first use.
