@@ -10,14 +10,17 @@ use hive_router::{
         ast::normalization::{error::NormalizationError, normalize_operation},
         graph::{PlannerOverrideContext, PERCENTAGE_SCALE_FACTOR},
         planner::{
-            plan_nodes::planning::{FetchNode, PlanNode},
+            plan_nodes::planning::{
+                BatchFetchNode, DeferDependency, FetchId, FetchNode, FlattenNodePath, PlanNode,
+                QueryPlan,
+            },
             Planner, PlannerError,
         },
         utils::{cancellation::CancellationToken, parsing::safe_parse_operation},
     },
 };
 use napi::{Task, Unknown};
-use serde_json::{json, Value};
+use serde::{Serialize, Serializer};
 
 #[derive(Debug, thiserror::Error)]
 pub enum QueryPlanError {
@@ -29,8 +32,6 @@ pub enum QueryPlanError {
     Normalization(#[from] NormalizationError),
     #[error("Failed to plan query: {0}")]
     Planner(#[from] PlannerError),
-    #[error("Failed to serialize query plan: {0}")]
-    Serialize(#[from] serde_json::Error),
 }
 
 impl From<QueryPlanError> for napi::Error {
@@ -72,7 +73,7 @@ pub fn query_plan(
     active_labels: HashSet<String>,
     percentage_value: f64,
     cancellation_token: &CancellationToken,
-) -> core::result::Result<Value, QueryPlanError> {
+) -> core::result::Result<QueryPlan, QueryPlanError> {
     let parsed_operation = safe_parse_operation(query)?;
     let normalized_operation =
         normalize_operation(&planner.supergraph, &parsed_operation, operation_name)?;
@@ -88,54 +89,156 @@ pub fn query_plan(
         cancellation_token,
     )?;
 
-    let mut json = serde_json::to_value(&plan)?;
-    if let Some(node) = plan.node() {
-        add_fetch_ids(node, &mut json["node"]);
-    }
-    Ok(json)
+    Ok(plan)
 }
 
-/// Adds `id` and `dependsOn` to every fetch of the serialized plan `json`, and `completes` to
-/// every batch fetch, so JS can start each fetch once the fetches it depends on are done. The
-/// router's own plan serialization skips them, so they're added here, only for the addon.
-/// `json` must be `node` serialized.
-fn add_fetch_ids(node: &PlanNode, json: &mut Value) {
-    match node {
-        PlanNode::Fetch(fetch) => add_fetch_node_ids(fetch, json),
-        PlanNode::BatchFetch(batch) => {
-            json["id"] = json!(batch.id);
-            json["dependsOn"] = json!(batch.depends_on.as_slice());
-            json["completes"] = json!(batch.completes.as_slice());
+/// The plan as the addon gives it to JS. Serializes like the router's own plan, but every
+/// fetch also has its `id` and `dependsOn`, and every batch fetch its `completes`, so JS can
+/// start each fetch once the fetches it depends on are done. The router's own serialization
+/// skips them, so the addon serializes the nodes holding fetches itself.
+pub struct JsQueryPlan<'a>(pub &'a QueryPlan);
+
+impl Serialize for JsQueryPlan<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        struct Plan<'a> {
+            kind: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            node: Option<JsPlanNode<'a>>,
         }
-        PlanNode::Sequence(sequence) => add_fetch_ids_to_all(&sequence.nodes, &mut json["nodes"]),
-        PlanNode::Parallel(parallel) => add_fetch_ids_to_all(&parallel.nodes, &mut json["nodes"]),
-        PlanNode::Flatten(flatten) => add_fetch_ids(&flatten.node, &mut json["node"]),
-        PlanNode::Subscription(subscription) => {
-            add_fetch_node_ids(&subscription.primary, &mut json["primary"])
+        Plan {
+            kind: self.0.kind,
+            node: self.0.node().map(JsPlanNode),
         }
-        PlanNode::Defer(defer) => {
-            if let Some(node) = &defer.primary.node {
-                add_fetch_ids(node, &mut json["primary"]["node"]);
-            }
-            for (index, deferred) in defer.deferred.iter().enumerate() {
-                if let Some(node) = &deferred.node {
-                    add_fetch_ids(node, &mut json["deferred"][index]["node"]);
-                }
-            }
-        }
+        .serialize(serializer)
     }
 }
 
-fn add_fetch_node_ids(fetch: &FetchNode, json: &mut Value) {
-    json["id"] = json!(fetch.id);
-    json["dependsOn"] = json!(fetch.depends_on.as_slice());
+struct JsPlanNode<'a>(&'a PlanNode);
+
+struct JsPlanNodes<'a>(&'a [PlanNode]);
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsFetchNode<'a> {
+    #[serde(flatten)]
+    fetch: &'a FetchNode,
+    id: FetchId,
+    depends_on: &'a [FetchId],
 }
 
-fn add_fetch_ids_to_all(nodes: &[PlanNode], json: &mut Value) {
-    if let Some(json) = json.as_array_mut() {
-        for (node, json) in nodes.iter().zip(json) {
-            add_fetch_ids(node, json);
+impl<'a> From<&'a FetchNode> for JsFetchNode<'a> {
+    fn from(fetch: &'a FetchNode) -> Self {
+        Self {
+            fetch,
+            id: fetch.id,
+            depends_on: &fetch.depends_on,
         }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsBatchFetchNode<'a> {
+    #[serde(flatten)]
+    batch: &'a BatchFetchNode,
+    id: FetchId,
+    depends_on: &'a [FetchId],
+    completes: &'a [FetchId],
+}
+
+#[derive(Serialize)]
+struct JsDeferPrimary<'a> {
+    subselection: &'a Option<String>,
+    node: Option<JsPlanNode<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsDeferredNode<'a> {
+    depends: &'a [DeferDependency],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: &'a Option<String>,
+    query_path: &'a [String],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subselection: &'a Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    node: Option<JsPlanNode<'a>>,
+}
+
+// same shape as the router's `PlanNode`, only with ids on the fetches
+#[derive(Serialize)]
+#[serde(tag = "kind")]
+enum JsTaggedPlanNode<'a> {
+    Fetch(JsFetchNode<'a>),
+    BatchFetch(JsBatchFetchNode<'a>),
+    Sequence {
+        nodes: JsPlanNodes<'a>,
+    },
+    Parallel {
+        nodes: JsPlanNodes<'a>,
+    },
+    Flatten {
+        path: &'a FlattenNodePath,
+        node: JsPlanNode<'a>,
+    },
+    Subscription {
+        primary: JsFetchNode<'a>,
+    },
+    Defer {
+        primary: JsDeferPrimary<'a>,
+        deferred: Vec<JsDeferredNode<'a>>,
+    },
+}
+
+impl Serialize for JsPlanNode<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0 {
+            PlanNode::Fetch(fetch) => JsTaggedPlanNode::Fetch(fetch.as_ref().into()),
+            PlanNode::BatchFetch(batch) => JsTaggedPlanNode::BatchFetch(JsBatchFetchNode {
+                batch,
+                id: batch.id,
+                depends_on: &batch.depends_on,
+                completes: &batch.completes,
+            }),
+            PlanNode::Sequence(sequence) => JsTaggedPlanNode::Sequence {
+                nodes: JsPlanNodes(&sequence.nodes),
+            },
+            PlanNode::Parallel(parallel) => JsTaggedPlanNode::Parallel {
+                nodes: JsPlanNodes(&parallel.nodes),
+            },
+            PlanNode::Flatten(flatten) => JsTaggedPlanNode::Flatten {
+                path: &flatten.path,
+                node: JsPlanNode(&flatten.node),
+            },
+            PlanNode::Subscription(subscription) => JsTaggedPlanNode::Subscription {
+                primary: (&subscription.primary).into(),
+            },
+            PlanNode::Defer(defer) => JsTaggedPlanNode::Defer {
+                primary: JsDeferPrimary {
+                    subselection: &defer.primary.subselection,
+                    node: defer.primary.node.as_deref().map(JsPlanNode),
+                },
+                deferred: defer
+                    .deferred
+                    .iter()
+                    .map(|deferred| JsDeferredNode {
+                        depends: &deferred.depends,
+                        label: &deferred.label,
+                        query_path: &deferred.query_path,
+                        subselection: &deferred.subselection,
+                        node: deferred.node.as_deref().map(JsPlanNode),
+                    })
+                    .collect(),
+            },
+        }
+        .serialize(serializer)
+    }
+}
+
+impl Serialize for JsPlanNodes<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.0.iter().map(JsPlanNode))
     }
 }
 
@@ -149,7 +252,7 @@ pub struct QueryPlanTask<'a> {
 }
 
 impl<'a> Task for QueryPlanTask<'a> {
-    type Output = Value;
+    type Output = QueryPlan;
     type JsValue = Unknown<'a>;
 
     fn compute(&mut self) -> Result<Self::Output, napi::Error> {
@@ -168,6 +271,6 @@ impl<'a> Task for QueryPlanTask<'a> {
         env: napi::Env,
         output: Self::Output,
     ) -> Result<Self::JsValue, napi::Error> {
-        env.to_js_value(&output)
+        env.to_js_value(&JsQueryPlan(&output))
     }
 }
