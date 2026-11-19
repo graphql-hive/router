@@ -690,6 +690,61 @@ mod tests {
     }
 
     #[test]
+    fn entities_without_typename_are_copied_by_their_fragment_type() {
+        use crate::query_planner::planner::plan_nodes::EntityReuse;
+        // the planner doesn't ask for `__typename` where it knows the type. `top` came without
+        // it, `again` has one entity with and one without, all of them are the same P
+        let data: Value<'_> = sonic_rs::from_str(
+            r#"{
+            "top": [{"id":"1", "name":"A"}],
+            "again": [{"__typename":"P", "id":"1"}, {"id":"1"}]
+        }"#,
+        )
+        .unwrap();
+        let selection = |query: &str| {
+            let definition = parse_operation(query).definitions.remove(0);
+            let graphql_tools::parser::query::Definition::Operation(
+                graphql_tools::parser::query::OperationDefinition::SelectionSet(selection),
+            ) = definition
+            else {
+                panic!("selection");
+            };
+            RequiresSelectionSet::from(&SelectionSet::from(selection))
+        };
+        let requires = selection("{ ... on P { __typename id } }");
+        let reuse = EntityReuse {
+            sources: vec![vec![PathSegment::Field("top".into()), PathSegment::List].into()],
+            copy: selection("{ ... on P { __typename name } }"),
+        };
+        let possible_types = PossibleTypes::default();
+        let path: FlattenNodePath =
+            vec![PathSegment::Field("again".into()), PathSegment::List].into();
+        let Collected {
+            targets,
+            copies,
+            groups,
+        } = collect_context_entities(
+            &data,
+            [path.as_ref()],
+            &requires,
+            None,
+            &None,
+            &possible_types,
+            None,
+            Some(&reuse),
+        );
+        assert_eq!(
+            targets[0].as_slice(),
+            [
+                Some(EntityRef::Copied { index: 0 }),
+                Some(EntityRef::Copied { index: 0 })
+            ]
+        );
+        assert_eq!(sonic_rs::to_string(&copies).unwrap(), r#"[{"name":"A"}]"#);
+        assert_eq!(groups[0].count, 0, "nothing goes to the subgraph");
+    }
+
+    #[test]
     fn ancestor_cache_invalidates_on_entity_local_values() {
         // all posts share the same user, only the entity-local code differs, so the cached
         // parent alone must not decide the group

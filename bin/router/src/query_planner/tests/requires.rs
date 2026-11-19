@@ -27,7 +27,6 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
         Fetch(service: "inventory") {
           {
             products {
-              __typename
               upc
             }
           }
@@ -101,7 +100,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "inventory",
             "operationKind": "query",
-            "operation": "{products{__typename upc}}"
+            "operation": "{products{upc}}"
           },
           {
             "kind": "Flatten",
@@ -238,7 +237,6 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
         Fetch(service: "inventory") {
           {
             products {
-              __typename
               upc
             }
           }
@@ -287,7 +285,7 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "inventory",
             "operationKind": "query",
-            "operation": "{products{__typename upc}}"
+            "operation": "{products{upc}}"
           },
           {
             "kind": "Flatten",
@@ -384,7 +382,6 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
         Fetch(service: "products") {
           {
             products {
-              __typename
               upc
               price
             }
@@ -419,7 +416,7 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "{products{__typename upc price}}"
+            "operation": "{products{upc price}}"
           },
           {
             "kind": "Flatten",
@@ -486,7 +483,6 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
         Fetch(service: "products") {
           {
             products {
-              __typename
               upc
               price
             }
@@ -522,7 +518,7 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "{products{__typename upc price}}"
+            "operation": "{products{upc price}}"
           },
           {
             "kind": "Flatten",
@@ -588,7 +584,6 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
         Fetch(service: "products") {
           {
             products {
-              __typename
               upc
               price
               weight
@@ -625,7 +620,7 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "{products{__typename upc price weight}}"
+            "operation": "{products{upc price weight}}"
           },
           {
             "kind": "Flatten",
@@ -696,7 +691,6 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
         Fetch(service: "products") {
           {
             products {
-              __typename
               upc
               price
               weight
@@ -734,7 +728,7 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "{products{__typename upc price weight}}"
+            "operation": "{products{upc price weight}}"
           },
           {
             "kind": "Flatten",
@@ -806,7 +800,6 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
         Fetch(service: "products") {
           {
             products {
-              __typename
               upc
               price
               weight
@@ -845,7 +838,7 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "{products{__typename upc price weight}}"
+            "operation": "{products{upc price weight}}"
           },
           {
             "kind": "Flatten",
@@ -920,7 +913,6 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
             b {
               id
               a {
-                __typename
                 id
                 compositeId {
                   two
@@ -978,7 +970,7 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "{b{id a{__typename id compositeId{two three}}}}"
+            "operation": "{b{id a{id compositeId{two three}}}}"
           },
           {
             "kind": "Flatten",
@@ -1095,7 +1087,6 @@ fn deep_requires() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             feed {
-              __typename
               id
             }
           }
@@ -1111,7 +1102,6 @@ fn deep_requires() -> Result<(), Box<dyn Error>> {
             {
               ... on Post {
                 comments(limit: 3) {
-                  __typename
                   id
                 }
               }
@@ -1187,9 +1177,7 @@ fn requires_reentry_selects_entity_typename() -> Result<(), Box<dyn Error>> {
         Fetch(service: "subgraph-a") {
           {
             productSearchResult(partialCriteria: "partialCriteria") {
-              __typename
               searchCriteria {
-                __typename
                 partialCriteria
               }
             }
@@ -1267,7 +1255,6 @@ fn chained_requires_after_entity_hop() -> Result<(), Box<dyn Error>> {
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -1283,7 +1270,6 @@ fn chained_requires_after_entity_hop() -> Result<(), Box<dyn Error>> {
             {
               ... on User {
                 orders {
-                  __typename
                   id
                   sku
                 }
@@ -1361,7 +1347,6 @@ fn requires_from_two_subgraphs_after_entity_hop() -> Result<(), Box<dyn Error>> 
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -1377,7 +1362,6 @@ fn requires_from_two_subgraphs_after_entity_hop() -> Result<(), Box<dyn Error>> 
             {
               ... on User {
                 orders {
-                  __typename
                   id
                   sku
                 }
@@ -1455,7 +1439,6 @@ fn requires_after_two_entity_hops() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             user {
-              __typename
               id
             }
           }
@@ -1471,7 +1454,6 @@ fn requires_after_two_entity_hops() -> Result<(), Box<dyn Error>> {
             {
               ... on User {
                 cart {
-                  __typename
                   id
                 }
               }
@@ -1489,7 +1471,6 @@ fn requires_after_two_entity_hops() -> Result<(), Box<dyn Error>> {
             {
               ... on Cart {
                 orders {
-                  __typename
                   id
                   sku
                 }

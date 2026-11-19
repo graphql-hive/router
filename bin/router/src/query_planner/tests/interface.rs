@@ -320,7 +320,6 @@ fn object_query_with_nested_object_field() -> Result<(), Box<dyn Error>> {
         Fetch(service: "b") {
           {
             chat(id: "c1") {
-              __typename
               id
               text
             }
@@ -379,7 +378,6 @@ fn object_query_with_nested_list_field() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             account(id: "a1") {
-              __typename
               id
               username
             }

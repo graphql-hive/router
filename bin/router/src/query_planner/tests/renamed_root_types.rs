@@ -102,7 +102,6 @@ fn mutation_on_renamed_root_mutation_type() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           mutation {
             addProduct(input: {name: "new", price: 599.99}) {
-              __typename
               name
               price
               id

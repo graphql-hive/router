@@ -12,7 +12,8 @@ use tracing::{instrument, trace};
 use crate::query_planner::{
     ast::{
         merge_path::{MergePath, Segment},
-        selection_set::find_selection_set_by_path,
+        selection_item::SelectionItem,
+        selection_set::{find_selection_set_by_path, SelectionSet},
     },
     planner::fetch::{
         error::FetchGraphError,
@@ -588,11 +589,24 @@ impl FetchStepData<MultiTypeFetchStep> {
 
         // We must already have `other`'s input at that path.
         // If we do not, the fields we move here would have no object to sit in.
+        // `__typename` doesn't count, we may not ask for it when the type is known, and the
+        // merged fields don't go through a representation anyway.
         let path = other.response_path.slice_from(self.response_path.len());
+        let is_typename = |item: &SelectionItem| matches!(item, SelectionItem::Field(field) if field.name == "__typename" && field.alias.is_none());
         self.output
             .selections_for_definition(output_type)
             .and_then(|output| find_selection_set_by_path(output, &path))
-            .is_some_and(|at_path| at_path.contains(input_selections))
+            .is_some_and(|at_path| {
+                at_path.contains(input_selections)
+                    || at_path.contains(&SelectionSet {
+                        items: input_selections
+                            .items
+                            .iter()
+                            .filter(|item| !is_typename(item))
+                            .cloned()
+                            .collect(),
+                    })
+            })
     }
 
     pub fn has_arguments_conflicts_with(&self, other: &Self) -> bool {

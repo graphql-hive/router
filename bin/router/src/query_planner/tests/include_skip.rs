@@ -28,7 +28,6 @@ fn include_basic_test() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           query ($bool:Boolean) {
             product {
-              __typename
               price
               id
               ... on Product @include(if: $bool) {
@@ -176,7 +175,6 @@ fn skip_basic_test() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           query ($bool:Boolean=false) {
             product {
-              __typename
               price
               id
               ... on Product @skip(if: $bool) {
@@ -250,7 +248,6 @@ fn skip_and_include_field_condition_test() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           query ($include:Boolean=true,$skip:Boolean=false) {
             product {
-              __typename
               price
               id
               ... on Product @skip(if: $skip) @include(if: $include) {
@@ -761,7 +758,6 @@ fn qp_include_field_level() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           query ($bool:Boolean) {
             product {
-              __typename
               price
               id
               ... on Product @include(if: $bool) {
@@ -824,7 +820,6 @@ fn qp_include_field_level_unconditional_before_conditional() -> Result<(), Box<d
         Fetch(service: "a") {
           query ($bool:Boolean) {
             product {
-              __typename
               price
               id
               ... on Product @include(if: $bool) {
@@ -888,7 +883,6 @@ fn qp_include_field_level_all_merged_fields_conditional() -> Result<(), Box<dyn 
         Fetch(service: "a") {
           query ($bool:Boolean) {
             product {
-              __typename
               price
               id
               ... on Product @include(if: $bool) {
@@ -948,7 +942,6 @@ fn qp_skip_field_level() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           query ($bool:Boolean) {
             product {
-              __typename
               price
               id
               ... on Product @skip(if: $bool) {
@@ -1011,7 +1004,6 @@ fn qp_skip_field_level_unconditional_before_conditional() -> Result<(), Box<dyn 
         Fetch(service: "a") {
           query ($bool:Boolean) {
             product {
-              __typename
               price
               id
               ... on Product @skip(if: $bool) {
@@ -1076,7 +1068,6 @@ fn qp_skip_field_level_all_merged_fields_conditional() -> Result<(), Box<dyn Err
         Fetch(service: "a") {
           query ($bool:Boolean) {
             product {
-              __typename
               price
               id
               ... on Product @skip(if: $bool) {
@@ -1139,7 +1130,6 @@ fn qp_skip_and_include_field_level_all_merged_fields_conditional() -> Result<(),
         Fetch(service: "a") {
           query ($include:Boolean,$skip:Boolean) {
             product {
-              __typename
               price
               id
               ... on Product @skip(if: $skip) @include(if: $include) {
@@ -1202,7 +1192,6 @@ fn qp_mixed_include_skip_field_level_keeps_conditions_scoped() -> Result<(), Box
         Fetch(service: "a") {
           query ($include:Boolean,$skip:Boolean) {
             product {
-              __typename
               price
               id
               ... on Product @include(if: $include) {
@@ -1284,7 +1273,6 @@ fn qp_nested_include_skip_conditions_in_complex_products_query() -> Result<(), B
         Fetch(service: "products") {
           {
             topProducts {
-              __typename
               name
               upc
             }
@@ -1303,12 +1291,10 @@ fn qp_nested_include_skip_conditions_in_complex_products_query() -> Result<(), B
                 reviews {
                   body
                   author @skip(if: $skipAuthor) {
-                    __typename
                     id
                     reviews @include(if: $nestedReviews) {
                       body
                       product @include(if: $product) {
-                        __typename
                         upc
                       }
                     }
@@ -1590,7 +1576,6 @@ fn qp_abstract_union_member_conditions_stay_scoped() -> Result<(), Box<dyn Error
             }
           }
           fragment a on Product {
-            __typename
             id
           }
         },
@@ -1665,7 +1650,6 @@ fn conditional_root_fragment_survives_merges() -> Result<(), Box<dyn Error>> {
           query ($x:Boolean!) {
             ... on Query @include(if: $x) {
               userInB {
-                __typename
                 id
                 ... on User @include(if: $x) {
                   __typename
@@ -1810,7 +1794,6 @@ fn batched_entity_calls_keep_the_condition_of_their_fragment() -> Result<(), Box
         Fetch(service: "accounts") {
           {
             users {
-              __typename
               id
             }
           }
@@ -1900,7 +1883,6 @@ fn condition_kept_when_another_branch_fetches_the_same_field() -> Result<(), Box
         Fetch(service: "users") {
           query ($c:Boolean!) {
             user {
-              __typename
               id
               ... on User @skip(if: $c) {
                 __typename
@@ -1938,7 +1920,6 @@ fn condition_kept_when_another_branch_fetches_the_same_field() -> Result<(), Box
             _e0: _entities(representations: $__batch_reps_0) {
               ... on User {
                 orders {
-                  __typename
                   id
                 }
               }
@@ -2053,7 +2034,6 @@ fn field_condition_kept_when_the_field_is_also_unconditional() -> Result<(), Box
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -2798,7 +2778,6 @@ fn abstract_field_selected_again_under_a_condition_in_an_entity_call_asks_for_it
         Fetch(service: "books") {
           {
             books {
-              __typename
               id
             }
           }

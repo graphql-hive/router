@@ -30,7 +30,6 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
         Fetch(service: "products") {
           {
             products {
-              __typename
               upc
             }
           }
@@ -67,7 +66,7 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "{products{__typename upc}}"
+            "operation": "{products{upc}}"
           },
           {
             "kind": "Flatten",

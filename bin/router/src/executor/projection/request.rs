@@ -124,16 +124,24 @@ pub fn project_requires(
 
             let parent_first = first;
             let mut first = true;
-            let type_keys = subgraph_keys.and_then(|subgraph_keys| {
-                Value::object_get(entity_obj, TYPENAME_FIELD_NAME)
-                    .and_then(Value::as_str)
-                    .and_then(|type_name| subgraph_keys.get(type_name))
-            });
+            // an entity of an object type comes without `__typename` when the planner knew its
+            // type, the fragment of the selection has it then
+            let type_name = Value::object_get(entity_obj, TYPENAME_FIELD_NAME)
+                .and_then(Value::as_str)
+                .or_else(|| {
+                    (!nested)
+                        .then(|| root_type_condition(requires_selections))
+                        .flatten()
+                });
+            let type_keys = subgraph_keys
+                .zip(type_name)
+                .and_then(|(subgraph_keys, type_name)| subgraph_keys.get(type_name));
             let object_start_offset = buffer.len();
             let applied = project_requires_map_mut(
                 possible_types,
                 requires_selections,
                 entity_obj,
+                type_name,
                 buffer,
                 &mut first,
                 response_key,
@@ -174,9 +182,7 @@ pub fn project_requires(
                 && !applied.missing_field
                 && (nested || (applied.typename && typename_finds_it))
             {
-                if let Some(type_name) =
-                    Value::object_get(entity_obj, TYPENAME_FIELD_NAME).and_then(Value::as_str)
-                {
+                if let Some(type_name) = type_name {
                     write_response_key(parent_first, response_key, buffer);
                     buffer.put(OPEN_BRACE);
                     write_typename_field(buffer, type_name);
@@ -208,21 +214,33 @@ struct AppliedSelections<'r> {
     found_response_keys: SmallVec<[&'r str; 4]>,
 }
 
+/// The type condition of the first fragment at the root of an entity's selection. Only read for
+/// an entity without `__typename`, which the planner leaves out only for an object type, so
+/// there's one fragment then.
+fn root_type_condition<'r>(requires_selections: RequiresSelectionSetRef<'r>) -> Option<&'r str> {
+    requires_selections
+        .iter()
+        .find_map(|selection| match selection {
+            RequiresSelection::InlineFragment { type_condition, .. } => Some(type_condition),
+            _ => None,
+        })
+}
+
 /// `keys_known` is whether `entity_obj` is the entity and its subgraph's keys are known. It has
 /// a complete key then, so a field it misses is sent as `null`.
+/// `type_name` is the object's `__typename`, or the type it's known to have when it has none.
 #[allow(clippy::too_many_arguments)]
 fn project_requires_map_mut<'r>(
     possible_types: &PossibleTypes,
     requires_selections: RequiresSelectionSetRef<'r>,
     entity_obj: &Vec<(&str, Value<'_>)>,
+    type_name: Option<&str>,
     buffer: &mut Vec<u8>,
     first: &mut bool,
     parent_response_key: Option<&str>,
     parent_first: bool,
     keys_known: bool,
 ) -> AppliedSelections<'r> {
-    // First, check if __typename is present in the entity object, we'll use it later
-    let type_name = Value::object_get(entity_obj, TYPENAME_FIELD_NAME).and_then(Value::as_str);
     let mut applied = AppliedSelections::default();
 
     for requires_selection in requires_selections.iter() {
@@ -305,15 +323,16 @@ fn project_requires_map_mut<'r>(
                 selections,
                 ..
             } => {
-                let type_name = type_name.unwrap_or(type_condition);
+                let matched = type_name.unwrap_or(type_condition);
                 // For projection, both sides of the condition are valid
-                if possible_types.entity_satisfies_type_condition(type_name, type_condition)
-                    || possible_types.entity_satisfies_type_condition(type_condition, type_name)
+                if possible_types.entity_satisfies_type_condition(matched, type_condition)
+                    || possible_types.entity_satisfies_type_condition(type_condition, matched)
                 {
                     let fragment = project_requires_map_mut(
                         possible_types,
                         selections,
                         entity_obj,
+                        type_name,
                         buffer,
                         first,
                         parent_response_key,
@@ -1103,5 +1122,60 @@ mod tests {
             }
           ]
         "#);
+    }
+
+    /// The planner doesn't ask for `__typename` where it knows the type, like an object type
+    /// that isn't reached through a type condition. The representation takes it from the
+    /// fragment then, the same as if the subgraph had sent it.
+    #[test]
+    fn project_requires_takes_typename_from_the_fragment_when_missing() {
+        let requires = "... on Product { __typename upc }";
+        let with =
+            project_requires_pretty(requires, json!({ "__typename": "Product", "upc": "1" }));
+        let without = project_requires_pretty(requires, json!({ "upc": "1" }));
+        assert_eq!(with, without);
+        assert!(without.unwrap().contains(r#""__typename": "Product""#));
+
+        // its keys are found by the fragment's type too
+        let keys = keys_of(&[("Product", &["upc"])]);
+        let with_keys =
+            project_requires_pretty_with_keys(requires, json!({ "upc": "1" }), Some(&keys));
+        assert_eq!(with_keys, with);
+        assert_eq!(
+            project_requires_pretty_with_keys(requires, json!({ "name": "x" }), Some(&keys)),
+            None,
+            "an entity without its key is still left out"
+        );
+
+        // an object inside the representation doesn't get one made up
+        assert_eq!(
+            project_requires_pretty(
+                "... on Product { __typename upc dimensions { ... on Dimensions { size } } }",
+                json!({ "upc": "1", "dimensions": { "size": 2 } }),
+            )
+            .unwrap()
+            .matches("__typename")
+            .count(),
+            1
+        );
+    }
+
+    /// The same entity hashes the same with or without `__typename`, so one fetched where its
+    /// type is known still matches one fetched with it, for deduplication and entity reuse.
+    #[test]
+    fn missing_typename_hashes_as_the_fragment_type() {
+        let requires = requires_from_str("... on Product { __typename upc }");
+        let hash = |entity_json: sonic_rs::Value| {
+            Value::from(entity_json.as_ref())
+                .to_hash(requires.root_selections(), &PossibleTypes::default())
+        };
+        assert_eq!(
+            hash(json!({ "__typename": "Product", "upc": "1" })),
+            hash(json!({ "upc": "1" })),
+        );
+        assert_ne!(
+            hash(json!({ "__typename": "Book", "upc": "1" })),
+            hash(json!({ "upc": "1" })),
+        );
     }
 }

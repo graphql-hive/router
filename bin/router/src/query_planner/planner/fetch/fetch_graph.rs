@@ -26,7 +26,9 @@ use crate::query_planner::planner::tree::query_tree_node::{MutationFieldPosition
 use crate::query_planner::planner::walker::path::OperationPath;
 use crate::query_planner::planner::walker::pathfinder::can_satisfy_edge;
 use crate::query_planner::planner::QueryPlannerOptions;
-use crate::query_planner::state::supergraph_state::{OperationKind, SubgraphName, SupergraphState};
+use crate::query_planner::state::supergraph_state::{
+    OperationKind, SubgraphName, SupergraphDefinition, SupergraphState,
+};
 use crate::query_planner::utils::cancellation::CancellationToken;
 use ahash::{HashMap, HashMapExt};
 use petgraph::algo::has_path_connecting;
@@ -526,6 +528,25 @@ fn create_noop_fetch_step(
         context_variable_definitions: Vec::new(),
         context_producers: BTreeSet::new(),
     })
+}
+
+/// Whether the objects at `path` of a fetch, `response_path` in the response, can only be of
+/// `type_name`. Then the executor takes their `__typename` from the input's fragment, so the
+/// fetch doesn't have to ask for it with every object. That's an object type not reached through
+/// a type condition, an interface or a union always needs it.
+fn typename_is_known(
+    supergraph: &SupergraphState,
+    type_name: &str,
+    path: &MergePath,
+    response_path: &MergePath,
+) -> bool {
+    matches!(
+        supergraph.definitions.get(type_name),
+        Some(SupergraphDefinition::Object(_))
+    ) && !matches!(
+        path.last().or(response_path.last()),
+        Some(Segment::TypeCondition(..))
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1067,10 +1088,12 @@ fn process_entity_move_edge(
             .insert(FetchStepFlags::USED_FOR_TYPE_CONDITION);
     }
 
-    let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
-    parent_fetch_step
-        .output
-        .add_selection_typename(fetch_path)?;
+    if !typename_is_known(supergraph, input_type_name, fetch_path, response_path) {
+        let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
+        parent_fetch_step
+            .output
+            .add_selection_typename(fetch_path)?;
+    }
 
     // Make the fetch step a child of the parent fetch step
     trace!(
@@ -2048,9 +2071,16 @@ fn process_requires_field_edge(
         .output
         .add_at_path(&key_to_reenter_at, key_output)?;
 
-    real_parent_fetch_step
-        .output
-        .add_selection_typename(&key_to_reenter_at)?;
+    if !typename_is_known(
+        supergraph,
+        head_type_name,
+        &key_to_reenter_at,
+        response_path,
+    ) {
+        real_parent_fetch_step
+            .output
+            .add_selection_typename(&key_to_reenter_at)?;
+    }
 
     // On a `@provides` path, some required fields only exist on that path. The subgraph can't
     // return them from `_entities`, so the fetch that went through the path gets them, and

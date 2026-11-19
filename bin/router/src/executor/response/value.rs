@@ -173,7 +173,7 @@ impl<'a> Value<'a> {
 
         match self {
             Value::Object(obj) => {
-                Value::hash_object_with_requires(state, obj, selections, possible_types);
+                Value::hash_object_with_requires(state, obj, selections, possible_types, None);
             }
             Value::Array(arr) => {
                 for item in arr {
@@ -192,11 +192,15 @@ impl<'a> Value<'a> {
         }
     }
 
+    /// `fragment_type` is the type of the fragment `selections` are in. An object of an object
+    /// type comes without `__typename` when the planner knew its type, it hashes as if it had
+    /// that one, so it matches the same entity fetched with `__typename`.
     fn hash_object_with_requires<H: Hasher>(
         state: &mut H,
         obj: &[(&'a str, Value<'a>)],
         selections: RequiresSelectionSetRef<'_>,
         possible_types: &PossibleTypes,
+        fragment_type: Option<&str>,
     ) {
         // Read __typename at most once per object, and only when a fragment
         // needs it. Also remember when it is missing: each fragment then
@@ -212,6 +216,11 @@ impl<'a> Value<'a> {
                         let (key, value) = &obj[idx];
                         key.hash(state);
                         value.hash_with_requires(state, selections, possible_types);
+                    } else if let Some(fragment_type) =
+                        fragment_type.filter(|_| name == TYPENAME_FIELD_NAME)
+                    {
+                        TYPENAME_FIELD_NAME.hash(state);
+                        fragment_type.hash(state);
                     }
                 }
                 RequiresSelection::InlineFragment {
@@ -226,7 +235,13 @@ impl<'a> Value<'a> {
                         .unwrap_or(type_condition);
 
                     if possible_types.entity_satisfies_type_condition(type_name, type_condition) {
-                        Value::hash_object_with_requires(state, obj, selections, possible_types);
+                        Value::hash_object_with_requires(
+                            state,
+                            obj,
+                            selections,
+                            possible_types,
+                            Some(type_name),
+                        );
                     }
                 }
                 RequiresSelection::FragmentSpread(_) => {
