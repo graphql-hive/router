@@ -61,19 +61,19 @@ ntex = { version = "=4.8.0", features = ["tokio", "rustls", "compress"] }
 ntex-http = { version = "=2.2.0"}
 ntex-codec = { version = "=2.0.0"}
 ntex-io = { version = "=4.7.2"}
-ntex-net = { version = "=4.10.3"}
+ntex-net = { version = "=4.11.0"}
 ntex-router = { version = "=2.3.0"}
 ntex-bytes = { version = "=1.15.2"}
 ntex-dispatcher = { version = "=4.4.1"}
 ntex-error = { version = "=3.1.0" }
-ntex-h2 = { version = "=4.4.3" }
-ntex-rt = { version = "=4.8.1" }
+ntex-h2 = { version = "=4.5.0" }
+ntex-rt = { version = "=4.9.0" }
 ntex-macros = { version = "=4.7.0" }
 ntex-httparse = { version = "=2.4.0" }
-ntex-server = { version = "=4.5.2" }
+ntex-server = { version = "=4.6.0" }
 ntex-service = { version = "=5.7.2" }
 ntex-tls = { version = "=4.8.0" }
-ntex-util = { version = "=4.9.0" }
+ntex-util = { version = "=4.11.0" }
 tonic = { version = "0.14.6", features = ["tls-aws-lc"] }
 reqwest = { version = "0.12.23", default-features = false, features = ["http2", "rustls-tls"] }
 reqwest-retry = "0.8.0"
