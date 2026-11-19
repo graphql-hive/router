@@ -355,11 +355,11 @@ fn next_field_waits_for_conditional_entity_fetch_of_previous_one() -> Result<(),
     Ok(())
 }
 
-/// `create` and `multiply` are both in `a`, so they go in one request, like in Apollo, even though
-/// `create` needs `b` for `isExpensive`. `b` runs after that request, once the product exists.
+/// `create` and `multiply` are both in `a`, but `create` needs `b` for `isExpensive`.
+/// A mutation field is done only when all of its data is, so `double` waits for `b`
+/// in a request of its own, and can't change what `b` reads.
 #[test]
-fn neighbours_in_one_graph_share_a_fetch_when_first_needs_another_fetch(
-) -> Result<(), Box<dyn Error>> {
+fn neighbours_in_one_graph_wait_for_the_first_ones_entity_fetch() -> Result<(), Box<dyn Error>> {
     init_logger();
     let document = parse_operation(
         r#"
@@ -384,7 +384,6 @@ fn neighbours_in_one_graph_share_a_fetch_when_first_needs_another_fetch(
               id
               price
             }
-            double: multiply(by: 2)
           }
         },
         Flatten(path: "create") {
@@ -403,6 +402,11 @@ fn neighbours_in_one_graph_share_a_fetch_when_first_needs_another_fetch(
             }
           },
         },
+        Fetch(service: "a") {
+          mutation {
+            double: multiply(by: 2)
+          }
+        },
       },
     },
     "#);
@@ -410,8 +414,8 @@ fn neighbours_in_one_graph_share_a_fetch_when_first_needs_another_fetch(
     Ok(())
 }
 
-/// `create` and `double` go to `a` in one request. `count` is in `c`, so it waits for the whole
-/// group, `isExpensive` from `b` included.
+/// `create` needs `b` for `isExpensive`, so `double` waits for it in a request of its own,
+/// and `count` in `c` waits for `double`.
 #[test]
 fn next_graph_waits_for_entity_fetch_of_the_group() -> Result<(), Box<dyn Error>> {
     init_logger();
@@ -439,7 +443,6 @@ fn next_graph_waits_for_entity_fetch_of_the_group() -> Result<(), Box<dyn Error>
               id
               price
             }
-            double: multiply(by: 2)
           }
         },
         Flatten(path: "create") {
@@ -457,6 +460,11 @@ fn next_graph_waits_for_entity_fetch_of_the_group() -> Result<(), Box<dyn Error>
               }
             }
           },
+        },
+        Fetch(service: "a") {
+          mutation {
+            double: multiply(by: 2)
+          }
         },
         Fetch(service: "c") {
           mutation {
@@ -558,7 +566,6 @@ fn next_graph_waits_for_entity_fetch_to_the_same_graph() -> Result<(), Box<dyn E
               id
               price
             }
-            double: multiply(by: 2)
           }
         },
         Flatten(path: "create") {
@@ -576,6 +583,11 @@ fn next_graph_waits_for_entity_fetch_to_the_same_graph() -> Result<(), Box<dyn E
               }
             }
           },
+        },
+        Fetch(service: "a") {
+          mutation {
+            double: multiply(by: 2)
+          }
         },
         Fetch(service: "b") {
           mutation {
@@ -1077,9 +1089,10 @@ fn shareable_mutation_fields_stay_in_one_fetch() -> Result<(), Box<dyn Error>> {
 #[test]
 fn shareable_mutation_field_between_fields_of_one_subgraph() -> Result<(), Box<dyn Error>> {
     init_logger();
-    // `first` and `third` only run in b. `second` reads `total` right in a,
-    // but in b with an entity call it keeps all three mutation fields in one fetch,
-    // instead of b, a, b.
+    // `first` and `third` only run in b. `second` reads `total` right in a.
+    // In b it'd need an entity call to a, and `third` has to wait for that,
+    // as `second` is done only when `total` is. So b can't run all three in one request,
+    // and `second` goes to a.
     let supergraph = r#"
         enum join__Graph {
             A @join__graph(name: "a", url: "")
@@ -1111,11 +1124,67 @@ fn shareable_mutation_field_between_fields_of_one_subgraph() -> Result<(), Box<d
         Fetch(service: "b") {
           mutation {
             first
+          }
+        },
+        Fetch(service: "a") {
+          mutation {
+            second {
+              total
+            }
+          }
+        },
+        Fetch(service: "b") {
+          mutation {
+            third
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn mutation_field_waits_for_entity_fetch_of_the_field_before() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // All three run in b, but `second` needs a for `total`. `second` is done only when `total`
+    // is, so `third` waits for that call, and can't change what a reads.
+    let supergraph = r#"
+        enum join__Graph {
+            A @join__graph(name: "a", url: "")
+            B @join__graph(name: "b", url: "")
+        }
+        type Query @join__type(graph: A) @join__type(graph: B) {
+            ping: Boolean @join__field(graph: A)
+        }
+        type Mutation @join__type(graph: B) {
+            first: Boolean
+            second: Order
+            third: Boolean
+        }
+        type Order @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
+            id: ID!
+            total: Int @join__field(graph: A)
+        }
+    "#;
+    let query_plan = build_query_plan_from_sdl(
+        supergraph,
+        parse_operation("mutation { first second { total } third }"),
+        Default::default(),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          mutation {
+            first
             second {
               __typename
               id
             }
-            third
           }
         },
         Flatten(path: "second") {
@@ -1132,6 +1201,11 @@ fn shareable_mutation_field_between_fields_of_one_subgraph() -> Result<(), Box<d
               }
             }
           },
+        },
+        Fetch(service: "b") {
+          mutation {
+            third
+          }
         },
       },
     },
