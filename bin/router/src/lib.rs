@@ -674,8 +674,14 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     // ntex pins workers to cores by default, but the plan ignores cgroup cpu quotas and
     // starts at the same core for every server (main, callback, metrics) and every pod on
     // the node. blocking pool threads inherit the pin too, so let the os scheduler place them
+    //
+    // with no pinning, ntex's default balancing picks the less busy of two random workers.
+    // when many connections open at once, the worker that was just busy looks busy for all
+    // of them and can end up with none, sitting idle while the others queue. hand them out
+    // in turn instead.
     server = server
         .affinity(ntex::server::Affinity::Disabled)
+        .load_balancing(ntex::server::LoadBalancing::RoundRobin)
         .graceful_shutdown_timeout(router_config.shutdown_timeout());
 
     let tls_config = shared_state_clone
