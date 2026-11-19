@@ -1,4 +1,18 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.54 (2026-11-19)
+
+### Fixes
+
+#### Fetch ids and dependencies in query plans
+
+Every `Fetch` and `BatchFetch` node in the plan now has its `id` and `dependsOn`, the ids of the fetches whose data it reads. A `BatchFetch` also has `completes`, the ids of every fetch merged into it. A fetch can start as soon as the fetches it depends on are done, the way the router schedules them, instead of waiting for its whole `Parallel`/`Sequence` wave.
+
+The plan types also lose `operationName` on `FetchNode` and `BatchFetchNode`, which the plan never had, and gain `customScalarPaths` and the `omitFromResponse` flag of required fields, which it did have. `DeferPrimary.subselection` and `DeferPrimary.node` are `null` when missing, as the plan has them, instead of optional. The `{ kind: "ValueSetter" }` rewrite and the `FragmentSpread` required selection are gone, the plan never has them.
+
+#### `omitFromResponse` in query plans
+
+A required field that is left out of the response is now marked `omitFromResponse` in the query plan's JSON, in camelCase like every other field, instead of `omit_from_response`.
+
 ## 0.0.53 (2026-11-16)
 
 ### Fixes

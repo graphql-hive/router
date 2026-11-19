@@ -116,6 +116,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.3.17 (2026-11-19)
+
+### Fixes
+
+#### `omitFromResponse` in query plans
+
+A required field that is left out of the response is now marked `omitFromResponse` in the query plan's JSON, in camelCase like every other field, instead of `omit_from_response`.
+
+#### Spread new connections over all HTTP workers
+
+The HTTP server now hands new client connections to its workers in turn. Before, it sent each connection to the less busy of two random workers. When many connections opened at once, a worker that had just been busy looked busy for all of them and could get none, so it sat idle while the other workers queued requests. With 4 workers and 50 connections opened together, one worker regularly got no connections at all.
+
 ## 0.3.16 (2026-11-18)
 
 ### Fixes

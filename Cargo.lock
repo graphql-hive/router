@@ -2790,7 +2790,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router"
-version = "0.3.16"
+version = "0.3.17"
 dependencies = [
  "ahash",
  "anyhow",
@@ -4611,7 +4611,7 @@ dependencies = [
 
 [[package]]
 name = "node-addon"
-version = "0.0.53"
+version = "0.0.54"
 dependencies = [
  "graphql-tools",
  "hive-router",
