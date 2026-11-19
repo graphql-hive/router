@@ -992,3 +992,150 @@ fn shareable_mutation_field_picks_subgraph_by_whole_plan() -> Result<(), Box<dyn
 
     Ok(())
 }
+
+#[test]
+fn shareable_mutation_fields_stay_in_one_fetch() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // Both subgraphs can run both fields, but only b has `customer`.
+    // Back to back mutation fields in the same subgraph go in one fetch,
+    // so `cancelOrder` goes to b too, even though a could run it just as well on its own.
+    let supergraph = r#"
+        enum join__Graph {
+            A @join__graph(name: "a", url: "")
+            B @join__graph(name: "b", url: "")
+        }
+        type Query @join__type(graph: A) @join__type(graph: B) {
+            ping: Boolean @join__field(graph: A)
+        }
+        type Mutation @join__type(graph: A) @join__type(graph: B) {
+            createOrder: Order
+            cancelOrder(id: ID): Boolean
+        }
+        type Order @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
+            id: ID!
+            total: Int
+            customer: Customer @join__field(graph: B)
+        }
+        type Customer @join__type(graph: B) {
+            name: String
+        }
+    "#;
+    let query_plan = build_query_plan_from_sdl(
+        supergraph,
+        parse_operation(
+            "mutation { createOrder { id total customer { name } } cancelOrder(id: 1) }",
+        ),
+        Default::default(),
+        Default::default(),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "b") {
+        mutation {
+          createOrder {
+            id
+            total
+            customer {
+              name
+            }
+          }
+          cancelOrder(id: 1)
+        }
+      },
+    },
+    "#);
+
+    // same the other way around
+    let query_plan = build_query_plan_from_sdl(
+        supergraph,
+        parse_operation(
+            "mutation { cancelOrder(id: 1) createOrder { id total customer { name } } }",
+        ),
+        Default::default(),
+        Default::default(),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "b") {
+        mutation {
+          cancelOrder(id: 1)
+          createOrder {
+            id
+            total
+            customer {
+              name
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn shareable_mutation_field_between_fields_of_one_subgraph() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // `first` and `third` only run in b. `second` reads `total` right in a,
+    // but in b with an entity call it keeps all three mutation fields in one fetch,
+    // instead of b, a, b.
+    let supergraph = r#"
+        enum join__Graph {
+            A @join__graph(name: "a", url: "")
+            B @join__graph(name: "b", url: "")
+        }
+        type Query @join__type(graph: A) @join__type(graph: B) {
+            ping: Boolean @join__field(graph: A)
+        }
+        type Mutation @join__type(graph: A) @join__type(graph: B) {
+            first: Boolean @join__field(graph: B)
+            second: Order
+            third: Boolean @join__field(graph: B)
+        }
+        type Order @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
+            id: ID!
+            total: Int @join__field(graph: A)
+        }
+    "#;
+    let query_plan = build_query_plan_from_sdl(
+        supergraph,
+        parse_operation("mutation { first second { total } third }"),
+        Default::default(),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          mutation {
+            first
+            second {
+              __typename
+              id
+            }
+            third
+          }
+        },
+        Flatten(path: "second") {
+          Fetch(service: "a") {
+            {
+              ... on Order {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                total
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
