@@ -38,6 +38,9 @@ pub struct QueryPlannerOptions {
     /// `traffic_shaping.entity_reuse`. Off, plans have nothing to copy and
     /// planning skips that work.
     pub entity_reuse: bool,
+    /// With `entity_reuse`, cut nested entities out of a fetch into follow-up fetches that copy
+    /// them, see `traffic_shaping.entity_reuse.split_nested_entities`.
+    pub split_nested_entities: bool,
     /// The most aliased `_entities` fields one entity request to a subgraph may carry.
     /// `None` means no limit: batches are never split, and all groups of contextual argument
     /// values go in one request.
@@ -54,6 +57,7 @@ impl Default for QueryPlannerOptions {
             experimental_abstract_type_folding: false,
             arguments_to_variables: true,
             entity_reuse: false,
+            split_nested_entities: false,
             max_aliases_per_request: None,
             subgraph_max_aliases_per_request: HashMap::new(),
         }

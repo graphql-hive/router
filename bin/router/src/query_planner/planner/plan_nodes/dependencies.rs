@@ -131,6 +131,15 @@ fn push_fetches<'p, S: PlanState>(
     }
 }
 
+/// The position of the fetch that completes `id`, a batch for a merged one
+pub(super) fn position_of(node: Option<&PlanNode<Planning>>, id: FetchId) -> Option<u32> {
+    let fetches = plan_fetches(node?);
+    fetches
+        .iter()
+        .position(|fetch| fetch_ids(fetch).is_some_and(|(completes, _)| completes.contains(&id)))
+        .map(|position| position as u32)
+}
+
 /// Each fetch's position, by id. Fetch ids count up from one, so a flat array holds them.
 /// `u32::MAX` where no fetch has that id. Fails when two fetches have one id, a dependency on it
 /// would pick one of them.

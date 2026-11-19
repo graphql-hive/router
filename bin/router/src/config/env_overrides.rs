@@ -153,8 +153,9 @@ impl EnvVarOverrides {
         }
 
         if let Some(entity_reuse) = self.traffic_shaping_entity_reuse.take() {
-            debug!(target: CONFIG_LOGGING_TARGET, value = entity_reuse, "overriding 'traffic_shaping.entity_reuse'");
-            config = config.set_override("traffic_shaping.entity_reuse", entity_reuse)?;
+            debug!(target: CONFIG_LOGGING_TARGET, value = entity_reuse, "overriding 'traffic_shaping.entity_reuse.enabled'");
+            // only whether it's on, the options from the config file stay
+            config = config.set_override("traffic_shaping.entity_reuse.enabled", entity_reuse)?;
         }
 
         if let Some(plugin_supergraph_runtimes) = self.plugin_supergraph_runtimes.take() {
@@ -362,6 +363,71 @@ telemetry:
         .unwrap();
 
         assert_eq!(config.telemetry.tracing.collect.sampling, 0.1);
+    }
+
+    fn config_with_file(overrides: EnvVarOverrides, yaml: &str) -> HiveRouterConfig {
+        overrides
+            .apply_overrides(Config::builder().add_source(File::from_str(yaml, FileFormat::Yaml)))
+            .unwrap()
+            .build()
+            .unwrap()
+            .try_deserialize::<HiveRouterConfig>()
+            .unwrap()
+    }
+
+    #[test]
+    fn entity_reuse_override_turns_it_on() {
+        let config = config_from_overrides(EnvVarOverrides {
+            traffic_shaping_entity_reuse: Some(true),
+            ..Default::default()
+        });
+
+        assert!(config.traffic_shaping.entity_reuse.enabled());
+        assert!(!config.traffic_shaping.entity_reuse.split_nested_entities());
+    }
+
+    #[test]
+    fn entity_reuse_override_wins_over_a_boolean_in_the_file() {
+        let config = config_with_file(
+            EnvVarOverrides {
+                traffic_shaping_entity_reuse: Some(false),
+                ..Default::default()
+            },
+            "traffic_shaping:\n  entity_reuse: true\n",
+        );
+
+        assert!(!config.traffic_shaping.entity_reuse.enabled());
+    }
+
+    #[test]
+    fn entity_reuse_override_keeps_the_options_from_the_file() {
+        let yaml = "traffic_shaping:\n  entity_reuse:\n    enabled: false\n    split_nested_entities: true\n";
+        let config = config_with_file(
+            EnvVarOverrides {
+                traffic_shaping_entity_reuse: Some(true),
+                ..Default::default()
+            },
+            yaml,
+        );
+
+        assert!(config.traffic_shaping.entity_reuse.enabled());
+        assert!(config.traffic_shaping.entity_reuse.split_nested_entities());
+    }
+
+    #[test]
+    fn entity_reuse_options_are_on_unless_turned_off() {
+        let config = config_with_file(
+            EnvVarOverrides::default(),
+            "traffic_shaping:\n  entity_reuse:\n    split_nested_entities: true\n",
+        );
+        assert!(config.traffic_shaping.entity_reuse.enabled());
+        assert!(config.traffic_shaping.entity_reuse.split_nested_entities());
+
+        let config = config_with_file(
+            EnvVarOverrides::default(),
+            "traffic_shaping:\n  entity_reuse:\n    enabled: false\n    split_nested_entities: true\n",
+        );
+        assert!(!config.traffic_shaping.entity_reuse.split_nested_entities());
     }
 
     #[test]

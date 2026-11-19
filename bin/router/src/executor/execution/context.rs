@@ -610,6 +610,7 @@ mod tests {
         let reuse = EntityReuse {
             sources: vec![vec![PathSegment::Field("top".into()), PathSegment::List].into()],
             copy: selection("{ __typename name }"),
+            unfilled_sources: false,
         };
         let possible_types = PossibleTypes::default();
         let path: FlattenNodePath =
@@ -663,6 +664,7 @@ mod tests {
         let reuse = EntityReuse {
             sources: vec![vec![PathSegment::Field("top".into()), PathSegment::List].into()],
             copy: selection("{ __typename name }"),
+            unfilled_sources: false,
         };
         let possible_types = PossibleTypes::default();
         let path: FlattenNodePath =

@@ -53,19 +53,28 @@ mod entity_reuse_e2e_tests {
         "{ topProducts { upc name reviews { author { reviews { product { upc name } } } } } }";
 
     async fn send(subgraphs: &TestSubgraphs<Started>, query: &str) -> sonic_rs::Value {
+        send_with(subgraphs, query, "true").await
+    }
+
+    /// `entity_reuse` is the value of `traffic_shaping.entity_reuse`
+    async fn send_with(
+        subgraphs: &TestSubgraphs<Started>,
+        query: &str,
+        entity_reuse: &str,
+    ) -> sonic_rs::Value {
         let router = TestRouter::builder()
             .with_subgraphs(subgraphs)
-            .inline_config(
+            .inline_config(format!(
                 r#"
                   supergraph:
                     source: file
                     path: supergraph.graphql
                   traffic_shaping:
-                    entity_reuse: true
+                    entity_reuse: {entity_reuse}
                     all:
                       dedupe_enabled: false
                   "#,
-            )
+            ))
             .build()
             .start()
             .await;
@@ -230,6 +239,77 @@ mod entity_reuse_e2e_tests {
         assert_eq!(
             mixed_deep_names(&body),
             [r#"1: "Table""#, "2: null", r#"1: "Table""#]
+        );
+    }
+
+    // The `reviews` call stops at the author's key, and the author's reviews copy from `me`.
+    // `reviews` is mocked to say who wrote the top product's review: user 1 is `me`, so its
+    // reviews copy. User 2 isn't anywhere in the response, so the split fetch asks `reviews`.
+    const SPLIT: &str = "{ me { id reviews { body } } topProducts(first: 1) { reviews { author { id reviews { body } } } } }";
+
+    fn split_subgraphs(author: &'static str) -> TestSubgraphs<Built> {
+        TestSubgraphs::builder()
+            .with_on_request(move |req| {
+                let body = req
+                    .body
+                    .as_ref()
+                    .map(|body| String::from_utf8_lossy(body).to_string())
+                    .unwrap_or_default();
+                if req.path != "/reviews" || !body.contains("_e0") {
+                    return None;
+                }
+                Some(ResponseLike::new(
+                    StatusCode::OK,
+                    Some(format!(
+                        r#"{{"data":{{"_e0":[{{"reviews":[{{"author":{{"__typename":"User","id":"{author}"}}}}]}}],"_e1":[{{"reviews":[{{"body":"mine"}}]}}]}}}}"#
+                    )),
+                    some_header_map! { http::header::CONTENT_TYPE => "application/json" },
+                ))
+            })
+            .build()
+    }
+
+    fn author_bodies(body: &sonic_rs::Value) -> Vec<String> {
+        body["data"]["topProducts"][0]["reviews"][0]["author"]["reviews"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|review| review["body"].as_str().unwrap().chars().take(11).collect())
+            .collect()
+    }
+
+    #[ntex::test]
+    async fn split_fetch_copies_what_the_response_has() {
+        let subgraphs = split_subgraphs("1").start().await;
+        let body = send_with(&subgraphs, SPLIT, "{ split_nested_entities: true }").await;
+        assert!(body.get("errors").is_none(), "unexpected errors: {body}");
+        assert_eq!(author_bodies(&body), ["mine"]);
+        assert_eq!(
+            body["data"]["me"]["reviews"].to_string(),
+            r#"[{"body":"mine"}]"#
+        );
+        let calls = entity_calls(&subgraphs, "reviews");
+        assert_eq!(calls.len(), 1, "only the batch goes out: {calls:?}");
+        assert!(
+            calls[0].contains("author{__typename id}"),
+            "the batch stops at the author's key: {}",
+            calls[0]
+        );
+    }
+
+    #[ntex::test]
+    async fn split_fetch_asks_for_what_the_response_lacks() {
+        let subgraphs = split_subgraphs("2").start().await;
+        let body = send_with(&subgraphs, SPLIT, "{ split_nested_entities: true }").await;
+        assert!(body.get("errors").is_none(), "unexpected errors: {body}");
+        // what the real `reviews` gives any user
+        assert_eq!(author_bodies(&body), ["Lorem ipsum", "Sed ut pers"]);
+        let calls = entity_calls(&subgraphs, "reviews");
+        assert_eq!(calls.len(), 2, "{calls:?}");
+        assert!(
+            calls[1].contains(r#""representations":[{"__typename":"User","id":"2"}]"#),
+            "{}",
+            calls[1]
         );
     }
 }

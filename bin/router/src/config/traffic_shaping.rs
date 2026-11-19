@@ -27,11 +27,12 @@ pub struct TrafficShapingConfig {
     #[serde(default)]
     pub http_client_mode: HttpClientMode,
     /// Copy entities that are already in the response instead of asking a subgraph for them
-    /// again. Off by default.
+    /// again. Off by default. `true`, or an object for its options.
     ///
-    /// Can also be set via the `ROUTER_TRAFFIC_SHAPING_ENTITY_REUSE` environment variable.
+    /// Whether it's on can also be set via the `ROUTER_TRAFFIC_SHAPING_ENTITY_REUSE`
+    /// environment variable.
     #[serde(default)]
-    pub entity_reuse: bool,
+    pub entity_reuse: EntityReuseConfig,
 
     #[serde(default)]
     /// Configuration for the router itself, e.g., for handling incoming requests, or other router-level traffic shaping configurations.
@@ -45,10 +46,67 @@ impl Default for TrafficShapingConfig {
             subgraphs: HashMap::new(),
             max_connections_per_host: default_max_connections_per_host(),
             http_client_mode: HttpClientMode::default(),
-            entity_reuse: false,
+            entity_reuse: EntityReuseConfig::default(),
             router: TrafficShapingRouterConfig::default(),
         }
     }
+}
+
+/// Entity reuse, `true`/`false`, or an object with its options.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+#[non_exhaustive]
+pub enum EntityReuseConfig {
+    /// Turns entity reuse on or off.
+    Boolean(bool),
+    /// Entity reuse with its options.
+    Options(EntityReuseOptions),
+}
+
+impl Default for EntityReuseConfig {
+    fn default() -> Self {
+        Self::Boolean(false)
+    }
+}
+
+impl EntityReuseConfig {
+    pub fn enabled(&self) -> bool {
+        match self {
+            Self::Boolean(enabled) => *enabled,
+            Self::Options(options) => options.enabled,
+        }
+    }
+
+    /// Only with entity reuse on.
+    pub fn split_nested_entities(&self) -> bool {
+        match self {
+            Self::Boolean(_) => false,
+            Self::Options(options) => options.enabled && options.split_nested_entities,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[non_exhaustive]
+pub struct EntityReuseOptions {
+    /// Whether entity reuse is on. On by default once it has options.
+    #[serde(default = "default_entity_reuse_enabled")]
+    pub enabled: bool,
+    /// Cut the fields of a nested entity, past its key, out of a subgraph call and into a
+    /// follow-up call to the same subgraph, where another call already puts those fields in the
+    /// response. The follow-up copies what's there instead of having the subgraph resolve and
+    /// send the same entities over and over, and asks the subgraph for the rest.
+    ///
+    /// Pays off when the same entities come back many times in one response, like
+    /// `users { reviews { author { reviews { ... } } } }`. When they aren't in the response
+    /// already, the follow-up costs one more round trip to the subgraph. Off by default.
+    #[serde(default)]
+    pub split_nested_entities: bool,
+}
+
+fn default_entity_reuse_enabled() -> bool {
+    true
 }
 
 /// Traffic shaping that belongs to one supergraph's subgraph executors.
@@ -59,7 +117,7 @@ pub struct SupergraphTrafficShapingConfig {
     pub subgraphs: HashMap<String, TrafficShapingExecutorSubgraphConfig>,
     pub max_connections_per_host: usize,
     pub http_client_mode: HttpClientMode,
-    pub entity_reuse: bool,
+    pub entity_reuse: EntityReuseConfig,
 }
 
 impl SupergraphTrafficShapingConfig {
@@ -147,7 +205,7 @@ impl Default for SupergraphTrafficShapingConfig {
             subgraphs: HashMap::new(),
             max_connections_per_host: default_max_connections_per_host(),
             http_client_mode: HttpClientMode::default(),
-            entity_reuse: false,
+            entity_reuse: EntityReuseConfig::default(),
         }
     }
 }
@@ -159,7 +217,7 @@ impl From<&TrafficShapingConfig> for SupergraphTrafficShapingConfig {
             subgraphs: config.subgraphs.clone(),
             max_connections_per_host: config.max_connections_per_host,
             http_client_mode: config.http_client_mode,
-            entity_reuse: config.entity_reuse,
+            entity_reuse: config.entity_reuse.clone(),
         }
     }
 }

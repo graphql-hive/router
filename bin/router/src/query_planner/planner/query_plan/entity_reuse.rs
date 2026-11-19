@@ -91,11 +91,19 @@ struct Wanted<'a> {
     representation: &'a SelectionSet,
     needed_keys: KeyMask,
     representation_keys: KeyMask,
+    /// the subgraph the fetch goes to, see `find_in`
+    subgraph: Option<u16>,
 }
 
 impl<'a> Wanted<'a> {
-    fn new(type_name: &'a str, needed: &'a SelectionSet, representation: &'a SelectionSet) -> Self {
+    fn new(
+        type_name: &'a str,
+        needed: &'a SelectionSet,
+        representation: &'a SelectionSet,
+        subgraph: Option<u16>,
+    ) -> Self {
         Self {
+            subgraph,
             type_name,
             needed,
             representation,
@@ -107,7 +115,9 @@ impl<'a> Wanted<'a> {
 
     fn is(&self, other: &Wanted) -> bool {
         let same = |a: &SelectionSet, b: &SelectionSet| std::ptr::eq(a, b) || a == b;
-        same(self.needed, other.needed) && same(self.representation, other.representation)
+        self.subgraph == other.subgraph
+            && same(self.needed, other.needed)
+            && same(self.representation, other.representation)
     }
 }
 
@@ -317,6 +327,7 @@ impl<'a> EntityReuseIndex<'a> {
         fetch_graph: &'a FetchGraph<MultiTypeFetchStep>,
         supergraph: &'a SupergraphState,
         enabled: bool,
+        follow_up_types: impl IntoIterator<Item = &'a str>,
     ) -> Self {
         let mut positions = HashMap::default();
         if enabled && fetch_graph.operation_kind == OperationKind::Query {
@@ -325,6 +336,9 @@ impl<'a> EntityReuseIndex<'a> {
                 {
                     positions.entry(type_name).or_default();
                 }
+            }
+            for type_name in follow_up_types {
+                positions.entry(type_name).or_default();
             }
         }
         Self {
@@ -401,6 +415,34 @@ impl<'a> EntityReuseIndex<'a> {
         }
     }
 
+    /// Where a follow-up fetch (see `split_nested_entities`) can copy from: any position filled
+    /// so far. It runs once its host is done, but nothing makes it wait for the others, so the
+    /// executor copies what's there by then and asks the subgraph for the rest.
+    pub(super) fn attach_follow_up(&mut self, node: &mut PlanNode, step: &'a Step) {
+        let PlanNode::Flatten(flatten) = node else {
+            return;
+        };
+        let PlanNode::Fetch(fetch) = flatten.node.as_mut() else {
+            return;
+        };
+        let Some((type_name, needed)) = wanted(step) else {
+            return;
+        };
+        let Some(representation) = step.input.selections_for_definition(type_name) else {
+            return;
+        };
+        let subgraph = self.supergraph.subgraph_index(&step.service_name.0);
+        let wanted = Wanted::new(type_name, needed, representation, subgraph);
+        // positions only hold steps of planned waves, so this is all of those
+        let everything = Dependencies(vec![true; self.fetch_graph.graph.node_bound()]);
+        if let Some(found) = self.find_cached(&everything, None, wanted) {
+            fetch.entity_reuse = Some(Arc::new(EntityReuse {
+                unfilled_sources: true,
+                ..(*found.reuse).clone()
+            }));
+        }
+    }
+
     /// Where the fetch can copy from, and the fetches it has to wait for to do it, on top of
     /// the ones it already does
     fn find(
@@ -417,7 +459,8 @@ impl<'a> EntityReuseIndex<'a> {
         if reads_renamed_keys(representation) {
             return None;
         }
-        let wanted = Wanted::new(type_name, needed, representation);
+        let subgraph = self.supergraph.subgraph_index(&step.service_name.0);
+        let wanted = Wanted::new(type_name, needed, representation, subgraph);
         let depends_on = Dependencies::of(self.fetch_graph, index);
         let (expanded, waits) = self.earlier_fetch_waits(step, &wanted, &depends_on);
 
@@ -683,8 +726,11 @@ fn find_in(
             continue;
         }
         let subgraph = subgraphs[step.index()];
+        // the subgraph the fetch goes to sends what it put there before: a field it only has
+        // through `@provides` is under the same parent field in both, so it's provided both times
         let resolves = *resolves_all.entry(subgraph).or_insert_with(|| {
-            resolves_every_field(supergraph, wanted.type_name, wanted.needed, subgraph)
+            wanted.subgraph == Some(subgraph)
+                || resolves_every_field(supergraph, wanted.type_name, wanted.needed, subgraph)
         });
         if !resolves || !covers(position.selections, wanted.needed) {
             continue;
@@ -733,6 +779,7 @@ fn find_in(
             .map(|path| positions.paths[path.index()].clone())
             .collect(),
         copy: RequiresSelectionSet::from(&copy),
+        unfilled_sources: false,
     };
     Some(ReuseMatch {
         reuse: Arc::new(reuse),
@@ -777,7 +824,7 @@ fn key_mask(selections: &SelectionSet, keep: impl Fn(&FieldSelection) -> bool + 
 
 /// Does `source` ask for every field in `needed`, with the same response key and arguments?
 /// `__typename` always counts: the executor checks it's really there before copying.
-fn covers(source: &SelectionSet, needed: &SelectionSet) -> bool {
+pub(crate) fn covers(source: &SelectionSet, needed: &SelectionSet) -> bool {
     needed.items.iter().all(|item| {
         let SelectionItem::Field(needed_field) = item else {
             return false;
@@ -799,7 +846,7 @@ fn covers(source: &SelectionSet, needed: &SelectionSet) -> bool {
 
 /// Does `subgraph` resolve every field of `type_name` in `needed` itself, all the way down? Only
 /// then is what it put in the response what the fetch would get.
-fn resolves_every_field(
+pub(crate) fn resolves_every_field(
     supergraph: &SupergraphState,
     type_name: &str,
     needed: &SelectionSet,
@@ -826,7 +873,7 @@ fn resolves_every_field(
 /// `resolvable_in` leaves out the subgraphs of a labelled `@override` too, since which of them
 /// answers depends on the request. Within one plan it's always the same one, so a value one of
 /// them put in the response is what a fetch to it would give again.
-fn resolved_by<'s>(
+pub(crate) fn resolved_by<'s>(
     supergraph: &'s SupergraphState,
     type_name: &str,
     field_name: &str,
@@ -874,13 +921,13 @@ fn reads_renamed_keys(representation: &SelectionSet) -> bool {
 
 /// Fields of a fetch with `@fromContext` arguments depend on values from outside the entity,
 /// so the same entity can come back different. We don't copy into or out of those.
-fn has_context(step: &Step) -> bool {
+pub(crate) fn has_context(step: &Step) -> bool {
     !step.context_variable_definitions.is_empty() || step.context_rewrites.is_some()
 }
 
 /// Only plain fields, all the way down. Fragments and `@skip`/`@include` would need the
 /// copy to know about types and variables, which we don't do (yet).
-fn is_plain(selections: &SelectionSet) -> bool {
+pub(crate) fn is_plain(selections: &SelectionSet) -> bool {
     selections.items.iter().all(|item| match item {
         SelectionItem::Field(field) => {
             field.skip_if.is_none() && field.include_if.is_none() && is_plain(&field.selections)

@@ -926,6 +926,11 @@ impl<'exec> Executor<'exec> {
             .filter(|index| waits[*index as usize] == 0)
             .collect();
         let mut running = FuturesUnordered::new();
+        // fetches whose jobs are done, before their follow-ups ran
+        let mut finished: SmallVec<[u32; 16]> = SmallVec::new();
+        // the follow-up level each fetch is at
+        let mut level: SmallVec<[u32; 16]> = smallvec![0; fetches.len()];
+        let mut started = Vec::new();
         loop {
             while let Some(index) = ready.pop() {
                 // `ctx.data` is only borrowed to prepare the jobs, they run without it
@@ -939,14 +944,44 @@ impl<'exec> Executor<'exec> {
                 // everything has no jobs and lets them go right away
                 entity_reuse::merge_copies(&mut ctx.data, copies, self.schema_metadata);
                 if jobs.is_empty() {
-                    release(schedule, index, &mut waits, &mut ready);
+                    finished.push(index);
                     continue;
                 }
+                started.push((index, jobs));
+            }
+            // a fetch is done once its follow-ups are, level by level
+            while let Some(index) = finished.pop() {
+                let Some(follow_ups) = plan.follow_ups(index, level[index as usize] as usize)
+                else {
+                    release(schedule, index, &mut waits, &mut ready);
+                    continue;
+                };
+                level[index as usize] += 1;
+                let mut copies = Vec::new();
+                let mut jobs = Vec::new();
+                for node in follow_ups {
+                    jobs.extend(self.prepare_job_future(
+                        node,
+                        &ctx.data,
+                        self.copy_into(ctx, &mut copies),
+                    ));
+                }
+                entity_reuse::merge_copies(&mut ctx.data, copies, self.schema_metadata);
+                if jobs.is_empty() {
+                    finished.push(index);
+                    continue;
+                }
+                started.push((index, jobs));
+            }
+            for (index, jobs) in started.drain(..) {
                 jobs_left[index as usize] = jobs.len() as u32;
                 running.extend(
                     jobs.into_iter()
-                        .map(|job| job.map(move |result| (index, result))),
+                        .map(move |job| job.map(move |result| (index, result))),
                 );
+            }
+            if !ready.is_empty() {
+                continue;
             }
             let Some((index, result)) = running.next().await else {
                 break;
@@ -954,7 +989,7 @@ impl<'exec> Executor<'exec> {
             self.process_job_result(ctx, result);
             jobs_left[index as usize] -= 1;
             if jobs_left[index as usize] == 0 {
-                release(schedule, index, &mut waits, &mut ready);
+                finished.push(index);
             }
         }
         // the schedule has no cycles, so every fetch was let go and ran, or had nothing to run.

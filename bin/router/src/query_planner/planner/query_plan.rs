@@ -8,7 +8,7 @@ use petgraph::{
 
 use crate::query_planner::{
     planner::{
-        fetch::state::MultiTypeFetchStep,
+        fetch::{split_nested_entities, state::MultiTypeFetchStep},
         plan_nodes::{planning::PlanNode, FetchIdList},
         query_plan::optimize::{optimize_root_node, optimize_top_level_sequence},
         QueryPlannerOptions,
@@ -23,19 +23,25 @@ use super::{
     plan_nodes::planning::{ParallelNode, QueryPlan, SequenceNode},
 };
 
-mod entity_reuse;
+pub(crate) mod entity_reuse;
 mod optimize;
 
 pub static QUERY_PLAN_KIND: &str = "QueryPlan";
 
 #[tracing::instrument(level = "trace", skip_all)]
 pub fn build_query_plan_from_fetch_graph(
-    fetch_graph: FetchGraph<MultiTypeFetchStep>,
+    mut fetch_graph: FetchGraph<MultiTypeFetchStep>,
     supergraph: &SupergraphState,
     options: &QueryPlannerOptions,
     cancellation_token: &CancellationToken,
 ) -> Result<QueryPlan, QueryPlanError> {
     let root_index = fetch_graph.root_index.ok_or(QueryPlanError::NoRoot)?;
+    let splits = match options.entity_reuse && options.split_nested_entities {
+        true => split_nested_entities::plan_follow_ups(&mut fetch_graph, supergraph)?,
+        false => Vec::new(),
+    };
+    let fetch_graph = fetch_graph;
+    let split_of = |index: NodeIndex| splits.iter().find(|split| split.host == index);
 
     // flat arrays by step index: steps are numbered densely
     let steps = fetch_graph.graph.node_bound();
@@ -70,8 +76,18 @@ pub fn build_query_plan_from_fetch_graph(
     let mut provides: Vec<FetchIdList> = vec![FetchIdList::new(); steps];
     // what finished waves put in the response. An entity fetch may copy entities the fetches it
     // depends on put there.
-    let mut entity_reuse =
-        entity_reuse::EntityReuseIndex::new(&fetch_graph, supergraph, options.entity_reuse);
+    let mut entity_reuse = entity_reuse::EntityReuseIndex::new(
+        &fetch_graph,
+        supergraph,
+        options.entity_reuse,
+        splits
+            .iter()
+            .flat_map(|split| split.levels.iter().flatten())
+            .filter_map(|step| step.output.try_as_single()),
+    );
+    let mut follow_ups = Vec::new();
+    // hosts that copy all they ask for, so they're not cut after all
+    let mut unsplit = std::collections::HashSet::new();
 
     while !queue.is_empty() {
         let mut current_wave_nodes: Vec<PlanNode> = Vec::new();
@@ -95,14 +111,34 @@ pub fn build_query_plan_from_fetch_graph(
             depends_on.sort_unstable();
             depends_on.dedup();
             // inline for one or two ids, so the copy doesn't allocate
-            let node =
+            let mut node =
                 PlanNode::from_fetch_step(step_data, supergraph, options, depends_on.clone());
+            if let Some(node) = node.as_mut() {
+                entity_reuse.attach(node, step_index, step_data);
+            }
+            // a host sends what's left once its follow-ups take out the nested entities. Unless
+            // it can copy all of it already: every hit is free then, and cutting it would only
+            // make the copy need a `__typename` the sources might not have
+            if let Some(split) = split_of(step_index) {
+                if node.as_ref().is_some_and(copies) {
+                    unsplit.insert(step_index);
+                } else {
+                    node = PlanNode::from_fetch_step(
+                        &split.trimmed,
+                        supergraph,
+                        options,
+                        depends_on.clone(),
+                    );
+                    if let Some(node) = node.as_mut() {
+                        entity_reuse.attach(node, step_index, &split.trimmed);
+                    }
+                }
+            }
             provides[step_index.index()] = match node {
                 Some(_) => smallvec![step_data.id],
                 None => depends_on,
             };
-            if let Some(mut node) = node {
-                entity_reuse.attach(&mut node, step_index, step_data);
+            if let Some(node) = node {
                 current_wave_nodes.push(node);
                 current_wave_steps.push((step_index, step_data));
             }
@@ -124,8 +160,32 @@ pub fn build_query_plan_from_fetch_graph(
             }
         }
 
-        for (index, step) in current_wave_steps {
+        for &(index, step) in &current_wave_steps {
             entity_reuse.add_step(index, step);
+        }
+        // follow-ups copy from what's planned up to their host's wave, so after it's added
+        for (index, step) in current_wave_steps {
+            let Some(split) = split_of(index).filter(|_| !unsplit.contains(&index)) else {
+                continue;
+            };
+            let mut levels = Vec::with_capacity(split.levels.len());
+            for level in &split.levels {
+                let mut nodes = Vec::with_capacity(level.len());
+                for follow_up in level {
+                    let node = PlanNode::from_fetch_step(
+                        follow_up,
+                        supergraph,
+                        options,
+                        FetchIdList::new(),
+                    );
+                    if let Some(mut node) = node {
+                        entity_reuse.attach_follow_up(&mut node, follow_up);
+                        nodes.push(node);
+                    }
+                }
+                levels.push(nodes);
+            }
+            follow_ups.push((step.id, levels));
         }
 
         // a wave can end up empty when none of its fetches would ever run
@@ -168,5 +228,21 @@ pub fn build_query_plan_from_fetch_graph(
     // Then run full recursive optimization + batching rewrites.
     let root_node = optimize_root_node(root_node, supergraph, options)?;
 
-    QueryPlan::new(Some(root_node))
+    QueryPlan::new(Some(root_node))?.with_follow_ups(follow_ups, |nodes| {
+        if nodes.len() < 2 {
+            return Ok(nodes);
+        }
+        // the same batching the plan gets, a level runs all at once like a wave
+        let node = PlanNode::Parallel(ParallelNode { nodes });
+        Ok(match optimize_root_node(node, supergraph, options)? {
+            PlanNode::Parallel(parallel) => parallel.nodes,
+            node => vec![node],
+        })
+    })
+}
+
+/// Whether `node` is an entity fetch that can copy what it asks for
+fn copies(node: &PlanNode) -> bool {
+    matches!(node, PlanNode::Flatten(flatten)
+        if matches!(flatten.node.as_ref(), PlanNode::Fetch(fetch) if fetch.entity_reuse.is_some()))
 }

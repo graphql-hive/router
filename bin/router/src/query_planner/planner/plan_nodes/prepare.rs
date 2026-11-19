@@ -6,10 +6,28 @@ impl QueryPlan<Planning> {
     pub fn into_executable(self, supergraph: &SupergraphState) -> QueryPlan {
         // the nodes keep their shape, so the schedule stays right
         let schedule = self.schedule().clone();
-        QueryPlan::with_schedule(
+        let mut plan = QueryPlan::with_schedule(
             self.node.map(|node| node.into_executable(supergraph)),
             schedule,
-        )
+        );
+        plan.follow_ups = self
+            .follow_ups
+            .into_iter()
+            .map(|follow_ups| FollowUps {
+                after: follow_ups.after,
+                levels: follow_ups
+                    .levels
+                    .into_iter()
+                    .map(|level| {
+                        level
+                            .into_iter()
+                            .map(|node| node.into_executable(supergraph))
+                            .collect()
+                    })
+                    .collect(),
+            })
+            .collect();
+        plan
     }
 }
 

@@ -91,6 +91,22 @@ pub struct QueryPlan<S: PlanState = Executable> {
     /// What each fetch of `node` waits for, worked out once with the plan.
     #[serde(skip)]
     schedule: PlanSchedule,
+    /// Fetches that run right after one of `node`'s, as part of it. Shown with the plan, so it
+    /// doesn't hide subgraph calls. Only with entity reuse on.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    follow_ups: Vec<FollowUps<S>>,
+}
+
+/// Entity fetches that fill in what a fetch of the plan left out. They run once it's done, level
+/// by level, and only then is it done for the fetches waiting for it.
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+#[serde(bound = "")]
+pub struct FollowUps<S: PlanState = Executable> {
+    /// the fetch they follow: its position among `node`'s fetches, depth first from 0, a batch
+    /// counting once
+    pub after: u32,
+    pub levels: Vec<Vec<PlanNode<S>>>,
 }
 
 impl QueryPlan<Planning> {
@@ -99,6 +115,46 @@ impl QueryPlan<Planning> {
     pub fn new(node: Option<PlanNode<Planning>>) -> Result<Self, QueryPlanError> {
         let schedule = PlanSchedule::new(node.as_ref())?;
         Ok(Self::with_schedule(node, schedule))
+    }
+
+    /// Adds follow-ups by the id of the fetch they follow. A batch that merged several of
+    /// those fetches runs all their follow-ups, level by level. `batch` gets each level once
+    /// they're together, to merge calls to one subgraph.
+    pub fn with_follow_ups(
+        mut self,
+        follow_ups: Vec<(FetchId, Vec<Vec<PlanNode<Planning>>>)>,
+        mut batch: impl FnMut(
+            Vec<PlanNode<Planning>>,
+        ) -> Result<Vec<PlanNode<Planning>>, QueryPlanError>,
+    ) -> Result<Self, QueryPlanError> {
+        for (id, levels) in follow_ups {
+            let fetch = dependencies::position_of(self.node.as_ref(), id).ok_or_else(|| {
+                QueryPlanError::Internal(format!("no fetch {id:?} for its follow-ups"))
+            })?;
+            let index = match self.follow_ups.iter().position(|f| f.after == fetch) {
+                Some(index) => index,
+                None => {
+                    self.follow_ups.push(FollowUps {
+                        after: fetch,
+                        levels: Vec::new(),
+                    });
+                    self.follow_ups.len() - 1
+                }
+            };
+            let merged = &mut self.follow_ups[index].levels;
+            for (level, nodes) in levels.into_iter().enumerate() {
+                if merged.len() <= level {
+                    merged.push(Vec::new());
+                }
+                merged[level].extend(nodes);
+            }
+        }
+        for follow_ups in &mut self.follow_ups {
+            for level in &mut follow_ups.levels {
+                *level = batch(std::mem::take(level))?;
+            }
+        }
+        Ok(self)
     }
 }
 
@@ -115,7 +171,18 @@ impl<S: PlanState> QueryPlan<S> {
             kind: QUERY_PLAN_KIND,
             node,
             schedule,
+            follow_ups: Vec::new(),
         }
+    }
+
+    /// The follow-ups of the fetch at `fetch` on `level`, `None` past its last level
+    pub fn follow_ups(&self, fetch: u32, level: usize) -> Option<&[PlanNode<S>]> {
+        self.follow_ups
+            .iter()
+            .find(|f| f.after == fetch)?
+            .levels
+            .get(level)
+            .map(Vec::as_slice)
     }
 
     /// A plan for tests, with a schedule made by hand.
@@ -329,6 +396,9 @@ impl FetchContext {
 pub struct EntityReuse {
     pub sources: Vec<FlattenNodePath>,
     pub copy: RequiresSelectionSet,
+    /// A follow-up's sources might not be filled in yet when it runs, so an object there only
+    /// counts if it has every field to copy. The fetches they come from always fill them.
+    pub unfilled_sources: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1017,6 +1087,17 @@ impl<S: PlanState> PrettyDisplay for QueryPlan<S> {
             node.pretty_fmt(f, depth + 1)?;
         } else {
             writeln!(f, "{indent}  None,")?;
+        }
+        for follow_ups in &self.follow_ups {
+            writeln!(f, "{indent}  FollowUps(after: {}) {{", follow_ups.after)?;
+            for nodes in &follow_ups.levels {
+                writeln!(f, "{indent}    Level {{")?;
+                for node in nodes {
+                    node.pretty_fmt(f, depth + 3)?;
+                }
+                writeln!(f, "{indent}    }},")?;
+            }
+            writeln!(f, "{indent}  }},")?;
         }
         writeln!(f, "{indent}}},")?;
         Ok(())

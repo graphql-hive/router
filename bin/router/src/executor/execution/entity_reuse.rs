@@ -19,7 +19,9 @@ use crate::{
 };
 
 /// Puts every object at the planner's sources that has all the fields of a representation into
-/// `seen`, by the same hash a representation of it would get.
+/// `seen`, by the same hash a representation of it would get. When the sources might not be
+/// filled in yet (a follow-up's), only objects with everything to copy: one with only its key
+/// would keep a full one at a later source out.
 pub(super) fn index_sources<'d, 'v>(
     reuse: &EntityReuse,
     data: &'d Value<'v>,
@@ -27,9 +29,13 @@ pub(super) fn index_sources<'d, 'v>(
     possible_types: &PossibleTypes,
     seen: &mut PrehashedMap<Known<'d, 'v>>,
 ) {
+    let copy = reuse.copy.root_selections();
     for source in &reuse.sources {
         traverse_and_callback(data, source.as_slice(), possible_types, &mut |object, _| {
-            if object.is_object() && holds_every_field(object, required_selections) {
+            if object.is_object()
+                && holds_every_field(object, required_selections)
+                && (!reuse.unfilled_sources || has_every_field(object, copy))
+            {
                 seen.entry(object.to_hash(required_selections, possible_types))
                     .or_insert(Known::InResponse(object));
             }
@@ -99,6 +105,28 @@ fn holds_every_field(value: &Value, selections: RequiresSelectionSetRef<'_>) -> 
         }),
         Value::Array(items) => items.iter().all(|item| holds_every_field(item, selections)),
         _ => selections.is_empty(),
+    }
+}
+
+/// Whether `value` has every field of `selections`, where `copy_object` looks for it. Unlike
+/// [`holds_every_field`], a null is fine, it's copied like any value.
+fn has_every_field(value: &Value, selections: RequiresSelectionSetRef<'_>) -> bool {
+    match value {
+        Value::Object(fields) => selections.iter().all(|selection| match selection {
+            RequiresSelection::Field {
+                name,
+                alias,
+                selections,
+                ..
+            } => Value::object_get(fields, alias.unwrap_or(name))
+                .is_some_and(|field| has_every_field(field, selections)),
+            RequiresSelection::InlineFragment { selections, .. } => {
+                has_every_field(value, selections)
+            }
+            RequiresSelection::FragmentSpread(_) => false,
+        }),
+        Value::Array(items) => items.iter().all(|item| has_every_field(item, selections)),
+        _ => true,
     }
 }
 

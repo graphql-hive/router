@@ -294,7 +294,7 @@ impl SubgraphExecutorMap {
     }
 
     pub fn entity_reuse_enabled(&self) -> bool {
-        self.config.traffic_shaping.entity_reuse
+        self.config.traffic_shaping.entity_reuse.enabled()
     }
 
     /// Returns the shared active callback subscriptions map for use by callback handlers.
