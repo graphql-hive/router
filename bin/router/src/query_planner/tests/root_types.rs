@@ -1,5 +1,5 @@
 use crate::query_planner::{
-    tests::testkit::{build_query_plan_with_defaults, init_logger},
+    tests::testkit::{build_query_plan_from_sdl, build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -99,5 +99,71 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
       }
     }
     "#);
+    Ok(())
+}
+
+#[test]
+fn shareable_subscription_field_uses_one_stream() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // `orderUpdated` lives in both subgraphs, `total` only in a and `eta` only in b.
+    // Two streams can't be put together, so one subgraph streams
+    // and the rest comes through an entity call on each event.
+    let supergraph = r#"
+        enum join__Graph {
+            A @join__graph(name: "a", url: "")
+            B @join__graph(name: "b", url: "")
+        }
+        type Query @join__type(graph: A) @join__type(graph: B) {
+            ping: Boolean @join__field(graph: A)
+        }
+        type Subscription @join__type(graph: A) @join__type(graph: B) {
+            orderUpdated: Order
+        }
+        type Order @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
+            id: ID!
+            total: Int @join__field(graph: A)
+            eta: String @join__field(graph: B)
+        }
+    "#;
+    let query_plan = build_query_plan_from_sdl(
+        supergraph,
+        parse_operation("subscription { orderUpdated { total eta } }"),
+        Default::default(),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Subscription {
+          Fetch(service: "a") {
+            subscription {
+              orderUpdated {
+                __typename
+                total
+                id
+              }
+            }
+          },
+        },
+        Flatten(path: "orderUpdated") {
+          Fetch(service: "b") {
+            {
+              ... on Order {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                eta
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
     Ok(())
 }

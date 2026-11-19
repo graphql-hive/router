@@ -1,10 +1,8 @@
 use crate::query_planner::{
-    tests::testkit::{build_query_plan_with_defaults, init_logger},
+    tests::testkit::{build_query_plan_from_sdl, build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
-
-// TODO: try to reproduce shared_root for mutations
 
 #[test]
 fn mutations() -> Result<(), Box<dyn Error>> {
@@ -676,6 +674,318 @@ fn conditional_field_stays_in_its_group() -> Result<(), Box<dyn Error>> {
           one: add(num: 1) @include(if: $x)
           two: add(num: 2)
         }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn shareable_mutation_field_runs_once() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // `createOrder` lives in both subgraphs, but `total` only in a and `eta` only in b.
+    // The mutation must hit one subgraph, the rest comes through an entity call.
+    let supergraph = r#"
+        enum join__Graph {
+            A @join__graph(name: "a", url: "")
+            B @join__graph(name: "b", url: "")
+        }
+        type Query @join__type(graph: A) @join__type(graph: B) {
+            ping: Boolean @join__field(graph: A)
+        }
+        type Mutation @join__type(graph: A) @join__type(graph: B) {
+            createOrder: Order
+        }
+        type Order @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
+            id: ID!
+            total: Int @join__field(graph: A)
+            eta: String @join__field(graph: B)
+        }
+    "#;
+    let query_plan = build_query_plan_from_sdl(
+        supergraph,
+        parse_operation("mutation { createOrder { total eta } }"),
+        Default::default(),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          mutation {
+            createOrder {
+              __typename
+              total
+              id
+            }
+          }
+        },
+        Flatten(path: "createOrder") {
+          Fetch(service: "b") {
+            {
+              ... on Order {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                eta
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    // everything is in b, so no reason to start in a
+    let query_plan = build_query_plan_from_sdl(
+        supergraph,
+        parse_operation("mutation { createOrder { id eta } }"),
+        Default::default(),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "b") {
+        mutation {
+          createOrder {
+            id
+            eta
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn mutation_key_does_not_jump_between_subgraphs() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // `Mutation` has a key in both subgraphs. Jumping from one `Mutation` to the other
+    // through `_entities` would run `createOrder` twice.
+    // b can't be jumped to for `Order`, so the mutation has to start in b.
+    let supergraph = r#"
+        enum join__Graph {
+            A @join__graph(name: "a", url: "")
+            B @join__graph(name: "b", url: "")
+        }
+        type Query @join__type(graph: A) @join__type(graph: B) {
+            ping: Boolean @join__field(graph: A)
+        }
+        type Mutation @join__type(graph: A, key: "__typename") @join__type(graph: B, key: "__typename") {
+            createOrder: Order
+        }
+        type Order @join__type(graph: A, key: "id") @join__type(graph: B, key: "id", resolvable: false) {
+            id: ID!
+            total: Int @join__field(graph: A)
+            eta: String @join__field(graph: B)
+        }
+    "#;
+    let query_plan = build_query_plan_from_sdl(
+        supergraph,
+        parse_operation("mutation { createOrder { total eta } }"),
+        Default::default(),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          mutation {
+            createOrder {
+              __typename
+              id
+              eta
+            }
+          }
+        },
+        Flatten(path: "createOrder") {
+          Fetch(service: "a") {
+            {
+              ... on Order {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                total
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn shareable_mutation_field_in_conditional_fragment_runs_once() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // The fragment keeps its @include, so it reaches the planner as one root selection.
+    // No subgraph has all of it (`cancelOrder` is only in c), but each mutation field
+    // inside it still has to run once, and in order.
+    let supergraph = r#"
+        enum join__Graph {
+            A @join__graph(name: "a", url: "")
+            B @join__graph(name: "b", url: "")
+            C @join__graph(name: "c", url: "")
+        }
+        type Query @join__type(graph: A) @join__type(graph: B) @join__type(graph: C) {
+            ping: Boolean @join__field(graph: A)
+        }
+        type Mutation @join__type(graph: A) @join__type(graph: B) @join__type(graph: C) {
+            createOrder: Order @join__field(graph: A) @join__field(graph: B)
+            cancelOrder: Boolean @join__field(graph: C)
+        }
+        type Order @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
+            id: ID!
+            total: Int @join__field(graph: A)
+            eta: String @join__field(graph: B)
+        }
+    "#;
+    let query_plan = build_query_plan_from_sdl(
+        supergraph,
+        parse_operation(
+            r#"
+            mutation ($run: Boolean!) {
+              ... on Mutation @include(if: $run) {
+                createOrder { total eta }
+                cancelOrder
+              }
+            }
+            "#,
+        ),
+        Default::default(),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a", if: $run) {
+          mutation ($run:Boolean!) {
+            ... on Mutation @include(if: $run) {
+              createOrder {
+                __typename
+                total
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "|[Mutation].createOrder") {
+          Fetch(service: "b", if: $run) {
+            {
+              ... on Order {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                eta
+              }
+            }
+          },
+        },
+        Fetch(service: "c", if: $run) {
+          mutation ($run:Boolean!) {
+            ... on Mutation @include(if: $run) {
+              cancelOrder
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn shareable_mutation_field_picks_subgraph_by_whole_plan() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // From a, `l1`, `l2` and `l3` come in one entity call to c.
+    // From b, they're local, but `x` takes two calls in a row (b -> e -> d).
+    // Counted per leaf, a looks more expensive (three trips vs one longer one),
+    // but its plan has fewer fetches, so a it is.
+    let supergraph = r#"
+        enum join__Graph {
+            A @join__graph(name: "a", url: "")
+            B @join__graph(name: "b", url: "")
+            C @join__graph(name: "c", url: "")
+            D @join__graph(name: "d", url: "")
+            E @join__graph(name: "e", url: "")
+        }
+        type Query @join__type(graph: A) @join__type(graph: B) @join__type(graph: C) @join__type(graph: D) @join__type(graph: E) {
+            ping: Boolean @join__field(graph: A)
+        }
+        type Mutation @join__type(graph: A) @join__type(graph: B) {
+            createOrder: Order
+        }
+        type Order
+            @join__type(graph: A, key: "id", resolvable: false)
+            @join__type(graph: B, key: "id", resolvable: false)
+            @join__type(graph: C, key: "id")
+            @join__type(graph: D, key: "code")
+            @join__type(graph: E, key: "id")
+            @join__type(graph: E, key: "code")
+        {
+            id: ID! @join__field(graph: A) @join__field(graph: B) @join__field(graph: C) @join__field(graph: E)
+            code: ID! @join__field(graph: D) @join__field(graph: E)
+            x: Int @join__field(graph: A) @join__field(graph: D)
+            l1: Int @join__field(graph: B) @join__field(graph: C)
+            l2: Int @join__field(graph: B) @join__field(graph: C)
+            l3: Int @join__field(graph: B) @join__field(graph: C)
+        }
+    "#;
+    let query_plan = build_query_plan_from_sdl(
+        supergraph,
+        parse_operation("mutation { createOrder { x l1 l2 l3 } }"),
+        Default::default(),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          mutation {
+            createOrder {
+              __typename
+              x
+              id
+            }
+          }
+        },
+        Flatten(path: "createOrder") {
+          Fetch(service: "c") {
+            {
+              ... on Order {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                l1
+                l2
+                l3
+              }
+            }
+          },
+        },
       },
     },
     "#);
