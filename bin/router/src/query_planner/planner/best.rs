@@ -59,7 +59,7 @@ use crate::query_planner::{
             query_tree::QueryTree,
             query_tree_node::{MutationFieldPosition, QueryTreeNode},
         },
-        walker::{path::OperationPath, ResolvedOperation},
+        walker::{path::OperationPath, BestPathsPerLeaf, ResolvedOperation},
     },
     state::supergraph_state::OperationKind,
     utils::cancellation::CancellationToken,
@@ -185,9 +185,18 @@ fn sort_candidates_by_cost(graph: &Graph<'_>, per_leaf_alternatives_asc: &mut [A
 
 pub fn find_best_combination(
     graph: &Graph<'_>,
-    operation: ResolvedOperation,
+    mut operation: ResolvedOperation,
     cancellation_token: &CancellationToken,
 ) -> Result<QueryTree, QueryPlanError> {
+    for (index, choices) in std::mem::take(&mut operation.entrypoint_choices) {
+        operation.root_field_groups[index] = cheapest_entrypoint(
+            graph,
+            &operation.operation_kind,
+            choices,
+            cancellation_token,
+        )?;
+    }
+
     if operation.root_field_groups.is_empty()
         || operation
             .root_field_groups
@@ -235,6 +244,36 @@ pub fn find_best_combination(
     )?;
 
     state.best_tree.ok_or(QueryPlanError::EmptyPlan)
+}
+
+/// A mutation or subscription field that more than one subgraph can run gets its paths from the
+/// one whose plan costs the least. Every option is planned on its own, so a fetch that a few
+/// leaves share is counted once. Root fields of a mutation never share fetches,
+/// so a field's cost doesn't depend on the others.
+fn cheapest_entrypoint<'graph>(
+    graph: &Graph<'_>,
+    operation_kind: &OperationKind,
+    choices: Vec<BestPathsPerLeaf<'graph>>,
+    cancellation_token: &CancellationToken,
+) -> Result<BestPathsPerLeaf<'graph>, QueryPlanError> {
+    let mut best: Option<(u64, BestPathsPerLeaf)> = None;
+    for choice in choices {
+        let tree = find_best_combination(
+            graph,
+            ResolvedOperation {
+                operation_kind: operation_kind.clone(),
+                root_field_groups: vec![choice.clone()],
+                entrypoint_choices: Vec::new(),
+            },
+            cancellation_token,
+        )?;
+        let cost = calculate_cost_of_tree(graph, &tree.root);
+        if best.as_ref().is_none_or(|(best_cost, _)| cost < *best_cost) {
+            best = Some((cost, choice));
+        }
+    }
+    best.map(|(_, choice)| choice)
+        .ok_or(QueryPlanError::EmptyPlan)
 }
 
 /// A fast search that finds a good, but not best plan.
