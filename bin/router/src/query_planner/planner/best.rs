@@ -248,7 +248,8 @@ pub fn find_best_combination(
 /// same subgraph go in one fetch, so `createOrder` in b followed by `cancelOrder` in b is one
 /// fetch, and in b then a it's two. So the whole list of root fields is picked at once:
 /// every option costs what its plan costs, plus a fetch whenever it's in another subgraph than
-/// the field before it, and the cheapest way through the list wins.
+/// the field before it, or the field before it needs more fetches than its root one,
+/// and the cheapest way through the list wins.
 fn pick_entrypoints(
     graph: &Graph<'_>,
     operation: &mut ResolvedOperation,
@@ -268,13 +269,34 @@ fn pick_entrypoints(
             .map(|segment| segment.edge_index)
     };
 
-    // (entrypoint, cost) per option of every root field, fields without a choice have one option
-    let mut options: Vec<Vec<(Option<EdgeIndex>, u64)>> =
+    // A field that needs more fetches than its root one ends the request it's in, the next
+    // field has to wait for all of its data (see `turn_mutations_into_sequence`).
+    // Its leaves can all be read right in its subgraph, or it needs more.
+    let complete = |paths_per_leaf: &BestPathsPerLeaf| {
+        paths_per_leaf.iter().all(|paths| {
+            paths.iter().any(|path| {
+                path.segments_rev().all(|segment| {
+                    segment.requirement_tree.is_none()
+                        && segment.context_requirements().is_empty()
+                        && !matches!(
+                            graph.edge(segment.edge_index),
+                            Ok(Edge::EntityMove(_)
+                                | Edge::InterfaceObjectTypeMove(_)
+                                | Edge::ReentryMove(_))
+                        )
+                })
+            })
+        })
+    };
+
+    // (entrypoint, cost, complete) per option of every root field,
+    // fields without a choice have one option
+    let mut options: Vec<Vec<(Option<EdgeIndex>, u64, bool)>> =
         Vec::with_capacity(operation.root_field_groups.len());
     let mut next_choice = choices.iter().map(|(index, _)| *index).peekable();
     for (index, group) in operation.root_field_groups.iter().enumerate() {
         if next_choice.next_if_eq(&index).is_none() {
-            options.push(vec![(entrypoint(group), 0)]);
+            options.push(vec![(entrypoint(group), 0, complete(group))]);
             continue;
         }
         let (_, field_choices) = choices
@@ -295,24 +317,25 @@ fn pick_entrypoints(
             field_options.push((
                 entrypoint(choice),
                 calculate_cost_of_tree(graph, &tree.root),
+                complete(choice),
             ));
         }
         options.push(field_options);
     }
 
     // cheapest total per option of the field so far, and the option of the field before it
-    let mut totals: Vec<u64> = options[0].iter().map(|(_, cost)| *cost).collect();
+    let mut totals: Vec<u64> = options[0].iter().map(|(_, cost, _)| *cost).collect();
     let mut previous: Vec<Vec<usize>> = Vec::with_capacity(options.len());
     for pair in options.windows(2) {
         let (before, field) = (&pair[0], &pair[1]);
         let mut field_totals = Vec::with_capacity(field.len());
         let mut field_previous = Vec::with_capacity(field.len());
-        for (field_entrypoint, cost) in field {
+        for (field_entrypoint, cost, _) in field {
             let (picked, total) = before
                 .iter()
                 .zip(&totals)
-                .map(|((before_entrypoint, _), total)| {
-                    let new_fetch = if before_entrypoint == field_entrypoint {
+                .map(|((before_entrypoint, _, before_complete), total)| {
+                    let new_fetch = if *before_complete && before_entrypoint == field_entrypoint {
                         0
                     } else {
                         CROSS_SUBGRAPH_COST

@@ -19,18 +19,18 @@ impl FetchGraph<MultiTypeFetchStep> {
     /// first field of the next group waits for the last steps of the group, not for the root.
     ///
     /// In a group, a field waits only for the root fetch of the field before it, so
-    /// `merge_children_with_parents` puts their root fetches in one request, in order. The
-    /// entity calls of the group run after that request: in
-    /// `create { isExpensive } double: multiply(by: 2)`, `double` runs before `b` fetches
-    /// `isExpensive`.
+    /// `merge_children_with_parents` puts their root fetches in one request, in order.
+    ///
+    /// A field is done only when all of its data is, so a field that needs more fetches after
+    /// its root one (entity calls, @requires, context) ends its group. Otherwise the next field
+    /// would run first, and those fetches could read what it changed: in
+    /// `create { isExpensive } double: multiply(by: 2)`, `b` fetches `isExpensive` before
+    /// `double` runs.
     ///
     /// The idea with grouping is here to validate two things:
     /// 1 - mutations fields are always running as sequence (serially), even if they are from different subgraphs
     /// 2 - grouping happens only if it's helping with efficiency (same subgraph)
-    /// 3 - entity/requires calls are still happening within the same group
-    ///
-    /// A field with contextual results ends its group so its context-dependent fetches finish
-    /// before the next root field runs.
+    /// 3 - a field and everything it fetches is done before the next field runs
     ///
     /// Runs before any optimization. With the order in the graph, merges keep it like any other
     /// dependency, and nothing else has to know about mutations.
@@ -57,17 +57,18 @@ impl FetchGraph<MultiTypeFetchStep> {
         // Consecutive fields whose root fetches go to one subgraph.
         let mut groups: Vec<Vec<Vec<NodeIndex>>> = Vec::new();
         let mut group_subgraph = None;
-        let mut group_has_context = false;
+        let mut group_ended = false;
         for steps in fields.into_values() {
             let subgraph = self.single_subgraph(&steps)?;
-            let has_context = self.reachable_from(&steps).iter().any(|index| {
-                self.get_step_data(*index)
-                    .is_ok_and(|step| !step.context_variable_definitions.is_empty())
-            });
+            // more fetches than the field's root ones, or root ones that need context
+            let reachable = self.reachable_from(&steps);
+            let ends_group = reachable.len() > steps.len()
+                || reachable.iter().any(|index| {
+                    self.get_step_data(*index)
+                        .is_ok_and(|step| !step.context_variable_definitions.is_empty())
+                });
             match groups.last_mut() {
-                Some(group)
-                    if subgraph.is_some() && subgraph == group_subgraph && !group_has_context =>
-                {
+                Some(group) if subgraph.is_some() && subgraph == group_subgraph && !group_ended => {
                     group.push(steps)
                 }
                 _ => {
@@ -75,7 +76,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                     groups.push(vec![steps]);
                 }
             }
-            group_has_context = has_context;
+            group_ended = ends_group;
         }
 
         for group in &groups {
