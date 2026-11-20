@@ -8,7 +8,9 @@ use std::slice;
 
 use smallvec::SmallVec;
 
+use super::defer::{is_within, part_of_fetch};
 use super::{FetchId, PlanNode, PlanState, Planning};
+use crate::query_planner::ast::defer::DeferPart;
 use crate::query_planner::planner::error::QueryPlanError;
 
 /// The fetches of a plan by position, the order [`plan_fetches`] lists them in, and which ones
@@ -26,7 +28,16 @@ pub struct PlanSchedule {
 impl PlanSchedule {
     /// The schedule of `node`. Fails when a fetch depends on one that doesn't come before it in
     /// the plan, so a schedule never has a cycle.
-    pub fn new(node: Option<&PlanNode<Planning>>) -> Result<Self, QueryPlanError> {
+    ///
+    /// With the `@defer` parts the fetches are for, it also fails when a fetch depends on one of a
+    /// part that isn't its own or one around it. The planner never makes that: a fetch reads only
+    /// from its own part or one around it, and mutation fields only wait for the primary fetches
+    /// of the field before. Only the parts know how they nest, so it's checked here, and the
+    /// primary part never waits for deferred work.
+    pub fn new(
+        node: Option<&PlanNode<Planning>>,
+        parts: Option<&[DeferPart]>,
+    ) -> Result<Self, QueryPlanError> {
         let fetches = node.map(plan_fetches).unwrap_or_default();
         let position = positions_by_id(&fetches)?;
         let mut dependencies: Vec<(u32, u32)> = Vec::new();
@@ -45,6 +56,19 @@ impl PlanSchedule {
                         fetch: completes[0],
                         dependency,
                     })?;
+                let other_part = parts.is_some_and(|parts| {
+                    !is_within(
+                        parts,
+                        part_of_fetch(fetch),
+                        part_of_fetch(fetches[dependency_index as usize]),
+                    )
+                });
+                if other_part {
+                    return Err(QueryPlanError::DependsOnFetchOfOtherPart {
+                        fetch: completes[0],
+                        dependency,
+                    });
+                }
                 dependencies.push((dependency_index, index));
             }
         }

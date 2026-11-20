@@ -2,7 +2,12 @@ use super::context::{
     collect_context_entities, unalias_response, AliasedRequests, Collected, ContextGroup,
     EntityRef, TargetEntities,
 };
+use crate::plugins::plugin_context::OwnedPluginRequestState;
+use crate::query_planner::ast::defer::{DeferId, DeferLayout};
+use crate::query_planner::planner::plan_nodes::defer::{defer_display_plan, part_of_fetch};
+use std::cmp::Reverse;
 use std::collections::{BTreeSet, HashMap};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::vec;
 
@@ -28,7 +33,7 @@ use crate::telemetry::traces::spans::observed_error::ObservedError;
 use ahash::{HashMap as AHashMap, HashMapExt};
 use futures::TryFutureExt;
 use futures::{
-    future::BoxFuture,
+    future::{join, ready, BoxFuture, Join, Ready},
     stream::{BoxStream, FuturesUnordered},
     FutureExt, StreamExt,
 };
@@ -39,6 +44,7 @@ use sonic_rs::{JsonValueTrait, ValueRef};
 use tracing::{debug, error, warn, Instrument};
 
 use crate::executor::execution::client_request_details::OperationDetails;
+use crate::executor::execution::demand_control::subgraph_response_tracker::SubgraphResponseCostTracker;
 use crate::executor::execution::demand_control::DemandControlExecutionContext;
 use crate::executor::execution::entity_reuse::{self, Copies};
 use crate::executor::execution::error_masking::ErrorMaskingRuntime;
@@ -63,7 +69,7 @@ use crate::executor::{
     hooks::{
         on_execute::{
             DemandControlCost, DemandControlEstimatedCost, OnExecuteEndHookPayload,
-            OnExecuteResponse, OnExecuteStartHookPayload,
+            OnExecuteEndHookResult, OnExecuteResponse, OnExecuteStartHookPayload,
         },
         on_graphql_error::handle_graphql_errors_with_plugins,
     },
@@ -72,9 +78,14 @@ use crate::executor::{
         schema::SchemaMetadata,
     },
     plugin_context::PluginRequestState,
-    plugin_trait::{EarlyHTTPResponse, EndControlFlow, StartControlFlow},
+    plugin_trait::{EarlyHTTPResponse, EndControlFlow, RouterPluginBoxed, StartControlFlow},
     plugins::hooks,
-    projection::{plan::ProjectionPlan, response::project_by_operation},
+    projection::{
+        defer::{is_part_path, DeferGroup, DeferPlans, IncrementalFormat, IncrementalWriter},
+        error::ProjectionError,
+        plan::ProjectionPlan,
+        response::project_by_operation,
+    },
     response::{
         graphql_error::{GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment},
         merge::{deep_merge, deep_merge_from, EntityMerger},
@@ -149,6 +160,27 @@ pub struct QueryPlanExecutionOpts<'exec> {
     pub response_header_sink: ResponseHeaderSink,
     pub error_masking_runtime: Arc<Option<ErrorMaskingRuntime>>,
     pub connection_fingerprint: Option<ConnectionFingerprint>,
+    /// Set when the operation has an active `@defer` and the client takes an incremental response.
+    pub defer: Option<DeferExecution>,
+}
+
+#[derive(Clone)]
+pub struct DeferExecution {
+    pub plans: Arc<DeferPlans>,
+    pub format: IncrementalFormat,
+    /// The same plan as `query_plan`, owned, the deferred passes outlive the request handler.
+    pub query_plan: Arc<QueryPlan>,
+    /// The deferred parts the plan's fetches are for.
+    pub layout: Arc<DeferLayout>,
+    /// When the request times out, `None` when it doesn't.
+    pub deadline: Option<std::time::Instant>,
+}
+
+impl DeferExecution {
+    /// The plan as it's shown when exposed, with `Defer` nodes. Only built when it's shown.
+    pub fn display_plan(&self) -> QueryPlan {
+        defer_display_plan(&self.query_plan, &self.layout)
+    }
 }
 
 pub struct PlanSubscriptionOutput {
@@ -159,6 +191,22 @@ pub struct PlanSubscriptionOutput {
 pub enum QueryPlanExecutionResult {
     Single(PlanExecutionOutput),
     Stream(PlanSubscriptionOutput),
+    /// An incremental (`@defer`) response, the primary part first.
+    Parts(PlanPartsOutput),
+}
+
+/// The parts of an incremental response. The first item is the primary part. `error_count`
+/// adds up the errors of the parts as they go out.
+pub struct PlanPartsOutput {
+    pub body: BoxStream<'static, Vec<u8>>,
+    pub error_count: Arc<AtomicUsize>,
+    /// The status of the response head, set once the stream gave its first item: the primary
+    /// part, a plugin's response or a failure. `on_graphql_error` can change it for the
+    /// primary part, like for a regular response. Later parts can't, the head is out by then.
+    pub status: Arc<AtomicU16>,
+    /// Set when the first item is a plugin's answer from `on_execute`, not a part. It goes out
+    /// as a regular response, the way it would without `@defer`.
+    pub plugin_response: Arc<AtomicBool>,
 }
 
 #[derive(Default)]
@@ -240,7 +288,7 @@ fn log_plan_execution_error(error: &PlanExecutionError) {
 }
 
 pub async fn execute_query_plan<'exec>(
-    opts: QueryPlanExecutionOpts<'exec>,
+    mut opts: QueryPlanExecutionOpts<'exec>,
 ) -> Result<QueryPlanExecutionResult, PlanExecutionError> {
     // subscription
     if let Some((sub, query_plan)) = opts.query_plan.split_subscription() {
@@ -405,6 +453,7 @@ pub async fn execute_query_plan<'exec>(
                     response_header_sink: response_header_sink.clone(),
                     error_masking_runtime: opts.error_masking_runtime.clone(),
                     connection_fingerprint: opts.connection_fingerprint,
+                    defer: None,
                 };
                 match execute_query_plan_with_data(response.data, opts).await {
                     Ok(result) => yield result.body,
@@ -426,6 +475,10 @@ pub async fn execute_query_plan<'exec>(
 
     // query or mutation
 
+    if let Some(defer) = opts.defer.take() {
+        return Ok(execute_deferred(opts, defer));
+    }
+
     let introspection_context_clone = Arc::clone(&opts.introspection_context);
     // An operation without fields, like `{ topProducts @skip(if: true) { name } }`,
     // still has `{}` as its data.
@@ -435,9 +488,524 @@ pub async fn execute_query_plan<'exec>(
         Value::Object(Vec::new())
     };
 
-    let output = execute_query_plan_with_data(data, opts).await?;
+    execute_query_plan_with_data(data, opts)
+        .await
+        .map(QueryPlanExecutionResult::Single)
+}
 
-    Ok(QueryPlanExecutionResult::Single(output))
+/// The error the deferred parts end with when the request timed out, the same one a request
+/// that times out before its response gets.
+fn timeout_error() -> GraphQLError {
+    let error = crate::pipeline::error::PipelineError::from(
+        crate::pipeline::error::ClientPipelineError::TimeoutError,
+    );
+    GraphQLError::from_message_and_code(error.graphql_error_message(), error.graphql_error_code())
+}
+
+/// A projected part, or the masked error that goes out in its place as the stream's last part.
+fn part_or_failure<T>(
+    part: Result<T, ProjectionError>,
+    error_masking_runtime: &Option<ErrorMaskingRuntime>,
+) -> Result<T, Vec<u8>> {
+    part.map_err(|err| serialize_masked_failure(failure_error(err), error_masking_runtime))
+}
+
+/// The error a part that couldn't be written goes out with, logged.
+fn failure_error(err: ProjectionError) -> GraphQLError {
+    let err = Err::<(), _>(err)
+        .with_plan_context(LazyPlanContext {
+            subgraph_name: || None,
+            affected_path: || None,
+        })
+        .unwrap_err();
+    log_plan_execution_error(&err);
+    (&err).into()
+}
+
+/// An end callback a plugin's `on_execute` left.
+type OnExecuteEndCallback<'exec> =
+    Box<dyn FnOnce(OnExecuteEndHookPayload<'exec>) -> OnExecuteEndHookResult<'exec> + Send + 'exec>;
+
+/// Runs every plugin's `on_execute`, in order. Gives back the payload as the last one left it
+/// and the end callbacks they registered, or the response a plugin answered with.
+async fn run_start_hooks<'exec>(
+    plugins: &'exec [RouterPluginBoxed],
+    mut payload: OnExecuteStartHookPayload<'exec>,
+) -> Result<
+    (
+        OnExecuteStartHookPayload<'exec>,
+        Vec<OnExecuteEndCallback<'exec>>,
+    ),
+    // boxed, a whole response, and the rare way out
+    Box<OnExecuteResponse>,
+> {
+    let mut on_end_callbacks = Vec::new();
+    for plugin in plugins {
+        let result = plugin.on_execute(payload).await;
+        payload = result.payload;
+        match result.control_flow {
+            StartControlFlow::Proceed => {}
+            StartControlFlow::EndWithResponse(response) => return Err(Box::new(response)),
+            StartControlFlow::OnEnd(callback) => on_end_callbacks.push(callback),
+        }
+    }
+    Ok((payload, on_end_callbacks))
+}
+
+/// Runs the end callbacks, in order. Gives back the payload as the last one left it, or the
+/// response one answered with, along with the payload's headers.
+fn run_end_hooks<'exec>(
+    callbacks: Vec<OnExecuteEndCallback<'exec>>,
+    mut payload: OnExecuteEndHookPayload<'exec>,
+) -> Result<OnExecuteEndHookPayload<'exec>, Box<(OnExecuteResponse, ResponseHeaderAggregator)>> {
+    for callback in callbacks {
+        let result = callback(payload);
+        payload = result.payload;
+        if let EndControlFlow::EndWithResponse(response) = result.control_flow {
+            return Err(Box::new((response, payload.response_headers)));
+        }
+    }
+    Ok(payload)
+}
+
+/// The actual cost of `data`. Over the limit is only logged, the subgraphs answered already.
+fn actual_cost(
+    demand_control: &DemandControlExecutionContext,
+    data: &Value<'_>,
+    variables: &Option<HashMap<String, sonic_rs::Value>>,
+    subgraph_response_cost_tracker: &SubgraphResponseCostTracker<'_>,
+    operation_name: Option<&str>,
+) -> u64 {
+    let actual =
+        demand_control.calculate_actual_cost(data, variables, subgraph_response_cost_tracker);
+    if actual > demand_control.operation.operation_max_cost {
+        warn!(
+            target: targets::DEMAND_CONTROL,
+            operation_name = ?operation_name,
+            actual_cost = actual,
+            estimated_cost = demand_control.evaluation.estimated_cost,
+            max_cost = demand_control.operation.operation_max_cost,
+            "actual cost exceeds max cost (not enforced)"
+        );
+    }
+    actual
+}
+
+/// The response a plugin answered with.
+fn on_execute_output(
+    response: OnExecuteResponse,
+    response_header_sink: &ResponseHeaderSink,
+) -> PlanExecutionOutput {
+    match response {
+        OnExecuteResponse::Output(response) => response,
+        OnExecuteResponse::EarlyResponse(response) => {
+            early_http_response_into_execution_output(response, response_header_sink)
+        }
+    }
+}
+
+/// A query or mutation with an active `@defer`. Everything runs inside the returned stream:
+/// fetches start as soon as their inputs are in, and each part goes out once all its data is.
+/// The stream owns all it needs, it keeps going after the request handler returns.
+///
+/// Plugins get a copy of the request, rebuilt inside the stream. `on_execute` starts as usual,
+/// its end callbacks run once before the primary part (`has_next: true`), and `on_graphql_error`
+/// runs for every part.
+fn execute_deferred(
+    opts: QueryPlanExecutionOpts<'_>,
+    defer: DeferExecution,
+) -> QueryPlanExecutionResult {
+    // every field by name, so a new one has to be handled here: the stream outlives `opts`
+    let QueryPlanExecutionOpts {
+        query_plan: _,
+        operation_for_plan,
+        projection_plan,
+        headers_plan,
+        extensions_plan,
+        variable_values,
+        extensions,
+        client_request,
+        introspection_context,
+        operation_type_name,
+        operation_kind,
+        executors,
+        jwt_auth_forwarding,
+        graphql_error_recorder,
+        demand_control_context,
+        initial_errors,
+        span,
+        plugin_req_state,
+        operation_name_factory,
+        response_header_sink,
+        error_masking_runtime,
+        connection_fingerprint,
+        defer: _,
+    } = opts;
+    let method = client_request.method.clone();
+    let url = client_request.url.clone();
+    let headers = client_request.headers.clone();
+    let operation_name = client_request.operation.name.map(|s| s.to_string());
+    let operation_query = client_request.operation.query.to_string();
+    let operation_kind_str = client_request.operation.kind;
+    let jwt = client_request.jwt.clone();
+    let path_params = client_request.path_params.clone().into_owned();
+    let expose_query_plan = extensions.query_plan.is_some();
+    let mut extensions_map = extensions.extensions;
+    let variables = variable_values.variables_map.clone();
+    // the plugin state borrows the request, the stream gets its own copy of what it needs
+    let owned_plugin_state = plugin_req_state.as_ref().map(OwnedPluginRequestState::from);
+    let error_count = Arc::new(AtomicUsize::new(0));
+    let error_count_out = error_count.clone();
+    let status = Arc::new(AtomicU16::new(StatusCode::OK.as_u16()));
+    let status_out = status.clone();
+    let plugin_response = Arc::new(AtomicBool::new(false));
+    let plugin_response_out = plugin_response.clone();
+
+    let body = Box::pin(async_stream::stream! {
+        let client_request = ClientRequestDetails {
+            method: &method,
+            url: &url,
+            headers,
+            operation: OperationDetails {
+                query: &operation_query,
+                name: operation_name.as_deref(),
+                kind: operation_kind_str,
+            },
+            jwt,
+            path_params,
+        };
+        let plugin_state = owned_plugin_state.as_ref().map(OwnedPluginRequestState::borrow);
+        let aliased_requests = AliasedRequests::default();
+        let executor = Executor {
+            variable_values: &variables,
+            schema_metadata: &introspection_context.metadata,
+            executors: &executors,
+            client_request: &client_request,
+            headers_plan: &headers_plan,
+            extensions_plan: &extensions_plan,
+            jwt_forwarding_plan: jwt_auth_forwarding,
+            dedupe_subgraph_requests: operation_kind.is_query(),
+            demand_control_context: demand_control_context.clone(),
+            plugin_req_state: plugin_state.as_ref(),
+            operation_name_factory: &operation_name_factory,
+            connection_fingerprint,
+            aliased_requests: &aliased_requests,
+        };
+        let mut data = match &introspection_context.query {
+            Some(query) => resolve_introspection(query, &introspection_context),
+            None => Value::Object(Vec::new()),
+        };
+        let mut initial_errors = initial_errors;
+
+        let mut on_end_callbacks = vec![];
+        if let Some(plugin_state) = plugin_state.as_ref() {
+            let start_payload = OnExecuteStartHookPayload {
+                router_http_request: &plugin_state.router_http_request,
+                context: &plugin_state.context,
+                request_context: plugin_state.request_context.for_plugin::<hooks::OnExecute>(),
+                query_plan: &defer.query_plan,
+                operation_for_plan: &operation_for_plan,
+                data,
+                errors: initial_errors,
+                extensions: extensions_map,
+                variable_values: &variables,
+                dedupe_subgraph_requests: operation_kind.is_query(),
+                demand_control_estimate: demand_control_context.as_ref().map(|dc| {
+                    DemandControlEstimatedCost {
+                        estimated: dc.evaluation.estimated_cost,
+                        max: dc.operation.operation_max_cost,
+                    }
+                }),
+            };
+            let start_payload = match run_start_hooks(&plugin_state.plugins, start_payload).await {
+                Ok((start_payload, callbacks)) => {
+                    on_end_callbacks = callbacks;
+                    start_payload
+                }
+                // a plugin answered for us, that's the only part
+                Err(response) => {
+                    let output = on_execute_output(*response, &response_header_sink);
+                    status.store(output.status_code.as_u16(), Ordering::Relaxed);
+                    error_count.fetch_add(output.error_count, Ordering::Relaxed);
+                    plugin_response.store(true, Ordering::Relaxed);
+                    yield output.body;
+                    return;
+                }
+            };
+            data = start_payload.data;
+            initial_errors = start_payload.errors;
+            extensions_map = start_payload.extensions;
+        }
+
+        let mut exec_ctx = ExecutionContext::new(data, initial_errors);
+        // a part's errors as the client gets them: through `on_graphql_error`, which runs for
+        // every part, then masked. The status it picks only counts for the primary part, the
+        // response head goes out with it
+        let for_client = |mut errors: Vec<GraphQLError>| {
+            let mut status_code = StatusCode::OK;
+            if let Some(state) = plugin_state.as_ref().filter(|_| !errors.is_empty()) {
+                (errors, status_code) = handle_graphql_errors_with_plugins(
+                    state.plugins.as_ref(),
+                    state.context.as_ref(),
+                    &state.request_context,
+                    errors,
+                    status_code,
+                );
+            }
+            if let Some(runtime) = error_masking_runtime.as_ref() {
+                errors.iter_mut().for_each(|error| runtime.apply(error));
+            }
+            (errors, status_code)
+        };
+        // the span's count is set, not added to, so it gets the total of all parts so far
+        let record_errors = |errors: &[GraphQLError]| {
+            if errors.is_empty() {
+                return;
+            }
+            let total = error_count.fetch_add(errors.len(), Ordering::Relaxed) + errors.len();
+            span.record_error_count(total);
+            span.record_errors(|| errors.iter().map(|e| e.into()).collect());
+            if let Some(recorder) = graphql_error_recorder.as_ref() {
+                recorder.record_errors(|| errors.iter().map(|err| err.extensions.code.as_deref()));
+            }
+        };
+
+        let mut run = FetchRun::new(&defer.query_plan);
+        // the deferred part each fetch is for, to tell when a part is ready
+        let fills: SmallVec<[Option<DeferId>; 16]> =
+            run.fetches().iter().map(|node| part_of_fetch(node)).collect();
+        let mut writer = IncrementalWriter::new(
+            &defer.plans,
+            &projection_plan,
+            &introspection_context.metadata,
+            &variables,
+            defer.format,
+            &defer.layout.parts,
+        );
+
+        // fetches run like any plan's, the primary part goes out once its own are done
+        loop {
+            run.start(&executor, &mut exec_ctx);
+            if fills.iter().zip(run.done()).all(|(fills, done)| fills.is_some() || *done) {
+                break;
+            }
+            run.advance(&executor, &mut exec_ctx).await;
+        }
+
+        let (errors, origins) = run.take_errors(&mut exec_ctx);
+        record_errors(&errors);
+        // errors from deferred fetches are their fragments'. Like the ones that come after the
+        // primary part, they skip the end hooks, which only get the primary part's
+        let (errors, deferred_errors): (Vec<_>, Vec<_>) = errors
+            .into_iter()
+            .zip(origins)
+            .partition(|(_, origin)| origin.is_none());
+        let mut errors: Vec<GraphQLError> = errors.into_iter().map(|(error, _)| error).collect();
+        let mut demand_control_cost = None;
+        if let Some(demand_control) = executor.demand_control_context.as_ref() {
+            // what came in so far, the limit is checked once everything did, at the end
+            let actual = demand_control.calculate_actual_cost(
+                &exec_ctx.data,
+                &variables,
+                &exec_ctx.subgraph_response_cost_tracker,
+            );
+            demand_control_cost = Some(DemandControlCost {
+                estimated: demand_control.evaluation.estimated_cost,
+                max: demand_control.operation.operation_max_cost,
+                actual,
+            });
+            // headers go out with the primary part, telemetry gets the cost of every part at the end
+            demand_control.apply_expose_headers(&mut exec_ctx.response_headers_aggregator, actual);
+        }
+        // the policy goes out before the deferred fetches answer, and theirs could be stricter
+        // or missing. So the whole response is `no-store`, whatever the subgraphs sent
+        cache_control::forbid(&mut exec_ctx.response_headers_aggregator);
+        // stored after the end hooks, so what they set goes out with the primary part
+        let mut response_headers = std::mem::take(&mut exec_ctx.response_headers_aggregator);
+        let display_plan = expose_query_plan.then(|| defer.display_plan());
+        let mut extensions = ExecutionResultExtensions {
+            query_plan: display_plan.as_ref(),
+            extensions: extensions_map,
+        };
+        std::mem::take(&mut exec_ctx.extensions_aggregator).merge_into(&mut extensions.extensions);
+        let mut size_estimate = exec_ctx.response_storage.estimate_final_response_size();
+
+        // end hooks run once, before the primary part, `has_next` tells them more is coming.
+        // what they change in `data` shows in the later parts too.
+        if let Some(state) = plugin_state.as_ref().filter(|_| !on_end_callbacks.is_empty()) {
+            let end_payload = OnExecuteEndHookPayload {
+                data: std::mem::take(&mut exec_ctx.data),
+                errors,
+                extensions: std::mem::take(&mut extensions.extensions),
+                response_size_estimate: size_estimate,
+                request_context: state.request_context.for_plugin::<hooks::OnExecute>(),
+                demand_control_cost,
+                response_headers,
+                has_next: true,
+            };
+            let end_payload = match run_end_hooks(on_end_callbacks, end_payload) {
+                Ok(end_payload) => end_payload,
+                Err(early) => {
+                    let (response, headers) = *early;
+                    response_header_sink.store(headers);
+                    let output = on_execute_output(response, &response_header_sink);
+                    status.store(output.status_code.as_u16(), Ordering::Relaxed);
+                    error_count.fetch_add(output.error_count, Ordering::Relaxed);
+                    plugin_response.store(true, Ordering::Relaxed);
+                    yield output.body;
+                    return;
+                }
+            };
+            exec_ctx.data = end_payload.data;
+            errors = end_payload.errors;
+            extensions.extensions = end_payload.extensions;
+            size_estimate = end_payload.response_size_estimate;
+            response_headers = end_payload.response_headers;
+            // hooks can't loosen the cache policy
+            cache_control::forbid(&mut response_headers);
+        }
+        // the handler reads these once the primary part is out
+        response_header_sink.store(response_headers);
+
+        // only the primary part's own errors count for the status, the writer tells them apart
+        let mut status_code = StatusCode::OK;
+        let mut origins = vec![None; errors.len()];
+        for (error, origin) in deferred_errors {
+            errors.push(error);
+            origins.push(origin);
+        }
+        let primary = writer.primary(
+            &exec_ctx.data,
+            errors,
+            origins,
+            &extensions,
+            &operation_type_name,
+            size_estimate,
+            |errors, own| {
+                let (errors, status) = for_client(errors);
+                if own {
+                    status_code = status;
+                }
+                errors
+            },
+        );
+        match part_or_failure(primary, &error_masking_runtime) {
+            Ok(part) => {
+                status.store(status_code.as_u16(), Ordering::Relaxed);
+                yield part;
+            }
+            Err(failure) => {
+                // like a regular response that fails, see `InternalPipelineError`
+                status.store(StatusCode::INTERNAL_SERVER_ERROR.as_u16(), Ordering::Relaxed);
+                yield failure;
+                return;
+            }
+        }
+
+        // then each deferred fragment once its own fetches are done, no matter how its siblings
+        // are doing. Once nothing is left to deliver, deferred fetches still running are dropped.
+        // The request timeout covers these parts too, the handler is done once the primary part
+        // is out
+        let mut timeout = defer.deadline.map(|deadline| {
+            futures_timer::Delay::new(deadline.saturating_duration_since(std::time::Instant::now()))
+        });
+        while writer.has_next() {
+            // past the deadline nothing else starts or goes out, even when the client only reads
+            // on after it
+            let past = defer
+                .deadline
+                .is_some_and(|deadline| std::time::Instant::now() >= deadline);
+            if !past {
+                run.start(&executor, &mut exec_ctx);
+                // a fragment's part is its `@defer` at its path, any list index matching. A
+                // fragment with no part, like one only on introspection fields, has no fetches.
+                // A copy of what's done, the run gives up its errors before the part is written
+                let done: SmallVec<[bool; 16]> = SmallVec::from_slice(run.done());
+                let ready = |group: &DeferGroup, path: &[GraphQLErrorPathSegment]| {
+                    let position = group.marker.position;
+                    !fills.iter().zip(&done).any(|(fills, done)| {
+                        !done
+                            && fills.is_some_and(|id| {
+                                let part = &defer.layout.parts[id.index()];
+                                part.position == position && is_part_path(&part.path, path)
+                            })
+                    })
+                };
+                if writer.has_ready(ready) {
+                    let (errors, origins) = run.take_errors(&mut exec_ctx);
+                    record_errors(&errors);
+                    match writer.next(&exec_ctx.data, for_client(errors).0, origins, ready) {
+                        Ok(Some(part)) => yield part,
+                        Ok(None) => break,
+                        Err(err) => {
+                            // the announced fragments end with the failure, the stream with
+                            // `hasNext: false`
+                            let mut error = failure_error(err);
+                            if let Some(runtime) = error_masking_runtime.as_ref() {
+                                runtime.apply(&mut error);
+                            }
+                            let last = writer.fail_pending(Vec::new(), Vec::new(), error);
+                            match part_or_failure(last, &error_masking_runtime) {
+                                Ok(part) | Err(part) => yield part,
+                            }
+                            return;
+                        }
+                    }
+                    continue;
+                }
+                // the timer is polled first, so when both are done the deadline wins
+                let timed_out = match timeout.as_mut() {
+                    Some(timeout) => matches!(
+                        futures::future::select(
+                            timeout,
+                            std::pin::pin!(run.advance(&executor, &mut exec_ctx)),
+                        )
+                        .await,
+                        futures::future::Either::Left(_)
+                    ),
+                    None => {
+                        run.advance(&executor, &mut exec_ctx).await;
+                        false
+                    }
+                };
+                if !timed_out {
+                    continue;
+                }
+            }
+            // the fragments still pending end with the timeout error, what's still running is
+            // dropped with the run
+            let (mut errors, origins) = run.take_errors(&mut exec_ctx);
+            errors.push(timeout_error());
+            record_errors(&errors);
+            let (mut errors, _) = for_client(errors);
+            let error = errors.pop().expect("one out for every one in");
+            match part_or_failure(
+                writer.fail_pending(errors, origins, error),
+                &error_masking_runtime,
+            ) {
+                Ok(part) | Err(part) => yield part,
+            }
+            break;
+        }
+
+        if let Some(demand_control) = executor.demand_control_context.as_ref() {
+            let actual = actual_cost(
+                demand_control,
+                &exec_ctx.data,
+                &variables,
+                &exec_ctx.subgraph_response_cost_tracker,
+                operation_name.as_deref(),
+            );
+            demand_control.report_telemetry(actual, operation_name.as_deref(), &span);
+        }
+    });
+
+    QueryPlanExecutionResult::Parts(PlanPartsOutput {
+        body,
+        error_count: error_count_out,
+        status: status_out,
+        plugin_response: plugin_response_out,
+    })
 }
 
 async fn execute_query_plan_with_data<'exec>(
@@ -454,7 +1022,7 @@ async fn execute_query_plan_with_data<'exec>(
 
     // TODO: coprocessor.on_execution_request
     if let Some(plugin_req_state) = opts.plugin_req_state.as_ref() {
-        let mut start_payload = OnExecuteStartHookPayload {
+        let start_payload = OnExecuteStartHookPayload {
             router_http_request: &plugin_req_state.router_http_request,
             context: &plugin_req_state.context,
             request_context: plugin_req_state
@@ -475,25 +1043,13 @@ async fn execute_query_plan_with_data<'exec>(
             }),
         };
 
-        for plugin in plugin_req_state.plugins.as_ref() {
-            let result = plugin.on_execute(start_payload).await;
-            start_payload = result.payload;
-            match result.control_flow {
-                StartControlFlow::Proceed => { /* continue to next plugin */ }
-                StartControlFlow::EndWithResponse(response) => match response {
-                    OnExecuteResponse::Output(response) => return Ok(response),
-                    OnExecuteResponse::EarlyResponse(response) => {
-                        return Ok(early_http_response_into_execution_output(
-                            response,
-                            &opts.response_header_sink,
-                        ));
-                    }
-                },
-                StartControlFlow::OnEnd(callback) => {
-                    on_end_callbacks.push(callback);
-                }
+        let start_payload = match run_start_hooks(&plugin_req_state.plugins, start_payload).await {
+            Ok((start_payload, callbacks)) => {
+                on_end_callbacks = callbacks;
+                start_payload
             }
-        }
+            Err(response) => return Ok(on_execute_output(*response, &opts.response_header_sink)),
+        };
 
         // Give the ownership back to variables
         data = start_payload.data;
@@ -547,10 +1103,12 @@ async fn execute_query_plan_with_data<'exec>(
 
     let mut demand_control_cost = None;
     if let Some(demand_control) = executor.demand_control_context {
-        let actual = demand_control.calculate_actual_cost(
+        let actual = actual_cost(
+            &demand_control,
             &data,
             &opts.variable_values.variables_map,
             &exec_ctx.subgraph_response_cost_tracker,
+            opts.operation_for_plan.name.as_deref(),
         );
 
         demand_control_cost = Some(DemandControlCost {
@@ -558,17 +1116,6 @@ async fn execute_query_plan_with_data<'exec>(
             max: demand_control.operation.operation_max_cost,
             actual,
         });
-
-        if actual > demand_control.operation.operation_max_cost {
-            warn!(
-                target: targets::DEMAND_CONTROL,
-                operation_name = ?opts.operation_for_plan.name.as_deref(),
-                actual_cost = actual,
-                estimated_cost = demand_control.evaluation.estimated_cost,
-                max_cost = demand_control.operation.operation_max_cost,
-                "actual cost exceeds max cost (not enforced)"
-            );
-        }
 
         demand_control.report_telemetry(
             actual,
@@ -601,7 +1148,7 @@ async fn execute_query_plan_with_data<'exec>(
 
     // TODO: coprocessor.on_execution_response
     if !on_end_callbacks.is_empty() {
-        let mut end_payload = OnExecuteEndHookPayload {
+        let end_payload = OnExecuteEndHookPayload {
             data,
             errors,
             extensions: opts.extensions.extensions,
@@ -613,31 +1160,18 @@ async fn execute_query_plan_with_data<'exec>(
                 .expect("plugin state not available, but on_end_callbacks are present"),
             demand_control_cost,
             response_headers,
+            has_next: false,
         };
 
-        for callback in on_end_callbacks {
-            let result = callback(end_payload);
-            end_payload = result.payload;
-            match result.control_flow {
-                EndControlFlow::Proceed => { /* continue to next callback */ }
-                EndControlFlow::EndWithResponse(response) => match response {
-                    OnExecuteResponse::Output(response) => {
-                        opts.response_header_sink
-                            .store(end_payload.response_headers);
-                        return Ok(response);
-                    }
-                    OnExecuteResponse::EarlyResponse(response) => {
-                        // early response headers replace the aggregated ones when present
-                        opts.response_header_sink
-                            .store(end_payload.response_headers);
-                        return Ok(early_http_response_into_execution_output(
-                            response,
-                            &opts.response_header_sink,
-                        ));
-                    }
-                },
+        let end_payload = match run_end_hooks(on_end_callbacks, end_payload) {
+            Ok(end_payload) => end_payload,
+            Err(early) => {
+                let (response, headers) = *early;
+                // an early response's own headers replace these when it has any
+                opts.response_header_sink.store(headers);
+                return Ok(on_execute_output(response, &opts.response_header_sink));
             }
-        }
+        };
 
         // Give the ownership back to variables
         data = end_payload.data;
@@ -894,83 +1428,182 @@ struct PrepareExecutionJobOpts<'exec> {
     affected_path: Option<ResponsePathRef<'exec>>,
 }
 
-/// The `index`th fetch is done: the fetches waiting only for it are ready.
-fn release(
-    schedule: &PlanSchedule,
-    index: u32,
-    waits: &mut [u32],
-    ready: &mut SmallVec<[u32; 16]>,
-) {
-    for &dependent in schedule.dependents(index as usize) {
-        waits[dependent as usize] -= 1;
-        if waits[dependent as usize] == 0 {
-            ready.push(dependent);
-        }
-    }
+type JobResult<'exec> = Result<ExecutionJob<'exec>, PlanExecutionError>;
+
+/// One run of a plan's fetches. Each starts as soon as the fetches it waits for are done (the
+/// plan's schedule says which), results are merged as they come in, and every fetch that's done
+/// lets go of the ones waiting for it.
+struct FetchRun<'exec, 'wave> {
+    fetches: SmallVec<[&'exec PlanNode; 16]>,
+    schedule: &'exec PlanSchedule,
+    /// How many fetches each one still waits for.
+    waits: SmallVec<[u32; 16]>,
+    /// How many jobs each running fetch has left.
+    jobs_left: SmallVec<[u32; 16]>,
+    done: SmallVec<[bool; 16]>,
+    /// Fetches that don't wait for anything anymore and haven't started.
+    ready: SmallVec<[u32; 16]>,
+    /// Jobs with the fetch they're for.
+    running: FuturesUnordered<Join<Ready<u32>, BoxFuture<'wave, JobResult<'exec>>>>,
+    /// Something failed, so nothing is copied anymore, see [`Executor::copy_into`]. Kept here
+    /// because errors of a part that went out are gone from the context.
+    failed: bool,
+    /// The part of the fetch each error in the context came from, see [`Self::take_errors`].
+    /// Filled once there's an error, a fetch with none never touches it.
+    origins: Vec<Option<DeferId>>,
 }
 
-impl<'exec> Executor<'exec> {
-    /// Runs the fetches of the plan, each as soon as the fetches it waits for are done (the
-    /// plan's schedule says which). Results are merged as they come in, and every fetch that's
-    /// done lets go of the ones waiting for it.
-    async fn execute_plan(&self, ctx: &mut ExecutionContext<'exec>, plan: &'exec QueryPlan) {
-        let Some(root) = plan.node() else {
-            return;
-        };
-        let fetches = plan_fetches(root);
+impl<'exec, 'wave> FetchRun<'exec, 'wave> {
+    fn new(plan: &'exec QueryPlan) -> Self {
+        let fetches = plan.node().map(plan_fetches).unwrap_or_default();
         let schedule = plan.schedule();
         debug_assert_eq!(
             fetches.len(),
             schedule.fetch_count(),
             "the schedule is for these nodes"
         );
-        // how many fetches each one still waits for, and how many jobs each running one has left
-        let mut waits: SmallVec<[u32; 16]> = SmallVec::from_slice(schedule.waits());
-        let mut jobs_left: SmallVec<[u32; 16]> = smallvec![0; fetches.len()];
-        let mut ready: SmallVec<[u32; 16]> = (0..fetches.len() as u32)
+        let waits = SmallVec::from_slice(schedule.waits());
+        let ready = (0..fetches.len() as u32)
             .filter(|index| waits[*index as usize] == 0)
             .collect();
-        let mut running = FuturesUnordered::new();
-        loop {
-            while let Some(index) = ready.pop() {
-                // `ctx.data` is only borrowed to prepare the jobs, they run without it
-                let mut copies = Vec::new();
-                let jobs = self.prepare_job_future(
-                    fetches[index as usize],
-                    &ctx.data,
-                    self.copy_into(ctx, &mut copies),
-                );
-                // in before anything waiting for this fetch is prepared, a fetch that copied
-                // everything has no jobs and lets them go right away
-                entity_reuse::merge_copies(&mut ctx.data, copies, self.schema_metadata);
-                if jobs.is_empty() {
-                    release(schedule, index, &mut waits, &mut ready);
-                    continue;
-                }
-                jobs_left[index as usize] = jobs.len() as u32;
-                running.extend(
-                    jobs.into_iter()
-                        .map(|job| job.map(move |result| (index, result))),
-                );
+        Self {
+            jobs_left: smallvec![0; fetches.len()],
+            done: smallvec![false; fetches.len()],
+            fetches,
+            schedule,
+            waits,
+            ready,
+            running: FuturesUnordered::new(),
+            failed: false,
+            origins: Vec::new(),
+        }
+    }
+
+    /// The fetches, in the order the schedule counts them.
+    fn fetches(&self) -> &[&'exec PlanNode] {
+        &self.fetches
+    }
+
+    /// Which fetches are done, by position.
+    fn done(&self) -> &[bool] {
+        &self.done
+    }
+
+    /// Starts every fetch that's ready. Primary ones first, then in the plan's order: with
+    /// `@defer` the client is waiting for the primary part. `ctx.data` is only borrowed to
+    /// prepare the jobs, they run without it.
+    fn start(&mut self, executor: &'wave Executor<'exec>, ctx: &mut ExecutionContext<'exec>) {
+        let fetches = &self.fetches;
+        self.ready.sort_unstable_by_key(|index| {
+            Reverse((part_of_fetch(fetches[*index as usize]).is_some(), *index))
+        });
+        while let Some(index) = self.ready.pop() {
+            let mut copies = Vec::new();
+            let copy_into = executor
+                .copy_into(ctx, &mut copies)
+                .filter(|_| !self.failed);
+            let jobs =
+                executor.prepare_job_future(self.fetches[index as usize], &ctx.data, copy_into);
+            // in before anything waiting for this fetch is prepared, a fetch that copied
+            // everything has no jobs and lets them go right away
+            entity_reuse::merge_copies(&mut ctx.data, copies, executor.schema_metadata);
+            if jobs.is_empty() {
+                self.finish(index);
+                continue;
             }
-            let Some((index, result)) = running.next().await else {
-                break;
-            };
-            self.process_job_result(ctx, result);
-            jobs_left[index as usize] -= 1;
-            if jobs_left[index as usize] == 0 {
-                release(schedule, index, &mut waits, &mut ready);
+            self.jobs_left[index as usize] = jobs.len() as u32;
+            self.running
+                .extend(jobs.into_iter().map(|job| join(ready(index), job)));
+        }
+    }
+
+    /// Merges the next job that's done. `false` when nothing is running.
+    async fn next(
+        &mut self,
+        executor: &'wave Executor<'exec>,
+        ctx: &mut ExecutionContext<'exec>,
+    ) -> bool {
+        let Some((index, result)) = self.running.next().await else {
+            return false;
+        };
+        let before = ctx.errors.len();
+        executor.process_job_result(ctx, result);
+        if ctx.errors.len() > before {
+            // the errors came from this fetch, with `@defer` they're its part's
+            let part = part_of_fetch(self.fetches[index as usize]);
+            self.origins.resize(before, None);
+            self.origins.resize(ctx.errors.len(), part);
+        }
+        self.failed |= !ctx.errors.is_empty();
+        self.jobs_left[index as usize] -= 1;
+        if self.jobs_left[index as usize] == 0 {
+            self.finish(index);
+        }
+        true
+    }
+
+    /// Takes the errors so far out of the context, with the part of the fetch each came from:
+    /// `None` for the primary part's fetches and for errors from before the run.
+    fn take_errors(
+        &mut self,
+        ctx: &mut ExecutionContext<'exec>,
+    ) -> (Vec<GraphQLError>, Vec<Option<DeferId>>) {
+        let errors = std::mem::take(&mut ctx.errors);
+        let mut origins = std::mem::take(&mut self.origins);
+        origins.resize(errors.len(), None);
+        (errors, origins)
+    }
+
+    /// The `index`th fetch is done: the fetches waiting only for it are ready.
+    fn finish(&mut self, index: u32) {
+        self.done[index as usize] = true;
+        for &dependent in self.schedule.dependents(index as usize) {
+            self.waits[dependent as usize] -= 1;
+            if self.waits[dependent as usize] == 0 {
+                self.ready.push(dependent);
             }
         }
-        // the schedule has no cycles, so every fetch was let go and ran, or had nothing to run.
-        // A fetch still waiting means the schedule doesn't fit the plan, a bug
-        if waits.iter().any(|&waits| waits != 0) {
+    }
+
+    /// Logs fetches that never ran. The schedule has no cycles, so once nothing is running every
+    /// fetch was let go and ran, or had nothing to run. One still waiting means the schedule
+    /// doesn't fit the plan, a bug.
+    fn check_finished(&self) {
+        if self.waits.iter().any(|&waits| waits != 0) {
             error!(
                 target: targets::GRAPHQL_EXECUTION,
-                waits = ?waits,
+                waits = ?self.waits,
                 "fetches still waiting after the plan finished",
             );
         }
+    }
+
+    /// [`Self::next`], for a run that's read while it goes. When nothing is running and nothing
+    /// could start, which can't happen with a well-formed schedule, every fetch counts as done,
+    /// so nothing waits on them forever.
+    async fn advance(
+        &mut self,
+        executor: &'wave Executor<'exec>,
+        ctx: &mut ExecutionContext<'exec>,
+    ) {
+        if !self.next(executor, ctx).await {
+            self.check_finished();
+            self.done.fill(true);
+        }
+    }
+}
+
+impl<'exec> Executor<'exec> {
+    /// Runs the fetches of the plan, see [`FetchRun`].
+    async fn execute_plan(&self, ctx: &mut ExecutionContext<'exec>, plan: &'exec QueryPlan) {
+        let mut run = FetchRun::new(plan);
+        loop {
+            run.start(self, ctx);
+            if !run.next(self, ctx).await {
+                break;
+            }
+        }
+        run.check_finished();
     }
 
     /// Where copies of entities already in the response go, `None` when we can't copy. Once
@@ -2505,6 +3138,7 @@ mod tests {
                         service_name: "subgraph_a".to_string(),
                         context: None,
                         run_if: None,
+                        defer: None,
                         depends_on: (),
                         reuse_waits: (),
                         operation: PlanningFetchOperation::from_anonymous_operation(
@@ -2525,6 +3159,7 @@ mod tests {
                         service_name: "subgraph_b".to_string(),
                         context: None,
                         run_if: None,
+                        defer: None,
                         depends_on: (),
                         reuse_waits: (),
                         operation: PlanningFetchOperation::from_anonymous_operation(
@@ -2551,5 +3186,154 @@ mod tests {
             .recv()
             .expect("Failed to receive from_a value through channel");
         assert_eq!(from_a_value, "value_a");
+    }
+}
+
+#[cfg(test)]
+mod defer_schedule_tests {
+    use crate::query_planner::planner::plan_nodes::defer::part_of_fetch;
+    use crate::query_planner::planner::plan_nodes::dependencies::plan_fetches;
+    use crate::query_planner::planner::plan_nodes::PlanNode;
+    use crate::query_planner::tests::testkit::{
+        plan_with_defer, read_supergraph, read_supergraph_state,
+    };
+    use crate::query_planner::utils::parsing::parse_operation;
+
+    fn service(node: &PlanNode) -> &str {
+        match node {
+            PlanNode::Fetch(fetch) => &fetch.service_name,
+            PlanNode::Flatten(flatten) => service(&flatten.node),
+            _ => "?",
+        }
+    }
+
+    /// Each fetch as `service/how many deferred parts deep`, with the fetches it waits for.
+    fn schedule(query: &str) -> Vec<(String, Vec<String>)> {
+        schedule_in("fixture/products-example.supergraph.graphql", query)
+    }
+
+    fn schedule_in(fixture: &str, query: &str) -> Vec<(String, Vec<String>)> {
+        let (plan, deferred) = plan_with_defer(
+            &read_supergraph(fixture),
+            parse_operation(query),
+            Default::default(),
+            Default::default(),
+        )
+        .unwrap();
+        let plan = plan.into_executable(&read_supergraph_state(fixture));
+        let parts = deferred.unwrap().layout.parts;
+        let fetches = plan_fetches(plan.node().unwrap());
+        let name = |node: &PlanNode| {
+            // how many deferred parts deep the fetch is, 0 for the primary part
+            let level =
+                std::iter::successors(part_of_fetch(node), |id| parts[id.index()].parent).count();
+            format!("{}/{level}", service(node))
+        };
+        let schedule = plan.schedule();
+        let mut waits_for = vec![Vec::new(); fetches.len()];
+        for index in 0..fetches.len() {
+            for &dependent in schedule.dependents(index) {
+                waits_for[dependent as usize].push(name(fetches[index]));
+            }
+        }
+        fetches
+            .iter()
+            .map(|node| name(node))
+            .zip(waits_for)
+            .collect()
+    }
+
+    /// What `fetch` waits for in `schedule`.
+    fn waits(schedule: &[(String, Vec<String>)], fetch: &str) -> Vec<String> {
+        let found: Vec<_> = schedule.iter().filter(|(name, _)| name == fetch).collect();
+        assert_eq!(found.len(), 1, "one {fetch} in {schedule:?}");
+        found[0].1.clone()
+    }
+
+    #[test]
+    fn deferred_fetches_wait_only_for_their_inputs() {
+        let schedule = schedule(
+            r#"{
+              topProducts {
+                upc
+                ... @defer(label: "reviews") {
+                  reviews { body author { id ... @defer(label: "author") { name } } }
+                }
+              }
+            }"#,
+        );
+        assert_eq!(waits(&schedule, "products/0"), Vec::<String>::new());
+        assert_eq!(waits(&schedule, "reviews/1"), ["products/0"]);
+        // the authors come from the reviews, the products are already in by then
+        assert_eq!(waits(&schedule, "accounts/2"), ["reviews/1"]);
+    }
+
+    #[test]
+    fn deferred_fetches_do_not_wait_for_primary_fetches_they_do_not_read() {
+        // the deferred authors come from the deferred reviews fetch, not from the primary one
+        let schedule = schedule(
+            r#"{
+              topProducts {
+                upc
+                reviews { author { id } }
+                ... @defer { inStock reviews { author { name } } }
+              }
+            }"#,
+        );
+        assert_eq!(waits(&schedule, "reviews/0"), ["products/0"]);
+        assert_eq!(waits(&schedule, "reviews/1"), ["products/0"]);
+        assert_eq!(waits(&schedule, "inventory/1"), ["products/0"]);
+        assert_eq!(waits(&schedule, "accounts/1"), ["reviews/1"]);
+    }
+
+    #[test]
+    fn deferred_root_fields_start_right_away() {
+        let schedule = schedule(r#"{ topProducts { upc } ... @defer { me { id name } } }"#);
+        assert!(
+            schedule.iter().all(|(_, deps)| deps.is_empty()),
+            "{schedule:?}"
+        );
+        assert!(schedule.iter().any(|(name, _)| name == "accounts/1"));
+    }
+
+    #[test]
+    fn a_mutation_field_waits_for_the_one_before_it() {
+        // the planner has `update2` wait for the last fetch of `update1`, the deferred one, but
+        // the primary part can't wait for deferred work, so it waits for what that one waits for
+        let schedule = schedule_in(
+            "src/query_planner/tests/fixtures/defer_plans/defer_on_mutation_on_different_subgraphs.graphql",
+            r#"mutation {
+              update1 { v0 ... @defer { v1 } }
+              update2 { v1 ... @defer { v0 v2 } }
+            }"#,
+        );
+        let primary: Vec<_> = schedule
+            .iter()
+            .filter(|(name, _)| name.ends_with("/0"))
+            .collect();
+        let update1 = &primary[0];
+        let update2 = &primary[1];
+        assert_eq!(
+            update1,
+            &&("Subgraph1/0".to_string(), vec![]),
+            "{schedule:?}"
+        );
+        assert_eq!(update2.0, "Subgraph2/0", "{schedule:?}");
+        assert_eq!(update2.1, ["Subgraph1/0"], "{schedule:?}");
+    }
+
+    #[test]
+    fn fetches_after_deferred_root_fields_wait_only_for_them() {
+        let schedule = schedule(
+            r#"{
+              me { id }
+              topProducts { upc }
+              ... @defer { me { reviews { body } } topProducts { inStock } }
+            }"#,
+        );
+        assert_eq!(waits(&schedule, "accounts/1"), Vec::<String>::new());
+        assert_eq!(waits(&schedule, "products/1"), Vec::<String>::new());
+        assert_eq!(waits(&schedule, "reviews/1"), ["accounts/1"]);
+        assert_eq!(waits(&schedule, "inventory/1"), ["products/1"]);
     }
 }

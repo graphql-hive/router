@@ -33,6 +33,15 @@ pub struct LimitsConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_aliases: Option<MaxAliasesRuleConfig>,
 
+    /// Limits how many `@defer`s one operation can have, `@defer(if:)` included.
+    /// Only applies with `defer.enabled` on.
+    ///
+    /// Every `@defer` is a deferred part with fetches of its own, and a `@defer(if:)` is planned
+    /// both ways, deferred and not, so each one makes the query plan bigger. Defaults to 4.
+    /// Set it to `null` to turn it off.
+    #[serde(default = "default_max_defers")]
+    pub max_defers: Option<MaxDefersRuleConfig>,
+
     #[serde(default = "default_max_request_body_size")]
     #[schemars(with = "String")]
     pub max_request_body_size: Size,
@@ -54,6 +63,7 @@ impl Default for LimitsConfig {
             max_directives: None,
             max_tokens: None,
             max_aliases: None,
+            max_defers: default_max_defers(),
             max_request_body_size: default_max_request_body_size(),
             max_request_header_size: default_max_request_header_size(),
         }
@@ -102,6 +112,17 @@ pub struct MaxTokensRuleConfig {
 pub struct MaxAliasesRuleConfig {
     /// Aliases threshold
     pub n: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[non_exhaustive]
+pub struct MaxDefersRuleConfig {
+    /// How many `@defer`s an operation can have
+    pub n: usize,
+}
+
+fn default_max_defers() -> Option<MaxDefersRuleConfig> {
+    Some(MaxDefersRuleConfig { n: 4 })
 }
 
 fn default_max_request_body_size() -> Size {

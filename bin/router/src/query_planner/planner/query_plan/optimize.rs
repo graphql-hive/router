@@ -51,6 +51,7 @@
 //!     e2: _entities (for F4)
 //!
 
+use crate::query_planner::ast::defer::DeferId;
 use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use std::{
     collections::BTreeSet,
@@ -344,6 +345,7 @@ impl<'a> BatchFetchBuilder<'a> {
             entity_batch: EntityBatch {
                 aliases: self.batched_aliases,
             },
+            defer: first_candidate.defer,
             depends_on: FetchIdList::new(),
             completes: FetchIdList::new(),
         })
@@ -375,6 +377,7 @@ struct EntityFetch {
     output_rewrites: Option<Vec<FetchRewrite>>,
     context: Option<Box<FetchContext>>,
     run_if: Option<Vec<ConditionGroup>>,
+    defer: Option<DeferId>,
     depends_on: FetchIdList,
     /// the ones in `depends_on` it waits for only to copy, see `FetchNode::reuse_waits`
     reuse_waits: FetchIdList,
@@ -508,6 +511,7 @@ impl EntityFetch {
             output_rewrites,
             context,
             run_if: fetch_node.run_if.clone(),
+            defer: fetch_node.defer,
             depends_on: fetch_node.depends_on.clone(),
             reuse_waits: fetch_node.reuse_waits.clone(),
             shape_key,
@@ -758,15 +762,20 @@ fn shared_entity_reuse(shape_group: &[EntityFetch]) -> Option<std::sync::Arc<Ent
     Some(shared.map_or_else(|| first.clone(), std::sync::Arc::new))
 }
 
+/// A subgraph and a deferred part, `None` for the primary part.
+type SubgraphPart = (String, Option<DeferId>);
+
+/// Entity fetches by subgraph and deferred part: fetches of different parts run at different
+/// times, so they don't share a request.
 fn partition_by_subgraph(
     nodes: &[PlanNode],
-) -> Result<HashMap<String, Vec<EntityFetch>>, QueryPlanError> {
-    let mut candidates_by_subgraph: HashMap<String, Vec<EntityFetch>> = HashMap::new();
+) -> Result<HashMap<SubgraphPart, Vec<EntityFetch>>, QueryPlanError> {
+    let mut candidates_by_subgraph: HashMap<SubgraphPart, Vec<EntityFetch>> = HashMap::new();
 
     for (index, node) in nodes.iter().enumerate() {
         if let Some(candidate) = EntityFetch::from_node(index, node)? {
             candidates_by_subgraph
-                .entry(candidate.service_name.clone())
+                .entry((candidate.service_name.clone(), candidate.defer))
                 .or_default()
                 .push(candidate);
         }
@@ -2984,6 +2993,7 @@ mod tests {
             output_rewrites: None,
             context: None,
             run_if: None,
+            defer: None,
             depends_on: FetchIdList::new(),
             reuse_waits: FetchIdList::new(),
             entity_reuse: None,
@@ -3068,6 +3078,7 @@ mod tests {
             output_rewrites: None,
             context: None,
             run_if: None,
+            defer: None,
             depends_on: FetchIdList::new(),
             reuse_waits: FetchIdList::new(),
             entity_reuse: None,

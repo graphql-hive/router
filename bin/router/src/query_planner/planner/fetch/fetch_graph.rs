@@ -1,3 +1,4 @@
+use crate::query_planner::ast::defer::DeferId;
 use crate::query_planner::ast::merge_path::{Condition, FieldPathSegment, MergePath, Segment};
 use crate::query_planner::ast::operation::{OperationDefinition, VariableDefinition};
 use crate::query_planner::ast::selection_item::SelectionItem;
@@ -150,9 +151,15 @@ impl FetchGraph<SingleTypeFetchStep> {
         input_type_name: &str,
         response_path: &MergePath,
         condition: Option<&Condition>,
+        defer: Option<DeferId>,
     ) -> impl Iterator<Item = NodeIndex> + '_ {
-        let entity_call =
-            entity_call_hash(subgraph_name, input_type_name, response_path, condition);
+        let entity_call = entity_call_hash(
+            subgraph_name,
+            input_type_name,
+            response_path,
+            condition,
+            defer,
+        );
         self.children_by_entity_call
             .as_ref()
             .expect("the children are indexed until the graph is built")
@@ -489,7 +496,7 @@ impl<State> Display for FetchGraph<State> {
     }
 }
 
-/// The `@include`/`@skip` conditions a query node sits under.
+/// The `@include`/`@skip` conditions a query node sits under, and the deferred part it's in.
 #[derive(Clone, Copy, Default)]
 struct Conditions<'a> {
     /// All of them, top first. A step created here copies them into `gated_by`.
@@ -498,6 +505,9 @@ struct Conditions<'a> {
     /// `from_root`, but `None` right after entering a subgraph: the field we entered through
     /// already has it.
     current: Option<&'a Condition>,
+    /// The deferred part the node is fetched for, `None` for the primary part. Steps of
+    /// different parts never merge.
+    defer: Option<DeferId>,
 }
 
 impl Conditions<'_> {
@@ -531,6 +541,7 @@ fn create_noop_fetch_step(
         flags,
         condition: None,
         gated_by: Vec::new(),
+        defer: None,
         kind: FetchStepKind::Root,
         operation_kind: OperationKind::Query,
         input_rewrites: None,
@@ -578,6 +589,7 @@ fn create_fetch_step_for_entity_call(
         flags,
         condition: condition.cloned(),
         gated_by: conditions.from_root.to_vec(),
+        defer: conditions.defer,
         kind: FetchStepKind::Entity,
         operation_kind: OperationKind::Query,
         input_rewrites: None,
@@ -592,6 +604,48 @@ fn create_fetch_step_for_entity_call(
     fetch_graph.entity_owners.insert(step_index, owner_index);
 
     step_index
+}
+
+/// A root fetch of its own for the fields of a deferred part at the root of a query, when
+/// `parent`, the subgraph's root fetch they'd join, is for another part. The root type has no key
+/// to go back into the subgraph through, a root fetch is how. `None` anywhere else.
+fn deferred_root_fetch(
+    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    parent: NodeIndex,
+    fetch_path: &MergePath,
+    conditions: Conditions<'_>,
+) -> Result<Option<NodeIndex>, FetchGraphError> {
+    let step = fetch_graph.get_step_data(parent)?;
+    if conditions.defer.is_none()
+        || step.defer == conditions.defer
+        || step.kind != FetchStepKind::Root
+        || step.operation_kind != OperationKind::Query
+        || !fetch_path.is_empty()
+    {
+        return Ok(None);
+    }
+    let Some(grandparent) = fetch_graph
+        .parents_of(parent)
+        .next()
+        .map(|edge| edge.source())
+    else {
+        return Ok(None);
+    };
+    let service_name = step.service_name.clone();
+    let type_name = step.output.definition_name().to_string();
+    let mutation_field_position = step.mutation_field_position;
+    // a root fetch can also sit deeper, where a field returns `Query`
+    let response_path = step.response_path.clone();
+    Ok(Some(create_fetch_step_for_root_move(
+        fetch_graph,
+        grandparent,
+        &service_name,
+        &type_name,
+        OperationKind::Query,
+        mutation_field_position,
+        &response_path,
+        conditions,
+    )))
 }
 
 // TODO: simplfy args
@@ -617,6 +671,7 @@ fn create_fetch_step_for_root_move(
         flags: FetchStepFlags::empty(),
         condition: condition.cloned(),
         gated_by: conditions.from_root.to_vec(),
+        defer: conditions.defer,
         kind: FetchStepKind::Root,
         operation_kind,
         variable_usages: None,
@@ -635,12 +690,13 @@ fn create_fetch_step_for_root_move(
 }
 
 /// The entity call a step makes, the part a step gets reused on: its subgraph, input type,
-/// response path and condition.
+/// response path, condition and deferred part.
 fn entity_call_hash(
     subgraph_name: &SubgraphName,
     input_type_name: &str,
     response_path: &MergePath,
     condition: Option<&Condition>,
+    defer: Option<DeferId>,
 ) -> u64 {
     use std::hash::{Hash, Hasher};
 
@@ -648,6 +704,7 @@ fn entity_call_hash(
     subgraph_name.hash(&mut hasher);
     input_type_name.hash(&mut hasher);
     condition.hash(&mut hasher);
+    defer.hash(&mut hasher);
     response_path.hash(&mut hasher);
     hasher.finish()
 }
@@ -660,6 +717,7 @@ fn entity_call_hash_of<State>(step: &FetchStepData<State>) -> Option<u64> {
         input_type_name,
         &step.response_path,
         step.condition.as_ref(),
+        step.defer,
     ))
 }
 
@@ -688,10 +746,17 @@ fn ensure_fetch_step_for_subgraph(
                 input_type_name,
                 response_path,
                 condition,
+                conditions.defer,
             )
             .find(|&child_index| {
                 fetch_graph.get_step_data(child_index).is_ok_and(|step| {
-                    step.matches_entity_call(subgraph_name, input_type_name, response_path, condition)
+                    step.matches_entity_call(
+                        subgraph_name,
+                        input_type_name,
+                        response_path,
+                        condition,
+                        conditions.defer,
+                    )
                         // the requested key fields have to be part of the input
                         && key.is_none_or(|key| {
                             step.input.definition_name() == key.type_name
@@ -769,11 +834,17 @@ fn ensure_fetch_step_for_requirement(
             type_name,
             response_path,
             condition,
+            conditions.defer,
         )
         .find(|&child_index| {
             fetch_graph.get_step_data(child_index).is_ok_and(|step| {
-                step.matches_entity_call(subgraph_name, type_name, response_path, condition)
-                    && step.context_rewrites.is_none()
+                step.matches_entity_call(
+                    subgraph_name,
+                    type_name,
+                    response_path,
+                    condition,
+                    conditions.defer,
+                ) && step.context_rewrites.is_none()
                     && step
                         .input
                         .contains(requirement.type_name, &requirement.selection_set)
@@ -1022,6 +1093,7 @@ fn process_entity_move_edge(
                         selections: requirement.selection_set.clone(),
                         skip_if: None,
                         include_if: None,
+                        defer: None,
                     })
                 })
                 .collect(),
@@ -1480,6 +1552,31 @@ fn process_selfie_edge(
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     let condition = conditions.current;
+    // a deferred fragment at the root of a query gets a root fetch of its own, so a slow root
+    // field in it can't hold up the primary part. A fragment that's only there for its `@defer`,
+    // on the same type with nothing to keep, goes on in the parent's fetch.
+    let deferred_parent =
+        match deferred_root_fetch(fetch_graph, parent_fetch_step_index, fetch_path, conditions)? {
+            Some(root_fetch) => Some(root_fetch),
+            None => (query_node.defer.is_some() && query_node.condition.is_none())
+                .then_some(parent_fetch_step_index),
+        };
+    if let Some(parent) = deferred_parent {
+        return process_children_for_fetch_steps(
+            graph,
+            fetch_graph,
+            supergraph,
+            override_context,
+            query_node,
+            parent,
+            response_path,
+            fetch_path,
+            requiring_fetch_step_index,
+            conditions,
+            created_from_requires,
+        );
+    }
+
     let condition_on_step = condition.is_some_and(|c| {
         fetch_graph.is_condition_on_step(parent_fetch_step_index, requiring_fetch_step_index, c)
     });
@@ -1510,6 +1607,7 @@ fn process_selfie_edge(
                         c.to_include_if()
                     }
                 }),
+                defer: None,
             })],
         },
     )?;
@@ -1605,6 +1703,7 @@ fn process_abstract_edge(
                     include_if: segment_condition
                         .as_ref()
                         .and_then(Condition::to_include_if),
+                    defer: None,
                 }),
             ],
         },
@@ -2442,6 +2541,11 @@ fn process_query_node(
     conditions: Conditions<'_>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
+    // a node of a deferred part starts that part for everything below it
+    let conditions = Conditions {
+        defer: query_node.defer.or(conditions.defer),
+        ..conditions
+    };
     // a condition of its own goes on top of the ones around it
     let with_own;
     let conditions = match &query_node.condition {
@@ -2450,6 +2554,7 @@ fn process_query_node(
             Conditions {
                 from_root: &with_own,
                 current: Some(own),
+                defer: conditions.defer,
             }
         }
         Some(own) => Conditions {
@@ -2831,7 +2936,7 @@ mod tests {
 
         let found = |fetch_graph: &FetchGraph<SingleTypeFetchStep>, parent: NodeIndex| {
             fetch_graph
-                .same_entity_calls(parent, &users, "User", &path, None)
+                .same_entity_calls(parent, &users, "User", &path, None, None)
                 .collect::<Vec<_>>()
         };
         assert_eq!(found(&fetch_graph, parent), vec![newer, older]);

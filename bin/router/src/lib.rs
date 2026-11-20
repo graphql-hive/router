@@ -25,7 +25,7 @@ use http::{
     header::{ACCEPT, CONTENT_TYPE, USER_AGENT},
     HeaderName,
 };
-use ntex_http::body::{BodySize, MessageBody};
+use ntex_http::body::{Body, BodySize, MessageBody, ResponseBody};
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use tracing::{debug, error};
@@ -48,8 +48,8 @@ use crate::{
         long_lived_client_limit::LongLivedClientLimitService,
         persisted_documents::PersistedDocumentsBackgroundTasks,
         request_extensions::{
-            read_graphql_operation_metric_identity, read_graphql_response_metric_status,
-            write_graphql_response_metric_status,
+            read_deferred_response_error_count, read_graphql_operation_metric_identity,
+            read_graphql_response_metric_status, write_graphql_response_metric_status,
         },
         request_identifiers::RequestIdentifiersService,
         request_summary::RequestSummaryService,
@@ -57,7 +57,8 @@ use crate::{
         timeout::handle_timeout,
         usage_reporting::HiveUsageReportingBackgroundTasks,
         validation::{
-            max_aliases_rule::MaxAliasesRule, max_depth_rule::MaxDepthRule,
+            defer_in_subscription_rule::DeferInSubscriptionRule, max_aliases_rule::MaxAliasesRule,
+            max_defers_rule::MaxDefersRule, max_depth_rule::MaxDepthRule,
             max_directives_rule::MaxDirectivesRule,
         },
         websocket_server::ws_index,
@@ -84,6 +85,7 @@ pub use crate::plugins::registry::PluginRegistry;
 use crate::telemetry::external_wait::{ExternalWaitTracker, WithExternalWaitTracker};
 use crate::telemetry::logging::request_id::{self, REQUEST_IDENTIFIERS};
 use crate::telemetry::metrics::catalog::values::GraphQLResponseStatus;
+use crate::telemetry::metrics::http_server_metrics::ResponseFacts;
 use crate::telemetry::{
     logging::{summary, targets},
     traces::spans::http_request::HttpServerRequestSpan,
@@ -98,7 +100,8 @@ pub use async_trait::async_trait;
 pub use dashmap::DashMap;
 pub use graphql_tools;
 use graphql_tools::validation::rules::{
-    default_rules_validation_plan_with_options, ValidationOptions,
+    default_rules_validation_plan_with_options, DeferDirectiveLabel, DeferDirectiveOnRootField,
+    ValidationOptions,
 };
 pub use http;
 pub use ntex;
@@ -258,31 +261,82 @@ async fn graphql_endpoint_handler(
             .store(payload_bytes, std::sync::atomic::Ordering::Relaxed);
     });
 
-    let graphql_operation = read_graphql_operation_metric_identity(&request);
-    let graphql_operation_name = graphql_operation
-        .as_ref()
-        .and_then(|operation| operation.operation_name.as_deref());
-    let graphql_operation_type = graphql_operation
-        .as_ref()
-        .and_then(|operation| operation.operation_type);
+    let graphql_operation = read_graphql_operation_metric_identity(&request).unwrap_or_default();
     let graphql_response_status =
         read_graphql_response_metric_status(&request).unwrap_or(GraphQLResponseStatus::Ok);
     let supergraph_name = request
         .extensions()
         .get::<crate::schema_state::SelectedSupergraph>()
         .map(|selected| selected.snapshot.name.clone());
+    let response_facts = ResponseFacts::of(&response);
+    let request_body_size = read_request_body_size(&request);
+    let finish = move |graphql_response_status| {
+        http_request_capture.finish(
+            response_facts,
+            request_body_size,
+            graphql_operation.operation_name.as_deref(),
+            graphql_operation.operation_type,
+            graphql_response_status,
+            supergraph_name.as_deref(),
+            external_wait,
+        );
+    };
 
-    http_request_capture.finish(
-        &response,
-        read_request_body_size(&request),
-        graphql_operation_name,
-        graphql_operation_type,
-        graphql_response_status,
-        supergraph_name.as_deref(),
-        external_wait,
-    );
+    // an incremental (`@defer`) response is done once its last part is out, or the client left.
+    // Its duration and status go in then, with every part's errors
+    let deferred = read_deferred_response_error_count(&request)
+        .filter(|_| matches!(response_facts.body, BodySize::Stream));
+    let Some(error_count) = deferred else {
+        finish(graphql_response_status);
+        return response;
+    };
+    response.map_body(move |_, body| {
+        ResponseBody::Body(Body::from_message(OnBodyEnd {
+            body,
+            on_end: Some(Box::new(move || {
+                let errors = error_count.load(std::sync::atomic::Ordering::Relaxed);
+                finish(if errors > 0 {
+                    GraphQLResponseStatus::Error
+                } else {
+                    graphql_response_status
+                });
+            })),
+        }))
+    })
+}
 
-    response
+/// A response body that runs `on_end` once it's all out, or when it's dropped before that.
+struct OnBodyEnd {
+    body: ResponseBody<Body>,
+    on_end: Option<Box<dyn FnOnce()>>,
+}
+
+impl MessageBody for OnBodyEnd {
+    fn size(&self) -> BodySize {
+        self.body.size()
+    }
+
+    fn poll_next_chunk(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<ntex::util::Bytes, std::rc::Rc<dyn std::error::Error>>>>
+    {
+        let poll = self.body.poll_next_chunk(cx);
+        if let std::task::Poll::Ready(None) = poll {
+            if let Some(on_end) = self.on_end.take() {
+                on_end();
+            }
+        }
+        poll
+    }
+}
+
+impl Drop for OnBodyEnd {
+    fn drop(&mut self) {
+        if let Some(on_end) = self.on_end.take() {
+            on_end();
+        }
+    }
 }
 
 async fn graphql_endpoint_dispatch(
@@ -777,6 +831,17 @@ pub async fn configure_app_from_config(
         validation_plan.add_rule(Box::new(MaxDirectivesRule {
             config: max_directives_config.clone(),
         }));
+    }
+    // with `@defer` off it isn't in the schema, and `KnownDirectives` rejects it
+    if router_config.defer.enabled {
+        validation_plan.add_rule(Box::new(DeferDirectiveOnRootField::new()));
+        validation_plan.add_rule(Box::new(DeferInSubscriptionRule));
+        validation_plan.add_rule(Box::new(DeferDirectiveLabel::new()));
+        if let Some(config) = &router_config.limits.max_defers {
+            validation_plan.add_rule(Box::new(MaxDefersRule {
+                config: config.clone(),
+            }));
+        }
     }
     if let Some(max_aliases_config) = &router_config.limits.max_aliases {
         validation_plan.add_rule(Box::new(MaxAliasesRule {

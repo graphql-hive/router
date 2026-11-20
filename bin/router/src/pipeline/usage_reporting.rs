@@ -270,6 +270,76 @@ impl BackgroundTask for HiveUsageReportingBackgroundTasks {
     }
 }
 
+/// The usage report's part of what's reported once a GraphQL response is complete, owned so it
+/// can outlive the handler. See [`report_on_completion`].
+pub struct CompletionUsage {
+    /// Keeps the runtime's usage worker around until the report is in.
+    pub runtime: Arc<crate::schema_state::RouterSupergraphRuntime>,
+    pub schema: Arc<Document<'static, String>>,
+    pub started_at: std::time::Instant,
+    pub client_name: Option<String>,
+    pub client_version: Option<String>,
+    pub operation_name: Option<String>,
+    pub operation_kind: Option<OperationKind>,
+    pub document: Arc<String>,
+    pub request_details: Option<RequestDetails>,
+    pub persisted_document_id: Option<String>,
+    pub variables: Option<ReportVariables>,
+}
+
+/// Reports a complete GraphQL response: the usage report, the "request completed" log line and
+/// the request summary's error count. Right away, or for an incremental (`@defer`) response once
+/// its last part is out, so every part's errors and time count.
+pub async fn report_on_completion(
+    usage: Option<CompletionUsage>,
+    response: crate::shared_state::SharedRouterResponse,
+) -> crate::shared_state::SharedRouterResponse {
+    use crate::shared_state::SharedRouterResponse;
+    match response {
+        SharedRouterResponse::Parts(parts) => {
+            // a client that leaves early drops the parts, and the report then runs outside the
+            // request's scope, after the summary went out. so the count goes in right here
+            let summary = crate::telemetry::logging::summary::is_enabled()
+                .then(crate::telemetry::logging::summary::current_summary)
+                .flatten();
+            SharedRouterResponse::Parts(parts.on_end(move |error_count| {
+                if let Some(summary) = summary {
+                    summary.set_error_count(error_count as u32);
+                }
+                Box::pin(report(usage, error_count))
+            }))
+        }
+        response => {
+            report(usage, response.error_count()).await;
+            response
+        }
+    }
+}
+
+async fn report(usage: Option<CompletionUsage>, error_count: usize) {
+    if let Some(usage) = usage {
+        if let Some(agent) = &usage.runtime.hive_usage_agent {
+            collect_usage_report(
+                usage.schema,
+                usage.started_at.elapsed(),
+                usage.client_name.as_deref(),
+                usage.client_version.as_deref(),
+                usage.operation_name.as_deref(),
+                usage.operation_kind.as_ref(),
+                &usage.document,
+                agent,
+                error_count,
+                usage.request_details,
+                usage.persisted_document_id.as_deref(),
+                usage.variables,
+            )
+            .await;
+        }
+    }
+    tracing::debug!(target: targets::GRAPHQL_EXECUTION, error_count, "graphql request completed");
+    crate::telemetry::logging::summary::record(|s| s.set_error_count(error_count as u32));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

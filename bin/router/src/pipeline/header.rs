@@ -1,3 +1,8 @@
+use crate::executor::projection::defer::IncrementalFormat;
+use crate::pipeline::multipart_subscribe::{
+    INCREMENTAL_DELIVERY_CONTENT_TYPE, INCREMENTAL_DELIVERY_DEFER_CONTENT_TYPE,
+    INCREMENTAL_DELIVERY_LEGACY_DEFER_CONTENT_TYPE,
+};
 use crate::telemetry::logging::targets;
 use headers_accept::Accept;
 use http::{header::ACCEPT, Method};
@@ -268,19 +273,33 @@ impl RequestAccepts for HttpRequest {
         // strip multipart/mixed boundaries before negotiation since the server chooses the response boundary
         // as per the spec. furthermore, the incremental delivery and apollo multipart specs already have
         // their boundaries defined in the spec and we use those boundaries when generating the response
-        let boundary = Name::new_unchecked("boundary");
+        // the same goes for the `@defer` format params, `defer_format` reads those from the header.
+        // an entry asking for a `@defer` format version we don't speak is left out, as if it wasn't there
+        let stripped = [
+            Name::new_unchecked("boundary"),
+            Name::new_unchecked("deferSpec"),
+            Name::new_unchecked("incrementalSpec"),
+        ];
         let accept = if accept.media_types().any(|media_type| {
-            media_type.ty().as_str() == "multipart"
-                && media_type.subty().as_str() == "mixed"
-                && media_type.get_param(boundary).is_some()
+            is_multipart_mixed(&media_type.to_ref())
+                && stripped
+                    .iter()
+                    .any(|name| media_type.get_param(*name).is_some())
         }) {
             accept
                 .media_types()
+                .filter(|media_type| {
+                    let media_type = media_type.to_ref();
+                    !is_multipart_mixed(&media_type)
+                        || is_subscription_spec(&media_type)
+                        || multipart_defer_format(&media_type).is_some()
+                })
                 .map(|media_type| {
                     let mut media_type = media_type.to_ref();
-                    if media_type.ty.as_str() == "multipart" && media_type.subty.as_str() == "mixed"
-                    {
-                        media_type.remove_params(boundary);
+                    if is_multipart_mixed(&media_type) {
+                        for name in stripped {
+                            media_type.remove_params(name);
+                        }
                     }
                     media_type
                 })
@@ -493,6 +512,43 @@ mod tests {
     }
 
     #[test]
+    fn multipart_with_a_defer_version_we_dont_speak_is_left_out() {
+        let negotiate = |accept: &str| {
+            TestRequest::default()
+                .method(Method::POST)
+                .header(ACCEPT, accept)
+                .to_http_request()
+                .negotiate(false)
+        };
+        // the other types still negotiate
+        assert_eq!(
+            negotiate("multipart/mixed;incrementalSpec=v0.3, application/json").unwrap(),
+            ResponseMode::SingleOnly(SingleContentType::JSON)
+        );
+        assert_eq!(
+            negotiate("multipart/mixed;deferSpec=20230101, text/event-stream").unwrap(),
+            ResponseMode::StreamOnly(StreamContentType::SSE)
+        );
+        // a supported one next to it still counts
+        assert_eq!(
+            negotiate("multipart/mixed;incrementalSpec=v0.3, multipart/mixed;deferSpec=20220824")
+                .unwrap(),
+            ResponseMode::StreamOnly(StreamContentType::IncrementalDelivery)
+        );
+        // nothing left is nothing acceptable
+        let result = negotiate("multipart/mixed;incrementalSpec=v0.3");
+        assert!(
+            matches!(
+                result,
+                Err(PipelineError::Client(
+                    ClientPipelineError::UnsupportedContentType
+                ))
+            ),
+            "expected UnsupportedContentType, got {result:?}"
+        );
+    }
+
+    #[test]
     fn html_only_get_renders_laboratory_when_enabled() {
         // The same `text/html`-only GET renders Laboratory when it is enabled.
         let request = TestRequest::default()
@@ -503,5 +559,150 @@ mod tests {
             .negotiate(true)
             .expect("unable to parse accept header");
         assert_eq!(agreed, ResponseMode::Laboratory);
+    }
+}
+
+fn is_multipart_mixed(media_type: &MediaType) -> bool {
+    media_type.ty.as_str() == "multipart" && media_type.subty.as_str() == "mixed"
+}
+
+fn is_subscription_spec(media_type: &MediaType) -> bool {
+    media_type
+        .get_param(Name::new_unchecked("subscriptionSpec"))
+        .is_some()
+}
+
+/// The `@defer` format a `multipart/mixed` entry asks for. No version means the current spec.
+/// `None` for a version we don't speak, or for both params at once.
+fn multipart_defer_format(media_type: &MediaType) -> Option<IncrementalFormat> {
+    let defer_spec = media_type.get_param(Name::new_unchecked("deferSpec"));
+    let incremental_spec = media_type.get_param(Name::new_unchecked("incrementalSpec"));
+    match (defer_spec, incremental_spec) {
+        (None, None) => Some(IncrementalFormat::Spec),
+        (Some(value), None) if value == "20220824" => Some(IncrementalFormat::Legacy),
+        (None, Some(value)) if value == "v0.2" => Some(IncrementalFormat::Spec),
+        _ => None,
+    }
+}
+
+/// The `@defer` format for a response that negotiated `multipart/mixed`, from the same `Accept`
+/// value `negotiate` reads. Of the `multipart/mixed` entries with a format we speak and a `q`
+/// above 0, the one with the highest `q` wins, the first one on a tie. The current spec when
+/// there's none, like for `*/*`.
+pub fn defer_format(accept_header: &str) -> IncrementalFormat {
+    defer_entry(accept_header)
+        .map(|(format, _)| format)
+        .unwrap_or_default()
+}
+
+/// The content type of a `multipart/mixed` response with nothing deferred, the whole response
+/// is its only part. It keeps the `@defer` version the client asked for, like when something is
+/// deferred, so `@defer(if:)` doesn't change it. Plain `multipart/mixed` when it asked for none.
+pub fn single_part_content_type(accept_header: &str) -> &'static str {
+    match defer_entry(accept_header) {
+        Some((IncrementalFormat::Legacy, _)) => INCREMENTAL_DELIVERY_LEGACY_DEFER_CONTENT_TYPE,
+        Some((IncrementalFormat::Spec, true)) => INCREMENTAL_DELIVERY_DEFER_CONTENT_TYPE,
+        _ => INCREMENTAL_DELIVERY_CONTENT_TYPE,
+    }
+}
+
+/// The `multipart/mixed` entry [`defer_format`] picks: its format, and whether it names a
+/// version. `None` when there's no such entry.
+fn defer_entry(accept_header: &str) -> Option<(IncrementalFormat, bool)> {
+    let accept = Accept::from_str(accept_header).ok()?;
+    let q = |media_type: &MediaType| {
+        media_type
+            .get_param(Name::new_unchecked("q"))
+            .and_then(|value| value.as_str().parse::<f32>().ok())
+            .unwrap_or(1.0)
+    };
+    let mut best: Option<(f32, IncrementalFormat, bool)> = None;
+    for media_type in accept.media_types() {
+        let media_type = media_type.to_ref();
+        if !is_multipart_mixed(&media_type) || is_subscription_spec(&media_type) {
+            continue;
+        }
+        let q = q(&media_type);
+        if q <= 0.0 {
+            continue;
+        }
+        if let Some(format) = multipart_defer_format(&media_type) {
+            if best.is_none_or(|(best_q, _, _)| q > best_q) {
+                let named = media_type
+                    .get_param(Name::new_unchecked("deferSpec"))
+                    .or_else(|| media_type.get_param(Name::new_unchecked("incrementalSpec")))
+                    .is_some();
+                best = Some((q, format, named));
+            }
+        }
+    }
+    best.map(|(_, format, named)| (format, named))
+}
+
+#[cfg(test)]
+mod defer_accept_tests {
+    use super::defer_format;
+    use crate::executor::projection::defer::IncrementalFormat::{Legacy, Spec};
+
+    #[test]
+    fn single_part_keeps_the_version() {
+        let cases = [
+            (
+                "multipart/mixed;deferSpec=20220824",
+                r#"multipart/mixed;boundary="-";deferSpec=20220824"#,
+            ),
+            (
+                "multipart/mixed;incrementalSpec=v0.2",
+                r#"multipart/mixed;boundary="-";incrementalSpec=v0.2"#,
+            ),
+            ("multipart/mixed", r#"multipart/mixed;boundary="-""#),
+            ("*/*", r#"multipart/mixed;boundary="-""#),
+            (
+                r#"multipart/mixed;subscriptionSpec="1.0""#,
+                r#"multipart/mixed;boundary="-""#,
+            ),
+        ];
+        for (accept, expected) in cases {
+            assert_eq!(
+                super::single_part_content_type(accept),
+                expected,
+                "{accept}"
+            );
+        }
+    }
+
+    #[test]
+    fn picks_the_defer_format() {
+        let cases = [
+            ("multipart/mixed;deferSpec=20220824, application/json", Legacy),
+            (r#"application/json, multipart/mixed; deferSpec="20220824""#, Legacy),
+            ("multipart/mixed;incrementalSpec=v0.2", Spec),
+            // no version is the current spec
+            ("multipart/mixed", Spec),
+            ("*/*", Spec),
+            ("application/json;deferSpec=20220824", Spec),
+            // the highest `q` wins
+            (
+                "multipart/mixed;incrementalSpec=v0.2;q=1, multipart/mixed;deferSpec=20220824;q=0.5",
+                Spec,
+            ),
+            (
+                "multipart/mixed;incrementalSpec=v0.2;q=0.5, multipart/mixed;deferSpec=20220824",
+                Legacy,
+            ),
+            // `q=0` is "not this one"
+            ("multipart/mixed;deferSpec=20220824;q=0, multipart/mixed", Spec),
+            // the first one on a tie
+            (
+                "multipart/mixed;deferSpec=20220824, multipart/mixed;incrementalSpec=v0.2",
+                Legacy,
+            ),
+            // a version we don't speak doesn't count
+            ("multipart/mixed;incrementalSpec=v0.3, multipart/mixed;deferSpec=20220824;q=0.1", Legacy),
+            ("multipart/mixed;deferSpec=20230101;q=1, multipart/mixed;deferSpec=20220824;q=0.1", Legacy),
+        ];
+        for (accept, expected) in cases {
+            assert_eq!(defer_format(accept), expected, "{accept}");
+        }
     }
 }

@@ -1,6 +1,8 @@
 pub mod defaults;
 pub mod rule;
 
+pub mod defer_directive_label;
+pub mod defer_directive_on_root_field;
 pub mod fields_on_correct_type;
 pub mod fragments_on_composite_types;
 pub mod known_argument_names;
@@ -30,6 +32,8 @@ pub mod variables_in_allowed_position;
 pub use self::defaults::*;
 pub use self::rule::*;
 
+pub use self::defer_directive_label::*;
+pub use self::defer_directive_on_root_field::*;
 pub use self::fields_on_correct_type::*;
 pub use self::fragments_on_composite_types::*;
 pub use self::known_argument_names::*;

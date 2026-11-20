@@ -1,0 +1,9 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+# For the differential test with `GRAPHQL_DIFF_DEFER=1`
+supergraph:
+  source: file
+  path: ../supergraph.graphql
+defer:
+  enabled: true
+log:
+  level: info

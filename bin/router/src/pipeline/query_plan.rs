@@ -13,6 +13,7 @@ use crate::pipeline::demand_control::formula::DemandControlFormulaPlan;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
+use crate::query_planner::ast::defer::{has_defer, prepare_for_planning, DeferLayout};
 use crate::query_planner::ast::hash::Blake3Hasher;
 use crate::query_planner::planner::plan_nodes::{Planning, QueryPlan};
 use crate::query_planner::state::supergraph_state::OperationKind;
@@ -30,6 +31,8 @@ pub enum QueryPlanResult {
 pub struct PlannedQuery {
     pub plan: Arc<QueryPlan>,
     pub demand_control: Option<Arc<DemandControlFormulaPlan>>,
+    /// The deferred parts the plan's fetches are for. `None` without a `@defer`.
+    pub defer: Option<Arc<DeferLayout>>,
 }
 
 static EMPTY_QUERY_PLAN: LazyLock<Arc<QueryPlan>> = LazyLock::new(|| Arc::new(QueryPlan::empty()));
@@ -94,16 +97,17 @@ pub async fn plan_operation_with_cache(
         } else {
             filtered_operation_for_plan.hash()
         };
+        let is_subscription = matches!(
+            filtered_operation_for_plan.operation_kind,
+            Some(OperationKind::Subscription)
+        );
+        // one plan covers every `@defer(if:)` value, see `prepare_for_planning`
+        let has_defer = has_defer(&filtered_operation_for_plan.selection_set);
         let plan_cache_key = calculate_cache_key(operation_for_plan_hash, &stable_override_context);
         let is_plan_operation_empty = filtered_operation_for_plan.selection_set.is_empty();
         let is_projection_plan_empty = normalized_operation.projection_plan.is_empty();
         let contains_introspection = normalized_operation.operation_for_introspection.is_some();
         let is_pure_introspection = is_plan_operation_empty && contains_introspection;
-        let is_subscription = matches!(
-            filtered_operation_for_plan.operation_kind,
-            Some(OperationKind::Subscription)
-        );
-
         let compile_demand_control = |plan: &QueryPlan<Planning>| {
             supergraph
                 .runtime
@@ -119,6 +123,43 @@ pub async fn plan_operation_with_cache(
                 })
         };
 
+        let plan = || {
+            let deferred = has_defer.then(|| {
+                prepare_for_planning(
+                    filtered_operation_for_plan,
+                    &supergraph.snapshot.planner.supergraph,
+                    supergraph.snapshot.options.query_planner.allow_expose,
+                )
+            });
+            let operation = deferred
+                .as_ref()
+                .map_or(filtered_operation_for_plan, |deferred| &deferred.operation);
+            supergraph
+                .snapshot
+                .planner
+                .plan_from_normalized_operation(
+                    operation,
+                    (&request_override_context.clone()).into(),
+                    cancellation_token,
+                )
+                .and_then(|plan| {
+                    let defer = deferred
+                        .map(|deferred| deferred.layout)
+                        .filter(|layout| !layout.parts.is_empty());
+                    let plan = match &defer {
+                        Some(layout) => plan.with_defer_parts(&layout.parts)?,
+                        None => plan,
+                    };
+                    let demand_control = compile_demand_control(&plan);
+                    let plan = plan.into_executable(&supergraph.snapshot.planner.supergraph);
+                    Ok(PlannedQuery {
+                        defer: defer.map(Arc::new),
+                        plan: Arc::new(plan),
+                        demand_control,
+                    })
+                })
+        };
+
         let mut cache_hint = CacheHint::Hit;
         plan_span.record_cache_hit(true);
         let mut prepared = supergraph
@@ -130,6 +171,7 @@ pub async fn plan_operation_with_cache(
                     return Ok(PlannedQuery {
                         plan: EMPTY_QUERY_PLAN.clone(),
                         demand_control: compile_demand_control(&QueryPlan::<Planning>::empty()),
+                        defer: None,
                     });
                 }
 
@@ -153,26 +195,11 @@ pub async fn plan_operation_with_cache(
                     return Ok(PlannedQuery {
                         plan: EMPTY_QUERY_PLAN.clone(),
                         demand_control: compile_demand_control(&QueryPlan::<Planning>::empty()),
+                        defer: None,
                     });
                 }
 
-                supergraph
-                    .snapshot
-                    .planner
-                    .plan_from_normalized_operation(
-                        filtered_operation_for_plan,
-                        (&request_override_context.clone()).into(),
-                        cancellation_token,
-                    )
-                    .map(|plan| {
-                        let demand_control = compile_demand_control(&plan);
-                        PlannedQuery {
-                            plan: Arc::new(
-                                plan.into_executable(&supergraph.snapshot.planner.supergraph),
-                            ),
-                            demand_control,
-                        }
-                    })
+                plan()
             })
             .await
             .map_err(PipelineError::from)

@@ -1,3 +1,4 @@
+use crate::query_planner::ast::defer::DeferId;
 use ahash::{HashSet, HashSetExt};
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -93,7 +94,18 @@ pub enum NavigationTarget<'op> {
         field: &'op FieldSelection,
         target_subgraph_ids: Option<&'op [u16]>,
     },
-    ConcreteType(&'op str, Option<Condition>),
+    /// A type, through a fragment with these `@skip`/`@include` and this `@defer`.
+    ConcreteType(&'op str, Option<Condition>, Option<DeferId>),
+}
+
+impl<'op> From<&'op InlineFragmentSelection> for NavigationTarget<'op> {
+    fn from(fragment: &'op InlineFragmentSelection) -> Self {
+        NavigationTarget::ConcreteType(
+            &fragment.type_condition,
+            fragment.into(),
+            fragment.defer_id(),
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -106,7 +118,7 @@ impl<'op> From<&'op NavigationTarget<'op>> for NavigationTargetKey<'op> {
     fn from(target: &'op NavigationTarget<'op>) -> Self {
         match target {
             NavigationTarget::Field { field, .. } => NavigationTargetKey::Field(&field.name),
-            NavigationTarget::ConcreteType(type_name, _) => {
+            NavigationTarget::ConcreteType(type_name, ..) => {
                 NavigationTargetKey::ConcreteType(type_name)
             }
         }
@@ -196,7 +208,7 @@ impl<'graph> PathSearch<'graph> {
             RequirementCycleChecker::new(self.supergraph, tail_node.name_str());
 
         // Respect the path's current union scope when targeting a concrete type.
-        if let NavigationTarget::ConcreteType(type_name, _) = target {
+        if let NavigationTarget::ConcreteType(type_name, ..) = target {
             if !path.can_resolve_union_member(type_name) {
                 return Ok(Vec::new());
             }
@@ -434,10 +446,11 @@ pub fn find_self_referencing_direct_path<'graph>(
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
-    type_name: &'graph str,
-    condition: &Condition,
+    fragment: &InlineFragmentSelection,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<OperationPath<'graph>, WalkOperationError> {
+    let type_name = fragment.type_condition.as_str();
+    let target = NavigationTarget::from(fragment);
     let path_tail_index = path.tail();
     let mut path_search = PathSearch::new(graph, supergraph, override_context, cancellation_token);
 
@@ -448,11 +461,7 @@ pub fn find_self_referencing_direct_path<'graph>(
             _ => false,
         })
     {
-        if let Some(new_path) = path_search.try_advance_direct_path(
-            path,
-            &edge_ref,
-            &NavigationTarget::ConcreteType(type_name, Some(condition.clone())),
-        )? {
+        if let Some(new_path) = path_search.try_advance_direct_path(path, &edge_ref, &target)? {
             trace!("Finished finding direct path, found one",);
             return Ok(new_path);
         }
@@ -461,6 +470,47 @@ pub fn find_self_referencing_direct_path<'graph>(
     trace!("Finished finding direct path, found none",);
 
     Err(WalkOperationError::NoPathsFound(type_name.to_string()))
+}
+
+/// For a path that just entered a deferred fragment, the same path moved back into its
+/// subgraph through one of the type's own keys. A field that resolves there then gets an entity
+/// call of its own, in the deferred part, instead of riding along in the parent's fetch, where a
+/// slow resolver would hold up the parent's part. `None` when the path didn't just enter a
+/// deferred fragment, already moved into a new call to get there, or the type has no usable key.
+pub fn find_deferred_self_key_path<'graph>(
+    graph: &'graph Graph<'graph>,
+    supergraph: &'graph SupergraphState,
+    override_context: &'graph PlannerOverrideContext,
+    path: &OperationPath<'graph>,
+    cancellation_token: &'graph CancellationToken,
+) -> Result<Option<OperationPath<'graph>>, WalkOperationError> {
+    let Some(segment) = path.last_segment.as_ref() else {
+        return Ok(None);
+    };
+    if segment.defer.is_none()
+        || matches!(
+            graph.edge(segment.edge_index)?,
+            Edge::EntityMove { .. } | Edge::InterfaceObjectTypeMove { .. }
+        )
+    {
+        return Ok(None);
+    }
+    let tail = path.tail();
+    let type_name = graph.node(tail)?.name_str();
+    let mut path_search = PathSearch::new(graph, supergraph, override_context, cancellation_token);
+    for edge_ref in graph
+        .edges_from(tail)
+        .filter(|e| e.target() == tail && matches!(e.weight(), Edge::EntityMove { .. }))
+    {
+        if let Some(new_path) = path_search.try_advance_direct_path(
+            path,
+            &edge_ref,
+            &NavigationTarget::ConcreteType(type_name, None, None),
+        )? {
+            return Ok(Some(new_path));
+        }
+    }
+    Ok(None)
 }
 
 #[instrument(level = "trace", skip_all, fields(
@@ -508,7 +558,7 @@ where
     let path_tail_index = path.tail();
 
     match target {
-        NavigationTarget::ConcreteType(type_name, _)
+        NavigationTarget::ConcreteType(type_name, ..)
             if !path.can_resolve_union_member(type_name) =>
         {
             Box::new(std::iter::empty())
@@ -519,7 +569,7 @@ where
                     || matches!(e.weight(), Edge::ReentryMove(r) if r.name == field.name)
             }))
         }
-        NavigationTarget::ConcreteType(type_name, _condition) => Box::new(
+        NavigationTarget::ConcreteType(type_name, ..) => Box::new(
             graph
                 .edges_from(path_tail_index)
                 .filter(move |e| match e.weight() {
@@ -1002,7 +1052,7 @@ impl<'graph> PathSearch<'graph> {
                     path,
                     // @skip/@include can't be used in @requires and @provides,
                     // that's why we pass no condition
-                    &NavigationTarget::ConcreteType(type_name, None),
+                    &NavigationTarget::ConcreteType(type_name, None, None),
                 )?);
             }
         }
@@ -1015,7 +1065,7 @@ impl<'graph> PathSearch<'graph> {
                 path_from_rc,
                 // @skip/@include can't be used in @requires and @provides,
                 // that's why we pass no condition
-                &NavigationTarget::ConcreteType(type_name, None),
+                &NavigationTarget::ConcreteType(type_name, None, None),
                 excluded,
             )?);
         }

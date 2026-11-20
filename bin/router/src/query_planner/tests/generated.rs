@@ -108,7 +108,7 @@ fn generated_operations_plan(chunk: usize) {
         // Validate against the client-visible schema, with built-in scalars and directives.
         let api =
             StripSchemaInternals::strip_schema_internals(&PruneInaccessible::prune(&supergraph));
-        let schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let schema = ConsumerSchema::new_from_supergraph(&supergraph, false);
         for seed in 0..ops {
             let case = QueryGenerator::new(&api, seed, config.clone()).generate();
             if !validate(&schema.document, &parse_operation(&case.document), &rules).is_empty() {

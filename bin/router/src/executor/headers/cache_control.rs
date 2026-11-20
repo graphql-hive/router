@@ -217,6 +217,18 @@ fn to_header_value(p: &CacheControl) -> String {
     parts.join(", ")
 }
 
+/// Sets `no-store, no-cache, must-revalidate`, whether a subgraph sent `Cache-Control` or
+/// not. For a response whose headers go out before every subgraph answered.
+pub fn forbid(aggregator: &mut ResponseHeaderAggregator) {
+    aggregator.entries.insert(
+        http::header::CACHE_CONTROL,
+        (
+            HeaderAggregationStrategy::Last,
+            vec![NO_STORE_HEADER_VALUE.clone()],
+        ),
+    );
+}
+
 /// Collapse all accumulated `Cache-Control` header values in the aggregator into
 /// a single, restrictively merged value and write it back, replacing whatever was
 /// there before.

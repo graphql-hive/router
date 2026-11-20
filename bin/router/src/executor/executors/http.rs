@@ -44,6 +44,7 @@ use hyper::body::Body as _;
 use hyper::Version;
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
+use smallvec::SmallVec;
 use thread_local::ThreadLocal;
 use tokio::sync::Semaphore;
 use tracing::{debug, trace, warn};
@@ -311,6 +312,10 @@ pub fn build_request_body_with_apq(
 
     let mut first_variable = true;
     if let Some(variables) = &execution_request.variables {
+        // in name order: the map's order changes from one request to the next, and dedupe
+        // hashes these bytes, so two equal requests would rarely look the same
+        let mut variables: SmallVec<[_; 8]> = variables.iter().collect();
+        variables.sort_unstable_by_key(|(name, _)| **name);
         for (variable_name, variable_value) in variables {
             if first_variable {
                 put_field(&mut body, &mut needs_comma, VARIABLES_STR);
@@ -1433,6 +1438,47 @@ mod tests {
                 r#"{"data":null,"errors":[{"message":"PersistedQueryNotFound","path":["a"]}]}"#
             ),
             None
+        );
+    }
+
+    /// Dedupe hashes the body, so the same variables have to give the same bytes. Every
+    /// `HashMap` has its own order, these are a few of them.
+    #[test]
+    fn build_request_body_writes_variables_in_the_same_order() {
+        let values: Vec<(String, sonic_rs::Value)> = (0..8)
+            .map(|i| (format!("v{i}"), sonic_rs::json!(i)))
+            .collect();
+        let bodies: std::collections::HashSet<Vec<u8>> = (0..20)
+            .map(|_| {
+                let variables: std::collections::HashMap<&str, &sonic_rs::Value> = values
+                    .iter()
+                    .map(|(name, value)| (name.as_str(), value))
+                    .collect();
+                let execution_request = SubgraphExecutionRequest {
+                    query: "query { a }",
+                    document_name_write_pos: 5,
+                    dedupe: true,
+                    operation_name: None,
+                    variables: Some(variables),
+                    headers: HeaderMap::new(),
+                    raw_variable_values: None,
+                    extensions: None,
+                    custom_scalar_paths: None,
+                    response_shape: None,
+                    connection_fingerprint: None,
+                    query_hash: None,
+                    is_query: false,
+                };
+                build_request_body(&execution_request).expect("request body should serialize")
+            })
+            .collect();
+        assert_eq!(bodies.len(), 1);
+        let body = String::from_utf8(bodies.into_iter().next().unwrap()).unwrap();
+        assert!(
+            body.contains(
+                r#""variables":{"v0":0,"v1":1,"v2":2,"v3":3,"v4":4,"v5":5,"v6":6,"v7":7}"#
+            ),
+            "{body}"
         );
     }
 }

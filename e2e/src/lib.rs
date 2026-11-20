@@ -23,6 +23,8 @@ mod context;
 #[cfg(test)]
 mod coprocessor;
 #[cfg(test)]
+mod defer;
+#[cfg(test)]
 mod demand_control;
 #[cfg(test)]
 mod demand_control_parity;

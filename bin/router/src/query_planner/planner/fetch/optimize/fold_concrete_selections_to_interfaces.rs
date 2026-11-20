@@ -288,6 +288,7 @@ impl<'a> StepConverter<'a> {
                     selections: candidate.folded.selection_set,
                     skip_if: condition.to_skip_if(),
                     include_if: condition.to_include_if(),
+                    defer: None,
                 }));
         } else if candidate.interface_name != current_type_name {
             selection_set
@@ -297,6 +298,7 @@ impl<'a> StepConverter<'a> {
                     selections: candidate.folded.selection_set,
                     skip_if: None,
                     include_if: None,
+                    defer: None,
                 }));
         } else {
             // Otherwise merge the fields directly into the parent selection set

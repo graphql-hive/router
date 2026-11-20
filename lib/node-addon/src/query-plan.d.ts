@@ -92,6 +92,8 @@ export interface FetchNode {
   contextVariables?: string[];
   /** The fetch runs when any of these holds, always when missing. */
   runIf?: ConditionGroup[];
+  /** The deferred part the fetch is for, missing for the primary part. */
+  defer?: number;
   id: FetchId;
   /**
    * The fetches whose data this fetch reads, it can start once they're all done. Empty for a
@@ -133,6 +135,8 @@ export interface BatchFetchNode {
   operation: string;
   customScalarPaths?: CustomScalarPaths;
   entityBatch: EntityBatch;
+  /** The deferred part the batch is for, missing for the primary part. */
+  defer?: number;
   /** The first of the ids in `completes`. */
   id: FetchId;
   /** What the fetches merged into this batch waited for, without those fetches themselves. */

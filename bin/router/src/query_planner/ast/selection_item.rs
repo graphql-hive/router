@@ -4,7 +4,7 @@ use crate::query_planner::{
 };
 use graphql_tools::parser::query as query_ast;
 
-use super::selection_set::{FieldSelection, InlineFragmentSelection};
+use super::selection_set::{DeferMarker, FieldSelection, InlineFragmentSelection};
 use super::shrink::ShrinkMemory;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -175,6 +175,7 @@ impl SelectionItem {
                     selections: fragment_selection.selections.strip_for_plan_input(),
                     skip_if: fragment_selection.skip_if.clone(),
                     include_if: fragment_selection.include_if.clone(),
+                    defer: fragment_selection.defer.clone(),
                 })
             }
             SelectionItem::FragmentSpread(name) => SelectionItem::FragmentSpread(name.clone()),
@@ -197,12 +198,14 @@ impl Debug for SelectionItem {
                 selections,
                 skip_if,
                 include_if,
+                defer,
             }) => f
                 .debug_struct("SelectionItem::Fragment")
                 .field("type_name", type_condition)
                 .field("selections", selections)
                 .field("skip_if", skip_if)
                 .field("include_if", include_if)
+                .field("defer", defer)
                 .finish(),
             SelectionItem::FragmentSpread(name) => f
                 .debug_struct("SelectionItem::FragmentSpread")
@@ -225,6 +228,7 @@ impl PartialEq for SelectionItem {
                 f1.type_condition == f2.type_condition
                     && f1.include_if == f2.include_if
                     && f1.skip_if == f2.skip_if
+                    && f1.defer == f2.defer
                     && f1.selections.items == f2.selections.items
             }
             (SelectionItem::FragmentSpread(f1), SelectionItem::FragmentSpread(f2)) => f1 == f2,
@@ -253,12 +257,14 @@ impl<'a, T: query_ast::Text<'a>> From<query_ast::Selection<'a, T>> for Selection
 struct ConditionsPair {
     skip_if: Option<String>,
     include_if: Option<String>,
+    defer: Option<DeferMarker>,
 }
 
 impl<'a, T: query_ast::Text<'a>> From<&Vec<query_ast::Directive<'a, T>>> for ConditionsPair {
     fn from(directives: &Vec<query_ast::Directive<'a, T>>) -> Self {
         let mut skip_if: Option<String> = None;
         let mut include_if: Option<String> = None;
+        let mut defer: Option<DeferMarker> = None;
 
         for directive in directives {
             match directive.name.as_ref() {
@@ -284,6 +290,29 @@ impl<'a, T: query_ast::Text<'a>> From<&Vec<query_ast::Directive<'a, T>>> for Con
                         include_if = Some(var_name.as_ref().to_string());
                     }
                 }
+                "defer" => {
+                    let mut marker = DeferMarker {
+                        position: (directive.position.line, directive.position.column),
+                        ..Default::default()
+                    };
+                    let mut active = true;
+                    for (name, value) in &directive.arguments {
+                        match (name.as_ref(), value) {
+                            ("if", query_ast::Value::Boolean(value)) => active = *value,
+                            ("if", query_ast::Value::Variable(var_name)) => {
+                                marker.if_var = Some(var_name.as_ref().to_string())
+                            }
+                            ("label", query_ast::Value::String(label)) => {
+                                marker.label = Some(label.clone())
+                            }
+                            _ => {}
+                        }
+                    }
+                    // `if: false` means no defer at all
+                    if active {
+                        defer = Some(marker);
+                    }
+                }
                 _ => {}
             }
         }
@@ -291,6 +320,7 @@ impl<'a, T: query_ast::Text<'a>> From<&Vec<query_ast::Directive<'a, T>>> for Con
         Self {
             skip_if,
             include_if,
+            defer,
         }
     }
 }
@@ -330,6 +360,7 @@ impl<'a, T: query_ast::Text<'a>> From<query_ast::InlineFragment<'a, T>>
             selections: value.selection_set.into(),
             skip_if: conditions.skip_if,
             include_if: conditions.include_if,
+            defer: conditions.defer,
         }
     }
 }

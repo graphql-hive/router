@@ -13,6 +13,12 @@ pub fn equal_directives<'a, T: Text<'a> + PartialEq>(
         return false;
     }
 
+    // two `@defer`s are two deferred parts even with the same arguments,
+    // copies of one (made while normalizing) keep its position
+    if a.name.as_ref() == "defer" && a.position != b.position {
+        return false;
+    }
+
     true
 }
 

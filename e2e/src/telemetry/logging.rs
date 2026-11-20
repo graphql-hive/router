@@ -1099,3 +1099,28 @@ log:
         stdout_log.lines_json
     );
 }
+
+#[ntex::test]
+async fn req_summary_counts_the_calls_of_deferred_parts() {
+    let (_subgraphs, router) = setup_router(router_with_telemetry(
+        "defer:\n  enabled: true\nlog:\n  level: info\n  format: json\n",
+    ))
+    .await;
+
+    // `reviews` is only called for the deferred part, after the handler returned
+    let stdout_log = async {
+        let response = router
+            .send_graphql_request(
+                "{ me { id ... @defer { reviews { id } } } }",
+                None,
+                Some(single_header("accept", "multipart/mixed")),
+            )
+            .await;
+        response.string_body().await
+    }
+    .capture_stdout_json()
+    .await;
+    let req_summary = log_line_by_target(&stdout_log, targets::SUMMARY);
+    assert_eq!(req_summary["subgraph_requests"], 2);
+    assert_eq!(req_summary["involved_subgraphs"], "accounts,reviews");
+}

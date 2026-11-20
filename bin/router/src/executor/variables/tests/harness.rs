@@ -28,7 +28,7 @@ static SCHEMA: LazyLock<TestSchema> = LazyLock::new(|| {
         env!("CARGO_MANIFEST_DIR"),
         "/fixture/variables_coercion/supergraph.graphql"
     )));
-    let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+    let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph, false);
     let metadata = consumer_schema.schema_metadata();
 
     TestSchema {

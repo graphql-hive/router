@@ -141,6 +141,9 @@ impl FetchStepData<MultiTypeFetchStep> {
         other: &Self,
         fetch_graph: &FetchGraph<MultiTypeFetchStep>,
     ) -> bool {
+        // A passthrough child makes no request of its own, it only hands its parent's data to
+        // its children, so it folds into a parent of another deferred part too. Its children
+        // keep their part.
         if !self.can_merge_context(other) {
             return false;
         }

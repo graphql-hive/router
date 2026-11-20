@@ -319,7 +319,15 @@ impl MessageBody for SummaryTrackedBody {
         &mut self,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Bytes, Rc<dyn Error>>>> {
-        let poll = self.body.poll_next_chunk(cx);
+        // A streamed body keeps working after the handler returned, like the fetches of a
+        // deferred fragment. Polling it in the summary's scope lets that work count too.
+        let body = &mut self.body;
+        let poll = match &self.summary.summary {
+            Some(summary) => {
+                REQUEST_SUMMARY.sync_scope(summary.clone(), || body.poll_next_chunk(cx))
+            }
+            None => body.poll_next_chunk(cx),
+        };
         if let Poll::Ready(Some(Ok(chunk))) = &poll {
             self.payload_bytes = self.payload_bytes.saturating_add(chunk.len() as i64);
         }

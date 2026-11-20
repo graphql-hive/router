@@ -26,6 +26,7 @@ use petgraph::{
 
 use crate::query_planner::{
     ast::{
+        defer::DeferId,
         merge_path::MergePath,
         requires::RequiresSelectionSet,
         selection_item::SelectionItem,
@@ -80,6 +81,8 @@ struct EarlierEntityFetch<'a> {
     needed: &'a SelectionSet,
     /// what it waits for, a later fetch only waits for it when it waits for all of that anyway
     depends_on: Dependencies,
+    /// its `@defer` part, `None` for the primary one
+    defer: Option<DeferId>,
 }
 
 /// What an entity fetch would copy: its type and fields, and the representation the executor
@@ -358,6 +361,7 @@ impl<'a> EntityReuseIndex<'a> {
                 type_name,
                 needed,
                 depends_on: Dependencies::of(self.fetch_graph, index),
+                defer: step.defer,
             });
         }
         self.found.clear();
@@ -449,7 +453,10 @@ impl<'a> EntityReuseIndex<'a> {
             {
                 continue;
             }
-            if earlier.service != step.service_name.0
+            // a fetch can wait for the primary part and its own, never for another `@defer`
+            // part: the primary part would wait for a deferred one, or one part for its sibling
+            if earlier.defer.is_some_and(|defer| step.defer != Some(defer))
+                || earlier.service != step.service_name.0
                 || earlier.type_name != wanted.type_name
                 || !covers(earlier.needed, wanted.needed)
             {
@@ -724,6 +731,7 @@ fn find_in(
             selections: wanted.needed.clone(),
             skip_if: None,
             include_if: None,
+            defer: None,
         })],
     };
 

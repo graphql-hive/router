@@ -38,6 +38,12 @@ pub struct QueryPlannerOptions {
     /// `traffic_shaping.entity_reuse`. Off, plans have nothing to copy and
     /// planning skips that work.
     pub entity_reuse: bool,
+    /// Accept `@defer` in operations and plan deferred fragments separately.
+    /// Off by default.
+    pub defer: bool,
+    /// Plans can be shown to clients, `query_planner.allow_expose`. Only then is the text a
+    /// deferred plan shows built and kept.
+    pub allow_expose: bool,
     /// The most aliased `_entities` fields one entity request to a subgraph may carry.
     /// `None` means no limit: batches are never split, and all groups of contextual argument
     /// values go in one request.
@@ -54,6 +60,8 @@ impl Default for QueryPlannerOptions {
             experimental_abstract_type_folding: false,
             arguments_to_variables: true,
             entity_reuse: false,
+            defer: false,
+            allow_expose: false,
             max_aliases_per_request: None,
             subgraph_max_aliases_per_request: HashMap::new(),
         }
@@ -118,7 +126,7 @@ impl Planner {
         let graph: Graph<'static> =
             unsafe { std::mem::transmute::<Graph<'_>, Graph<'static>>(graph) };
 
-        let consumer_schema = ConsumerSchema::new_from_supergraph(parsed_supergraph);
+        let consumer_schema = ConsumerSchema::new_from_supergraph(parsed_supergraph, options.defer);
 
         Ok(Planner {
             graph,
