@@ -16,7 +16,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use bytes::BufMut;
-use sonic_rs::{JsonContainerTrait, JsonValueMutTrait, JsonValueTrait};
+use sonic_rs::{JsonContainerTrait, JsonValueTrait};
 
 use crate::executor::execution::plan::ExecutionResultExtensions;
 use crate::executor::introspection::schema::SchemaMetadata;
@@ -67,6 +67,11 @@ impl Conditions {
         }
     }
 
+    /// No `@skip` and no `@include`.
+    fn is_always(&self) -> bool {
+        self.skip_if.is_none() && self.include_if.is_none()
+    }
+
     fn pass(&self, variables: &Variables) -> bool {
         let is_true = |var: &String| variable_bool(variables, var) == Some(true);
         !self.skip_if.as_ref().is_some_and(is_true) && self.include_if.as_ref().is_none_or(is_true)
@@ -115,6 +120,107 @@ pub struct DeferGroup {
     /// One per fragment in the group. Normalization can split one `@defer`
     /// into several fragments (one per possible type, or per nested condition).
     fragments: Vec<FragmentCondition>,
+    /// The fields under the fragment's object that another part delivers too.
+    shared: Shared,
+    /// How many response keys the fragment's object is from the root.
+    depth: usize,
+    /// Whether another group shares a field with this one, so how its fragments end is kept.
+    watched: bool,
+}
+
+/// Response keys that more than one part delivers, by key, nested the way the fields are. A
+/// null a deferred fragment's projection puts on one of these would wipe data another part
+/// sends, whichever goes out first, so the fragment fails then, see `nulls_shared`.
+#[derive(Debug, Clone, Default)]
+struct Shared(HashMap<String, SharedField>);
+
+#[derive(Debug, Clone)]
+struct SharedField {
+    /// How each other part has the field. One of them has to hold for the field to be shared
+    /// in a request. Empty when a part has it whatever the variables and the type are.
+    when: Vec<Selected>,
+    /// The type the field returns, for an object that comes without a `__typename`. Empty when
+    /// the schema doesn't have the field.
+    output_type: String,
+    fields: Shared,
+}
+
+/// A part that has a field, and what it has it under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Selected {
+    /// The group, `None` for the primary part.
+    owner: Option<usize>,
+    /// The `@skip`/`@include`s, from the root.
+    conditions: Vec<Conditions>,
+    /// The type conditions from the root, each with how many response keys from the root the
+    /// object it's on is.
+    types: Vec<(usize, String)>,
+}
+
+impl Shared {
+    /// Marks the groups that have one of these fields.
+    fn owners(&self, groups: &mut [bool]) {
+        for field in self.0.values() {
+            for owner in field.when.iter().filter_map(|selected| selected.owner) {
+                groups[owner] = true;
+            }
+            field.fields.owners(groups);
+        }
+    }
+}
+
+/// Who selects a field, by its response keys from the root: the groups, `None` for the primary
+/// part, each with what it has the field under. Only there while the plans are built.
+#[derive(Default)]
+struct Position {
+    owners: Vec<Selected>,
+    output_type: String,
+    children: HashMap<String, Position>,
+}
+
+impl Position {
+    fn add(&mut self, path: &[String], selected: Selected, output_type: &str) {
+        let mut node = self;
+        for key in path {
+            node = node.children.entry(key.clone()).or_default();
+        }
+        node.output_type = output_type.to_string();
+        if !node.owners.contains(&selected) {
+            node.owners.push(selected);
+        }
+    }
+
+    /// The fields under this one that an owner `outside` picks selects.
+    fn shared(&self, outside: &impl Fn(Option<usize>) -> bool) -> Shared {
+        let mut shared = HashMap::new();
+        for (key, child) in &self.children {
+            let mut when: Vec<&Selected> = child
+                .owners
+                .iter()
+                .filter(|selected| outside(selected.owner))
+                .collect();
+            if when.is_empty() {
+                continue;
+            }
+            // the primary part has it whatever the request is, the others don't matter then
+            if when.iter().any(|selected| {
+                selected.owner.is_none()
+                    && selected.conditions.is_empty()
+                    && selected.types.is_empty()
+            }) {
+                when.clear();
+            }
+            shared.insert(
+                key.clone(),
+                SharedField {
+                    when: when.into_iter().cloned().collect(),
+                    output_type: child.output_type.clone(),
+                    fields: child.shared(outside),
+                },
+            );
+        }
+        Shared(shared)
+    }
 }
 
 #[derive(Debug)]
@@ -130,10 +236,37 @@ impl DeferPlans {
             schema,
             groups: Vec::new(),
             fragments: Vec::new(),
+            positions: Position::default(),
+            keys: Vec::new(),
+            conditions: Vec::new(),
+            types: Vec::new(),
+            anchors: Vec::new(),
         };
         builder.walk(&operation.selection_set, root, &mut Vec::new(), None, &[]);
         if builder.groups.is_empty() {
             return None;
+        }
+        for index in 0..builder.groups.len() {
+            let position = builder.anchors[index]
+                .iter()
+                .try_fold(&builder.positions, |node, key| node.children.get(key));
+            // the group itself and the ones nested in it go out with it or after it, every
+            // other part is another one
+            let outside = |owner: Option<usize>| {
+                !std::iter::successors(owner, |owner| builder.groups[*owner].parent)
+                    .any(|owner| owner == index)
+            };
+            if let Some(position) = position {
+                builder.groups[index].shared = position.shared(&outside);
+            }
+            builder.groups[index].depth = builder.anchors[index].len();
+        }
+        let mut watched = vec![false; builder.groups.len()];
+        for group in &builder.groups {
+            group.shared.owners(&mut watched);
+        }
+        for (group, watched) in builder.groups.iter_mut().zip(watched) {
+            group.watched = watched;
         }
         for (group, fragments) in builder.groups.iter_mut().zip(builder.fragments) {
             let selection_set = SelectionSet {
@@ -263,6 +396,16 @@ struct Builder<'s> {
     schema: &'s SchemaMetadata,
     groups: Vec<DeferGroup>,
     fragments: Vec<Vec<InlineFragmentSelection>>,
+    /// Who selects what, to tell which fields more than one part delivers.
+    positions: Position,
+    /// The response keys from the root to where the walk is.
+    keys: Vec<String>,
+    /// The `@skip`/`@include`s from the root to where the walk is.
+    conditions: Vec<Conditions>,
+    /// The type conditions from the root to where the walk is, see `Selected::types`.
+    types: Vec<(usize, String)>,
+    /// The response keys from the root to each group's object.
+    anchors: Vec<Vec<String>>,
 }
 
 impl Builder<'_> {
@@ -280,29 +423,53 @@ impl Builder<'_> {
         for item in &set.items {
             match item {
                 SelectionItem::Field(field) => {
-                    if field.selections.is_empty() {
-                        continue;
+                    let conditions = Conditions::new(&field.skip_if, &field.include_if);
+                    let depth = self.conditions.len();
+                    if !conditions.is_always() {
+                        self.conditions.push(conditions.clone());
                     }
-                    let Some(info) = self
+                    self.keys.push(field.selection_identifier().to_string());
+                    let info = self
                         .schema
                         .get_type_fields(parent_type)
-                        .and_then(|fields| fields.get(&field.name))
-                    else {
-                        continue;
-                    };
-                    let output_type = info.output_type_name.clone();
-                    path.push(PathSeg::Field {
-                        key: field.selection_identifier().to_string(),
-                        output_type: output_type.clone(),
-                        conditions: Conditions::new(&field.skip_if, &field.include_if),
-                    });
-                    let sent = sent_fields(sent, field.selection_identifier())
-                        .map(|sent| &sent.selections)
-                        .collect::<Vec<_>>();
-                    self.walk(&field.selections, &output_type, path, group, &sent);
-                    path.pop();
+                        .and_then(|fields| fields.get(&field.name));
+                    self.positions.add(
+                        &self.keys,
+                        Selected {
+                            owner: group,
+                            conditions: self.conditions.clone(),
+                            types: self.types.clone(),
+                        },
+                        info.map_or("", |info| &info.output_type_name),
+                    );
+                    let info = info.filter(|_| !field.selections.is_empty());
+                    if let Some(info) = info {
+                        let output_type = info.output_type_name.clone();
+                        path.push(PathSeg::Field {
+                            key: field.selection_identifier().to_string(),
+                            output_type: output_type.clone(),
+                            conditions,
+                        });
+                        let sent = sent_fields(sent, field.selection_identifier())
+                            .map(|sent| &sent.selections)
+                            .collect::<Vec<_>>();
+                        self.walk(&field.selections, &output_type, path, group, &sent);
+                        path.pop();
+                    }
+                    self.keys.pop();
+                    self.conditions.truncate(depth);
                 }
                 SelectionItem::InlineFragment(fragment) => {
+                    let conditions = Conditions::new(&fragment.skip_if, &fragment.include_if);
+                    let depth = self.conditions.len();
+                    if !conditions.is_always() {
+                        self.conditions.push(conditions);
+                    }
+                    let types = self.types.len();
+                    if fragment.type_condition != parent_type {
+                        self.types
+                            .push((self.keys.len(), fragment.type_condition.clone()));
+                    }
                     let Some(marker) = &fragment.defer else {
                         path.push(PathSeg::Type(FragmentCondition::new(fragment)));
                         self.walk(
@@ -313,6 +480,8 @@ impl Builder<'_> {
                             sent,
                         );
                         path.pop();
+                        self.conditions.truncate(depth);
+                        self.types.truncate(types);
                         continue;
                     };
                     let index = self.group_for(group, path, marker, parent_type);
@@ -335,6 +504,8 @@ impl Builder<'_> {
                         Some(index),
                         &sent_here,
                     );
+                    self.conditions.truncate(depth);
+                    self.types.truncate(types);
                 }
                 SelectionItem::FragmentSpread(_) => {}
             }
@@ -364,8 +535,12 @@ impl Builder<'_> {
             type_name: type_name.to_string(),
             plan: ProjectionPlan::default(),
             fragments: Vec::new(),
+            shared: Shared::default(),
+            depth: 0,
+            watched: false,
         });
         self.fragments.push(Vec::new());
+        self.anchors.push(self.keys.clone());
         self.groups.len() - 1
     }
 }
@@ -490,8 +665,6 @@ struct Pending {
     type_name: String,
     /// Errors that belong to it, held until it goes out.
     errors: Vec<GraphQLError>,
-    /// What went out at its object before it, to tell when its own nulls can't go out.
-    sent: Sent,
 }
 
 /// Where a held error goes.
@@ -518,14 +691,6 @@ pub fn is_part_path(part_path: &[PartPathSegment], path: &[GraphQLErrorPathSegme
             })
 }
 
-/// What went out at a fragment's object before the fragment.
-enum Sent {
-    /// The primary part's output at the fragment's path.
-    Primary,
-    /// For a fragment nested in a deferred one: the part around it and what went out before.
-    Parsed(sonic_rs::Value),
-}
-
 /// Writes an incremental response part by part, as the data comes in.
 /// [`Self::primary`] once the primary data is there, then [`Self::next`] whenever some
 /// announced fragments have all their data, until it returns `None`.
@@ -545,18 +710,44 @@ pub struct IncrementalWriter<'p> {
     /// Tests only: how many later parts get written before writing one fails.
     #[cfg(test)]
     fail_write_after: Option<usize>,
-    /// The primary part's data, what `Sent::Primary` reads.
-    primary: PrimaryData,
     /// The plan's deferred parts, to find the fragments an error from a deferred fetch is for.
     parts: &'p [DeferPart],
     /// Errors from a deferred fetch whose fragment isn't announced yet, with the fetch's part.
     unplaced: Vec<(DeferId, GraphQLError)>,
+    /// How the fragments of watched groups ended: their group, their path and whether they
+    /// went out with data.
+    // ponytail: a list, read only when a null lands on a shared field. A map if that's ever hot
+    finished: Vec<(usize, Vec<GraphQLErrorPathSegment>, bool)>,
 }
 
-/// The primary part's data as it went out, parsed the first time a later part needs it.
-enum PrimaryData {
-    Written(Vec<u8>),
-    Parsed(sonic_rs::Value),
+/// Where a walk down a fragment's data is, see `IncrementalWriter::nulls_shared`.
+struct Place {
+    /// From the root of the response.
+    path: Vec<GraphQLErrorPathSegment>,
+    /// The type of every object on the way, by how many response keys from the root it is.
+    /// `None` when there's nothing to tell it by.
+    types: Vec<Option<String>>,
+}
+
+/// How much of `path` leads to the object `depth` response keys from the root, its list
+/// indexes included.
+fn object_path(path: &[GraphQLErrorPathSegment], depth: usize) -> &[GraphQLErrorPathSegment] {
+    let mut keys = 0;
+    for (index, segment) in path.iter().enumerate() {
+        if matches!(segment, GraphQLErrorPathSegment::String(_)) {
+            if keys == depth {
+                return &path[..index];
+            }
+            keys += 1;
+        }
+    }
+    path
+}
+
+fn type_name_of(object: &[(&str, Value)]) -> Option<String> {
+    Value::object_get(object, TYPENAME_FIELD_NAME)
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 impl<'p> IncrementalWriter<'p> {
@@ -588,9 +779,9 @@ impl<'p> IncrementalWriter<'p> {
             announced: 0,
             #[cfg(test)]
             fail_write_after: None,
-            primary: PrimaryData::Written(Vec::new()),
             parts,
             unplaced: Vec::new(),
+            finished: Vec::new(),
         }
     }
 
@@ -717,7 +908,6 @@ impl<'p> IncrementalWriter<'p> {
         group: usize,
         path: Vec<GraphQLErrorPathSegment>,
         type_name: String,
-        sent: Sent,
     ) {
         self.pending.push(Pending {
             id: self.next_id,
@@ -725,25 +915,8 @@ impl<'p> IncrementalWriter<'p> {
             path,
             type_name,
             errors: Vec::new(),
-            sent,
         });
         self.next_id += 1;
-    }
-
-    /// What went out at a pending fragment's object, parsed.
-    fn sent_value(&mut self, index: usize) -> Result<sonic_rs::Value, ProjectionError> {
-        if let Sent::Parsed(value) = &self.pending[index].sent {
-            return Ok(value.clone());
-        }
-        if let PrimaryData::Written(output) = &self.primary {
-            self.primary = PrimaryData::Parsed(read_back(output)?);
-        }
-        let PrimaryData::Parsed(tree) = &self.primary else {
-            unreachable!("parsed right above");
-        };
-        Ok(value_at_output(tree, &self.pending[index].path)
-            .cloned()
-            .unwrap_or_else(sonic_rs::Value::new_object))
     }
 
     /// How far into `segments` the fragment's plan goes, `None` when the path isn't under it.
@@ -879,16 +1052,18 @@ impl<'p> IncrementalWriter<'p> {
         if !anchors.is_empty() {
             // a null that projection put in can take out an anchor that's there in the data. Only
             // then the output is read back, to tell which
-            if nulled {
-                self.primary = PrimaryData::Parsed(read_back(&out[DATA_PREFIX.len()..data_end])?);
-            }
+            let tree = match nulled {
+                true => Some(read_back(&out[DATA_PREFIX.len()..data_end])?),
+                false => None,
+            };
             for (group, anchor) in anchors {
-                if let PrimaryData::Parsed(tree) = &self.primary {
-                    if !alive_in_output(tree, &anchor.path) {
-                        continue;
-                    }
+                if tree
+                    .as_ref()
+                    .is_some_and(|tree| !alive_in_output(tree, &anchor.path))
+                {
+                    continue;
                 }
-                self.push_pending(group, anchor.path, anchor.type_name, Sent::Primary);
+                self.push_pending(group, anchor.path, anchor.type_name);
             }
         }
 
@@ -944,10 +1119,6 @@ impl<'p> IncrementalWriter<'p> {
         }
         write_has_next(&mut out, self.has_next());
         out.put_u8(b'}');
-        // kept for `Sent::Primary`, parsed only if a later part needs it
-        if self.has_next() && matches!(self.primary, PrimaryData::Written(_)) {
-            self.primary = PrimaryData::Written(out[DATA_PREFIX.len()..data_end].to_vec());
-        }
         self.announced = self.next_id;
         Ok(out)
     }
@@ -993,7 +1164,13 @@ impl<'p> IncrementalWriter<'p> {
         let mut buffer = Vec::new();
         let mut outputs = Vec::with_capacity(going.len());
         for &index in &going {
-            outputs.push(self.project_pending(index, data, &mut buffer)?);
+            let output = self.project_pending(index, data, &mut buffer)?;
+            let item = &self.pending[index];
+            if self.plans.groups[item.group].watched {
+                self.finished
+                    .push((item.group, item.path.clone(), output.is_some()));
+            }
+            outputs.push(output);
         }
 
         // `going` and the fragments nested in them are now announced, the rest stays
@@ -1119,6 +1296,136 @@ impl<'p> IncrementalWriter<'p> {
         Ok(part)
     }
 
+    /// Where the object at `path` is, with the types of the objects above it.
+    fn place_of(&self, data: &Value, path: &[GraphQLErrorPathSegment]) -> Place {
+        let mut types = Vec::new();
+        let mut current = Some(data);
+        for segment in path {
+            current = match (segment, current) {
+                (GraphQLErrorPathSegment::String(key), Some(Value::Object(object))) => {
+                    types.push(type_name_of(object));
+                    Value::object_get(object, key)
+                }
+                (GraphQLErrorPathSegment::Index(index), Some(Value::Array(items))) => {
+                    items.get(*index)
+                }
+                _ => None,
+            };
+        }
+        Place {
+            path: path.to_vec(),
+            types,
+        }
+    }
+
+    /// Whether a group's fragment for the object `path` is under went out with data, or still
+    /// can. A group that isn't active goes out with the part around it.
+    fn delivers(&self, group: Option<usize>, path: &[GraphQLErrorPathSegment]) -> bool {
+        let active = std::iter::successors(group, |group| self.plans.groups[*group].parent)
+            .find(|group| self.deliveries[*group].is_some());
+        match active {
+            // the primary part
+            None => true,
+            Some(group) => self.ended(group, path).unwrap_or(true),
+        }
+    }
+
+    /// Whether a group's fragment for the object `path` is under went out with data, `None`
+    /// while it can still go out.
+    fn ended(&self, group: usize, path: &[GraphQLErrorPathSegment]) -> Option<bool> {
+        let anchor = object_path(path, self.plans.groups[group].depth);
+        if let Some((_, _, delivered)) = self
+            .finished
+            .iter()
+            .find(|(finished, path, _)| *finished == group && path == anchor)
+        {
+            return Some(*delivered);
+        }
+        if self
+            .pending
+            .iter()
+            .any(|item| item.group == group && item.path == anchor)
+        {
+            return None;
+        }
+        // not announced. It still can be while the fragment it's nested in hasn't gone out,
+        // after that it never is: its object isn't there, or isn't its type
+        match self.deliveries[group].as_ref().and_then(|d| d.parent) {
+            Some(parent) => self.ended(parent, path).map(|_| false),
+            None => Some(false),
+        }
+    }
+
+    /// Whether another part delivers a shared field at `place`: one that has it with these
+    /// variables, on objects of these types, and that went out with data or still can.
+    fn delivered(&self, field: &SharedField, place: &Place) -> bool {
+        field.when.is_empty()
+            || field.when.iter().any(|selected| {
+                selected.conditions.iter().all(|c| c.pass(self.variables))
+                    && selected.types.iter().all(|(depth, condition)| {
+                        // no type to go by, so it may well be delivered
+                        place
+                            .types
+                            .get(*depth)
+                            .and_then(Option::as_deref)
+                            .is_none_or(|type_name| self.type_matches(type_name, condition))
+                    })
+                    && self.delivers(selected.owner, &place.path)
+            })
+    }
+
+    /// Whether `output` has a null on a `shared` field where `data` has a value: a null
+    /// projection put in, on a field another part delivers too. A null that's in the data is
+    /// fine, the other part gets the same one. `type_name` is the type of the object `data` is,
+    /// or is in, for when it has no `__typename`. `place` is where `data` is.
+    fn nulls_shared(
+        &self,
+        output: &sonic_rs::Value,
+        data: &Value,
+        shared: &Shared,
+        type_name: &str,
+        place: &mut Place,
+    ) -> bool {
+        if output.is_null() {
+            return !data.is_null();
+        }
+        if let (Some(output), Value::Object(data)) = (output.as_object(), data) {
+            let type_name = type_name_of(data)
+                .or_else(|| Some(type_name.to_string()).filter(|name| !name.is_empty()));
+            place.types.push(type_name);
+            let found = output.iter().any(|(key, value)| {
+                let Some(field) = shared.0.get(key) else {
+                    return false;
+                };
+                let Some(data) = Value::object_get(data, key) else {
+                    return false;
+                };
+                place
+                    .path
+                    .push(GraphQLErrorPathSegment::String(key.to_string()));
+                let found = self.delivered(field, place)
+                    && self.nulls_shared(value, data, &field.fields, &field.output_type, place);
+                place.path.pop();
+                found
+            });
+            place.types.pop();
+            return found;
+        }
+        if let (Some(output), Value::Array(data)) = (output.as_array(), data) {
+            return output
+                .iter()
+                .zip(data)
+                .enumerate()
+                .any(|(index, (value, data))| {
+                    place.path.push(GraphQLErrorPathSegment::Index(index));
+                    let found = self.nulls_shared(value, data, shared, type_name, place);
+                    place.path.pop();
+                    found
+                });
+        }
+        false
+    }
+
     /// Projects the pending fragment at `index` into `buffer`, and announces the fragments nested
     /// in it. Where its data is in `buffer`, `None` when it went null.
     fn project_pending(
@@ -1146,21 +1453,26 @@ impl<'p> IncrementalWriter<'p> {
             return Ok(None);
         }
         let output = start..buffer.len();
-        // whether projection put in a null, one that could land on data that went out
-        let nulled = projected.nulled;
+        // whether projection put in a null, one that could land on a field another part
+        // delivers too
+        let shared = &self.plans.groups[group].shared;
+        let nulled = projected.nulled && !shared.0.is_empty();
         let children = self.children_of(Some(group));
         if !nulled && children.is_empty() {
             return Ok(Some(output));
         }
 
-        // parsed only when it's needed: to check a null against what went out, and to find the
-        // fragments nested in it
+        // parsed only when it's needed: to find where the nulls are, and to find the fragments
+        // nested in it
         let parsed: sonic_rs::Value = read_back(&buffer[output.clone()])?;
-        let sent = self.sent_value(index)?;
-        // A null that bubbled up to a field that already went out, like `book` in
+        // A null that bubbled up to a field another part delivers too, like `book` in
         // `{ book { ... } ... @defer { book { nonNull } } }`, can't replace it: the null stops at
         // the fragment, which goes out with its errors and no data.
-        if nulled && nulls_sent(&parsed, &sent) {
+        if nulled && {
+            let item = &self.pending[index];
+            let mut place = self.place_of(data, &item.path);
+            self.nulls_shared(&parsed, value, shared, &item.type_name, &mut place)
+        } {
             return Ok(None);
         }
         if children.is_empty() {
@@ -1173,17 +1485,9 @@ impl<'p> IncrementalWriter<'p> {
             if !alive_in_output(&parsed, &anchor.path) {
                 continue;
             }
-            // what went out at the nested fragment's object: what went out before, with this
-            // part's output on top
-            let mut child_sent = value_at_output(&sent, &anchor.path)
-                .cloned()
-                .unwrap_or_else(sonic_rs::Value::new_object);
-            if let Some(output) = value_at_output(&parsed, &anchor.path) {
-                merge_output(&mut child_sent, output.clone());
-            }
             let mut path = self.pending[index].path.clone();
             path.extend(anchor.path);
-            self.push_pending(child, path, anchor.type_name, Sent::Parsed(child_sent));
+            self.push_pending(child, path, anchor.type_name);
         }
         // hand errors down to the nested fragments they belong to
         for mut error in std::mem::take(&mut self.pending[index].errors) {
@@ -1337,58 +1641,6 @@ fn truncate_path(error: &mut GraphQLError, matched: usize) {
 /// Parses output projection just wrote. It's always valid JSON, failing here is a bug.
 fn read_back(output: &[u8]) -> Result<sonic_rs::Value, ProjectionError> {
     sonic_rs::from_slice(output).map_err(|err| ProjectionError::ReadBackFailure(err.to_string()))
-}
-
-/// The value at `path` in what went out, `None` if anything on the way is missing.
-fn value_at_output<'v>(
-    value: &'v sonic_rs::Value,
-    path: &[GraphQLErrorPathSegment],
-) -> Option<&'v sonic_rs::Value> {
-    path.iter()
-        .try_fold(value, |current, segment| match segment {
-            GraphQLErrorPathSegment::String(key) => current.get(key.as_str()),
-            GraphQLErrorPathSegment::Index(index) => current.get(*index),
-        })
-}
-
-/// Whether `output` has a null where `sent` has a value that already went out.
-fn nulls_sent(output: &sonic_rs::Value, sent: &sonic_rs::Value) -> bool {
-    if output.is_null() {
-        return !sent.is_null();
-    }
-    if let (Some(output), Some(sent)) = (output.as_object(), sent.as_object()) {
-        return output
-            .iter()
-            .any(|(key, value)| sent.get(&key).is_some_and(|sent| nulls_sent(value, sent)));
-    }
-    if let (Some(output), Some(sent)) = (output.as_array(), sent.as_array()) {
-        return output
-            .iter()
-            .zip(sent.iter())
-            .any(|(value, sent)| nulls_sent(value, sent));
-    }
-    false
-}
-
-/// Adds what's in `output` to `sent`, moving its values over.
-fn merge_output(sent: &mut sonic_rs::Value, mut output: sonic_rs::Value) {
-    if let (Some(sent), Some(output)) = (sent.as_object_mut(), output.as_object_mut()) {
-        for (key, value) in output.iter_mut() {
-            let value = std::mem::take(value);
-            match sent.get_mut(&key) {
-                Some(existing) if existing.is_object() || existing.is_array() => {
-                    merge_output(existing, value)
-                }
-                _ => {
-                    sent.insert(key, value);
-                }
-            }
-        }
-    } else if let (Some(sent), Some(output)) = (sent.as_array_mut(), output.as_array_mut()) {
-        for (existing, value) in sent.iter_mut().zip(output.iter_mut()) {
-            merge_output(existing, std::mem::take(value));
-        }
-    }
 }
 
 /// The value at a response path, `None` if anything on the way is missing.

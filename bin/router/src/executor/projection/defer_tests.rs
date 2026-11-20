@@ -40,6 +40,7 @@ type Post implements Node
   @join__implements(graph: A, interface: "Node") {
   id: ID!
   title: String
+  friends: [User]
 }
 "#;
 
@@ -439,6 +440,143 @@ fn nested_defer_under_a_field_that_went_out() {
     {"data":{"me":{"id":"1","friends":[{"id":"2"}]}},"pending":[{"id":"0","path":["me"]}],"hasNext":true}
     {"pending":[{"id":"1","path":["me","friends",0]}],"incremental":[{"id":"0","data":{"friends":[{}]}}],"completed":[{"id":"0"}],"hasNext":true}
     {"incremental":[{"id":"1","data":{"name":"Bo"}}],"completed":[{"id":"1"}],"hasNext":false}
+    "#
+    );
+}
+
+#[test]
+fn null_can_not_replace_a_field_a_sibling_fragment_delivers() {
+    // `friends` comes from both fragments. The null from `age` would take out the friend the
+    // other fragment delivers, so the fragment with `age` fails, whichever comes first
+    let data = r#"{"me":{"friends":[{"name":"Bo","age":null}]}}"#;
+    insta::assert_snapshot!(
+        Case::new(
+            r#"{ ... @defer(label: "A") { me { friends { age } } } me { ... @defer(label: "B") { friends { name } } } }"#,
+            data,
+        )
+        .spec(),
+        @r#"
+    {"data":{"me":{}},"pending":[{"id":"0","path":[],"label":"A"},{"id":"1","path":["me"],"label":"B"}],"hasNext":true}
+    {"incremental":[{"id":"1","data":{"friends":[{"name":"Bo"}]}}],"completed":[{"id":"0","errors":[{"message":"Cannot return null for non-nullable field.","path":[]}]},{"id":"1"}],"hasNext":false}
+    "#
+    );
+    insta::assert_snapshot!(
+        Case::new(
+            r#"{ me { ... @defer(label: "B") { friends { name } } } ... @defer(label: "A") { me { friends { age } } } }"#,
+            data,
+        )
+        .spec(),
+        @r#"
+    {"data":{"me":{}},"pending":[{"id":"0","path":["me"],"label":"B"},{"id":"1","path":[],"label":"A"}],"hasNext":true}
+    {"incremental":[{"id":"0","data":{"friends":[{"name":"Bo"}]}}],"completed":[{"id":"0"},{"id":"1","errors":[{"message":"Cannot return null for non-nullable field.","path":[]}]}],"hasNext":false}
+    "#
+    );
+}
+
+#[test]
+fn null_on_a_field_no_other_part_delivers_goes_out() {
+    // only fragment A has `friends`, its null takes nothing away
+    insta::assert_snapshot!(
+        Case::new(
+            r#"{ me { id ... @defer(label: "A") { friends { age } } ... @defer(label: "B") { name } } }"#,
+            r#"{"me":{"id":"1","name":"Ann","friends":[{"age":null}]}}"#,
+        )
+        .spec(),
+        @r#"
+    {"data":{"me":{"id":"1"}},"pending":[{"id":"0","path":["me"],"label":"A"},{"id":"1","path":["me"],"label":"B"}],"hasNext":true}
+    {"incremental":[{"id":"0","data":{"friends":[null]}},{"id":"1","data":{"name":"Ann"}}],"completed":[{"id":"0"},{"id":"1"}],"hasNext":false}
+    "#
+    );
+}
+
+#[test]
+fn null_from_the_data_on_a_shared_field_goes_out() {
+    // `friends` is null in the data, the primary part sent the same null
+    insta::assert_snapshot!(
+        Case::new(
+            r#"{ me { friends { id } } ... @defer { me { friends { name } } } }"#,
+            r#"{"me":{"friends":null}}"#,
+        )
+        .spec(),
+        @r#"
+    {"data":{"me":{"friends":null}},"pending":[{"id":"0","path":[]}],"hasNext":true}
+    {"incremental":[{"id":"0","data":{"me":{"friends":null}}}],"completed":[{"id":"0"}],"hasNext":false}
+    "#
+    );
+}
+
+#[test]
+fn a_field_the_other_part_skipped_is_not_shared() {
+    // the primary part has `friends` only with `$f`. Without it, the fragment's null is its own
+    let case = |f: bool| {
+        Case::new(
+            r#"query ($f: Boolean!) { me { id friends @include(if: $f) { id } ... @defer { friends { age } } } }"#,
+            r#"{"me":{"id":"1","friends":[{"id":"2","age":null}]}}"#,
+        )
+        .var("f", f)
+        .spec()
+    };
+    insta::assert_snapshot!(case(false), @r#"
+    {"data":{"me":{"id":"1"}},"pending":[{"id":"0","path":["me"]}],"hasNext":true}
+    {"incremental":[{"id":"0","data":{"friends":[null]}}],"completed":[{"id":"0"}],"hasNext":false}
+    "#);
+    insta::assert_snapshot!(case(true), @r#"
+    {"data":{"me":{"id":"1","friends":[{"id":"2"}]}},"pending":[{"id":"0","path":["me"]}],"hasNext":true}
+    {"completed":[{"id":"0","errors":[{"message":"Cannot return null for non-nullable field.","path":["me"]}]}],"hasNext":false}
+    "#);
+}
+
+#[test]
+fn a_field_the_other_part_has_on_another_type_is_not_shared() {
+    // the primary part has `friends` on a `Post` only, the node is a `User`
+    let case = |on: &str| {
+        let query = format!(
+            "{{ node {{ ... on {on} {{ friends {{ id }} }} ... on User @defer {{ name friends {{ age }} }} }} }}"
+        );
+        Case::new(
+            Box::leak(query.into_boxed_str()),
+            r#"{"node":{"__typename":"User","name":"Ann","friends":[{"id":"2","age":null}]}}"#,
+        )
+        .spec()
+    };
+    insta::assert_snapshot!(case("Post"), @r#"
+    {"data":{"node":{}},"pending":[{"id":"0","path":["node"]}],"hasNext":true}
+    {"incremental":[{"id":"0","data":{"name":"Ann","friends":[null]}}],"completed":[{"id":"0"}],"hasNext":false}
+    "#);
+    insta::assert_snapshot!(case("User"), @r#"
+    {"data":{"node":{"friends":[{"id":"2"}]}},"pending":[{"id":"0","path":["node"]}],"hasNext":true}
+    {"completed":[{"id":"0","errors":[{"message":"Cannot return null for non-nullable field.","path":["node"]}]}],"hasNext":false}
+    "#);
+}
+
+#[test]
+fn a_field_of_a_sibling_fragment_that_failed_is_not_shared() {
+    // fragment B fails on `age`, so nothing of it went out, and A's null takes nothing away
+    insta::assert_snapshot!(
+        Case::new(
+            r#"{ me { ... @defer(label: "B") { age friends { name } } } ... @defer(label: "A") { me { friends { age } } } }"#,
+            r#"{"me":{"age":null,"friends":[{"name":"Bo","age":null}]}}"#,
+        )
+        .spec(),
+        @r#"
+    {"data":{"me":{}},"pending":[{"id":"0","path":["me"],"label":"B"},{"id":"1","path":[],"label":"A"}],"hasNext":true}
+    {"incremental":[{"id":"1","data":{"me":{"friends":[null]}}}],"completed":[{"id":"0","errors":[{"message":"Cannot return null for non-nullable field.","path":["me"]}]},{"id":"1"}],"hasNext":false}
+    "#
+    );
+}
+
+#[test]
+fn type_conditions_are_followed_part_by_part() {
+    // `friends` is shared on a `User`, but `friends.friends` only comes from the `Post` fragment
+    insta::assert_snapshot!(
+        Case::new(
+            r#"{ node { ... on Post { friends { friends { id } } } ... on User { friends { name } } ... on User @defer { friends { friends { age } } } } }"#,
+            r#"{"node":{"__typename":"User","friends":[{"name":"Bo","friends":[{"id":"3","age":null}]}]}}"#,
+        )
+        .spec(),
+        @r#"
+    {"data":{"node":{"friends":[{"name":"Bo"}]}},"pending":[{"id":"0","path":["node"]}],"hasNext":true}
+    {"incremental":[{"id":"0","data":{"friends":[{"friends":[null]}]}}],"completed":[{"id":"0"}],"hasNext":false}
     "#
     );
 }
