@@ -1,12 +1,16 @@
-//! Retires subgraph connections once they hit `max_connection_age`.
+//! Retires subgraph connections we don't want reused: ones past `max_connection_age`, and
+//! ones whose request just timed out.
 //!
 //! A busy connection never sits idle, so `pool_idle_timeout` never closes it, and it stays on
 //! whatever pod it first connected to. Giving every connection a deadline makes the pool open
 //! fresh ones from time to time, which re-resolves DNS and lets the Service pick a pod again.
-//!
 //! The connector stamps each new connection with a deadline. When a request picks up a connection
 //! past its deadline, we poison it, so the pool stops handing it out. That request and any others
 //! already on it finish normally, then it closes.
+//!
+//! A timed-out request on HTTP/1 already takes its connection down with it. On HTTP/2 only the
+//! stream is reset, and the connection keeps getting new requests, likely to the same stuck pod.
+//! So when a request times out, we poison its connection too.
 
 use std::{
     future::Future,
@@ -27,6 +31,7 @@ use hyper_util::client::legacy::connect::{
 use hyper_util::rt::TokioIo;
 use rand::prelude::*;
 use tokio::net::TcpStream;
+use tokio::time::error::Elapsed;
 use tower_service::Service;
 
 use super::http::HttpClient;
@@ -133,40 +138,61 @@ impl Write for AgedStream {
     }
 }
 
-/// Sends `req` and retires the connection it goes over if that connection is past its deadline.
+/// Sends `req`, retiring the connection it goes over when that connection is past its deadline
+/// (only when `check_age` is set) or when the request runs out of `timeout`.
 ///
-/// The check runs as soon as the request gets a connection, not when the response arrives, so
-/// a request that hangs or times out still stops others from reusing an old connection. The
-/// request itself still goes over that connection.
+/// The age check runs as soon as the request gets a connection, not when the response arrives,
+/// so a request that hangs still stops others from reusing an old connection. The request itself
+/// still goes over that connection. A connection only gets checked when it carries a request; one
+/// that goes quiet past its deadline is closed by `pool_idle_timeout` instead.
 ///
-/// A connection only gets checked when it carries a request. One that goes quiet past its
-/// deadline is closed by `pool_idle_timeout` instead.
-pub async fn request_and_retire_old(
+/// Like `tokio::time::timeout`, the outer `Err` means the timeout ran out.
+pub async fn request_and_retire(
     client: &HttpClient,
     mut req: Request<Full<Bytes>>,
-) -> Result<Response<Incoming>, hyper_util::client::legacy::Error> {
+    timeout: Option<Duration>,
+    check_age: bool,
+) -> Result<Result<Response<Incoming>, hyper_util::client::legacy::Error>, Elapsed> {
     let mut connection = capture_connection(&mut req);
-    let request = client.request(req);
-    tokio::pin!(request);
-    // Don't just wait for the connection: if connecting fails, it never shows up.
-    let finished = tokio::select! {
-        res = &mut request => Some(res),
-        _ = connection.wait_for_connection_metadata() => None,
+    let sending = async {
+        let request = client.request(req);
+        if !check_age {
+            return request.await;
+        }
+        tokio::pin!(request);
+        // Don't just wait for the connection: if connecting fails, it never shows up.
+        let finished = tokio::select! {
+            res = &mut request => Some(res),
+            _ = connection.wait_for_connection_metadata() => None,
+        };
+        if let Some(connected) = connection.connection_metadata().as_ref() {
+            if is_past_deadline(connected) {
+                connected.poison();
+            }
+        }
+        match finished {
+            Some(res) => res,
+            None => request.await,
+        }
     };
-    if let Some(connected) = connection.connection_metadata().as_ref() {
-        let mut extras = Extensions::new();
-        connected.get_extras(&mut extras);
-        if extras
-            .get::<ConnectionDeadline>()
-            .is_some_and(|deadline| Instant::now() >= deadline.0)
-        {
+    let Some(timeout) = timeout else {
+        return Ok(sending.await);
+    };
+    let result = tokio::time::timeout(timeout, sending).await;
+    if result.is_err() {
+        if let Some(connected) = connection.connection_metadata().as_ref() {
             connected.poison();
         }
     }
-    match finished {
-        Some(res) => res,
-        None => request.await,
-    }
+    result
+}
+
+fn is_past_deadline(connected: &Connected) -> bool {
+    let mut extras = Extensions::new();
+    connected.get_extras(&mut extras);
+    extras
+        .get::<ConnectionDeadline>()
+        .is_some_and(|deadline| Instant::now() >= deadline.0)
 }
 
 #[cfg(test)]
@@ -230,6 +256,7 @@ mod tests {
             builder,
             build_https_connector(None, max_age, None).unwrap(),
             max_age.is_some(),
+            http2,
         )
     }
 
@@ -237,7 +264,7 @@ mod tests {
         let req = hyper::Request::get(url)
             .body(Full::new(Bytes::new()))
             .unwrap();
-        let res = client.request(req).await.unwrap();
+        let res = client.request(req, None).await.unwrap().unwrap();
         // read the body so an HTTP/1 connection goes back to the pool
         res.into_body().collect().await.unwrap();
     }
@@ -265,7 +292,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retires_old_http2_connection_even_when_the_request_times_out() {
+    async fn retires_old_http2_connection_even_when_the_request_hangs() {
         let (url, accepted) = start_server(true).await;
         let client = client(Some(Duration::from_millis(100)), true);
 
@@ -277,10 +304,31 @@ mod tests {
             .header("x-hang", "1")
             .body(Full::new(Bytes::new()))
             .unwrap();
-        let timed_out = tokio::time::timeout(Duration::from_millis(50), client.request(req)).await;
+        // cancel it from outside, so only the age check can retire the connection
+        let timed_out =
+            tokio::time::timeout(Duration::from_millis(50), client.request(req, None)).await;
         assert!(timed_out.is_err());
 
         // so the next request has to open a new connection
+        get(&client, &url).await;
+        assert_eq!(accepted.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn retires_http2_connection_when_a_request_times_out() {
+        let (url, accepted) = start_server(true).await;
+        let client = client(None, true);
+
+        get(&client, &url).await;
+
+        let req = hyper::Request::get(&url)
+            .header("x-hang", "1")
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        let timed_out = client.request(req, Some(Duration::from_millis(50))).await;
+        assert!(timed_out.is_err());
+
+        // the stuck connection is retired, so the next request opens a new one
         get(&client, &url).await;
         assert_eq!(accepted.load(Ordering::SeqCst), 2);
     }

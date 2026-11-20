@@ -247,6 +247,7 @@ fn build_http_client(
         builder,
         build_https_connector(tls_config, all.max_connection_age, all.tcp_keepalive)?,
         all.max_connection_age.is_some(),
+        http2_only,
     ))
 }
 
