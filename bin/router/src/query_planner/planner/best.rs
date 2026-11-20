@@ -49,6 +49,7 @@
 //!     cost of the entire merged tree while preserving the exact branch-and-bound costs.
 
 use lazy_init::LazyTransform;
+use petgraph::graph::EdgeIndex;
 use std::{cell::OnceCell, rc::Rc};
 
 use crate::query_planner::{
@@ -59,7 +60,7 @@ use crate::query_planner::{
             query_tree::QueryTree,
             query_tree_node::{MutationFieldPosition, QueryTreeNode},
         },
-        walker::{path::OperationPath, ResolvedOperation},
+        walker::{path::OperationPath, BestPathsPerLeaf, ResolvedOperation},
     },
     state::supergraph_state::OperationKind,
     utils::cancellation::CancellationToken,
@@ -185,9 +186,11 @@ fn sort_candidates_by_cost(graph: &Graph<'_>, per_leaf_alternatives_asc: &mut [A
 
 pub fn find_best_combination(
     graph: &Graph<'_>,
-    operation: ResolvedOperation,
+    mut operation: ResolvedOperation,
     cancellation_token: &CancellationToken,
 ) -> Result<QueryTree, QueryPlanError> {
+    pick_entrypoints(graph, &mut operation, cancellation_token)?;
+
     if operation.root_field_groups.is_empty()
         || operation
             .root_field_groups
@@ -235,6 +238,136 @@ pub fn find_best_combination(
     )?;
 
     state.best_tree.ok_or(QueryPlanError::EmptyPlan)
+}
+
+/// Picks the subgraph for every mutation or subscription field that more than one subgraph can
+/// run (`ResolvedOperation::entrypoint_choices`), and puts its paths in `root_field_groups`.
+///
+/// Each option is planned on its own, so a fetch that a few leaves share is counted once.
+/// The fields can't be picked one by one though. Back to back mutation fields that run in the
+/// same subgraph go in one fetch, so `createOrder` in b followed by `cancelOrder` in b is one
+/// fetch, and in b then a it's two. So the whole list of root fields is picked at once:
+/// every option costs what its plan costs, plus a fetch whenever it's in another subgraph than
+/// the field before it, or the field before it needs more fetches than its root one,
+/// and the cheapest way through the list wins.
+fn pick_entrypoints(
+    graph: &Graph<'_>,
+    operation: &mut ResolvedOperation,
+    cancellation_token: &CancellationToken,
+) -> Result<(), QueryPlanError> {
+    if operation.entrypoint_choices.is_empty() {
+        return Ok(());
+    }
+    let mut choices = std::mem::take(&mut operation.entrypoint_choices);
+
+    // the entrypoint edge a field's paths start from, it's the subgraph the field runs in
+    let entrypoint = |paths_per_leaf: &BestPathsPerLeaf| {
+        paths_per_leaf
+            .first()
+            .and_then(|paths| paths.first())
+            .and_then(|path| path.segments_rev().last())
+            .map(|segment| segment.edge_index)
+    };
+
+    // A field that needs more fetches than its root one ends the request it's in, the next
+    // field has to wait for all of its data (see `turn_mutations_into_sequence`).
+    // Its leaves can all be read right in its subgraph, or it needs more.
+    let complete = |paths_per_leaf: &BestPathsPerLeaf| {
+        paths_per_leaf.iter().all(|paths| {
+            paths.iter().any(|path| {
+                path.segments_rev().all(|segment| {
+                    segment.requirement_tree.is_none()
+                        && segment.context_requirements().is_empty()
+                        && !matches!(
+                            graph.edge(segment.edge_index),
+                            Ok(Edge::EntityMove(_)
+                                | Edge::InterfaceObjectTypeMove(_)
+                                | Edge::ReentryMove(_))
+                        )
+                })
+            })
+        })
+    };
+
+    // (entrypoint, cost, complete) per option of every root field,
+    // fields without a choice have one option
+    let mut options: Vec<Vec<(Option<EdgeIndex>, u64, bool)>> =
+        Vec::with_capacity(operation.root_field_groups.len());
+    // choices are sorted by field index, so one pass over them is enough
+    let mut next_choice = choices.iter().peekable();
+    for (index, group) in operation.root_field_groups.iter().enumerate() {
+        let Some((_, field_choices)) =
+            next_choice.next_if(|(choice_index, _)| *choice_index == index)
+        else {
+            options.push(vec![(entrypoint(group), 0, complete(group))]);
+            continue;
+        };
+        let mut field_options = Vec::with_capacity(field_choices.len());
+        for choice in field_choices {
+            let tree = find_best_combination(
+                graph,
+                ResolvedOperation {
+                    operation_kind: operation.operation_kind.clone(),
+                    root_field_groups: vec![choice.clone()],
+                    entrypoint_choices: Vec::new(),
+                },
+                cancellation_token,
+            )?;
+            field_options.push((
+                entrypoint(choice),
+                calculate_cost_of_tree(graph, &tree.root),
+                complete(choice),
+            ));
+        }
+        options.push(field_options);
+    }
+
+    // cheapest total per option of the field so far, and the option of the field before it
+    let mut totals: Vec<u64> = options[0].iter().map(|(_, cost, _)| *cost).collect();
+    let mut previous: Vec<Vec<usize>> = Vec::with_capacity(options.len());
+    for pair in options.windows(2) {
+        let (before, field) = (&pair[0], &pair[1]);
+        let mut field_totals = Vec::with_capacity(field.len());
+        let mut field_previous = Vec::with_capacity(field.len());
+        for (field_entrypoint, cost, _) in field {
+            let (picked, total) = before
+                .iter()
+                .zip(&totals)
+                .map(|((before_entrypoint, _, before_complete), total)| {
+                    let new_fetch = if *before_complete && before_entrypoint == field_entrypoint {
+                        0
+                    } else {
+                        CROSS_SUBGRAPH_COST
+                    };
+                    total + new_fetch
+                })
+                .enumerate()
+                .min_by_key(|(_, total)| *total)
+                .expect("every field has an option");
+            field_totals.push(total + cost);
+            field_previous.push(picked);
+        }
+        totals = field_totals;
+        previous.push(field_previous);
+    }
+
+    // walk back from the cheapest option of the last field
+    let mut picked = totals
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, total)| **total)
+        .map(|(option, _)| option)
+        .expect("every field has an option");
+    let mut picks = vec![picked; options.len()];
+    for (field, field_previous) in previous.iter().enumerate().rev() {
+        picked = field_previous[picked];
+        picks[field] = picked;
+    }
+
+    for (index, field_choices) in choices.iter_mut() {
+        operation.root_field_groups[*index] = std::mem::take(&mut field_choices[picks[*index]]);
+    }
+    Ok(())
 }
 
 /// A fast search that finds a good, but not best plan.

@@ -37,6 +37,10 @@ use utils::get_entrypoints;
 pub struct ResolvedOperation<'graph> {
     pub operation_kind: OperationKind,
     pub root_field_groups: Vec<BestPathsPerLeaf<'graph>>,
+    /// Root fields of a mutation or subscription that more than one subgraph can run,
+    /// by their index in `root_field_groups`, with the paths from each of those subgraphs.
+    /// Their spot in `root_field_groups` is left empty, the planner picks one.
+    pub entrypoint_choices: Vec<(usize, Vec<BestPathsPerLeaf<'graph>>)>,
 }
 
 // TODO: Make a better struct
@@ -74,39 +78,97 @@ pub fn walk_operation<'graph, 'op: 'graph>(
     let mut paths_grouped_by_root_field: Vec<BestPathsPerLeaf> =
         Vec::with_capacity(operation.selection_set.items.len());
 
+    // mutations and subscriptions, see below
+    let one_subgraph_per_root_field = !matches!(operation_kind, OperationKind::Query);
+    let mut entrypoint_choices = Vec::new();
+
     // It's critical to iterate over root fiels and preserve their original order
     for selection_item in selection_set.items.iter() {
-        let mut stack_to_resolve: VecDeque<WorkItem> = VecDeque::new();
-
-        stack_to_resolve.push_back((selection_item, Rc::clone(&initial_paths)));
-
-        let mut paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
-
-        while let Some((selection_item, paths)) = stack_to_resolve.pop_front() {
-            cancellation_token.bail_if_cancelled()?;
-            let (next_stack_to_resolve, new_paths_per_leaf) = process_selection(
+        let walk = |paths| {
+            walk_root_field(
                 graph,
                 supergraph,
                 override_context,
                 selection_item,
-                &paths,
-                &[],
+                paths,
                 cancellation_token,
-            )?;
+            )
+        };
 
-            paths_per_leaf.extend(new_paths_per_leaf);
-            for item in next_stack_to_resolve.into_iter().rev() {
-                stack_to_resolve.push_front(item);
+        // A mutation field has to run in one subgraph, or its side effects happen twice.
+        // Same for a subscription field, two event streams can't be put together.
+        // Walking from all entrypoints at once lets each leaf pick its own subgraph,
+        // so these get walked from one entrypoint at a time, and the planner picks one walk.
+        // The leaves the picked subgraph doesn't have come through entity calls from there.
+        if !one_subgraph_per_root_field || initial_paths.len() < 2 {
+            paths_grouped_by_root_field.push(walk(Rc::clone(&initial_paths))?);
+            continue;
+        }
+
+        let mut choices = Vec::new();
+        for entrypoint in initial_paths.iter() {
+            match walk(Rc::new(vec![entrypoint.clone()])) {
+                Ok(paths_per_leaf) => choices.push(paths_per_leaf),
+                Err(WalkOperationError::CancellationError(err)) => return Err(err.into()),
+                // can't get there from this subgraph
+                Err(_) => {}
             }
         }
 
-        paths_grouped_by_root_field.push(paths_per_leaf);
+        match choices.len() {
+            // Walking from all of them at once gives the error to show. If it works anyway,
+            // it splits the field across subgraphs, and that's never a plan for it.
+            0 => {
+                walk(Rc::clone(&initial_paths))?;
+                return Err(WalkOperationError::NoPathsFound(selection_item.to_string()));
+            }
+            1 => paths_grouped_by_root_field.extend(choices),
+            _ => {
+                entrypoint_choices.push((paths_grouped_by_root_field.len(), choices));
+                paths_grouped_by_root_field.push(Vec::new());
+            }
+        }
     }
 
     Ok(ResolvedOperation {
         operation_kind,
         root_field_groups: paths_grouped_by_root_field,
+        entrypoint_choices,
     })
+}
+
+fn walk_root_field<'graph, 'op: 'graph>(
+    graph: &'graph Graph<'graph>,
+    supergraph: &'graph SupergraphState,
+    override_context: &'graph PlannerOverrideContext,
+    selection_item: &'op SelectionItem,
+    initial_paths: Rc<Vec<OperationPath<'graph>>>,
+    cancellation_token: &'graph CancellationToken,
+) -> Result<BestPathsPerLeaf<'graph>, WalkOperationError> {
+    let mut stack_to_resolve: VecDeque<WorkItem> = VecDeque::new();
+    stack_to_resolve.push_back((selection_item, initial_paths));
+
+    let mut paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
+
+    while let Some((selection_item, paths)) = stack_to_resolve.pop_front() {
+        cancellation_token.bail_if_cancelled()?;
+        let (next_stack_to_resolve, new_paths_per_leaf) = process_selection(
+            graph,
+            supergraph,
+            override_context,
+            selection_item,
+            &paths,
+            &[],
+            cancellation_token,
+        )?;
+
+        paths_per_leaf.extend(new_paths_per_leaf);
+        for item in next_stack_to_resolve.into_iter().rev() {
+            stack_to_resolve.push_front(item);
+        }
+    }
+
+    Ok(paths_per_leaf)
 }
 
 fn process_selection<'graph, 'op: 'graph>(

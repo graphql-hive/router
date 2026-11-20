@@ -98,10 +98,55 @@ pub fn create_normalized_document<'a>(
 ) -> NormalizedDocument {
     let mut operation: ast::operation::OperationDefinition = operation_ast.into();
     inject_skipped_typename_for_empty_composites(&mut operation, supergraph);
+    if matches!(operation.operation_kind, Some(OperationKind::Mutation)) {
+        let items = std::mem::take(&mut operation.selection_set.items);
+        for item in items {
+            split_root_fragment_per_field(item, &mut operation.selection_set.items);
+        }
+    }
 
     NormalizedDocument {
         operation,
         operation_name,
+    }
+}
+
+/// The planner picks one subgraph per root selection, and each mutation field needs its own,
+/// as it runs once and in order. A root fragment that kept its @skip/@include can hold a few
+/// mutation fields, so it's split into a fragment per field, each with the same condition.
+/// `... on Mutation @include(if: $a) { x y }` becomes
+/// `... on Mutation @include(if: $a) { x } ... on Mutation @include(if: $a) { y }`.
+fn split_root_fragment_per_field(
+    item: ast::selection_item::SelectionItem,
+    out: &mut Vec<ast::selection_item::SelectionItem>,
+) {
+    use ast::selection_item::SelectionItem;
+    use ast::selection_set::{InlineFragmentSelection, SelectionSet};
+
+    let SelectionItem::InlineFragment(fragment) = item else {
+        out.push(item);
+        return;
+    };
+    if fragment.selections.items.len() == 1
+        && !matches!(
+            fragment.selections.items[0],
+            SelectionItem::InlineFragment(_)
+        )
+    {
+        out.push(SelectionItem::InlineFragment(fragment));
+        return;
+    }
+    for child in fragment.selections.items {
+        let mut pieces = Vec::new();
+        split_root_fragment_per_field(child, &mut pieces);
+        out.extend(pieces.into_iter().map(|piece| {
+            SelectionItem::InlineFragment(InlineFragmentSelection {
+                type_condition: fragment.type_condition.clone(),
+                selections: SelectionSet { items: vec![piece] },
+                skip_if: fragment.skip_if.clone(),
+                include_if: fragment.include_if.clone(),
+            })
+        }));
     }
 }
 
