@@ -5,6 +5,9 @@ pub(crate) mod path;
 pub(crate) mod pathfinder;
 pub(crate) mod utils;
 
+#[cfg(test)]
+pub(crate) use best_path::KEEP_EVERY_PATH;
+
 use std::{borrow::Cow, collections::VecDeque, rc::Rc};
 
 use crate::query_planner::{
@@ -26,11 +29,11 @@ use crate::query_planner::{
     state::supergraph_state::{OperationKind, SupergraphState},
     utils::cancellation::CancellationToken,
 };
-use best_path::{find_best_paths, BestPathTracker};
+use best_path::{find_leaf_paths, BestPathTracker};
 use error::WalkOperationError;
 use excluded::ExcludedFromLookup;
 use path::OperationPath;
-use pathfinder::{find_direct_paths, find_indirect_paths};
+use pathfinder::{find_direct_paths, find_indirect_paths, MoveRequirements};
 use tracing::{instrument, span, trace, Level};
 use utils::get_entrypoints;
 
@@ -73,6 +76,8 @@ pub fn walk_operation<'graph, 'op: 'graph>(
 
     let mut paths_grouped_by_root_field: Vec<BestPathsPerLeaf> =
         Vec::with_capacity(operation.selection_set.items.len());
+    let moves = MoveRequirements::default();
+    let moves = &moves;
 
     // It's critical to iterate over root fiels and preserve their original order
     for selection_item in selection_set.items.iter() {
@@ -92,6 +97,7 @@ pub fn walk_operation<'graph, 'op: 'graph>(
                 &paths,
                 &[],
                 cancellation_token,
+                moves,
             )?;
 
             paths_per_leaf.extend(new_paths_per_leaf);
@@ -109,6 +115,7 @@ pub fn walk_operation<'graph, 'op: 'graph>(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn process_selection<'graph, 'op: 'graph>(
     graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
@@ -117,6 +124,7 @@ fn process_selection<'graph, 'op: 'graph>(
     paths: &[OperationPath<'graph>],
     fields_to_resolve_locally: &[String],
     cancellation_token: &'graph CancellationToken,
+    moves: &MoveRequirements<'graph>,
 ) -> Result<
     (
         ResolutionStack<'graph, 'op>,
@@ -137,6 +145,7 @@ fn process_selection<'graph, 'op: 'graph>(
                 paths,
                 fields_to_resolve_locally,
                 cancellation_token,
+                moves,
             )?;
             paths_per_leaf.extend(new_paths_per_leaf);
             stack_to_resolve.extend(next_selection_items);
@@ -150,6 +159,7 @@ fn process_selection<'graph, 'op: 'graph>(
                 field,
                 paths,
                 cancellation_token,
+                moves,
             )?;
             paths_per_leaf.extend(new_paths_per_leaf);
             stack_to_resolve.extend(next_selection_items);
@@ -163,6 +173,7 @@ fn process_selection<'graph, 'op: 'graph>(
 }
 
 #[instrument(level = "trace", skip_all)]
+#[allow(clippy::too_many_arguments)]
 fn process_selection_set<'graph, 'op: 'graph>(
     graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
@@ -171,6 +182,7 @@ fn process_selection_set<'graph, 'op: 'graph>(
     paths: &[OperationPath<'graph>],
     fields_to_resolve_locally: &[String],
     cancellation_token: &'graph CancellationToken,
+    moves: &MoveRequirements<'graph>,
 ) -> Result<
     (
         ResolutionStack<'graph, 'op>,
@@ -190,6 +202,7 @@ fn process_selection_set<'graph, 'op: 'graph>(
             paths,
             fields_to_resolve_locally,
             cancellation_token,
+            moves,
         )?;
         paths_per_leaf.extend(new_paths_per_leaf);
         stack_to_resolve.extend(next_stack_to_resolve);
@@ -201,6 +214,7 @@ fn process_selection_set<'graph, 'op: 'graph>(
 #[instrument(level = "trace", skip_all, fields(
   type_condition = fragment.type_condition,
 ))]
+#[allow(clippy::too_many_arguments)]
 fn process_inline_fragment<'graph, 'op: 'graph>(
     graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
@@ -209,6 +223,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
     paths: &[OperationPath<'graph>],
     fields_to_resolve_locally: &[String],
     cancellation_token: &'graph CancellationToken,
+    moves: &MoveRequirements<'graph>,
 ) -> Result<
     (
         ResolutionStack<'graph, 'op>,
@@ -264,6 +279,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
                 paths,
                 fields_to_resolve_locally,
                 cancellation_token,
+                moves,
             );
         }
 
@@ -331,6 +347,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             &next_paths,
             fields_to_resolve_locally,
             cancellation_token,
+            moves,
         );
     }
 
@@ -374,6 +391,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
                 &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
                 &ExcludedFromLookup::new(),
                 cancellation_token,
+                Some(moves),
             )?;
 
             let found_indirect_paths = !indirect_paths.is_empty();
@@ -413,10 +431,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
                 supergraph,
                 override_context,
                 path,
-                &NavigationTarget::Field {
-                    field: &FieldSelection::new_typename(),
-                    target_subgraph_ids: None,
-                },
+                &NavigationTarget::field(&FieldSelection::new_typename(), None),
                 cancellation_token,
             )?;
 
@@ -437,7 +452,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             return Err(WalkOperationError::NoPathsFound("__typename".to_string()));
         }
 
-        return Ok((vec![], vec![find_best_paths(next_paths)]));
+        return Ok((vec![], vec![find_leaf_paths(next_paths)]));
     }
 
     process_selection_set(
@@ -448,6 +463,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
         &next_paths,
         fields_to_resolve_locally,
         cancellation_token,
+        moves,
     )
 }
 
@@ -559,6 +575,7 @@ fn process_field<'graph, 'op: 'graph>(
     field: &'op FieldSelection,
     paths: &[OperationPath<'graph>],
     cancellation_token: &'graph CancellationToken,
+    moves: &MoveRequirements<'graph>,
 ) -> Result<
     (
         ResolutionStack<'graph, 'op>,
@@ -579,6 +596,8 @@ fn process_field<'graph, 'op: 'graph>(
     cancellation_token.bail_if_cancelled()?;
 
     let mut target_subgraph_ids_cache = None;
+    // built once, so every path into the field shares its alias and arguments
+    let direct_target = NavigationTarget::field(field, None);
 
     for path in paths {
         let path_span = span!(
@@ -596,10 +615,7 @@ fn process_field<'graph, 'op: 'graph>(
             supergraph,
             override_context,
             path,
-            &NavigationTarget::Field {
-                field,
-                target_subgraph_ids: None,
-            },
+            &direct_target,
             cancellation_token,
         )?;
         trace!("Direct paths found: {}", direct_paths.len());
@@ -614,12 +630,7 @@ fn process_field<'graph, 'op: 'graph>(
         }
 
         if !found_direct_paths_to_leaf {
-            let has_indirect_candidates = graph.edges_from(path.tail()).any(|edge| {
-                matches!(
-                    edge.weight(),
-                    Edge::EntityMove { .. } | Edge::InterfaceObjectTypeMove { .. }
-                )
-            });
+            let has_indirect_candidates = graph.entity_moves_from(path.tail()).next().is_some();
 
             if has_indirect_candidates {
                 if target_subgraph_ids_cache.is_none() {
@@ -635,12 +646,10 @@ fn process_field<'graph, 'op: 'graph>(
                     supergraph,
                     override_context,
                     path,
-                    &NavigationTarget::Field {
-                        field,
-                        target_subgraph_ids,
-                    },
+                    &direct_target.in_subgraphs(target_subgraph_ids),
                     &excluded,
                     cancellation_token,
+                    Some(moves),
                 )?;
                 trace!("Indirect paths found: {}", indirect_paths.len());
 
@@ -758,6 +767,7 @@ fn process_field<'graph, 'op: 'graph>(
                     std::slice::from_ref(candidate_path),
                     &fields_to_resolve_locally,
                     cancellation_token,
+                    moves,
                 );
 
                 match finding {
@@ -795,7 +805,7 @@ fn process_field<'graph, 'op: 'graph>(
     }
 
     if field.is_leaf() {
-        paths_per_leaf.push(find_best_paths(next_paths));
+        paths_per_leaf.push(find_leaf_paths(next_paths));
     } else {
         trace!("Found {} paths", next_paths.len());
         let next_paths = Rc::new(next_paths);

@@ -1,4 +1,6 @@
-use ahash::{HashSet, HashSetExt};
+use ahash::HashMap;
+use rustc_hash::FxHashSet;
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
@@ -29,7 +31,7 @@ use crate::query_planner::{
 use super::{
     error::WalkOperationError,
     excluded::ExcludedFromLookup,
-    path::{ContextRequirement, OperationPath},
+    path::{ContextRequirement, OperationPath, PathSegment, SelectionAttributes, UnionContext},
 };
 
 #[derive(Debug)]
@@ -38,13 +40,14 @@ pub struct EdgeRequirements<'graph> {
     pub context_requirements: Vec<Rc<ContextRequirement>>,
 }
 
-pub type VisitedGraphs<'graph> = HashSet<&'graph str>;
-type ActiveEdgeChecks = HashSet<(NodeIndex, EdgeIndex)>;
+// Fx sets: small, and made for every search, see `ExcludedFromLookup`
+pub type VisitedGraphs<'graph> = FxHashSet<&'graph str>;
+type ActiveEdgeChecks = FxHashSet<(NodeIndex, EdgeIndex)>;
 
 struct IndirectPathsLookupQueue<'graph> {
     queue: Vec<(
         VisitedGraphs<'graph>,
-        HashSet<&'graph TypeAwareSelection<'graph>>,
+        FxHashSet<&'graph TypeAwareSelection<'graph>>,
         OperationPath<'graph>,
     )>,
 }
@@ -61,7 +64,7 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
                     .requirement
                     .clone()
                     .into_iter()
-                    .collect::<HashSet<_>>(),
+                    .collect::<FxHashSet<_>>(),
                 path.clone(),
             )],
         }
@@ -70,7 +73,7 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
     pub fn add(
         &mut self,
         visited_graphs: VisitedGraphs<'graph>,
-        selections: HashSet<&'graph TypeAwareSelection<'graph>>,
+        selections: FxHashSet<&'graph TypeAwareSelection<'graph>>,
         path: OperationPath<'graph>,
     ) {
         self.queue.push((visited_graphs, selections, path));
@@ -80,10 +83,66 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
         &mut self,
     ) -> Option<(
         VisitedGraphs<'graph>,
-        HashSet<&'graph TypeAwareSelection<'graph>>,
+        FxHashSet<&'graph TypeAwareSelection<'graph>>,
         OperationPath<'graph>,
     )> {
         self.queue.pop()
+    }
+}
+
+/// What a move out of a path needs, as `can_satisfy_edge` and the tree of its paths, or `None`
+/// when it can't be made.
+type CheckedRequirement<'graph> = Option<(Option<Rc<QueryTreeNode>>, Vec<Rc<ContextRequirement>>)>;
+
+/// The requirements of the moves out of a path, worked out once per walk. Sibling fields look for
+/// indirect paths from the same paths, so each of them would check the same moves again. Only
+/// the first step of a search with nothing excluded yet goes here, the rest depends on the search.
+#[derive(Default)]
+pub struct MoveRequirements<'graph> {
+    /// By the path's last segment, root and the edge. The segment is kept, so its address isn't
+    /// reused by another path while it's a key.
+    checked: RefCell<HashMap<(usize, NodeIndex, EdgeIndex), Vec<CheckedMove<'graph>>>>,
+}
+
+struct CheckedMove<'graph> {
+    _segment: Option<Rc<PathSegment>>,
+    union_context: Option<UnionContext<'graph>>,
+    requirement: CheckedRequirement<'graph>,
+}
+
+impl<'graph> MoveRequirements<'graph> {
+    fn get_or_check(
+        &self,
+        path: &OperationPath<'graph>,
+        edge: EdgeIndex,
+        check: impl FnOnce() -> Result<CheckedRequirement<'graph>, WalkOperationError>,
+    ) -> Result<CheckedRequirement<'graph>, WalkOperationError> {
+        let segment = path.last_segment.as_ref();
+        let key = (
+            segment.map_or(0, |segment| Rc::as_ptr(segment) as usize),
+            path.root_node,
+            edge,
+        );
+        let found = self.checked.borrow().get(&key).and_then(|checked| {
+            checked
+                .iter()
+                .find(|checked| checked.union_context == path.union_context)
+                .map(|checked| checked.requirement.clone())
+        });
+        if let Some(requirement) = found {
+            return Ok(requirement);
+        }
+        let requirement = check()?;
+        self.checked
+            .borrow_mut()
+            .entry(key)
+            .or_default()
+            .push(CheckedMove {
+                _segment: segment.cloned(),
+                union_context: path.union_context.clone(),
+                requirement: requirement.clone(),
+            });
+        Ok(requirement)
     }
 }
 
@@ -92,8 +151,39 @@ pub enum NavigationTarget<'op> {
     Field {
         field: &'op FieldSelection,
         target_subgraph_ids: Option<&'op [u16]>,
+        /// The field's alias and arguments, for every path advanced to it
+        attributes: Rc<SelectionAttributes>,
     },
     ConcreteType(&'op str, Option<Condition>),
+}
+
+impl<'op> NavigationTarget<'op> {
+    pub fn field(field: &'op FieldSelection, target_subgraph_ids: Option<&'op [u16]>) -> Self {
+        NavigationTarget::Field {
+            field,
+            target_subgraph_ids,
+            attributes: Rc::new(SelectionAttributes {
+                alias: field.alias.clone(),
+                arguments: field.arguments.clone(),
+            }),
+        }
+    }
+
+    /// The same field target, limited to these subgraphs.
+    pub fn in_subgraphs(&self, target_subgraph_ids: Option<&'op [u16]>) -> Self {
+        match self {
+            NavigationTarget::Field {
+                field, attributes, ..
+            } => NavigationTarget::Field {
+                field,
+                target_subgraph_ids,
+                attributes: Rc::clone(attributes),
+            },
+            NavigationTarget::ConcreteType(type_name, condition) => {
+                NavigationTarget::ConcreteType(type_name, condition.clone())
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -135,7 +225,7 @@ impl<'graph> PathSearch<'graph> {
             supergraph,
             override_context,
             cancellation_token,
-            active_edge_checks: ActiveEdgeChecks::new(),
+            active_edge_checks: ActiveEdgeChecks::default(),
         }
     }
 }
@@ -144,6 +234,7 @@ impl<'graph> PathSearch<'graph> {
   path = path.pretty_print(graph),
   current_cost = path.cost
 ))]
+#[allow(clippy::too_many_arguments)]
 pub fn find_indirect_paths<'graph>(
     graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
@@ -152,9 +243,10 @@ pub fn find_indirect_paths<'graph>(
     target: &NavigationTarget<'_>,
     excluded: &ExcludedFromLookup<'graph>,
     cancellation_token: &'graph CancellationToken,
+    moves: Option<&MoveRequirements<'graph>>,
 ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
     PathSearch::new(graph, supergraph, override_context, cancellation_token)
-        .find_indirect_paths(path, target, excluded)
+        .find_indirect_paths(path, target, excluded, moves)
 }
 
 impl<'graph> PathSearch<'graph> {
@@ -180,11 +272,18 @@ impl<'graph> PathSearch<'graph> {
         path: &OperationPath<'graph>,
         target: &NavigationTarget<'_>,
         excluded: &ExcludedFromLookup<'graph>,
+        moves: Option<&MoveRequirements<'graph>>,
     ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
         let graph = self.graph;
         let cancellation_token = self.cancellation_token;
         let mut tracker = BestPathTracker::new(graph);
-        let mut seen = HashSet::new();
+        // the first step depends only on the path when nothing is excluded or being checked yet
+        let mut moves = moves.filter(|_| {
+            excluded.graph_ids.is_empty()
+                && excluded.requirement.is_empty()
+                && self.active_edge_checks.is_empty()
+        });
+        let mut seen = FxHashSet::default();
         let target_key = NavigationTargetKey::from(target);
         let tail_node_index = path.tail();
         let tail_node = graph.node(tail_node_index)?;
@@ -207,6 +306,8 @@ impl<'graph> PathSearch<'graph> {
         while let Some(item) = queue.pop() {
             cancellation_token.bail_if_cancelled()?;
             let (visited_graphs, visited_key_fields, path) = item;
+            // only the first item is the path the search started from
+            let first_step_moves = moves.take();
 
             if !seen.insert((path.tail(), target_key)) {
                 trace!(
@@ -216,12 +317,7 @@ impl<'graph> PathSearch<'graph> {
                 continue;
             }
 
-            let relevant_edges = graph.edges_from(path.tail()).filter(|e| {
-                matches!(
-                    e.weight(),
-                    Edge::EntityMove { .. } | Edge::InterfaceObjectTypeMove { .. }
-                )
-            });
+            let relevant_edges = graph.entity_moves_from(path.tail());
 
             for edge_ref in relevant_edges {
                 trace!(
@@ -312,27 +408,33 @@ impl<'graph> PathSearch<'graph> {
                     requirement: visited_key_fields.clone(),
                 };
 
-                let can_be_satisfied =
-                    self.can_satisfy_edge(&edge_ref, &path, &new_excluded, false)?;
+                let mut check = || -> Result<CheckedRequirement<'graph>, WalkOperationError> {
+                    let Some(paths) =
+                        self.can_satisfy_edge(&edge_ref, &path, &new_excluded, false)?
+                    else {
+                        return Ok(None);
+                    };
+                    let tree = QueryTreeNode::from_paths(graph, &paths.paths, None)?;
+                    Ok(Some((tree, paths.context_requirements)))
+                };
+                let can_be_satisfied = match first_step_moves {
+                    Some(moves) => moves.get_or_check(&path, edge_ref.id(), check)?,
+                    None => check()?,
+                };
 
                 match can_be_satisfied {
                     None => {
                         trace!("Requirements not satisfied, continue look up...");
                         continue;
                     }
-                    Some(paths) => {
+                    Some((tree, context_requirements)) => {
                         trace!(
                             "Advancing path to {}",
                             graph.pretty_print_edge(edge_ref.id(), false)
                         );
 
-                        let next_resolution_path = path.advance(
-                            graph,
-                            &edge_ref,
-                            QueryTreeNode::from_paths(graph, &paths.paths, None)?,
-                            paths.context_requirements,
-                            target,
-                        );
+                        let next_resolution_path =
+                            path.advance(graph, &edge_ref, tree, context_requirements, target);
 
                         let direct_paths = self.find_direct_paths(&next_resolution_path, target)?;
 
@@ -514,10 +616,7 @@ where
             Box::new(std::iter::empty())
         }
         NavigationTarget::Field { field, .. } => {
-            Box::new(graph.edges_from(path_tail_index).filter(move |e| {
-                matches!(e.weight(), Edge::FieldMove(f) if f.name == field.name)
-                    || matches!(e.weight(), Edge::ReentryMove(r) if r.name == field.name)
-            }))
+            Box::new(graph.field_edges_from(path_tail_index, &field.name))
         }
         NavigationTarget::ConcreteType(type_name, _condition) => Box::new(
             graph
@@ -903,28 +1002,17 @@ impl<'graph> PathSearch<'graph> {
             self.graph,
         )?;
 
+        let direct_target = NavigationTarget::field(field, None);
+        let indirect_target = direct_target.in_subgraphs(target_subgraph_ids.as_deref());
         for path in move_requirement.paths.iter() {
-            let direct_paths = self.find_direct_paths(
-                path,
-                &NavigationTarget::Field {
-                    field,
-                    target_subgraph_ids: None,
-                },
-            )?;
+            let direct_paths = self.find_direct_paths(path, &direct_target)?;
             // Skip looking for indirect paths if we already found direct paths to a leaf
             let found_direct_paths_to_leaf = !direct_paths.is_empty() && field.is_leaf();
             direct_path_results.push(direct_paths);
 
             let needs_indirect = !use_only_direct_edges && !found_direct_paths_to_leaf;
             let indirect_paths = if needs_indirect {
-                self.find_indirect_paths(
-                    path,
-                    &NavigationTarget::Field {
-                        field,
-                        target_subgraph_ids: target_subgraph_ids.as_deref(),
-                    },
-                    excluded,
-                )?
+                self.find_indirect_paths(path, &indirect_target, excluded, None)?
             } else {
                 Vec::new()
             };
@@ -1017,6 +1105,7 @@ impl<'graph> PathSearch<'graph> {
                 // that's why we pass no condition
                 &NavigationTarget::ConcreteType(type_name, None),
                 excluded,
+                None,
             )?);
         }
 

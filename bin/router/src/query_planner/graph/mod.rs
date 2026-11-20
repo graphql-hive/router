@@ -16,7 +16,7 @@ use std::{
 };
 
 use super::graph::{
-    edge::{ContextArgument, Edge},
+    edge::{ContextArgument, Edge, EdgeReference},
     node::Node,
     provided::Provided,
 };
@@ -167,6 +167,11 @@ pub struct Graph<'graph> {
     /// The edges `upsert_edge` added, by head and tail, only while building. `push_edge`
     /// never adds one like them, so they're the only ones to look through.
     upserted: HashMap<(NodeIndex, NodeIndex), Vec<EdgeIndex>>,
+    /// The edges out of a node to a field, by the field name's hash. The walker looks a field up
+    /// on every path, and a type can have hundreds of fields to go through otherwise.
+    field_edges: HashMap<(NodeIndex, u64), Vec<EdgeIndex>>,
+    /// The entity and interface object moves out of each node that has any.
+    entity_moves: HashMap<NodeIndex, Vec<EdgeIndex>>,
 }
 
 impl<'graph> Graph<'graph> {
@@ -206,6 +211,7 @@ impl<'graph> Graph<'graph> {
 
         instance.build_graph(supergraph_state)?;
         instance.upserted = HashMap::new();
+        instance.index_edges();
 
         for node in instance.graph.node_weights_mut() {
             if let Node::SubgraphType(subgraph_type) = node {
@@ -217,6 +223,72 @@ impl<'graph> Graph<'graph> {
         }
 
         Ok(instance)
+    }
+
+    /// Fills `field_edges` and `entity_moves`, keeping the order `edges_from` gives.
+    fn index_edges(&mut self) {
+        let mut field_edges: HashMap<(NodeIndex, u64), Vec<EdgeIndex>> = HashMap::new();
+        let mut entity_moves: HashMap<NodeIndex, Vec<EdgeIndex>> = HashMap::new();
+        for node in self.graph.node_indices() {
+            for edge in self.edges_from(node) {
+                match edge.weight() {
+                    Edge::FieldMove(field) => field_edges
+                        .entry((node, name_hash(field.name)))
+                        .or_default()
+                        .push(edge.id()),
+                    Edge::ReentryMove(reentry) => field_edges
+                        .entry((node, name_hash(&reentry.name)))
+                        .or_default()
+                        .push(edge.id()),
+                    Edge::EntityMove(_) | Edge::InterfaceObjectTypeMove(_) => {
+                        entity_moves.entry(node).or_default().push(edge.id())
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self.field_edges = field_edges;
+        self.entity_moves = entity_moves;
+    }
+
+    /// The field and re-entry moves out of `node` to the field `name`, like going through
+    /// `edges_from` for them.
+    pub fn field_edges_from<'s, 'n>(
+        &'s self,
+        node: NodeIndex,
+        name: &'n str,
+    ) -> impl Iterator<Item = EdgeReference<'s>> + 'n
+    where
+        's: 'n,
+    {
+        self.field_edges
+            .get(&(node, name_hash(name)))
+            .into_iter()
+            .flatten()
+            .map(|index| self.edge_reference(*index))
+            .filter(move |edge| match edge.weight() {
+                Edge::FieldMove(field) => field.name == name,
+                Edge::ReentryMove(reentry) => reentry.name == name,
+                _ => false,
+            })
+    }
+
+    /// The entity and interface object moves out of `node`, like going through `edges_from` for
+    /// them.
+    pub fn entity_moves_from(&self, node: NodeIndex) -> impl Iterator<Item = EdgeReference<'_>> {
+        self.entity_moves
+            .get(&node)
+            .into_iter()
+            .flatten()
+            .map(|index| self.edge_reference(*index))
+    }
+
+    fn edge_reference(&self, index: EdgeIndex) -> EdgeReference<'_> {
+        // a slice underneath, so `nth` doesn't go through the edges before it
+        self.graph
+            .edge_references()
+            .nth(index.index())
+            .expect("an indexed edge exists")
     }
 
     pub fn node(&self, node_index: NodeIndex) -> Result<&Node<'_>, GraphError> {
@@ -1521,4 +1593,11 @@ impl Display for Graph<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", Dot::with_config(&self.graph, &[]))
     }
+}
+
+fn name_hash(name: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = rustc_hash::FxHasher::default();
+    name.hash(&mut hasher);
+    hasher.finish()
 }

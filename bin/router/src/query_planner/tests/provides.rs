@@ -134,8 +134,8 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
           products {
             id
             categories {
-              id
               name
+              id
             }
           }
         }
@@ -149,7 +149,7 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
         "kind": "Fetch",
         "serviceName": "category",
         "operationKind": "query",
-        "operation": "{products{id categories{id name}}}"
+        "operation": "{products{id categories{name id}}}"
       }
     }
     "#);
@@ -187,8 +187,8 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
           media {
             __typename
             ... on Book {
-              title
               id
+              title
             }
             ... on Movie {
               id
@@ -205,7 +205,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
         "kind": "Fetch",
         "serviceName": "b",
         "operationKind": "query",
-        "operation": "{media{__typename ...on Book{title id} ...on Movie{id}}}"
+        "operation": "{media{__typename ...on Book{id title} ...on Movie{id}}}"
       }
     }
     "#);
@@ -234,12 +234,12 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
-        Fetch(service: "b") {
+        Fetch(service: "a") {
           {
             media {
               __typename
               ... on Book {
-                title
+                __typename
                 id
               }
               ... on Movie {
@@ -249,15 +249,22 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Flatten(path: "media.@|[Movie]") {
+        Flatten(path: "media.@") {
           Fetch(service: "c") {
             {
+              ... on Book {
+                __typename
+                id
+              }
               ... on Movie {
                 __typename
                 id
               }
             } =>
             {
+              ... on Book {
+                title
+              }
               ... on Movie {
                 title
               }
@@ -275,9 +282,9 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
-            "serviceName": "b",
+            "serviceName": "a",
             "operationKind": "query",
-            "operation": "{media{__typename ...on Book{title id} ...on Movie{__typename id}}}"
+            "operation": "{media{__typename ...on Book{__typename id} ...on Movie{__typename id}}}"
           },
           {
             "kind": "Flatten",
@@ -285,19 +292,28 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
               {
                 "Field": "media"
               },
-              "@",
-              {
-                "TypeCondition": [
-                  "Movie"
-                ]
-              }
+              "@"
             ],
             "node": {
               "kind": "Fetch",
               "serviceName": "c",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Movie{title}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Book{title} ...on Movie{title}}}",
               "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Book",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                },
                 {
                   "kind": "InlineFragment",
                   "typeCondition": "Movie",
@@ -350,6 +366,7 @@ fn provides_on_interface_1_test() -> Result<(), Box<dyn Error>> {
         {
           media {
             __typename
+            id
             ... on Book {
               animals {
                 __typename
@@ -357,7 +374,6 @@ fn provides_on_interface_1_test() -> Result<(), Box<dyn Error>> {
                 name
               }
             }
-            id
           }
         }
       },
@@ -597,6 +613,7 @@ fn provides_on_interface_2_test() -> Result<(), Box<dyn Error>> {
           {
             media {
               __typename
+              id
               ... on Book {
                 animals {
                   __typename
@@ -611,7 +628,6 @@ fn provides_on_interface_2_test() -> Result<(), Box<dyn Error>> {
                   }
                 }
               }
-              id
             }
           }
         },

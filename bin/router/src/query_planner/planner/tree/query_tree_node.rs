@@ -5,7 +5,9 @@ use tracing::{instrument, trace};
 use crate::query_planner::{
     ast::{arguments::ArgumentsMap, merge_path::Condition},
     graph::{error::GraphError, Graph},
-    planner::walker::path::{ContextRequirement, OperationPath, PathSegment, SelectionAttributes},
+    planner::walker::path::{
+        same_attributes, ContextRequirement, OperationPath, PathSegment, SelectionAttributes,
+    },
 };
 
 use super::query_tree::QueryTree;
@@ -25,7 +27,7 @@ pub struct QueryTreeNode {
     /// Only set on nodes that deal with `@fromContext`, the rest pay a pointer for it.
     pub context: Option<Box<NodeContext>>,
     pub children: Vec<Rc<QueryTreeNode>>,
-    pub selection_attributes: Option<SelectionAttributes>,
+    pub selection_attributes: Option<Rc<SelectionAttributes>>,
     pub condition: Option<Condition>,
     /// Distinguishes nodes originating from different top-level mutation fields.
     pub mutation_field_position: MutationFieldPosition,
@@ -48,10 +50,10 @@ impl PartialEq for QueryTreeNode {
     fn eq(&self, other: &Self) -> bool {
         self.node_index == other.node_index
             && self.edge_from_parent == other.edge_from_parent
-            && self.selection_attributes == other.selection_attributes
             && self.mutation_field_position == other.mutation_field_position
             && self.condition == other.condition
             && self.context_coordinate() == other.context_coordinate()
+            && same_attributes(&self.selection_attributes, &other.selection_attributes)
     }
 }
 
@@ -85,7 +87,7 @@ impl QueryTreeNode {
     pub fn new(
         node_index: &NodeIndex,
         edge_from_parent: Option<&EdgeIndex>,
-        selection_attributes: Option<&SelectionAttributes>,
+        selection_attributes: Option<&Rc<SelectionAttributes>>,
         condition: Option<&Condition>,
     ) -> Self {
         QueryTreeNode {
@@ -299,8 +301,8 @@ mod size_tests {
     fn planner_structs_stay_small() {
         // pathfinding makes a lot of these, so growing them makes planning slower
         for (name, actual, expected) in [
-            ("PathSegment", size_of::<PathSegment>(), 160),
-            ("QueryTreeNode", size_of::<QueryTreeNode>(), 192),
+            ("PathSegment", size_of::<PathSegment>(), 112),
+            ("QueryTreeNode", size_of::<QueryTreeNode>(), 144),
         ] {
             assert_eq!(
                 actual, expected,

@@ -1,55 +1,20 @@
-//! This module solves the problem of finding the "best" execution plan for a
-//! query that can be satisfied in many different ways by various subgraphs.
+//! Picks one path per leaf of the query, so the plan they make together is the best one.
 //!
-//! The "best" plan is defined by a cost model that penalizes crossing
-//! subgraph boundaries, and favors plans that are "local" to a single subgraph.
+//! A plan is better with fewer waves of fetches that run one after another, then with fewer
+//! fetches, then with a smaller tree. Fetches are counted the way the fetch graph makes
+//! them (`FetchKey`): a subgraph's root fetch, or the entity calls to a subgraph after as many
+//! other entity calls, however many paths need them.
 //!
-//! A naive search to find the best combination would be exponentially slow (we were there...),
-//! as the number of possible plans is the product of the number of choices for each part of
-//! the query. This module implements a search algorithm to make this problem solved.
+//! Trying every combination is exponentially slow, the number of plans is the product of the
+//! number of choices for each leaf. So it's greedy: leaves with one way to get them go in a
+//! `BasePlan` first, then a leaf at a time, fewest choices first, each takes the candidate that
+//! adds the least to the plan so far, the cheapest on its own on a tie.
 //!
-//! The core of the solution is a Branch and Bound algorithm implemented over a
-//! Depth-First Search (DFS). This approach explores all possible
-//! combinations while aggressively pruning entire branches of the search space that
-//! are guaranteed to not contain the optimal solution.
-//!
-//! The key components are:
-//!
-//! 1.  The query is broken down into independent decision points.
-//!     For each point, there is a set of `Alternatives`, and each alternative is a
-//!     `Candidate` plan fragment. The goal is to pick exactly one `Candidate` from
-//!     each set of `Alternatives`. Leaves with one way to get them go in a `BasePlan`.
-//!
-//! 2.  Before the main search, a fast greedy search (`Search::greedy`)
-//!     is run to find a "good enough" initial plan.
-//!     This provides a strong `best_cost` value, which is critical for making the
-//!     pruning in the main search much more effective.
-//!
-//! 3.  The Bounding Function (`min_remaining_costs`) - this is the most important
-//!     optimization. We pre-compute a vector that contains an optimistic,
-//!     "best-case" cost for completing the plan from any given step to the end.
-//!     It never overestimates the true cost, which allows
-//!     for the pruning check: if a partial plan's cost plus the optimistic
-//!     remaining cost is already worse than our best-found solution, we can safely
-//!     abandon the entire branch.
-//!
-//! 4.  To find good solutions faster, we sort both the
-//!     decision points and the choices themselves:
-//!     -   Sets of `Alternatives` are sorted by size (fewest choices first) to reduce
-//!         the branching factor and find a complete plan sooner.
-//!     -   `Candidates` within each set are sorted by their individual cost to explore
-//!         the most promising options first.
-//!
-//! 5.  The `Candidate` struct uses `OnceCell` to ensure that the
-//!     potentially expensive work of building a `QueryTree` is only ever
-//!     done if a candidate is actually evaluated, and never more than once.
-//!
-//! 6.  Candidate combinations are costed incrementally (`Costs`). Since adding a candidate only
-//!     adds nodes not already present in the current tree, we avoid recalculating the
-//!     cost of the entire merged tree while preserving the exact branch-and-bound costs.
+//! A `Candidate` is costed and merged from its path, its `QueryTree` is built only when needed.
 
+use ahash::{HashMap, HashMapExt, HashSet};
 use petgraph::graph::NodeIndex;
-use std::{cell::OnceCell, rc::Rc};
+use std::{cell::OnceCell, cmp::Reverse, collections::BTreeMap, rc::Rc};
 
 use crate::query_planner::{
     graph::{edge::Edge, error::GraphError, Graph},
@@ -60,7 +25,7 @@ use crate::query_planner::{
             query_tree_node::{merge_query_tree_node_list, MutationFieldPosition, QueryTreeNode},
         },
         walker::{
-            path::{OperationPath, PathSegment},
+            path::{same_attributes, OperationPath, PathSegment},
             ResolvedOperation,
         },
     },
@@ -101,41 +66,245 @@ pub fn find_best_combination(
         .map(|paths| Candidate::alternatives(graph, paths))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let best_case_cost_per_leaf: Vec<u64> = base
-        .leaf_costs
+    // the fetches each leaf could use, and how many of the leaves still to pick could use each
+    let usable: Vec<Vec<FetchKey>> = groups
         .iter()
-        .copied()
-        .chain(
-            groups
+        .map(|alternatives| {
+            let mut keys: Vec<FetchKey> = alternatives
                 .iter()
-                .map(|alternatives| alternatives.first().map_or(u64::MAX, |c| c.cost)),
-        )
+                .flat_map(|candidate| candidate.fetches.iter().copied())
+                .collect();
+            keys.sort_unstable();
+            keys.dedup();
+            keys
+        })
         .collect();
-    let min_remaining_costs = calculate_min_remaining_costs(&best_case_cost_per_leaf);
+    let mut users: HashMap<FetchKey, u32> = HashMap::new();
+    for key in usable.iter().flatten() {
+        *users.entry(*key).or_default() += 1;
+    }
 
-    let mut search = Search {
-        graph,
-        groups: &groups,
-        min_remaining_costs: &min_remaining_costs[base.leaf_costs.len()..],
-        cancellation_token,
-        best_cost: u64::MAX,
-        best_tree: None,
-    };
+    let base_keys = base.fetches.keys.clone();
+    let mut plan = base.tree.clone();
+    let mut fetches = base.fetches;
+    let mut picks = Vec::with_capacity(groups.len());
+    for (alternatives, usable) in groups.iter().zip(&usable) {
+        cancellation_token.bail_if_cancelled()?;
+        for key in usable {
+            *users.get_mut(key).expect("counted above") -= 1;
+        }
+        let pick = cheapest_to_add(graph, alternatives, plan.as_ref(), &fetches, &users)?;
+        fetches.add(&alternatives[pick]);
+        add(graph, &mut plan, &alternatives[pick])?;
+        picks.push(pick);
+    }
 
-    // A strong initial `best_cost` is critical for effective pruning.
-    search.greedy(base.tree.clone(), base.cost());
-
-    // the bounds the search would check on the single leaves
-    for (index, pair) in base.costs_before.windows(2).enumerate() {
-        if pair[0] + min_remaining_costs[index] >= search.best_cost || pair[1] >= search.best_cost {
-            return search.best_tree.ok_or(QueryPlanError::EmptyPlan);
+    if drop_fetches(&groups, &mut picks, &base_keys) {
+        plan = base.tree;
+        for (alternatives, pick) in groups.iter().zip(picks) {
+            add(graph, &mut plan, &alternatives[pick])?;
         }
     }
 
-    let base_cost = base.cost();
-    search.explore(0, base.tree, base_cost)?;
+    plan.ok_or(QueryPlanError::EmptyPlan)
+}
 
-    search.best_tree.ok_or(QueryPlanError::EmptyPlan)
+fn add(
+    graph: &Graph<'_>,
+    plan: &mut Option<QueryTree>,
+    candidate: &Candidate<'_>,
+) -> Result<(), GraphError> {
+    match plan.as_mut() {
+        Some(tree) => candidate.merge_into(graph, Rc::make_mut(&mut tree.root)),
+        None => {
+            *plan = Some(candidate.tree(graph)?);
+            Ok(())
+        }
+    }
+}
+
+/// Takes out the fetches greedy opened that the plan can do without: one goes when every leaf that
+/// uses it has another candidate whose fetches the plan makes anyway. Greedy goes a leaf at a time,
+/// so it can open a fetch for a few leaves that other fetches it opens later cover too. Waves can't
+/// go up, they come from the fetches. Returns whether a pick changed.
+fn drop_fetches(
+    groups: &[Alternatives<'_>],
+    picks: &mut [usize],
+    base: &HashSet<FetchKey>,
+) -> bool {
+    // how many picks use each fetch
+    let mut uses: HashMap<FetchKey, u32> = HashMap::new();
+    for (alternatives, &pick) in groups.iter().zip(picks.iter()) {
+        for key in &alternatives[pick].fetches {
+            *uses.entry(*key).or_default() += 1;
+        }
+    }
+    let mut changed = false;
+    loop {
+        // the least used first, sorted so plans don't depend on hashing
+        let mut keys: Vec<(u32, FetchKey)> = uses
+            .iter()
+            .filter(|(key, uses)| **uses > 0 && !base.contains(*key))
+            .map(|(key, uses)| (*uses, *key))
+            .collect();
+        keys.sort_unstable();
+        let mut dropped = false;
+        for (_, key) in keys {
+            let made = |other: &FetchKey| {
+                *other != key && (base.contains(other) || uses.get(other).is_some_and(|n| *n > 0))
+            };
+            let mut moves = Vec::new();
+            let all_move =
+                groups
+                    .iter()
+                    .zip(picks.iter())
+                    .enumerate()
+                    .all(|(leaf, (alternatives, &pick))| {
+                        if !alternatives[pick].fetches.contains(&key) {
+                            return true;
+                        }
+                        let other = alternatives
+                            .iter()
+                            .position(|candidate| candidate.fetches.iter().all(made));
+                        other.inspect(|&other| moves.push((leaf, other))).is_some()
+                    });
+            if !all_move || moves.is_empty() {
+                continue;
+            }
+            for (leaf, other) in moves {
+                for key in &groups[leaf][picks[leaf]].fetches {
+                    *uses.get_mut(key).expect("counted") -= 1;
+                }
+                for key in &groups[leaf][other].fetches {
+                    *uses.entry(*key).or_default() += 1;
+                }
+                picks[leaf] = other;
+            }
+            dropped = true;
+            changed = true;
+            break;
+        }
+        if !dropped {
+            return changed;
+        }
+    }
+}
+
+/// The candidate that adds the fewest waves, then fetches, to `plan`. Between those, the one whose
+/// new fetches more of the leaves still to pick could use too, so they don't each open their own.
+/// Then the one that adds the least to the tree, and the first one, they're cheapest on their own
+/// first. Each tie-break is only worked out for the candidates still tied.
+fn cheapest_to_add(
+    graph: &Graph<'_>,
+    alternatives: &Alternatives<'_>,
+    plan: Option<&QueryTree>,
+    fetches: &Fetches,
+    users: &HashMap<FetchKey, u32>,
+) -> Result<usize, GraphError> {
+    let tied = most_by(0..alternatives.len(), |index| {
+        let (waves, added) = fetches.added_by(&alternatives[index]);
+        Reverse((waves, added))
+    });
+    if let [index] = tied[..] {
+        return Ok(index);
+    }
+    let tied = most_by(tied.into_iter(), |index| {
+        alternatives[index]
+            .fetches
+            .iter()
+            .filter(|key| !fetches.keys.contains(*key))
+            .map(|key| users.get(key).copied().unwrap_or(0))
+            .sum::<u32>()
+    });
+    if let [index] = tied[..] {
+        return Ok(index);
+    }
+    let mut cheapest = None;
+    for index in tied {
+        let candidate = &alternatives[index];
+        let added_cost = match plan {
+            Some(tree) => candidate.added_cost(graph, &tree.root)?,
+            None => candidate.cost,
+        };
+        if cheapest.is_none_or(|(cost, _)| added_cost < cost) {
+            cheapest = Some((added_cost, index));
+        }
+    }
+    let (_, index) = cheapest.expect("a leaf has a way to get it");
+    Ok(index)
+}
+
+/// The indexes with the highest `rank`, in order.
+fn most_by<R: Ord>(indexes: impl Iterator<Item = usize>, rank: impl Fn(usize) -> R) -> Vec<usize> {
+    let mut best = None;
+    let mut tied = Vec::new();
+    for index in indexes {
+        let rank = rank(index);
+        if best.as_ref().is_none_or(|best| rank > *best) {
+            best = Some(rank);
+            tied.clear();
+            tied.push(index);
+        } else if best.as_ref() == Some(&rank) {
+            tied.push(index);
+        }
+    }
+    tied
+}
+
+/// Every plan the leaves' paths make, one per pick of a path for each leaf, handed to `each`.
+/// For the plan oracle test, to check what the passes above pick against all of them.
+/// `None` when there are more than `limit` of them, otherwise how many there were.
+#[cfg(test)]
+pub(crate) fn every_combination(
+    graph: &Graph<'_>,
+    operation: ResolvedOperation,
+    limit: usize,
+    mut each: impl FnMut(QueryTree),
+) -> Result<Option<usize>, QueryPlanError> {
+    let leaves = Leaves::of(operation);
+    let base = BasePlan::merge(graph, leaves.singles, &CancellationToken::new())?;
+    let groups = leaves
+        .groups
+        .into_iter()
+        .map(|paths| Candidate::alternatives(graph, paths))
+        .collect::<Result<Vec<_>, _>>()?;
+    let Some(count) = groups.iter().try_fold(1usize, |count, alternatives| {
+        count
+            .checked_mul(alternatives.len())
+            .filter(|count| *count <= limit)
+    }) else {
+        return Ok(None);
+    };
+
+    // counts up like an odometer, one digit per leaf
+    let mut picks = vec![0; groups.len()];
+    loop {
+        let mut plan = base.tree.clone();
+        let merged = groups.iter().zip(&picks).all(|(alternatives, &pick)| {
+            let candidate = &alternatives[pick];
+            match plan.as_mut() {
+                Some(tree) => candidate
+                    .merge_into(graph, Rc::make_mut(&mut tree.root))
+                    .is_ok(),
+                None => candidate.tree(graph).map(|tree| plan = Some(tree)).is_ok(),
+            }
+        });
+        if let (true, Some(tree)) = (merged, plan) {
+            each(tree);
+        }
+        let mut digit = 0;
+        loop {
+            if digit == picks.len() {
+                return Ok(Some(count));
+            }
+            picks[digit] += 1;
+            if picks[digit] < groups[digit].len() {
+                break;
+            }
+            picks[digit] = 0;
+            digit += 1;
+        }
+    }
 }
 
 /// The ways to get each leaf of the query.
@@ -179,9 +348,7 @@ impl<'graph> Leaves<'graph> {
 /// instead of copying the tree on every search step.
 struct BasePlan {
     tree: Option<QueryTree>,
-    /// The cost before each leaf is merged, and after the last one.
-    costs_before: Vec<u64>,
-    leaf_costs: Vec<u64>,
+    fetches: Fetches,
 }
 
 impl BasePlan {
@@ -192,35 +359,20 @@ impl BasePlan {
     ) -> Result<Self, QueryPlanError> {
         let mut base = BasePlan {
             tree: None,
-            costs_before: Vec::with_capacity(singles.len() + 1),
-            leaf_costs: Vec::with_capacity(singles.len()),
+            fetches: Fetches::default(),
         };
-        base.costs_before.push(0);
 
         for (path, mutation_field_position) in singles {
             cancellation_token.bail_if_cancelled()?;
             let candidate = Candidate::new(graph, path, mutation_field_position)?;
-            base.leaf_costs.push(candidate.cost);
-            let cost = base.cost();
+            base.fetches.add(&candidate);
             match base.tree.as_mut() {
-                Some(tree) => {
-                    let root = Rc::make_mut(&mut tree.root);
-                    base.costs_before
-                        .push(cost + candidate.added_cost(graph, root)?);
-                    candidate.merge_into(graph, root)?;
-                }
-                None => {
-                    base.costs_before.push(cost + candidate.cost);
-                    base.tree = Some(candidate.tree(graph)?);
-                }
+                Some(tree) => candidate.merge_into(graph, Rc::make_mut(&mut tree.root))?,
+                None => base.tree = Some(candidate.tree(graph)?),
             }
         }
 
         Ok(base)
-    }
-
-    fn cost(&self) -> u64 {
-        *self.costs_before.last().expect("starts with a zero")
     }
 }
 
@@ -232,6 +384,10 @@ struct Candidate<'graph> {
     /// `@fromContext` paths always go through their `QueryTree`.
     uses_context: bool,
     cost: u64,
+    /// The fetches of its tree, see `FetchKey`.
+    fetches: Vec<FetchKey>,
+    /// Its nodes that resolve context, a fetch each.
+    crossings: u64,
     tree: OnceCell<QueryTree>,
 }
 
@@ -248,19 +404,46 @@ impl<'graph> Candidate<'graph> {
             .segments_rev()
             .any(|segment| !segment.context_requirements().is_empty());
         let tree = OnceCell::new();
+        let mut walk = FetchWalk::new(graph);
         let cost = if uses_context {
             let built = QueryTree::from_path(graph, &path, mutation_field_position)?;
             let cost = Costs(graph).tree(&built.root);
+            walk.node(&built.root, 0, 0, None);
             let _ = tree.set(built);
             cost
         } else {
-            FIELD_COST + Costs(graph).of_segments(&path.get_segments())?
+            // one walk over the path for both
+            let segments = path.get_segments();
+            walk.path(&segments, mutation_field_position)?;
+            FIELD_COST + Costs(graph).of_segments(&segments)?
         };
+        // what's worked out from the path has to match what its tree gives
+        #[cfg(test)]
+        if !uses_context {
+            let built = QueryTree::from_path(graph, &path, mutation_field_position)?;
+            let mut from_tree = FetchWalk::new(graph);
+            from_tree.node(&built.root, 0, 0, None);
+            let mut from_path = FetchWalk::new(graph);
+            from_path.path(&path.get_segments(), mutation_field_position)?;
+            assert_eq!(cost, Costs(graph).tree(&built.root), "path cost");
+            let sorted = |mut fetches: Vec<FetchKey>| {
+                fetches.sort_unstable();
+                fetches
+            };
+            assert_eq!(
+                sorted(from_path.fetches),
+                sorted(from_tree.fetches),
+                "path fetches"
+            );
+            assert_eq!(from_path.crossings, from_tree.crossings, "path crossings");
+        }
         Ok(Self {
             path,
             mutation_field_position,
             uses_context,
             cost,
+            fetches: walk.fetches,
+            crossings: walk.crossings,
             tree,
         })
     }
@@ -312,125 +495,196 @@ impl<'graph> Candidate<'graph> {
     }
 }
 
-/// `min_remaining_costs[i]` is the best-case cost from leaf `i` to the end, what
-/// `Search::explore` prunes with.
-fn calculate_min_remaining_costs(best_case_cost_per_leaf: &[u64]) -> Vec<u64> {
-    let mut min_remaining_costs = vec![0; best_case_cost_per_leaf.len() + 1];
-    for i in (0..best_case_cost_per_leaf.len()).rev() {
-        min_remaining_costs[i] = min_remaining_costs[i + 1] + best_case_cost_per_leaf[i];
+/// A fetch the way the fetch graph makes it: a subgraph's root fetch, or the entity calls to a
+/// subgraph after as many other entity calls (`true`, depth). The fetch graph batches calls to a
+/// subgraph across response paths, so it's per depth, not per object.
+type FetchKey = (bool, Option<u16>, u32, MutationFieldPosition);
+
+/// Which wave a fetch runs in: root fetches first, entity calls after as many waves as entity
+/// calls before them.
+fn wave((entity_call, _, depth, _): &FetchKey) -> u32 {
+    match entity_call {
+        true => depth + 2,
+        false => 1,
     }
-    min_remaining_costs
 }
 
-/// Picks one candidate per group, keeping the cheapest complete plan it finds.
-struct Search<'a, 'graph> {
+/// The fetches a plan makes so far, with the waves of each mutation field (mutation fields run
+/// one after another, the fields of a query all at once).
+#[derive(Default)]
+struct Fetches {
+    keys: HashSet<FetchKey>,
+    crossings: u64,
+    waves: BTreeMap<MutationFieldPosition, u32>,
+}
+
+impl Fetches {
+    fn add(&mut self, candidate: &Candidate<'_>) {
+        for key in &candidate.fetches {
+            let waves = self.waves.entry(key.3).or_default();
+            *waves = (*waves).max(wave(key));
+            self.keys.insert(*key);
+        }
+        self.crossings += candidate.crossings;
+    }
+
+    /// The waves and fetches adding `candidate` adds to the plan.
+    // ponytail: depth stands in for the batching the fetch graph does, it's only exact when
+    // calls at the same depth don't depend on each other. Checked against real plans by the
+    // plan oracle test.
+    /// A path's fetches are all at its mutation field's position.
+    fn added_by(&self, candidate: &Candidate<'_>) -> (u32, u64) {
+        let fetches = candidate.crossings
+            + candidate
+                .fetches
+                .iter()
+                .filter(|key| !self.keys.contains(*key))
+                .count() as u64;
+        let waves = candidate.fetches.first().map_or(0, |first| {
+            let most = candidate.fetches.iter().map(wave).max().unwrap_or(0);
+            most.saturating_sub(self.waves.get(&first.3).copied().unwrap_or(0))
+        });
+        (waves, fetches)
+    }
+}
+
+/// Walks a tree for its fetches, with how many entity calls lead to each node.
+struct FetchWalk<'a> {
     graph: &'a Graph<'a>,
-    groups: &'a [Alternatives<'graph>],
-    /// The best-case cost from each group to the end.
-    min_remaining_costs: &'a [u64],
-    cancellation_token: &'a CancellationToken,
-    best_cost: u64,
-    best_tree: Option<QueryTree>,
+    /// The nodes that resolve context, a fetch each
+    crossings: u64,
+    /// A path makes a few, so a list, without repeats
+    fetches: Vec<FetchKey>,
 }
 
-impl Search<'_, '_> {
-    /// A fast, good-enough plan: per leaf, the candidate that adds the least.
-    fn greedy(&mut self, mut current_tree: Option<QueryTree>, mut current_cost: u64) {
-        let graph = self.graph;
-        for alternatives in self.groups {
-            let mut best_delta = u64::MAX;
-            let mut best_candidate: Option<&Candidate> = None;
-
-            for candidate in alternatives {
-                let delta = match current_tree.as_ref() {
-                    Some(tree) => match candidate.added_cost(graph, &tree.root) {
-                        Ok(added_cost) => added_cost,
-                        Err(_) => continue,
-                    },
-                    None => candidate.cost,
-                };
-
-                if delta < best_delta {
-                    best_delta = delta;
-                    best_candidate = Some(candidate);
-                }
-            }
-
-            let Some(candidate) = best_candidate else {
-                return;
-            };
-            match current_tree.as_mut() {
-                Some(tree) => {
-                    if candidate
-                        .merge_into(graph, Rc::make_mut(&mut tree.root))
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
-                None => match candidate.tree(graph) {
-                    Ok(tree) => current_tree = Some(tree),
-                    Err(_) => return,
-                },
-            }
-            current_cost += best_delta;
-        }
-
-        if let Some(tree) = current_tree {
-            if current_cost < self.best_cost {
-                self.best_cost = current_cost;
-                self.best_tree = Some(tree);
-            }
+impl<'a> FetchWalk<'a> {
+    fn new(graph: &'a Graph<'a>) -> Self {
+        Self {
+            graph,
+            crossings: 0,
+            fetches: Vec::new(),
         }
     }
 
-    /// Branch and bound (to prune early) depth-first search for the best combination.
-    fn explore(
+    fn insert(&mut self, fetch: FetchKey) {
+        if !self.fetches.contains(&fetch) {
+            self.fetches.push(fetch);
+        }
+    }
+
+    /// Same as `node` on the tree `QueryTree::from_path` makes of `segments`, a node per segment
+    /// under a root, without building it. Not for `@fromContext` paths.
+    fn path(
         &mut self,
-        group_index: usize,
-        tree_so_far: Option<QueryTree>,
-        cost_so_far: u64,
-    ) -> Result<(), QueryPlanError> {
-        self.cancellation_token.bail_if_cancelled()?;
-
-        // even the best case from here can't beat the best plan
-        if cost_so_far + self.min_remaining_costs[group_index] >= self.best_cost {
-            return Ok(());
-        }
-
-        // a complete plan, and the best one so far
-        let Some(alternatives) = self.groups.get(group_index) else {
-            self.best_cost = cost_so_far;
-            self.best_tree = tree_so_far;
-            return Ok(());
-        };
-
-        let costs = Costs(self.graph);
-        for candidate in alternatives {
-            let candidate_tree = candidate.tree(self.graph)?;
-
-            let added_cost = match tree_so_far.as_ref() {
-                Some(tree) => costs.added_by_merge(&tree.root, &candidate_tree.root),
-                None => costs.tree(&candidate_tree.root),
-            };
-            let next_cost = cost_so_far + added_cost;
-            if next_cost >= self.best_cost {
-                continue;
+        segments: &[&PathSegment],
+        position: MutationFieldPosition,
+    ) -> Result<(), GraphError> {
+        let (mut depth, mut object_depth) = (0, 0);
+        for (index, segment) in segments.iter().enumerate() {
+            let edge = self.graph.edge(segment.edge_index)?;
+            let subgraph = self
+                .graph
+                .node(self.graph.get_edge_tail(&segment.edge_index)?)?
+                .subgraph_index();
+            if matches!(edge, Edge::SubgraphEntrypoint { .. }) {
+                self.insert((false, subgraph, 0, position));
             }
-
-            let next_tree = match tree_so_far.as_ref() {
-                Some(tree) => {
-                    let mut merged = tree.clone();
-                    Rc::make_mut(&mut merged.root).merge_nodes(&candidate_tree.root);
-                    merged
-                }
-                None => candidate_tree,
+            let Some(requirement) = &segment.requirement_tree else {
+                object_depth = depth;
+                continue;
             };
-
-            self.explore(group_index + 1, Some(next_tree), next_cost)?;
+            let is_requires = matches!(edge, Edge::FieldMove(_));
+            let requirement_depth = if is_requires { object_depth } else { depth };
+            let only_requires = match segments.get(index + 1) {
+                Some(next) => {
+                    next.requirement_tree.is_some()
+                        && matches!(self.graph.edge(next.edge_index)?, Edge::FieldMove(_))
+                }
+                None => false,
+            };
+            // the call waits for the calls that get what it needs
+            let call_depth = self
+                .node(requirement, requirement_depth, requirement_depth, position)
+                .map_or(depth, |deepest| depth.max(deepest + 1));
+            if is_requires || !only_requires {
+                self.insert((true, subgraph, call_depth, position));
+            }
+            object_depth = if is_requires {
+                call_depth + 1
+            } else {
+                call_depth
+            };
+            depth = call_depth + 1;
         }
-
         Ok(())
+    }
+
+    /// `object_depth` is where the calls for a @requires on this node's object go: next to the
+    /// entity call that brought the object in, as the requirement is read from where it came from,
+    /// or after the fetch it came in with. Returns the depth of the deepest entity call in it.
+    fn node(
+        &mut self,
+        node: &QueryTreeNode,
+        depth: u32,
+        object_depth: u32,
+        position: MutationFieldPosition,
+    ) -> Option<u32> {
+        if !node.resolved_context_requirements().is_empty() {
+            self.crossings += 1;
+        }
+        let position = node.mutation_field_position.or(position);
+        let subgraph = self
+            .graph
+            .node(node.node_index)
+            .ok()
+            .and_then(|node| node.subgraph_index());
+        let entrypoint = node.edge_from_parent.is_some_and(|edge| {
+            matches!(self.graph.edge(edge), Ok(Edge::SubgraphEntrypoint { .. }))
+        });
+        if entrypoint {
+            self.insert((false, subgraph, 0, position));
+        }
+        let is_field = |node: &QueryTreeNode| {
+            node.edge_from_parent
+                .is_some_and(|edge| matches!(self.graph.edge(edge), Ok(Edge::FieldMove(_))))
+        };
+        let is_requires = is_field(node);
+        let requirement_depth = if is_requires { object_depth } else { depth };
+        // An entity call that only brings in fields with a @requires has no fetch of its own, the
+        // fetch graph asks for the object in the calls for those fields.
+        let only_requires = !node.children.is_empty()
+            && node
+                .children
+                .iter()
+                .all(|child| !child.requirements.is_empty() && is_field(child));
+        // the call waits for the calls that get what it needs
+        let mut deepest = None;
+        let mut call_depth = depth;
+        for requirement in &node.requirements {
+            let needs = self.node(requirement, requirement_depth, requirement_depth, position);
+            if let Some(needs) = needs {
+                call_depth = call_depth.max(needs + 1);
+            }
+            deepest = deepest.max(needs);
+        }
+        if !node.requirements.is_empty() && (is_requires || !only_requires) {
+            self.insert((true, subgraph, call_depth, position));
+            deepest = deepest.max(Some(call_depth));
+        }
+        for context in node.context_requirements() {
+            deepest = deepest.max(self.node(context, depth, object_depth, position));
+        }
+        let child_depth = match node.requirements.is_empty() {
+            true => depth,
+            false => call_depth + 1,
+        };
+        // an entity call's fields are on the object it brought in, the rest are after this fetch
+        let entered = !node.requirements.is_empty() && !is_requires;
+        let child_object_depth = if entered { call_depth } else { child_depth };
+        for child in &node.children {
+            deepest = deepest.max(self.node(child, child_depth, child_object_depth, position));
+        }
+        deepest
     }
 }
 
@@ -444,10 +698,10 @@ fn find_path_child(
     node.children.iter().position(|child| {
         child.node_index == tail_node_index
             && child.edge_from_parent == Some(segment.edge_index)
-            && child.selection_attributes == segment.selection_attributes
             && child.mutation_field_position == position
             && child.condition == segment.condition
             && child.context_coordinate().is_none()
+            && same_attributes(&child.selection_attributes, &segment.selection_attributes)
     })
 }
 
