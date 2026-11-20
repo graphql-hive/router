@@ -5,7 +5,7 @@ export declare class QueryPlanner {
   consumerSchema: string
   overrideLabels: Array<string>
   overridePercentages: Array<number>
-  constructor(supergraphSdl: string)
+  constructor(supergraphSdl: string, options?: QueryPlannerOptions | undefined | null)
   /**
    * Each subgraph's resolvable `@key`s, by subgraph name and then entity type. A key is its
    * top-level fields without `__typename`, like `["id", "org"]` for
@@ -27,6 +27,32 @@ export declare class QueryPlanner {
   computeCacheKey(query: string, operationName: string | undefined | null, activeLabels: Set<string>, percentageValue: number): string
   plan(query: string, operationName: string | undefined | null, activeLabels: Set<string>, percentageValue: number, signal?: AbortSignal | undefined | null): QueryPlan
   planAsync(query: string, operationName: string | undefined | null, activeLabels: Set<string>, percentageValue: number, signal?: AbortSignal | undefined | null): Promise<QueryPlan>
+}
+
+/**
+ * How the planner plans, like the router's planner options from its config. Every option is
+ * off or unlimited when missing.
+ */
+export interface QueryPlannerOptions {
+  /**
+   * The most aliases one entity request to a subgraph may carry, like the router's
+   * `traffic_shaping.all.max_aliases_per_request`. An integer from 0 to 4294967295, where 0
+   * counts as 1. Batch fetches are split to stay within it, and it limits the
+   * `maxContextGroups` of fetches with context variables. No limit when missing.
+   */
+  maxAliasesPerRequest?: number
+  /**
+   * `maxAliasesPerRequest` for single subgraphs, by subgraph name, like the router's
+   * `traffic_shaping.subgraphs.<name>.max_aliases_per_request`. Wins over
+   * `maxAliasesPerRequest` for its subgraph.
+   */
+  subgraphMaxAliasesPerRequest?: Record<string, number>
+  /**
+   * Folds matching object type fragments into an interface fragment even when that interface
+   * isn't the field's type, like the router's
+   * `query_planner.experimental_abstract_type_folding`. Only the subgraph operations change.
+   */
+  experimentalAbstractTypeFolding?: boolean
 }
 
 export interface QueryPlan {
