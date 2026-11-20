@@ -69,6 +69,9 @@ pub struct FetchGraph<State> {
     pub(crate) entity_owners: HashMap<NodeIndex, NodeIndex>,
     /// For each entity call step, the type and subgraph its objects came from, as a graph node.
     pub(crate) entity_sources: HashMap<NodeIndex, NodeIndex>,
+    /// For each entity call step, the entity move it was made for, so the subgraph it calls and
+    /// the key it calls it with.
+    pub(crate) entity_moves: HashMap<NodeIndex, EdgeIndex>,
     /// The keys of the fields the planner adds itself. Only needed while the graph is built.
     pub(crate) response_keys: ResponseKeys,
     pub(crate) context_producers: HashMap<(MergePath, (EdgeIndex, usize)), Vec<NodeIndex>>,
@@ -99,6 +102,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             operation_kind: self.operation_kind,
             entity_owners: HashMap::new(),
             entity_sources: HashMap::new(),
+            entity_moves: HashMap::new(),
             response_keys: ResponseKeys::default(),
             context_producers: HashMap::new(),
             context_variables: HashMap::new(),
@@ -116,6 +120,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             operation_kind: kind,
             entity_owners: HashMap::new(),
             entity_sources: HashMap::new(),
+            entity_moves: HashMap::new(),
             response_keys: ResponseKeys::default(),
             context_producers: HashMap::new(),
             context_variables: HashMap::new(),
@@ -1035,6 +1040,10 @@ fn process_entity_move_edge(
         .entity_sources
         .entry(fetch_step_index)
         .or_insert(head_node_index);
+    fetch_graph
+        .entity_moves
+        .entry(fetch_step_index)
+        .or_insert(edge_index);
 
     let fetch_step = fetch_graph.get_step_data_mut(fetch_step_index)?;
     trace!(
@@ -1177,13 +1186,16 @@ fn process_interface_object_type_move_edge(
         requirement,
         step_for_children_index.index()
     );
+    let requirement_node_index = query_node.requirements.first().unwrap().node_index;
     let key_to_reenter_subgraph = find_satisfiable_key(
         graph,
         supergraph,
         override_context,
-        query_node.requirements.first().unwrap().node_index,
+        requirement_node_index,
+        requirement_node_index,
         false,
-    )?;
+    )?
+    .ok_or_else(no_satisfiable_key)?;
     let key_to_reenter_subgraph = &fetch_graph.read_at(response_path, key_to_reenter_subgraph);
     let step_for_children = fetch_graph.get_step_data_mut(step_for_children_index)?;
     step_for_children.input.add(&requirement.selection_set)?;
@@ -1786,21 +1798,6 @@ fn process_requires_field_edge(
         _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
 
-    let key_to_reenter_subgraph =
-        find_satisfiable_key(graph, supergraph, override_context, head_node_index, true)?;
-    let requires_input = requires.map(|requires| fetch_graph.read_at(response_path, requires));
-    let key_input = fetch_graph.read_at(response_path, key_to_reenter_subgraph);
-    let key_output = fetch_graph.response_keys.output(
-        &place_of(response_path),
-        &key_to_reenter_subgraph.selection_set,
-    );
-    let field_alias = fetch_graph.alias_at(
-        response_path,
-        query_node,
-        field_move.name,
-        created_from_requires,
-    );
-
     let parent_fetch_step = fetch_graph.get_step_data(parent_fetch_step_index)?;
     // In case of a field with `@requires`, the parent will be the current subgraph we're in.
     let real_parent_fetch_step_index = match !parent_fetch_step
@@ -1841,27 +1838,62 @@ fn process_requires_field_edge(
             .get(&parent_fetch_step_index)
             .copied()
     };
-    // The objects go back into this subgraph with its key, read from where they came from. When
-    // that subgraph doesn't have every key field, like `sku` of `@key(fields: "id sku")` that
-    // only came in through another subgraph, the entity call we're in has them, it was made with
-    // them.
-    let (real_parent_fetch_step_index, holder_node) = match holder_node {
+    // The objects go back into this subgraph with one of its keys. When the subgraph they came
+    // from resolves one, it fetches it too. When it doesn't, like with `@key(fields: "id sku")`
+    // and `sku` coming from another subgraph, there's the entity call we're in: it was made with
+    // a key of this subgraph, so that key is in the response before it runs, whichever fetches
+    // put it there. We go in with the same key and wait for the same fetches. The call itself is
+    // the last resort: it's in this subgraph, so it resolves its own keys and returns one.
+    let own_key = || {
+        find_satisfiable_key(
+            graph,
+            supergraph,
+            override_context,
+            head_node_index,
+            head_node_index,
+            true,
+        )?
+        .ok_or_else(no_satisfiable_key)
+    };
+    let mut key_already_fetched_by = Vec::new();
+    let (real_parent_fetch_step_index, holder_node, key_to_reenter_subgraph) = match holder_node {
         Some(holder) if real_parent_fetch_step_index != parent_fetch_step_index => {
-            if holder_resolves_key(
+            if let Some(key) = find_satisfiable_key(
                 graph,
                 supergraph,
                 override_context,
-                holder,
                 head_node_index,
-                key_to_reenter_subgraph,
+                holder,
+                true,
             )? {
-                (real_parent_fetch_step_index, holder_node)
+                (real_parent_fetch_step_index, holder_node, key)
+            } else if let Some(key) =
+                key_of_entity_call(graph, fetch_graph, parent_fetch_step_index, head_node_index)?
+            {
+                key_already_fetched_by = fetch_graph
+                    .parents_of(parent_fetch_step_index)
+                    .map(|edge| edge.source())
+                    .collect();
+                (real_parent_fetch_step_index, None, key)
             } else {
-                (parent_fetch_step_index, Some(head_node_index))
+                (parent_fetch_step_index, Some(head_node_index), own_key()?)
             }
         }
-        _ => (real_parent_fetch_step_index, holder_node),
+        // We don't know the subgraph the objects came from, or we're in it already.
+        _ => (real_parent_fetch_step_index, holder_node, own_key()?),
     };
+    let requires_input = requires.map(|requires| fetch_graph.read_at(response_path, requires));
+    let key_input = fetch_graph.read_at(response_path, key_to_reenter_subgraph);
+    let key_output = fetch_graph.response_keys.output(
+        &place_of(response_path),
+        &key_to_reenter_subgraph.selection_set,
+    );
+    let field_alias = fetch_graph.alias_at(
+        response_path,
+        query_node,
+        field_move.name,
+        created_from_requires,
+    );
 
     // When a field (foo) is annotated with `@requires(fields: "bar")`
     // We want to create new FetchStep (entity move) for that field (foo)
@@ -2065,13 +2097,19 @@ fn process_requires_field_edge(
         key_to_reenter_at
     );
 
-    real_parent_fetch_step
-        .output
-        .add_at_path(&key_to_reenter_at, key_output)?;
+    // A key that's already in the response only needs us to wait for the fetches that put it there.
+    if key_already_fetched_by.is_empty() {
+        real_parent_fetch_step
+            .output
+            .add_at_path(&key_to_reenter_at, key_output)?;
 
-    real_parent_fetch_step
-        .output
-        .add_selection_typename(&key_to_reenter_at)?;
+        real_parent_fetch_step
+            .output
+            .add_selection_typename(&key_to_reenter_at)?;
+    }
+    for &step in &key_already_fetched_by {
+        fetch_graph.connect(step, step_for_children_index);
+    }
 
     // On a `@provides` path, some required fields only exist on that path. The subgraph can't
     // return them from `_entities`, so the fetch that went through the path gets them, and
@@ -2100,6 +2138,9 @@ fn process_requires_field_edge(
         );
         step_for_requirements.input.add(&key_input.selection_set)?;
         fetch_graph.connect(real_parent_fetch_step_index, step_for_requirements_index);
+        for &step in &key_already_fetched_by {
+            fetch_graph.connect(step, step_for_requirements_index);
+        }
 
         if let Some(holder_node) = holder_node {
             fetch_graph
@@ -2108,10 +2149,11 @@ fn process_requires_field_edge(
                 .or_insert(holder_node);
         }
 
-        // The requirements need another key to reach their subgraph. If the subgraph the objects
-        // came from can fetch that key too, grab it there and pass it along.
+        // The requirements need another key to reach their subgraph. When it's already in the
+        // response, a part of the key we go back in with, or the subgraph the objects came from
+        // can fetch it too, we pass it along instead of asking this subgraph for it.
         let mut jump_keys = Vec::new();
-        if let Some(holder_node) = holder_node {
+        if holder_node.is_some() || !key_already_fetched_by.is_empty() {
             let requirements = query_node
                 .requirements
                 .first()
@@ -2122,18 +2164,25 @@ fn process_requires_field_edge(
                 .filter_map(|child| child.edge_from_parent)
                 .collect();
 
-            let from_holder = OperationPath {
-                root_node: holder_node,
-                last_segment: None,
-                cost: 0,
-                union_context: None,
-            };
-
             for edge_ref in graph
                 .edges_from(requirements.node_index)
                 .filter(|edge_ref| jumps.contains(&edge_ref.id()))
             {
                 let Edge::EntityMove(entity_move) = edge_ref.weight() else {
+                    continue;
+                };
+                let key = &entity_move.requirements;
+                if !key_already_fetched_by.is_empty() {
+                    if key.type_name == key_to_reenter_subgraph.type_name
+                        && key_to_reenter_subgraph
+                            .selection_set
+                            .contains(&key.selection_set)
+                    {
+                        jump_keys.push((key, false));
+                    }
+                    continue;
+                }
+                let Some(holder_node) = holder_node else {
                     continue;
                 };
                 // Only what the holder's subgraph resolves on that spot, no jumps.
@@ -2142,26 +2191,34 @@ fn process_requires_field_edge(
                     supergraph,
                     override_context,
                     &edge_ref,
-                    &from_holder,
+                    &OperationPath {
+                        root_node: holder_node,
+                        last_segment: None,
+                        cost: 0,
+                        union_context: None,
+                    },
                     &Default::default(),
                     true,
                     &CancellationToken::new(),
                 )?
                 .is_some()
                 {
-                    jump_keys.push(&entity_move.requirements);
+                    jump_keys.push((key, true));
                 }
             }
         }
-        for key in jump_keys {
+        for (key, fetch_it) in jump_keys {
             let input = fetch_graph.read_at(response_path, key);
-            let output = fetch_graph
-                .response_keys
-                .output(&place_of(response_path), &key.selection_set);
             fetch_graph
                 .get_step_data_mut(step_for_requirements_index)?
                 .input
                 .add(&input.selection_set)?;
+            if !fetch_it {
+                continue;
+            }
+            let output = fetch_graph
+                .response_keys
+                .output(&place_of(response_path), &key.selection_set);
             fetch_graph
                 .get_step_data_mut(real_parent_fetch_step_index)?
                 .output
@@ -2278,6 +2335,9 @@ fn process_requires_field_edge(
 ///
 /// The key fields need to be added to the output of the parent,
 /// and input of the entity move.
+///
+/// The key is one of `node_index`'s, and its fields are read from `from`, the subgraph type the
+/// objects are in. `None` when `from` can't resolve any of them.
 #[instrument(level = "trace",skip_all, fields(
   node = graph.node(node_index).unwrap().to_string()
 ))]
@@ -2286,8 +2346,9 @@ fn find_satisfiable_key<'a>(
     supergraph: &'a SupergraphState,
     override_context: &'a PlannerOverrideContext,
     node_index: NodeIndex,
+    from: NodeIndex,
     local_only: bool,
-) -> Result<&'a TypeAwareSelection<'a>, FetchGraphError> {
+) -> Result<Option<&'a TypeAwareSelection<'a>>, FetchGraphError> {
     // This could be improved...
     // We added a flag to `can_satisfy_edge` and increased the complexity.
 
@@ -2312,7 +2373,7 @@ fn find_satisfiable_key<'a>(
             override_context,
             &edge_ref,
             &OperationPath {
-                root_node: node_index,
+                root_node: from,
                 last_segment: None,
                 cost: 0,
                 union_context: None,
@@ -2326,52 +2387,33 @@ fn find_satisfiable_key<'a>(
         )?
         .is_some()
         {
-            return edge_ref.weight().requirements().ok_or_else(|| {
+            return edge_ref.weight().requirements().map(Some).ok_or_else(|| {
                 FetchGraphError::Internal(String::from("Resolved empty Satisfiable Key"))
             });
         }
     }
 
-    Err(FetchGraphError::Internal(String::from(
-        "Failed to find Satisfiable Key",
-    )))
+    Ok(None)
 }
 
-/// Whether the subgraph type at `holder` resolves `key`, one of `node`'s keys, on its own.
-fn holder_resolves_key<'a>(
+fn no_satisfiable_key() -> FetchGraphError {
+    FetchGraphError::Internal(String::from("Failed to find Satisfiable Key"))
+}
+
+/// The key the entity call `step` was made with, when it calls `node`.
+fn key_of_entity_call<'a>(
     graph: &'a Graph<'a>,
-    supergraph: &'a SupergraphState,
-    override_context: &'a PlannerOverrideContext,
-    holder: NodeIndex,
+    fetch_graph: &FetchGraph<SingleTypeFetchStep>,
+    step: NodeIndex,
     node: NodeIndex,
-    key: &TypeAwareSelection<'_>,
-) -> Result<bool, FetchGraphError> {
-    let from_holder = OperationPath {
-        root_node: holder,
-        last_segment: None,
-        cost: 0,
-        union_context: None,
+) -> Result<Option<&'a TypeAwareSelection<'a>>, FetchGraphError> {
+    let Some(&edge_index) = fetch_graph.entity_moves.get(&step) else {
+        return Ok(None);
     };
-    for edge_ref in graph.edges_from(node) {
-        let Edge::EntityMove(entity_move) = edge_ref.weight() else {
-            continue;
-        };
-        if !std::ptr::eq(&*entity_move.requirements, key) {
-            continue;
-        }
-        return Ok(can_satisfy_edge(
-            graph,
-            supergraph,
-            override_context,
-            &edge_ref,
-            &from_holder,
-            &Default::default(),
-            true,
-            &CancellationToken::new(),
-        )?
-        .is_some());
+    if graph.get_edge_tail(&edge_index)? != node {
+        return Ok(None);
     }
-    Ok(false)
+    Ok(graph.edge(edge_index)?.requirements())
 }
 
 // TODO: simplfy args

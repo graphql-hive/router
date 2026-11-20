@@ -57,6 +57,7 @@ type Product @join__type(graph: CATALOG, key: "id") @join__type(graph: INVENTORY
   sku: String! @join__field(graph: CATALOG) @join__field(graph: INVENTORY) @join__field(graph: SHIPPING)
   weight: Int @join__field(graph: INVENTORY) @join__field(graph: SHIPPING, external: true)
   shippingEstimate: Int @join__field(graph: SHIPPING, requires: "weight")
+  carrier: String @join__field(graph: SHIPPING)
 }
 
 type Query @join__type(graph: CATALOG) @join__type(graph: INVENTORY) @join__type(graph: PRODUCTS) @join__type(graph: SHIPPING) {

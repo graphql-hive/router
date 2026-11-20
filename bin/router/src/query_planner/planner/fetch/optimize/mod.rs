@@ -41,6 +41,7 @@ impl FetchGraph<MultiTypeFetchStep> {
 
             self.merge_context_producers()?;
             self.merge_passthrough_child()?;
+            self.drop_passthrough_steps()?;
             self.merge_children_with_parents()?;
             self.merge_siblings()?;
             self.merge_leafs()?;

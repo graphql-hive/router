@@ -78,6 +78,59 @@ impl FetchGraph<MultiTypeFetchStep> {
 
         Ok(())
     }
+
+    /// A step that only returns what's in its input, with more than one parent, adds nothing to
+    /// the response: its parents put its input there. It goes away and its children wait for its
+    /// parents instead. One parent is `merge_passthrough_child`'s job. Steps without children are
+    /// left to the other passes.
+    #[instrument(level = "trace", skip_all)]
+    pub(crate) fn drop_passthrough_steps(&mut self) -> Result<(), FetchGraphError> {
+        let root_index = self.root_index;
+        let passthrough: Vec<NodeIndex> = self
+            .graph
+            .node_indices()
+            .filter(|&index| Some(index) != root_index)
+            .filter(|&index| {
+                self.parents_of(index).count() > 1 && self.children_of(index).next().is_some()
+            })
+            .filter(|&index| {
+                let step = &self.graph[index];
+                step.input_rewrites.is_none()
+                    && step.output_rewrites.is_none()
+                    && step.context_rewrites.is_none()
+                    && step.context_variable_definitions.is_empty()
+                    && step.context_producers.is_empty()
+                    && !step.flags.contains(FetchStepFlags::USED_FOR_TYPE_CONDITION)
+                    && step.output.iter_selections().all(|(definition, output)| {
+                        step.input
+                            .selections_for_definition(definition)
+                            .is_some_and(|input| {
+                                selection_items_are_subset_of(&input.items, &output.items)
+                            })
+                    })
+            })
+            .collect();
+        for index in passthrough {
+            let id = self.get_step_data(index)?.id;
+            if self
+                .graph
+                .node_weights()
+                .any(|step| step.context_producers.contains(&id))
+            {
+                continue;
+            }
+            let parents: Vec<NodeIndex> = self.parents_of(index).map(|e| e.source()).collect();
+            let children: Vec<NodeIndex> = self.children_of(index).map(|e| e.target()).collect();
+            trace!("dropping passthrough step [{}]", index.index());
+            for &parent in &parents {
+                for &child in &children {
+                    self.connect(parent, child);
+                }
+            }
+            self.remove_step(index);
+        }
+        Ok(())
+    }
 }
 
 impl FetchStepData<MultiTypeFetchStep> {
