@@ -99,15 +99,15 @@ impl QueryPlan<Planning> {
     /// A plan with `node`, and the schedule its fetches run on. Fails when a fetch depends on one
     /// that doesn't come before it in the plan.
     pub fn new(node: Option<PlanNode<Planning>>) -> Result<Self, QueryPlanError> {
-        let schedule = PlanSchedule::new(node.as_ref(), None)?;
+        let schedule = PlanSchedule::new(node.as_ref())?;
         Ok(Self::with_schedule(node, schedule))
     }
 
-    /// The plan with its schedule checked against the `@defer` parts its fetches are for, see
-    /// [`PlanSchedule::new`]. The planner doesn't know how the parts nest.
+    /// The plan, checked against the `@defer` parts its fetches are for, see
+    /// [`dependencies::check_fetches_of_parts`]. The planner doesn't know how the parts nest.
     pub fn with_defer_parts(self, parts: &[DeferPart]) -> Result<Self, QueryPlanError> {
-        let schedule = PlanSchedule::new(self.node.as_ref(), Some(parts))?;
-        Ok(Self::with_schedule(self.node, schedule))
+        dependencies::check_fetches_of_parts(self.node.as_ref(), parts)?;
+        Ok(self)
     }
 }
 

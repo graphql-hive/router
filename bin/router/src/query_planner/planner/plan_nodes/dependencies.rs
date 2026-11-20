@@ -28,16 +28,7 @@ pub struct PlanSchedule {
 impl PlanSchedule {
     /// The schedule of `node`. Fails when a fetch depends on one that doesn't come before it in
     /// the plan, so a schedule never has a cycle.
-    ///
-    /// With the `@defer` parts the fetches are for, it also fails when a fetch depends on one of a
-    /// part that isn't its own or one around it. The planner never makes that: a fetch reads only
-    /// from its own part or one around it, and mutation fields only wait for the primary fetches
-    /// of the field before. Only the parts know how they nest, so it's checked here, and the
-    /// primary part never waits for deferred work.
-    pub fn new(
-        node: Option<&PlanNode<Planning>>,
-        parts: Option<&[DeferPart]>,
-    ) -> Result<Self, QueryPlanError> {
+    pub fn new(node: Option<&PlanNode<Planning>>) -> Result<Self, QueryPlanError> {
         let fetches = node.map(plan_fetches).unwrap_or_default();
         let position = positions_by_id(&fetches)?;
         let mut dependencies: Vec<(u32, u32)> = Vec::new();
@@ -56,19 +47,6 @@ impl PlanSchedule {
                         fetch: completes[0],
                         dependency,
                     })?;
-                let other_part = parts.is_some_and(|parts| {
-                    !is_within(
-                        parts,
-                        part_of_fetch(fetch),
-                        part_of_fetch(fetches[dependency_index as usize]),
-                    )
-                });
-                if other_part {
-                    return Err(QueryPlanError::DependsOnFetchOfOtherPart {
-                        fetch: completes[0],
-                        dependency,
-                    });
-                }
                 dependencies.push((dependency_index, index));
             }
         }
@@ -129,6 +107,35 @@ impl PlanSchedule {
             .collect();
         Self::from_dependencies(self.fetch_count().saturating_sub(1), dependencies)
     }
+}
+
+/// Fails when a fetch of `node` depends on one of a `@defer` part that isn't its own or one
+/// around it. The planner never makes that: a fetch reads only from its own part or one around it,
+/// and mutation fields only wait for the primary fetches of the field before. Only the parts know
+/// how they nest, so it's checked here, and the primary part never waits for deferred work.
+///
+/// For a plan whose schedule is already made: the dependencies are known to point back.
+pub fn check_fetches_of_parts(
+    node: Option<&PlanNode<Planning>>,
+    parts: &[DeferPart],
+) -> Result<(), QueryPlanError> {
+    let fetches = node.map(plan_fetches).unwrap_or_default();
+    let position = positions_by_id(&fetches)?;
+    for fetch in &fetches {
+        let Some((completes, depends_on)) = fetch_ids(fetch) else {
+            continue;
+        };
+        for &dependency in depends_on {
+            let dependency_fetch = fetches[position[dependency.index()] as usize];
+            if !is_within(parts, part_of_fetch(fetch), part_of_fetch(dependency_fetch)) {
+                return Err(QueryPlanError::DependsOnFetchOfOtherPart {
+                    fetch: completes[0],
+                    dependency,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The fetches of `node` in the plan's order: every node that isn't a `Sequence` or a `Parallel`.
