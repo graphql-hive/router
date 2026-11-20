@@ -9,7 +9,7 @@ use crate::config::{
     override_subgraph_urls::{OverrideSubgraphUrlsConfig, UrlOrExpression},
     subscriptions::{SubscriptionProtocol, SupergraphSubscriptionsConfig},
     traffic_shaping::{
-        DurationOrExpression, StatusCodeMatcher, SupergraphTrafficShapingConfig,
+        ClientTLSConfig, DurationOrExpression, StatusCodeMatcher, SupergraphTrafficShapingConfig,
         TrafficShapingSubgraphCompressionConfig, WebSocketExecuteMode,
     },
 };
@@ -188,25 +188,51 @@ pub struct SubgraphExecutorMap {
     /// endpoint, and inbound connection fingerprint.
     websocket_pool: Arc<WebSocketPool>,
 }
+
+/// Builds the HTTP client for subgraph requests. The arguments are the settings a subgraph can
+/// override; everything else comes from `traffic_shaping.all`.
+fn build_http_client(
+    traffic_shaping: &SupergraphTrafficShapingConfig,
+    tls_config: Option<&ClientTLSConfig>,
+    pool_idle_timeout: Duration,
+    http2_only: bool,
+) -> Result<HttpClientProvider, SubgraphExecutorError> {
+    let all = &traffic_shaping.all;
+    let mut builder = Client::builder(TokioExecutor::new());
+    builder
+        .pool_timer(TokioTimer::new())
+        .pool_idle_timeout(pool_idle_timeout)
+        .pool_max_idle_per_host(traffic_shaping.max_connections_per_host);
+    if http2_only {
+        builder.http2_only(true);
+    }
+    if let Some(interval) = all.http2_keep_alive_interval {
+        // HTTP/2 pings need their own timer
+        builder
+            .timer(TokioTimer::new())
+            .http2_keep_alive_interval(interval)
+            .http2_keep_alive_while_idle(true);
+    }
+    Ok(HttpClientProvider::new(
+        traffic_shaping.http_client_mode,
+        builder,
+        build_https_connector(tls_config, all.max_connection_age, all.tcp_keepalive)?,
+        all.max_connection_age.is_some(),
+    ))
+}
+
 impl SubgraphExecutorMap {
     fn new(
         config: Arc<SubgraphExecutorConfig>,
         global_timeout: DurationOrProgram,
         telemetry_context: Arc<TelemetryContext>,
     ) -> Result<Self, SubgraphExecutorError> {
-        let mut client_builder = Client::builder(TokioExecutor::new());
-        client_builder
-            .pool_timer(TokioTimer::new())
-            .pool_idle_timeout(config.traffic_shaping.all.pool_idle_timeout)
-            .pool_max_idle_per_host(config.traffic_shaping.max_connections_per_host);
-        if config.traffic_shaping.all.allow_only_http2 {
-            client_builder.http2_only(true);
-        }
-        let client = HttpClientProvider::new(
-            config.traffic_shaping.http_client_mode,
-            client_builder,
-            build_https_connector(config.traffic_shaping.all.tls.as_ref())?,
-        );
+        let client = build_http_client(
+            &config.traffic_shaping,
+            config.traffic_shaping.all.tls.as_ref(),
+            config.traffic_shaping.all.pool_idle_timeout,
+            config.traffic_shaping.all.allow_only_http2,
+        )?;
 
         let max_connections_per_host = config.traffic_shaping.max_connections_per_host;
 
@@ -1006,19 +1032,12 @@ impl SubgraphExecutorMap {
                 self.config.traffic_shaping.all.tls.as_ref(),
                 subgraph_config.tls.as_ref(),
             );
-            let mut client_builder = Client::builder(TokioExecutor::new());
-            client_builder
-                .pool_timer(TokioTimer::new())
-                .pool_idle_timeout(pool_idle_timeout)
-                .pool_max_idle_per_host(self.max_connections_per_host);
-            if subgraph_allow_only_http2 {
-                client_builder.http2_only(true);
-            }
-            config.client = Arc::new(HttpClientProvider::new(
-                self.config.traffic_shaping.http_client_mode,
-                client_builder,
-                build_https_connector(tls_config.as_ref())?,
-            ));
+            config.client = Arc::new(build_http_client(
+                &self.config.traffic_shaping,
+                tls_config.as_ref(),
+                pool_idle_timeout,
+                subgraph_allow_only_http2,
+            )?);
         }
 
         // Apply other subgraph-specific overrides

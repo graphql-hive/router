@@ -41,7 +41,9 @@ use http_body_util::Full;
 use hyper::body::Body as _;
 use hyper::Version;
 use hyper_rustls::HttpsConnector;
-use hyper_util::client::legacy::{connect::HttpConnector, Client};
+use hyper_util::client::legacy::Client;
+
+use crate::executor::executors::connection_age::{self, AgedConnector};
 use thread_local::ThreadLocal;
 use tokio::sync::Semaphore;
 use tracing::{debug, trace};
@@ -74,19 +76,25 @@ const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
 const FIRST_QUOTE_STR: &[u8] = b"{\"query\":";
 const OPERATION_NAME_STR: &[u8] = b",\"operationName\":";
 
-pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
+pub type HttpClient = Client<HttpsConnector<AgedConnector>, Full<Bytes>>;
+
+pub struct HttpClientProvider {
+    clients: HttpClients,
+    /// On when `max_connection_age` is set. Only then do requests pay for the age check.
+    retire_old_connections: bool,
+}
 
 #[allow(clippy::large_enum_variant)]
-pub enum HttpClientProvider {
+enum HttpClients {
     /// One client for all workers.
     Shared(HttpClient),
     /// One client per worker thread.
     PerWorker(WorkerLocalClients),
 }
 
-pub struct WorkerLocalClients {
+struct WorkerLocalClients {
     builder: hyper_util::client::legacy::Builder,
-    connector: HttpsConnector<HttpConnector>,
+    connector: HttpsConnector<AgedConnector>,
     clients: ThreadLocal<HttpClient>,
 }
 
@@ -94,25 +102,41 @@ impl HttpClientProvider {
     pub fn new(
         mode: HttpClientMode,
         builder: hyper_util::client::legacy::Builder,
-        connector: HttpsConnector<HttpConnector>,
+        connector: HttpsConnector<AgedConnector>,
+        retire_old_connections: bool,
     ) -> Self {
-        match mode {
-            HttpClientMode::Shared => Self::Shared(builder.build(connector)),
-            HttpClientMode::PerWorker => Self::PerWorker(WorkerLocalClients {
+        let clients = match mode {
+            HttpClientMode::Shared => HttpClients::Shared(builder.build(connector)),
+            HttpClientMode::PerWorker => HttpClients::PerWorker(WorkerLocalClients {
                 builder,
                 connector,
                 clients: ThreadLocal::new(),
             }),
+        };
+        Self {
+            clients,
+            retire_old_connections,
         }
     }
 
     /// The client for the current thread.
-    pub fn client(&self) -> &HttpClient {
-        match self {
-            Self::Shared(client) => client,
-            Self::PerWorker(local) => local
+    fn client(&self) -> &HttpClient {
+        match &self.clients {
+            HttpClients::Shared(client) => client,
+            HttpClients::PerWorker(local) => local
                 .clients
                 .get_or(|| local.builder.build(local.connector.clone())),
+        }
+    }
+
+    pub async fn request(
+        &self,
+        req: hyper::Request<Full<Bytes>>,
+    ) -> Result<hyper::Response<hyper::body::Incoming>, hyper_util::client::legacy::Error> {
+        if self.retire_old_connections {
+            connection_age::request_and_retire_old(self.client(), req).await
+        } else {
+            self.client().request(req).await
         }
     }
 }
@@ -254,7 +278,7 @@ impl HTTPSubgraphExecutor {
 }
 
 pub struct SendRequestOpts<'a> {
-    pub http_client: &'a HttpClient,
+    pub http_client: &'a HttpClientProvider,
     pub endpoint: &'a http::Uri,
     pub subgraph_name: &'a str,
     pub method: http::Method,
@@ -528,7 +552,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             Some(resp) => resp,
             None => {
                 let send_request_opts = SendRequestOpts {
-                    http_client: self.http_client.client(),
+                    http_client: &self.http_client,
                     endpoint: &self.endpoint,
                     subgraph_name: &self.subgraph_name,
                     method,
@@ -721,7 +745,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             "establishing subscription connection"
         );
 
-        let res_fut = self.http_client.client().request(req);
+        let res_fut = self.http_client.request(req);
 
         let res = if let Some(timeout_duration) = connection_timeout {
             tokio::time::timeout(timeout_duration, res_fut).await?

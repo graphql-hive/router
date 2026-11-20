@@ -188,6 +188,37 @@ fn default_pool_idle_timeout() -> Duration {
     Duration::from_secs(50)
 }
 
+/// Same as `humantime_serde`, but refuses `0s`. For these settings zero is never what anyone
+/// means: it would stop connection reuse, or send probes and pings back to back.
+fn deserialize_nonzero_duration<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
+where
+    D: de::Deserializer<'de>,
+{
+    let value: Option<Duration> = humantime_serde::deserialize(deserializer)?;
+    if value == Some(Duration::ZERO) {
+        return Err(de::Error::custom("must be more than 0s"));
+    }
+    Ok(value)
+}
+
+/// Same as `humantime_serde`, but refuses anything under 1s. The OS takes keepalive timings in
+/// whole seconds, so `500ms` would become 0, which Linux rejects, and the socket would quietly
+/// keep the OS defaults.
+fn deserialize_tcp_keepalive<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
+where
+    D: de::Deserializer<'de>,
+{
+    let value: Option<Duration> = humantime_serde::deserialize(deserializer)?;
+    if value.is_some_and(|value| value < Duration::from_secs(1)) {
+        return Err(de::Error::custom("must be at least 1s"));
+    }
+    Ok(value)
+}
+
+fn default_tcp_keepalive() -> Option<Duration> {
+    Some(Duration::from_secs(30))
+}
+
 fn default_subgraph_pool_idle_timeout() -> Option<Duration> {
     None
 }
@@ -440,6 +471,78 @@ pub struct TrafficShapingExecutorGlobalConfig {
     #[schemars(with = "String")]
     pub pool_idle_timeout: Duration,
 
+    /// How long a subgraph HTTP connection is reused before the router replaces it.
+    ///
+    /// Under steady traffic connections never go idle, so `pool_idle_timeout` never closes them.
+    /// They stay on whichever pod they first connected to, and a pod that restarts or scales
+    /// up gets little traffic. With this set, each connection is retired once it's roughly this
+    /// old (up to 10% earlier, so they don't all reconnect together). Requests already running
+    /// on it finish normally. The new connection resolves DNS again.
+    ///
+    /// The age is checked when a request picks up a connection, so the request that finds a
+    /// connection past its age still goes over it, and the next one gets a new connection. A
+    /// connection that sits idle past its age is closed by `pool_idle_timeout` instead.
+    ///
+    /// Applies to HTTP connections only, not WebSockets. Disabled by default.
+    ///
+    /// ```yaml
+    /// traffic_shaping:
+    ///   all:
+    ///     max_connection_age: 30s
+    /// ```
+    #[serde(
+        default,
+        deserialize_with = "deserialize_nonzero_duration",
+        serialize_with = "humantime_serde::serialize",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "Option<String>")]
+    pub max_connection_age: Option<Duration>,
+
+    /// How long a subgraph connection can sit with no traffic before the OS starts sending TCP
+    /// keepalive probes. The probes repeat at the same interval, and after 3 unanswered ones the
+    /// connection is closed. With the default, a subgraph host that vanished (crashed node,
+    /// dropped network) is noticed in about 2 minutes instead of on the next failed request.
+    ///
+    /// The OS answers these probes, so they don't catch a process that is alive but stuck.
+    /// Use `http2_keep_alive_interval` for that.
+    ///
+    /// Must be at least 1s. The OS counts it in whole seconds, so fractions are dropped: `1500ms`
+    /// acts as `1s`.
+    ///
+    /// Defaults to 30 seconds. Set to `null` to turn it off.
+    #[serde(
+        default = "default_tcp_keepalive",
+        deserialize_with = "deserialize_tcp_keepalive",
+        serialize_with = "humantime_serde::serialize"
+    )]
+    #[schemars(with = "Option<String>")]
+    pub tcp_keepalive: Option<Duration>,
+
+    /// How often to send HTTP/2 PING frames on subgraph connections. If a ping isn't answered
+    /// within 20 seconds, the connection is closed and its requests fail.
+    ///
+    /// Unlike `tcp_keepalive`, the subgraph process itself has to answer, so this also catches a
+    /// subgraph that is hung (for example, close to running out of memory). Pings are sent on
+    /// idle connections too. Only affects HTTP/2 connections; HTTP/1 has no equivalent, so
+    /// rely on `request_timeout` there.
+    ///
+    /// Disabled by default.
+    ///
+    /// ```yaml
+    /// traffic_shaping:
+    ///   all:
+    ///     http2_keep_alive_interval: 10s
+    /// ```
+    #[serde(
+        default,
+        deserialize_with = "deserialize_nonzero_duration",
+        serialize_with = "humantime_serde::serialize",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "Option<String>")]
+    pub http2_keep_alive_interval: Option<Duration>,
+
     /// Enables/disables request deduplication to subgraphs.
     ///
     /// When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will
@@ -558,6 +661,9 @@ impl Default for TrafficShapingExecutorGlobalConfig {
     fn default() -> Self {
         Self {
             pool_idle_timeout: default_pool_idle_timeout(),
+            max_connection_age: None,
+            tcp_keepalive: default_tcp_keepalive(),
+            http2_keep_alive_interval: None,
             dedupe_enabled: default_dedupe_enabled(),
             request_timeout: default_request_timeout(),
             circuit_breaker: default_circuit_breaker_config(),
@@ -1450,7 +1556,52 @@ pub struct ClientAuthConfig {
 mod tests {
     use std::time::Duration;
 
-    use super::{SupergraphTrafficShapingConfig, TrafficShapingConfig, TrafficShapingRouterConfig};
+    use super::{
+        SupergraphTrafficShapingConfig, TrafficShapingConfig, TrafficShapingExecutorGlobalConfig,
+        TrafficShapingRouterConfig,
+    };
+
+    #[test]
+    fn tcp_keepalive_is_on_by_default_and_null_turns_it_off() {
+        let config: TrafficShapingExecutorGlobalConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.tcp_keepalive, Some(Duration::from_secs(30)));
+        assert_eq!(config.http2_keep_alive_interval, None);
+
+        let config: TrafficShapingExecutorGlobalConfig = serde_json::from_str(
+            r#"{ "tcp_keepalive": null, "http2_keep_alive_interval": "10s" }"#,
+        )
+        .unwrap();
+        assert_eq!(config.tcp_keepalive, None);
+        assert_eq!(
+            config.http2_keep_alive_interval,
+            Some(Duration::from_secs(10))
+        );
+    }
+
+    #[test]
+    fn connection_settings_refuse_zero() {
+        for field in ["max_connection_age", "http2_keep_alive_interval"] {
+            let json = format!(r#"{{ "{field}": "0s" }}"#);
+            let err = serde_json::from_str::<TrafficShapingExecutorGlobalConfig>(&json)
+                .expect_err(field)
+                .to_string();
+            assert!(err.contains("must be more than 0s"), "{field}: {err}");
+        }
+    }
+
+    #[test]
+    fn tcp_keepalive_refuses_less_than_a_second() {
+        for value in ["0s", "500ms"] {
+            let json = format!(r#"{{ "tcp_keepalive": "{value}" }}"#);
+            let err = serde_json::from_str::<TrafficShapingExecutorGlobalConfig>(&json)
+                .expect_err(value)
+                .to_string();
+            assert!(err.contains("must be at least 1s"), "{value}: {err}");
+        }
+        let config: TrafficShapingExecutorGlobalConfig =
+            serde_json::from_str(r#"{ "tcp_keepalive": "1s" }"#).unwrap();
+        assert_eq!(config.tcp_keepalive, Some(Duration::from_secs(1)));
+    }
 
     #[test]
     fn keep_alive_defaults_to_five_seconds() {
