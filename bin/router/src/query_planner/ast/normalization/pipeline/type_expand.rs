@@ -7,7 +7,9 @@ use graphql_tools::parser::query::{
 
 use crate::query_planner::{
     ast::normalization::{context::NormalizationContext, error::NormalizationError},
-    state::supergraph_state::{SupergraphDefinition, SupergraphObjectType, SupergraphState},
+    state::supergraph_state::{
+        SupergraphDefinition, SupergraphInterfaceType, SupergraphObjectType, SupergraphState,
+    },
 };
 
 /// A selection set may target an interface type.
@@ -232,6 +234,13 @@ fn handle_type_expansion_candidate<'a>(
         }
     });
 
+    // Picking a field from a value type that one of the interface's subgraphs doesn't have.
+    // Without an interface entity the planner can't leave them, so go through the objects,
+    // each of them can jump to another subgraph by its key.
+    let should_expand = should_expand
+        || (subgraph_name.is_none()
+            && selection_leaves_interface_subgraphs(state, interface_type, field));
+
     if !should_expand {
         // An interface may be defined in multiple subgraphs.
         // If a field on that interface is not resolvable in all of those subgraphs,
@@ -332,4 +341,75 @@ fn handle_type_expansion_candidate<'a>(
     new_items.extend(fragments);
 
     Ok(true)
+}
+
+/// True when some subgraph resolving the interface field misses a field picked from
+/// the value types under it. Entities and abstract types under it count as fine, the
+/// planner can jump from those.
+/// It's "some", not "every", because we don't know which subgraph the planner will be in
+/// when it gets to the interface. If it's one of the subgraphs missing the field, it's stuck.
+fn selection_leaves_interface_subgraphs(
+    state: &SupergraphState,
+    interface_type: &SupergraphInterfaceType,
+    field: &Field<'_, String>,
+) -> bool {
+    if field.selection_set.items.is_empty()
+        || interface_type
+            .join_type
+            .iter()
+            .any(|jt| jt.key.is_some() || jt.is_interface_object)
+    {
+        return false;
+    }
+    let Some(field_def) = interface_type.fields.get(&field.name) else {
+        return false;
+    };
+    let type_name = field_def.field_type.inner_type();
+
+    field_def
+        .resolvable_in
+        .iter()
+        .any(|subgraph| !resolves_in_subgraph(state, type_name, &field.selection_set, *subgraph))
+}
+
+fn resolves_in_subgraph(
+    state: &SupergraphState,
+    type_name: &str,
+    selection_set: &SelectionSet<'_, String>,
+    subgraph: u16,
+) -> bool {
+    // only value types, anything else the planner handles on its own
+    let Some(SupergraphDefinition::Object(object)) = state.definitions.get(type_name) else {
+        return true;
+    };
+    if object.join_type.iter().any(|jt| jt.key.is_some()) {
+        return true;
+    }
+
+    selection_set.items.iter().all(|item| match item {
+        Selection::Field(field) => {
+            if field.name.starts_with("__") {
+                return true;
+            }
+            let Some(field_def) = object.fields.get(&field.name) else {
+                return true;
+            };
+            field_def.resolvable_in.contains(&subgraph)
+                && (field.selection_set.items.is_empty()
+                    || resolves_in_subgraph(
+                        state,
+                        field_def.field_type.inner_type(),
+                        &field.selection_set,
+                        subgraph,
+                    ))
+        }
+        Selection::InlineFragment(fragment) => {
+            let type_name = match &fragment.type_condition {
+                Some(TypeCondition::On(name)) => name.as_str(),
+                None => type_name,
+            };
+            resolves_in_subgraph(state, type_name, &fragment.selection_set, subgraph)
+        }
+        Selection::FragmentSpread(_) => true,
+    })
 }
