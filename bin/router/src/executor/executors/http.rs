@@ -229,6 +229,13 @@ impl HTTPSubgraphExecutor {
             http::header::CONNECTION,
             HeaderValue::from_static("keep-alive"),
         );
+        // Ask for the media types we can parse (see `VALID_GRAPHQL_CONTENT_TYPES`).
+        // `header_map` is applied after header propagation, so a client's `Accept`
+        // (e.g. `text/event-stream`) can't make the subgraph respond in a format we reject.
+        header_map.insert(
+            http::header::ACCEPT,
+            HeaderValue::from_static(SUBGRAPH_ACCEPT_HEADER_VALUE),
+        );
 
         // Advertise the algorithms we can decompress, regardless of whether outbound request
         // compression is enabled - unless the user disabled or emptied out the list.
@@ -907,6 +914,11 @@ pub struct SubgraphHttpResponse {
 
 const VALID_GRAPHQL_CONTENT_TYPES: [&str; 2] =
     ["application/json", "application/graphql-response+json"];
+
+/// `Accept` sent on regular subgraph fetches, preferring `application/graphql-response+json`
+/// as recommended by the GraphQL over HTTP spec.
+const SUBGRAPH_ACCEPT_HEADER_VALUE: &str =
+    "application/graphql-response+json, application/json;q=0.9";
 
 /// Whether a `Content-Encoding` value means "no encoding" - either the explicit `identity`
 /// token (RFC 9110 §8.4.1) or an empty value - so the body can be used as-is without

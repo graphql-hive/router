@@ -1,7 +1,7 @@
 #[cfg(test)]
 
 mod header_propagation_e2e_tests {
-    use crate::testkit::{some_header_map, TestRouter, TestSubgraphs};
+    use crate::testkit::{some_header_map, Started, TestRouter, TestSubgraphs};
     use futures::join;
     use hive_router::{
         async_trait,
@@ -531,5 +531,84 @@ mod header_propagation_e2e_tests {
                 Some("rule, plugin"),
             );
         }
+    }
+
+    const ROUTER_SUBGRAPH_ACCEPT: &str =
+        "application/graphql-response+json, application/json;q=0.9";
+
+    fn subgraph_accept(subgraphs: &TestSubgraphs<Started>) -> String {
+        let requests = subgraphs
+            .get_requests_log("accounts")
+            .expect("expected requests sent to accounts subgraph");
+        assert_eq!(requests.len(), 1, "expected 1 request to accounts subgraph");
+        requests[0]
+            .headers
+            .get("accept")
+            .expect("expected accept header on the subgraph request")
+            .to_str()
+            .expect("accept header should be valid ASCII")
+            .to_string()
+    }
+
+    // A propagated client `Accept` must not decide the subgraph's response format:
+    // `text/event-stream` made subgraphs answer with SSE, which the router rejects
+    // as an invalid content type.
+    #[ntex::test]
+    async fn should_not_propagate_client_accept_to_subgraph_fetches() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: supergraph.graphql
+                  headers:
+                    all:
+                      request:
+                        - propagate:
+                            matching: ".*"
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                "{ users { id } }",
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream, application/json"
+                },
+            )
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+        assert_eq!(subgraph_accept(&subgraphs), ROUTER_SUBGRAPH_ACCEPT);
+    }
+
+    #[ntex::test]
+    async fn should_send_accept_to_subgraph_fetches_without_propagation() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: supergraph.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+        assert_eq!(subgraph_accept(&subgraphs), ROUTER_SUBGRAPH_ACCEPT);
     }
 }
