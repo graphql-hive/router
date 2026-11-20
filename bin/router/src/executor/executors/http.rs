@@ -8,7 +8,7 @@ use crate::config::traffic_shaping::{
     SupergraphTrafficShapingConfig, TrafficShapingSubgraphRequestCompressionConfig,
 };
 use crate::executor::executors::dedupe::unique_leader_fingerprint;
-use crate::executor::executors::inflight::InFlightRole;
+use crate::executor::executors::inflight::{InFlightClaim, InFlightRole};
 use crate::executor::executors::map::InflightRequestsMap;
 use crate::executor::executors::multipart_subscribe;
 use crate::executor::executors::sse;
@@ -49,7 +49,7 @@ use hyper_util::rt::{TokioExecutor, TokioTimer};
 use crate::executor::executors::connection_age::{self, AgedConnector};
 use crate::executor::executors::tls::build_https_connector;
 use thread_local::ThreadLocal;
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, SemaphorePermit};
 use tracing::{debug, trace, warn};
 
 use crate::executor::executors::common::{sha256_hex, SubgraphExecutionRequest};
@@ -550,6 +550,62 @@ async fn until<F: std::future::Future>(
     }
 }
 
+/// Takes a slot under `max_connections_per_host`, counting the wait toward the timeout: all
+/// pods behind the URL share the slots, so a hung pod mustn't make requests queue forever.
+/// Returns the permit and the time left for the request.
+async fn acquire_slot(
+    semaphore: &Semaphore,
+    timeout: Option<Duration>,
+) -> Result<(SemaphorePermit<'_>, Option<Duration>), SubgraphExecutorError> {
+    // a free slot is the common case, so skip the clock and the timer for it
+    if let Ok(permit) = semaphore.try_acquire() {
+        return Ok((permit, timeout));
+    }
+    // the semaphore is never closed, so acquire() can't fail
+    let Some(timeout) = timeout else {
+        return Ok((semaphore.acquire().await.unwrap(), None));
+    };
+    let started = Instant::now();
+    // not RequestTimeout: the subgraph never saw it, so the circuit breaker mustn't count it
+    let permit = tokio::time::timeout(timeout, semaphore.acquire())
+        .await
+        .map_err(|_| SubgraphExecutorError::RequestSlotTimeout)?
+        .unwrap();
+    Ok((permit, Some(timeout.saturating_sub(started.elapsed()))))
+}
+
+/// Deduplicates under one per-request deadline. A joiner gives up at its own deadline, and if the
+/// leader fails, the joiner that takes over gets only its remaining time (passed to `init`),
+/// not a fresh timeout.
+async fn get_or_init_by<V, F, Fut>(
+    claim: InFlightClaim<u128, V>,
+    timeout: Option<Duration>,
+    init: F,
+) -> Result<(Arc<V>, InFlightRole), SubgraphExecutorError>
+where
+    F: FnOnce(Option<Duration>) -> Fut,
+    Fut: std::future::Future<Output = Result<V, SubgraphExecutorError>>,
+{
+    let Some(timeout) = timeout else {
+        return claim.get_or_try_init(|| init(None)).await;
+    };
+    let deadline = tokio::time::Instant::now() + timeout;
+    let initializing = std::sync::atomic::AtomicBool::new(false);
+    let mut joined = std::pin::pin!(claim.get_or_try_init(|| {
+        initializing.store(true, Ordering::Relaxed);
+        init(Some(
+            deadline.saturating_duration_since(tokio::time::Instant::now()),
+        ))
+    }));
+    match tokio::time::timeout_at(deadline, &mut joined).await {
+        Ok(result) => result,
+        // sending it ourselves: its own timeouts end it, and they poison a stuck connection
+        Err(_) if initializing.load(Ordering::Relaxed) => joined.await,
+        // still waiting on someone else's request
+        Err(elapsed) => Err(elapsed.into()),
+    }
+}
+
 async fn send_request<'a>(
     opts: SendRequestOpts<'a>,
 ) -> Result<FetchedSubgraphResponse<'a>, SubgraphExecutorError> {
@@ -784,11 +840,14 @@ impl HTTPSubgraphExecutor {
                 };
 
                 if deduplicate_request {
-                    // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
-                    // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
-                    let _permit = self.semaphore.acquire().await.unwrap();
+                    let (_permit, timeout) =
+                        acquire_slot(&self.semaphore, send_request_opts.timeout).await?;
                     let external_wait_guard = external_wait::enter();
-                    let fetched_response = send_request(send_request_opts).await;
+                    let fetched_response = send_request(SendRequestOpts {
+                        timeout,
+                        ..send_request_opts
+                    })
+                    .await;
                     drop(external_wait_guard);
                     let fetched_response = fetched_response?;
                     http_request_capture = Some(HttpRequestTelemetryCapture {
@@ -811,27 +870,30 @@ impl HTTPSubgraphExecutor {
                         let claim = self.in_flight_requests.claim(fingerprint);
                         let mut leader_http_request_capture = None;
                         let external_wait_guard = external_wait::enter();
-                        let init_result = claim
-                            .get_or_try_init(|| async {
-                                let res = {
-                                    // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
-                                    // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
-                                    let _permit = self.semaphore.acquire().await.unwrap();
-                                    send_request(send_request_opts).await
-                                };
-
-                                res.map(|fetched_response| {
-                                    leader_http_request_capture =
-                                        Some(HttpRequestTelemetryCapture {
-                                            capture: fetched_response.http_request_capture,
-                                            response_body_size: fetched_response.response.body.len()
-                                                as u64,
-                                            transport_duration: fetched_response.transport_duration,
-                                        });
+                        let leader_capture = &mut leader_http_request_capture;
+                        let init_result = get_or_init_by(
+                            claim,
+                            send_request_opts.timeout,
+                            |timeout| async move {
+                                let (_permit, timeout) =
+                                    acquire_slot(&self.semaphore, timeout).await?;
+                                send_request(SendRequestOpts {
+                                    timeout,
+                                    ..send_request_opts
+                                })
+                                .await
+                                .map(|fetched_response| {
+                                    *leader_capture = Some(HttpRequestTelemetryCapture {
+                                        capture: fetched_response.http_request_capture,
+                                        response_body_size: fetched_response.response.body.len()
+                                            as u64,
+                                        transport_duration: fetched_response.transport_duration,
+                                    });
                                     (fetched_response.response, unique_leader_fingerprint())
                                 })
-                            })
-                            .await;
+                            },
+                        )
+                        .await;
                         drop(external_wait_guard);
                         let (shared_response, role) = init_result?;
 
@@ -1354,8 +1416,103 @@ mod tests {
     use http::HeaderMap;
     use serde_json::json;
 
-    use super::build_request_body;
+    use std::time::Duration;
+
+    use tokio::sync::Semaphore;
+
+    use super::{acquire_slot, build_request_body, get_or_init_by};
     use crate::executor::executors::common::SubgraphExecutionRequest;
+    use crate::executor::executors::error::SubgraphExecutorError;
+    use crate::executor::executors::inflight::{InFlightMap, InFlightRole};
+
+    const MS: Duration = Duration::from_millis(1);
+
+    #[tokio::test]
+    async fn joiner_that_takes_over_gets_only_the_time_left() {
+        let map = InFlightMap::<u128, Option<Duration>>::default();
+        let leader = get_or_init_by(map.claim(1), Some(200 * MS), |_| async {
+            tokio::time::sleep(100 * MS).await;
+            Err(SubgraphExecutorError::RequestSlotTimeout)
+        });
+        let joiner = async {
+            tokio::time::sleep(10 * MS).await;
+            get_or_init_by(map.claim(1), Some(200 * MS), |left| async move { Ok(left) }).await
+        };
+        let (leader, joiner) = tokio::join!(leader, joiner);
+        assert!(leader.is_err());
+        let (left, role) = joiner.unwrap();
+        assert_eq!(role, InFlightRole::Leader);
+        // joined at ~10ms, took over at ~100ms: ~110ms of its 200ms left
+        let left = left.unwrap();
+        assert!(left > 50 * MS && left < 150 * MS, "{left:?}");
+    }
+
+    #[tokio::test]
+    async fn joiner_gives_up_at_its_own_deadline() {
+        let map = InFlightMap::<u128, ()>::default();
+        let leader = get_or_init_by(map.claim(1), None, |_| async {
+            tokio::time::sleep(500 * MS).await;
+            Ok(())
+        });
+        let joiner = async {
+            tokio::time::sleep(10 * MS).await;
+            let started = std::time::Instant::now();
+            let res = get_or_init_by(map.claim(1), Some(100 * MS), |_| async { Ok(()) }).await;
+            (res, started.elapsed())
+        };
+        let (_, (res, waited)) = tokio::join!(leader, joiner);
+        assert!(matches!(res, Err(SubgraphExecutorError::RequestTimeout(_))));
+        assert!(waited < 300 * MS, "{waited:?}");
+    }
+
+    #[tokio::test]
+    async fn deadline_does_not_cut_off_our_own_request() {
+        // the request's own timeouts end it, so the outer deadline must not drop it early
+        let map = InFlightMap::<u128, ()>::default();
+        let res = get_or_init_by(map.claim(1), Some(20 * MS), |_| async {
+            tokio::time::sleep(60 * MS).await;
+            Ok(())
+        })
+        .await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn acquire_slot_keeps_the_whole_timeout_when_a_slot_is_free() {
+        let semaphore = Semaphore::new(1);
+        let (_permit, left) = acquire_slot(&semaphore, Some(Duration::from_secs(5)))
+            .await
+            .unwrap();
+        assert_eq!(left, Some(Duration::from_secs(5)));
+    }
+
+    #[tokio::test]
+    async fn acquire_slot_times_out_when_every_slot_stays_taken() {
+        let semaphore = Semaphore::new(1);
+        let _held = semaphore.acquire().await.unwrap();
+        let result = acquire_slot(&semaphore, Some(Duration::from_millis(50))).await;
+        assert!(matches!(
+            result,
+            Err(SubgraphExecutorError::RequestSlotTimeout)
+        ));
+    }
+
+    #[tokio::test]
+    async fn acquire_slot_takes_the_wait_out_of_the_timeout() {
+        let semaphore = std::sync::Arc::new(Semaphore::new(1));
+        let held = semaphore.clone().acquire_owned().await.unwrap();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            drop(held);
+        });
+        let (_permit, left) = acquire_slot(&semaphore, Some(Duration::from_secs(5)))
+            .await
+            .unwrap();
+        let left = left.unwrap();
+        // waited ~100ms for the slot, so less than the full 5s is left for the request
+        assert!(left <= Duration::from_millis(4900), "{left:?}");
+        assert!(left > Duration::from_secs(4), "{left:?}");
+    }
 
     #[test]
     fn build_request_body_with_forwarded_operation_name_and_no_variables_is_valid_json() {
