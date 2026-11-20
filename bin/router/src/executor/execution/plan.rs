@@ -802,6 +802,7 @@ fn execute_deferred(
             .partition(|(_, origin)| origin.is_none());
         let mut errors: Vec<GraphQLError> = errors.into_iter().map(|(error, _)| error).collect();
         let mut demand_control_cost = None;
+        let mut primary_cost = 0;
         if let Some(demand_control) = executor.demand_control_context.as_ref() {
             // what came in so far, the limit is checked once everything did, at the end
             let actual = demand_control.calculate_actual_cost(
@@ -814,6 +815,7 @@ fn execute_deferred(
                 max: demand_control.operation.operation_max_cost,
                 actual,
             });
+            primary_cost = actual;
             // headers go out with the primary part, telemetry gets the cost of every part at the end
             demand_control.apply_expose_headers(&mut exec_ctx.response_headers_aggregator, actual);
         }
@@ -846,6 +848,10 @@ fn execute_deferred(
             let end_payload = match run_end_hooks(on_end_callbacks, end_payload) {
                 Ok(end_payload) => end_payload,
                 Err(early) => {
+                    // the fetches ran, same as the regular path counts them
+                    if let Some(demand_control) = executor.demand_control_context.as_ref() {
+                        demand_control.report_telemetry(primary_cost, operation_name.as_deref(), &span);
+                    }
                     let (response, headers) = *early;
                     response_header_sink.store(headers);
                     let output = on_execute_output(response, &response_header_sink);
@@ -897,6 +903,16 @@ fn execute_deferred(
             Err(failure) => {
                 // like a regular response that fails, see `InternalPipelineError`
                 status.store(StatusCode::INTERNAL_SERVER_ERROR.as_u16(), Ordering::Relaxed);
+                if let Some(demand_control) = executor.demand_control_context.as_ref() {
+                    let actual = actual_cost(
+                        demand_control,
+                        &exec_ctx.data,
+                        &variables,
+                        &exec_ctx.subgraph_response_cost_tracker,
+                        operation_name.as_deref(),
+                    );
+                    demand_control.report_telemetry(actual, operation_name.as_deref(), &span);
+                }
                 yield failure;
                 return;
             }
@@ -947,6 +963,16 @@ fn execute_deferred(
                             let last = writer.fail_pending(Vec::new(), Vec::new(), error);
                             match part_or_failure(last, &error_masking_runtime) {
                                 Ok(part) | Err(part) => yield part,
+                            }
+                            if let Some(demand_control) = executor.demand_control_context.as_ref() {
+                                let actual = actual_cost(
+                                    demand_control,
+                                    &exec_ctx.data,
+                                    &variables,
+                                    &exec_ctx.subgraph_response_cost_tracker,
+                                    operation_name.as_deref(),
+                                );
+                                demand_control.report_telemetry(actual, operation_name.as_deref(), &span);
                             }
                             return;
                         }
