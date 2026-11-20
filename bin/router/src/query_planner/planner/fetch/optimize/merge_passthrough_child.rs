@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use petgraph::{
     graph::NodeIndex,
@@ -30,11 +30,17 @@ impl FetchGraph<MultiTypeFetchStep> {
         // Breadth-First Search (BFS) starting from the root node.
         let mut queue = VecDeque::from([root_index]);
         let mut merged_steps = MergedSteps::default();
+        // A step with several parents gets queued once per parent. Checking it again only finds
+        // something new when a child was merged into it since, so the rest are skipped.
+        let mut checked = HashSet::new();
 
         while let Some(parent_index) = queue.pop_front() {
             // Store pairs of sibling nodes that can be merged.
             let mut merges_to_perform: Vec<(NodeIndex, NodeIndex)> = Vec::new();
             let parent_index = merged_steps.resolve(parent_index);
+            if !checked.insert(parent_index) {
+                continue;
+            }
 
             let children: Vec<_> = self
                 .graph
@@ -73,6 +79,8 @@ impl FetchGraph<MultiTypeFetchStep> {
 
                 perform_passthrough_child_merge(parent_index, child_index, self)?;
                 merged_steps.record(child_index, parent_index);
+                // the child's queued entry leads back here, to check the children it brought
+                checked.remove(&parent_index);
             }
         }
 
