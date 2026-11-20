@@ -3,16 +3,35 @@
 mod query_plan;
 use hive_router::executor::introspection::schema::{SchemaMetadata, SchemaWithMetadata};
 use hive_router::query_planner::graph::PERCENTAGE_SCALE_FACTOR;
-use hive_router::query_planner::planner::Planner;
+use hive_router::query_planner::planner::{Planner, QueryPlannerOptions};
 use hive_router::query_planner::utils::cancellation::CancellationToken;
 use hive_router::query_planner::utils::parsing::safe_parse_schema;
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::query_plan::{QueryPlanError, QueryPlanTask};
+
+/// How the planner plans, like the router's planner options from its config. Every option is
+/// off or unlimited when missing.
+#[napi(object, js_name = "QueryPlannerOptions")]
+pub struct JsQueryPlannerOptions {
+    /// The most aliases one entity request to a subgraph may carry, like the router's
+    /// `traffic_shaping.all.max_aliases_per_request`. An integer from 0 to 4294967295, where 0
+    /// counts as 1. Batch fetches are split to stay within it, and it limits the
+    /// `maxContextGroups` of fetches with context variables. No limit when missing.
+    pub max_aliases_per_request: Option<f64>,
+    /// `maxAliasesPerRequest` for single subgraphs, by subgraph name, like the router's
+    /// `traffic_shaping.subgraphs.<name>.max_aliases_per_request`. Wins over
+    /// `maxAliasesPerRequest` for its subgraph.
+    pub subgraph_max_aliases_per_request: Option<HashMap<String, f64>>,
+    /// Folds matching object type fragments into an interface fragment even when that interface
+    /// isn't the field's type, like the router's
+    /// `query_planner.experimental_abstract_type_folding`. Only the subgraph operations change.
+    pub experimental_abstract_type_folding: Option<bool>,
+}
 
 #[napi]
 pub struct QueryPlanner {
@@ -30,12 +49,43 @@ pub struct QueryPlanner {
 #[napi]
 impl QueryPlanner {
     #[napi(constructor)]
-    pub fn new(supergraph_sdl: String) -> Result<Self> {
+    pub fn new(supergraph_sdl: String, options: Option<JsQueryPlannerOptions>) -> Result<Self> {
         let parsed_supergraph =
             safe_parse_schema(&supergraph_sdl).map_err(QueryPlanError::SchemaParse)?;
 
-        let planner = Planner::new_from_supergraph(&parsed_supergraph, Default::default())
-            .map_err(|err| {
+        // capped at u32 so an emitted `maxContextGroups` above it can only mean no limit
+        let alias_limit = |name: &str, value: f64| {
+            if value.fract() == 0.0 && (0.0..=u32::MAX as f64).contains(&value) {
+                Ok(value as usize)
+            } else {
+                Err(napi::Error::from_reason(format!(
+                    "{name} must be an integer from 0 to {}, got {value}",
+                    u32::MAX
+                )))
+            }
+        };
+        let mut planner_options = QueryPlannerOptions::default();
+        if let Some(options) = options {
+            planner_options.experimental_abstract_type_folding =
+                options.experimental_abstract_type_folding.unwrap_or(false);
+            planner_options.max_aliases_per_request = options
+                .max_aliases_per_request
+                .map(|value| alias_limit("maxAliasesPerRequest", value))
+                .transpose()?;
+            planner_options.subgraph_max_aliases_per_request = options
+                .subgraph_max_aliases_per_request
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(subgraph, value)| {
+                    let limit =
+                        alias_limit(&format!("subgraphMaxAliasesPerRequest.{subgraph}"), value)?;
+                    Ok((subgraph, limit))
+                })
+                .collect::<Result<_>>()?;
+        }
+
+        let planner =
+            Planner::new_from_supergraph(&parsed_supergraph, planner_options).map_err(|err| {
                 napi::Error::from_reason(format!("Failed to create query planner: {}", err))
             })?;
 

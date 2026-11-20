@@ -17,8 +17,8 @@ use hive_router::{
         graph::{PlannerOverrideContext, PERCENTAGE_SCALE_FACTOR},
         planner::{
             plan_nodes::planning::{
-                BatchFetchNode, DeferDependency, FetchId, FetchNode, FlattenNodePath, PlanNode,
-                QueryPlan,
+                BatchFetchNode, DeferDependency, FetchContext, FetchId, FetchNode, FlattenNodePath,
+                PlanNode, QueryPlan,
             },
             Planner, PlannerError,
         },
@@ -109,7 +109,8 @@ pub fn query_plan(
 
 /// The plan as the addon gives it to JS. Serializes like the router's own plan, but every
 /// fetch also has its `id` and `dependsOn`, and every batch fetch its `completes`, so JS can
-/// start each fetch once the fetches it depends on are done. The router's own serialization
+/// start each fetch once the fetches it depends on are done. A fetch with context variables
+/// also has its `maxContextGroups`, unless it has no limit. The router's own serialization
 /// skips them, so the addon serializes the nodes holding fetches itself. It also has the
 /// `projection` the router shapes the operation's response with.
 pub struct JsQueryPlan {
@@ -272,16 +273,29 @@ struct JsFetchNode<'a> {
     fetch: &'a FetchNode,
     id: FetchId,
     depends_on: &'a [FetchId],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_context_groups: Option<u32>,
 }
 
 impl<'a> From<&'a FetchNode> for JsFetchNode<'a> {
     fn from(fetch: &'a FetchNode) -> Self {
+        let contextual = !FetchContext::variables(&fetch.context).is_empty();
         Self {
             fetch,
             id: fetch.id,
             depends_on: &fetch.depends_on,
+            max_context_groups: contextual
+                .then(|| max_context_groups(fetch.operation.operation.max_context_groups()))
+                .flatten(),
         }
     }
+}
+
+/// The most context groups one request may carry, `None` when there's no limit. Configured alias
+/// limits fit in a `u32`, so only no limit gives more: `usize::MAX`, or that divided by the
+/// aliases of a batch.
+fn max_context_groups(groups: usize) -> Option<u32> {
+    u32::try_from(groups).ok()
 }
 
 #[derive(Serialize)]
@@ -292,6 +306,8 @@ struct JsBatchFetchNode<'a> {
     id: FetchId,
     depends_on: &'a [FetchId],
     completes: &'a [FetchId],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_context_groups: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -347,6 +363,13 @@ impl Serialize for JsPlanNode<'_> {
                 id: batch.id,
                 depends_on: &batch.depends_on,
                 completes: &batch.completes,
+                max_context_groups: batch
+                    .entity_batch
+                    .aliases
+                    .iter()
+                    .any(|alias| !FetchContext::variables(&alias.context).is_empty())
+                    .then(|| max_context_groups(batch.operation.operation.max_context_groups()))
+                    .flatten(),
             }),
             PlanNode::Sequence(sequence) => JsTaggedPlanNode::Sequence {
                 nodes: JsPlanNodes(&sequence.nodes),

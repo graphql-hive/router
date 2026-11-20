@@ -83,6 +83,66 @@ it("should expose fetch ids and dependencies", async (t) => {
   }
 });
 
+it("should limit context groups per request with the alias limits", async (t) => {
+  const supergraph = (fixture: string) =>
+    fs.readFile(`../../bin/router/fixture/tests/${fixture}.supergraph.graphql`, "utf-8");
+  const contextual = (planner: QueryPlanner, query: string) =>
+    collectFetches(planner.plan(query, undefined, new Set(), 0).node).filter(
+      (fetch) =>
+        fetch.contextVariables ||
+        fetch.entityBatch?.aliases.some((alias: any) => alias.contextVariables),
+    );
+
+  const basic = await supergraph("context-basic");
+  const query = "{ users { txs { amount } } }";
+  // no limit, every group goes in one request
+  const [unlimited] = contextual(new QueryPlanner(basic), query);
+  t.assert.strictEqual(unlimited.kind, "Fetch");
+  t.assert.ok(!("maxContextGroups" in unlimited));
+  const [global] = contextual(new QueryPlanner(basic, { maxAliasesPerRequest: 15 }), query);
+  t.assert.strictEqual(global.maxContextGroups, 15);
+  const [overridden] = contextual(
+    new QueryPlanner(basic, {
+      maxAliasesPerRequest: 15,
+      subgraphMaxAliasesPerRequest: { a: 4 },
+    }),
+    query,
+  );
+  t.assert.strictEqual(overridden.maxContextGroups, 4);
+  // fetches without context variables have no limit to follow
+  for (const fetch of collectFetches(
+    new QueryPlanner(basic, { maxAliasesPerRequest: 15 }).plan(query, undefined, new Set(), 0)
+      .node,
+  )) {
+    t.assert.strictEqual("maxContextGroups" in fetch, !!fetch.contextVariables);
+  }
+
+  // a non-null contextual argument can't be aliased per group, so one request per group
+  const [nonNull] = contextual(
+    new QueryPlanner(await supergraph("context-non-null")),
+    "{ viewer { ... on User { txs { amount } } } }",
+  );
+  t.assert.strictEqual(nonNull.maxContextGroups, 1);
+
+  // every group repeats all aliases of a batch
+  const duck = await supergraph("context-shared-duck");
+  const duckQuery = "{ foo { u { field } } bar { u { field } } }";
+  const [unlimitedBatch] = contextual(new QueryPlanner(duck), duckQuery);
+  t.assert.strictEqual(unlimitedBatch.kind, "BatchFetch");
+  t.assert.strictEqual(unlimitedBatch.entityBatch.aliases.length, 2);
+  t.assert.ok(!("maxContextGroups" in unlimitedBatch));
+  const [batch] = contextual(new QueryPlanner(duck, { maxAliasesPerRequest: 15 }), duckQuery);
+  t.assert.strictEqual(batch.maxContextGroups, 7);
+
+  t.assert.throws(() => new QueryPlanner(basic, { maxAliasesPerRequest: -1 }), {
+    message: "maxAliasesPerRequest must be an integer from 0 to 4294967295, got -1",
+  });
+  t.assert.throws(
+    () => new QueryPlanner(basic, { subgraphMaxAliasesPerRequest: { a: 1.5 } }),
+    { message: "subgraphMaxAliasesPerRequest.a must be an integer from 0 to 4294967295, got 1.5" },
+  );
+});
+
 it("should expose each subgraph's resolvable entity keys", async (t) => {
   const supergraph = await fs.readFile(
     "../../bin/router/fixture/tests/keys-mashup.supergraph.graphql",
