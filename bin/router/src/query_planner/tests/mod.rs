@@ -239,16 +239,33 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Converts the benchmark plan to its executable form. The serialized output is what other tools
-/// depend on, so it must stay the same after the planning data is dropped.
+/// Converts plans to their executable form. The serialized output is what other tools depend on,
+/// so it must stay the same after the planning data is dropped. Executable plans keep their
+/// paths only as tries, so this also checks the paths told again from them.
 #[test]
 fn preparing_a_plan_preserves_its_wire_form() -> Result<(), Box<dyn std::error::Error>> {
     init_logger();
-    let document = parse_operation(&std::fs::read_to_string("../../bench/operation.graphql")?);
-    let planning = build_query_plan_with_defaults("../../bench/supergraph.graphql", document)?;
-    let before = serde_json::to_string(&planning)?;
-    let executable =
-        planning.into_executable(&read_supergraph_state("../../bench/supergraph.graphql"));
-    assert_eq!(serde_json::to_string(&executable)?, before);
+    for (supergraph, operation) in [
+        (
+            "../../bench/supergraph.graphql",
+            "../../bench/operation.graphql",
+        ),
+        // batches with type conditions in their paths
+        (
+            "fixture/abstract-many-subgraphs/supergraph.graphql",
+            "fixture/abstract-many-subgraphs/operation.graphql",
+        ),
+        // many batches and flatten fetches
+        (
+            "fixture/grafbase-many-plans/supergraph.graphql",
+            "fixture/grafbase-many-plans/operation.graphql",
+        ),
+    ] {
+        let document = parse_operation(&std::fs::read_to_string(operation)?);
+        let planning = build_query_plan_with_defaults(supergraph, document)?;
+        let json = serde_json::to_string(&planning)?;
+        let executable = planning.into_executable(&read_supergraph_state(supergraph));
+        assert_eq!(serde_json::to_string(&executable)?, json, "{operation}");
+    }
     Ok(())
 }
