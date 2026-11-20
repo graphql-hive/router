@@ -293,16 +293,15 @@ fn pick_entrypoints(
     // fields without a choice have one option
     let mut options: Vec<Vec<(Option<EdgeIndex>, u64, bool)>> =
         Vec::with_capacity(operation.root_field_groups.len());
-    let mut next_choice = choices.iter().map(|(index, _)| *index).peekable();
+    // choices are sorted by field index, so one pass over them is enough
+    let mut next_choice = choices.iter().peekable();
     for (index, group) in operation.root_field_groups.iter().enumerate() {
-        if next_choice.next_if_eq(&index).is_none() {
+        let Some((_, field_choices)) =
+            next_choice.next_if(|(choice_index, _)| *choice_index == index)
+        else {
             options.push(vec![(entrypoint(group), 0, complete(group))]);
             continue;
-        }
-        let (_, field_choices) = choices
-            .iter()
-            .find(|(choice_index, _)| *choice_index == index)
-            .expect("a choice for this field");
+        };
         let mut field_options = Vec::with_capacity(field_choices.len());
         for choice in field_choices {
             let tree = find_best_combination(

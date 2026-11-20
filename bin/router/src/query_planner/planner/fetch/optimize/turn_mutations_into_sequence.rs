@@ -60,7 +60,9 @@ impl FetchGraph<MultiTypeFetchStep> {
         let mut group_ended = false;
         for steps in fields.into_values() {
             let subgraph = self.single_subgraph(&steps)?;
-            // more fetches than the field's root ones, or root ones that need context
+            // more fetches than the field's root ones, or root ones that need context.
+            // `complete` in `pick_entrypoints` guesses this from the walked paths to pick
+            // subgraphs, keep them in step
             let reachable = self.reachable_from(&steps);
             let ends_group = reachable.len() > steps.len()
                 || reachable.iter().any(|index| {
