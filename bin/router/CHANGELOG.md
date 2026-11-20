@@ -116,6 +116,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.3.18 (2026-11-20)
+
+### Fixes
+
+#### Faster query planning for large queries
+
+Planning large queries does less work, with the same plans as before.
+
+- Normalizing an operation copies less. On our largest test query, it makes 6.6M allocations instead of 9.1M and peaks at 212 MiB instead of 305 MiB.
+- Optimizing the fetch graph skips checks that can't lead to a merge. On the same query, the fetch graph builds in 1.30 s instead of 1.96 s.
+
+#### `@requires` with a key field from another subgraph
+
+A `@requires` field whose subgraph is keyed by a field the entity's original subgraph doesn't have can now be planned. The key is read from a fetch that has it.
+
+#### Send the router's own `Accept` header on subgraph requests
+
+The router now sends `Accept: application/graphql-response+json, application/json;q=0.9` on regular subgraph requests, after header propagation. Before, it sent no `Accept` of its own, so a propagated client `Accept` reached the subgraph unchanged. A client sending `Accept: text/event-stream` made subgraphs that negotiate on `Accept` answer with an event stream, which the router then rejected with `SUBREQUEST_MALFORMED_RESPONSE`. Subscription requests keep their existing `Accept`.
+
 ## 0.3.17 (2026-11-19)
 
 ### Fixes
