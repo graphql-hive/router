@@ -156,6 +156,15 @@ export interface FetchNode {
    * batch fetch stands for that batch, see `BatchFetchNode.completes`.
    */
   dependsOn: FetchId[];
+  /**
+   * The most groups of context values one request of this fetch may carry, at least 1, from the
+   * `maxAliasesPerRequest` options. Put up to this many groups in one request, each under its own
+   * aliases, and send as many requests as it takes. 1 means one request per group, without
+   * aliasing. The planner already checked that the operation can be aliased per group, so the
+   * executor doesn't have to. Only on fetches with `contextVariables`, missing on those when there
+   * is no limit, so every group goes in one request.
+   */
+  maxContextGroups?: number;
 }
 
 /**
@@ -189,6 +198,12 @@ export interface BatchFetchNode {
    * Every fetch merged into this batch. A fetch that depends on any of them depends on the batch.
    */
   completes: FetchId[];
+  /**
+   * Like `FetchNode.maxContextGroups`, only on batches with an alias that has
+   * `contextVariables`. A group repeats every alias of the batch, so the limit is
+   * `maxAliasesPerRequest` divided by the number of aliases.
+   */
+  maxContextGroups?: number;
 }
 
 export interface EntityBatch {
