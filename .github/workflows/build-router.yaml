@@ -8,7 +8,8 @@ on:
     types: [published]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # release commits get their own group so a later push to main cannot cancel them
+  group: ${{ github.workflow }}-${{ github.ref }}${{ startsWith(github.event.head_commit.message, 'chore(release)') && format('-{0}', github.sha) || '' }}
   cancel-in-progress: true
 
 permissions:
