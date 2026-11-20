@@ -83,6 +83,8 @@ fn handle_selection_set<'a>(
 ) -> Result<(), NormalizationError> {
     let old_items = std::mem::take(&mut selection_set.items);
     let mut new_items: Vec<Selection<'a, String>> = Vec::new();
+    // fragments that others were merged into, with their type
+    let mut merged: Vec<(usize, &SupergraphDefinition)> = Vec::new();
 
     for selection in old_items {
         match selection {
@@ -132,7 +134,7 @@ fn handle_selection_set<'a>(
                 flatten_redundant_nested_inline_fragments(&mut current_fragment);
 
                 let mut merged_into_existing = false;
-                for new_item_selection in new_items.iter_mut() {
+                for (index, new_item_selection) in new_items.iter_mut().enumerate() {
                     if let Selection::InlineFragment(ref mut existing_fragment) = new_item_selection
                     {
                         if inline_fragments_equal(&current_fragment, existing_fragment) {
@@ -140,12 +142,13 @@ fn handle_selection_set<'a>(
                                 .selection_set
                                 .items
                                 .append(&mut current_fragment.selection_set.items);
-
-                            handle_selection_set(
-                                state,
-                                &mut existing_fragment.selection_set,
-                                child_parent_type,
-                            )?;
+                            // handled once at the end, after everything that merges into it
+                            if !merged
+                                .iter()
+                                .any(|(merged_index, _)| *merged_index == index)
+                            {
+                                merged.push((index, child_parent_type));
+                            }
 
                             merged_into_existing = true;
                             break;
@@ -160,6 +163,11 @@ fn handle_selection_set<'a>(
             Selection::FragmentSpread(_) => {
                 // gone at this point
             }
+        }
+    }
+    for (index, parent_type) in merged {
+        if let Selection::InlineFragment(fragment) = &mut new_items[index] {
+            handle_selection_set(state, &mut fragment.selection_set, parent_type)?;
         }
     }
     selection_set.items = new_items;
