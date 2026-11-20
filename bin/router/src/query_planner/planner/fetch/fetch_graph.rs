@@ -80,7 +80,9 @@ pub struct FetchGraph<State> {
     pub(crate) context_variables: HashMap<ContextVariableKey, String>,
     pub(crate) context_variable_counter: usize,
     /// Whether any step has `context_producers`. Merges only rename producers when one does,
-    /// as going through every step on each merge was most of what a merge cost.
+    /// as going through every step on each merge was most of what a merge cost. Only the
+    /// multi-type graph reads it, and `to_multi_type` works it out from the steps. Merges don't
+    /// add producers, they only combine or rename them.
     pub(crate) uses_context: bool,
     pub(crate) operation_variables: HashSet<String>,
     /// Each step's children by the entity call they make, see `entity_call_hash`, newest last. So
@@ -98,6 +100,9 @@ impl FetchGraph<SingleTypeFetchStep> {
         let new_graph = self
             .graph
             .map(|_, w| w.clone().into_multi_type(), |_, _| ());
+        let uses_context = new_graph
+            .node_weights()
+            .any(|step| !step.context_producers.is_empty());
 
         FetchGraph {
             graph: new_graph,
@@ -110,7 +115,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             context_producers: HashMap::new(),
             context_variables: HashMap::new(),
             context_variable_counter: 0,
-            uses_context: self.uses_context,
+            uses_context,
             operation_variables: HashSet::new(),
             children_by_entity_call: None,
             next_fetch_id: self.next_fetch_id,
@@ -1967,7 +1972,6 @@ fn process_requires_field_edge(
             .cloned()
             .ok_or(FetchGraphError::UnsupportedContextInRequirement)?;
         for producer in producers {
-            fetch_graph.uses_context = true;
             let id = fetch_graph.get_step_data(producer)?.id;
             fetch_graph.connect(producer, step_for_children_index);
             fetch_graph

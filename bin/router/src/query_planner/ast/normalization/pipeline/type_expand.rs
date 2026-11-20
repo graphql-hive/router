@@ -309,11 +309,9 @@ fn expand_to_objects<'a>(
     new_items: &mut Vec<Selection<'a, String>>,
 ) -> Result<(), NormalizationError> {
     // a copy for each type, the last one takes the field itself
-    let copies = std::iter::repeat_n(
-        (field.directives.clone(), field),
-        possible_object_types.len(),
-    );
-    for ((directives, mut new_field), obj) in copies.zip(possible_object_types) {
+    let copies = std::iter::repeat_n(field, possible_object_types.len());
+    for (mut new_field, obj) in copies.zip(possible_object_types) {
+        let directives = new_field.directives.clone();
         if !new_field.selection_set.items.is_empty() {
             if let Some(obj_field) = obj.fields.get(&new_field.name) {
                 let inner_type_name = obj_field.field_type.inner_type();
