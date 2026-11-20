@@ -15,20 +15,11 @@ macro_rules! make_content_type {
         concat!("multipart/mixed;boundary=\"", $boundary, "\"")
     };
 }
-macro_rules! make_boundaries {
-    ($boundary:expr) => {
-        (
-            // start
-            concat!(
-                "--",
-                $boundary,
-                "\r\nContent-Type: application/json\r\n\r\n"
-            ),
-            // end
-            concat!("--", $boundary, "--"),
-        )
-    };
-}
+
+/// What comes between a boundary and a part's payload.
+const PART_HEAD: &str = "\r\nContent-Type: application/json\r\n\r\n";
+/// After a boundary, this makes it the closing one.
+const CLOSE: &str = "--";
 
 const INCREMENTAL_DELIVERY_BOUNDARY: &str = "-";
 
@@ -56,16 +47,21 @@ pub fn create_incremental_delivery_stream(
     input: impl Stream<Item = Vec<u8>> + Send + Unpin + 'static,
 ) -> impl Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Unpin {
     let mut input = input;
-    let (start_boundary, end_boundary) = make_boundaries!(INCREMENTAL_DELIVERY_BOUNDARY);
+    // Every part goes out with the boundary that ends it. A client only knows a part is whole
+    // once it sees that boundary, so with the boundary in front of the next part it would sit
+    // on each part until the next one came. The bytes are the same either way.
+    const BOUNDARY: &str = concat!("--", INCREMENTAL_DELIVERY_BOUNDARY);
+    const PART_END: &str = concat!("\r\n", BOUNDARY);
     async_stream::stream! {
+        yield Ok(Bytes::from(BOUNDARY));
         loop {
             match input.next().await {
                 Some(resp) => {
                     match std::str::from_utf8(&resp) {
                         Ok(_) => {
-                            yield Ok(Bytes::from(start_boundary));
+                            yield Ok(Bytes::from(PART_HEAD));
                             yield Ok(Bytes::from(resp));
-                            yield Ok(Bytes::from("\r\n"));
+                            yield Ok(Bytes::from(PART_END));
                         }
                         Err(e) => {
                             yield Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e));
@@ -74,7 +70,7 @@ pub fn create_incremental_delivery_stream(
                     }
                 }
                 None => {
-                    yield Ok(Bytes::from(end_boundary));
+                    yield Ok(Bytes::from(CLOSE));
                     break;
                 },
             }
@@ -100,9 +96,13 @@ pub fn create_apollo_multipart_http_stream(
     heartbeat_interval: Duration,
 ) -> impl Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Unpin {
     let mut input = input;
-    let (start_boundary, end_boundary) = make_boundaries!(APOLLO_MULTIPART_HTTP_BOUNDARY);
-    let ping = "{}\r\n";
+    // every event and heartbeat goes out with the boundary that ends it, see
+    // `create_incremental_delivery_stream`
+    const BOUNDARY: &str = concat!("--", APOLLO_MULTIPART_HTTP_BOUNDARY);
+    const PART_END: &str = concat!("\r\n", BOUNDARY);
+    let ping = "{}";
     async_stream::stream! {
+        yield Ok(Bytes::from(BOUNDARY));
         loop {
             tokio::select! {
                 item = input.next() => {
@@ -110,7 +110,7 @@ pub fn create_apollo_multipart_http_stream(
                         Some(resp) => {
                             match std::str::from_utf8(&resp) {
                                 Ok(_) => {
-                                    yield Ok(Bytes::from(start_boundary));
+                                    yield Ok(Bytes::from(PART_HEAD));
                                     // Wrap the GraphQL response in a payload field
                                     // As per the spec.
                                     let mut payload = ntex::util::BytesMut::with_capacity(resp.len() + 15);
@@ -118,7 +118,7 @@ pub fn create_apollo_multipart_http_stream(
                                     payload.put_slice(&resp);
                                     payload.put_slice(br"}");
                                     yield Ok(payload.freeze());
-                                    yield Ok(Bytes::from("\r\n"));
+                                    yield Ok(Bytes::from(PART_END));
                                 }
                                 Err(e) => {
                                     // TODO: use transport level errors as per spec
@@ -128,16 +128,80 @@ pub fn create_apollo_multipart_http_stream(
                             }
                         }
                         None => {
-                            yield Ok(Bytes::from(end_boundary));
+                            yield Ok(Bytes::from(CLOSE));
                             break;
                         },
                     }
                 }
                 _ = tokio::time::sleep(heartbeat_interval) => {
-                    yield Ok(Bytes::from(start_boundary));
+                    yield Ok(Bytes::from(PART_HEAD));
                     yield Ok(Bytes::from(ping));
+                    yield Ok(Bytes::from(PART_END));
                 }
             }
         }
     }.boxed()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{create_apollo_multipart_http_stream, create_incremental_delivery_stream};
+    use futures_util::{FutureExt, StreamExt};
+
+    /// What the stream has to give right now, without waiting for more parts.
+    fn ready(
+        stream: &mut (impl futures_util::Stream<Item = Result<ntex::util::Bytes, std::io::Error>>
+                  + Unpin),
+    ) -> String {
+        let mut out = Vec::new();
+        while let Some(Some(chunk)) = stream.next().now_or_never() {
+            out.extend_from_slice(&chunk.unwrap());
+        }
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn a_part_goes_out_with_the_boundary_that_ends_it() {
+        let (parts, input) = futures::channel::mpsc::unbounded::<Vec<u8>>();
+        let mut stream = create_incremental_delivery_stream(input);
+
+        // the next part isn't there yet, the client still has all of this one
+        parts
+            .unbounded_send(br#"{"hasNext":true}"#.to_vec())
+            .unwrap();
+        assert_eq!(
+            ready(&mut stream),
+            "---\r\nContent-Type: application/json\r\n\r\n{\"hasNext\":true}\r\n---"
+        );
+
+        parts
+            .unbounded_send(br#"{"hasNext":false}"#.to_vec())
+            .unwrap();
+        assert_eq!(
+            ready(&mut stream),
+            "\r\nContent-Type: application/json\r\n\r\n{\"hasNext\":false}\r\n---"
+        );
+
+        drop(parts);
+        assert_eq!(ready(&mut stream), "--");
+    }
+
+    #[tokio::test]
+    async fn a_subscription_event_goes_out_with_the_boundary_that_ends_it() {
+        let (events, input) = futures::channel::mpsc::unbounded::<Vec<u8>>();
+        let heartbeat = std::time::Duration::from_secs(3600);
+        let mut stream = create_apollo_multipart_http_stream(input, heartbeat);
+
+        // no next event and no heartbeat yet, the client still has all of this one
+        events
+            .unbounded_send(br#"{"data":{"a":1}}"#.to_vec())
+            .unwrap();
+        assert_eq!(
+            ready(&mut stream),
+            "--graphql\r\nContent-Type: application/json\r\n\r\n{\"payload\":{\"data\":{\"a\":1}}}\r\n--graphql"
+        );
+
+        drop(events);
+        assert_eq!(ready(&mut stream), "--");
+    }
 }
