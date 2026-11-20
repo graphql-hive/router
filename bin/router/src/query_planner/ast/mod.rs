@@ -1,3 +1,4 @@
+pub mod defer;
 pub mod document;
 pub mod fragment;
 pub mod fragment_expansion;

@@ -621,6 +621,7 @@ async fn handle_text_frame(
                     ));
 
                   let fingerprint = if request_dedupe_enabled
+                      && normalize_payload.defer_plans.is_none()
                       && matches!(
                           normalize_payload.operation_for_plan.operation_kind,
                           // same deduplication applies for queries and subscriptions
@@ -694,6 +695,7 @@ async fn handle_text_frame(
                       guard,
                       response_header_sink.clone(),
                       connection_fingerprint,
+                      None,
                   );
 
                   let shared_response = if let Some(fp) = fingerprint {
@@ -741,7 +743,8 @@ async fn handle_text_frame(
                       }
                   };
 
-                  if let Some(hive_usage_agent) = &supergraph.runtime.hive_usage_agent {
+                  let mut usage = None;
+                  if supergraph.runtime.hive_usage_agent.is_some() {
                       let mut headers_vec = Vec::with_capacity(headers.len());
                       for (name, value) in headers.iter() {
                           if let Ok(val_str) = value.to_str() {
@@ -755,33 +758,71 @@ async fn handle_text_frame(
                           url: http::Uri::try_from(ws_uri).unwrap_or_default(),
                           headers: headers_vec,
                       };
-                      usage_reporting::collect_usage_report(
-                          supergraph.snapshot.supergraph_schema.clone(),
-                          started_at.elapsed(),
-                          client_name,
-                          client_version,
-                          normalize_payload.operation_for_plan.name.as_deref(),
-                          normalize_payload.operation_for_plan.operation_kind.as_ref(),
-                          &parser_payload.minified_document,
-                          hive_usage_agent,
-                          shared_response.error_count(),
-                          Some(request_details),
+                      usage = Some(usage_reporting::CompletionUsage {
+                          runtime: supergraph.runtime.clone(),
+                          schema: supergraph.snapshot.supergraph_schema.clone(),
+                          started_at,
+                          client_name: client_name.map(str::to_string),
+                          client_version: client_version.map(str::to_string),
+                          operation_name: normalize_payload.operation_for_plan.name.clone(),
+                          operation_kind: normalize_payload.operation_for_plan.operation_kind.clone(),
+                          document: parser_payload.minified_document.clone(),
+                          request_details: Some(request_details),
                           // The graphql-transport-ws Subscribe payload carries no document id
                           // and this path never invokes the document id resolver.
-                          None,
-                          usage_variables,
-                      )
-                      .await;
+                          persisted_document_id: None,
+                          variables: usage_variables,
+                      });
                   }
-
-                  debug!(target: targets::GRAPHQL_EXECUTION, error_count = shared_response.error_count(), "graphql request completed");
-
-                  summary::record(|s| s.set_error_count(shared_response.error_count() as u32));
+                  // usage, the log line and the summary, right away or after the last `@defer` part
+                  let shared_response =
+                      usage_reporting::report_on_completion(usage, shared_response).await;
 
                   match shared_response {
                       SharedRouterResponse::Single(response) => {
                           let _ = sink.send(ServerMessage::next(&id, &response.body)).await;
                           Some(ServerMessage::complete(&id))
+                      }
+                      SharedRouterResponse::Parts(response) => {
+                          let _ = sink.send(ServerMessage::next(&id, &response.primary)).await;
+                          // the deferred parts are spawned and can be cancelled like a
+                          // subscription, waiting for them here would hold up every other
+                          // message on the connection, `complete` included
+                          let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
+                          state
+                              .borrow_mut()
+                              .subscriptions
+                              .insert(id.clone(), cancel_tx);
+                          let guard = SubscriptionGuard {
+                              state: state.clone(),
+                              id: id.clone(),
+                          };
+                          let mut rest = response.take_rest();
+                          let sink = sink.clone();
+                          let id = id.clone();
+                          let request_scope = RequestTaskScope::capture();
+                          rt::spawn(request_scope.scope(async move {
+                              let _guard = guard;
+                              loop {
+                                  tokio::select! {
+                                      part = rest.next() => match part {
+                                          Some(part) => {
+                                              let _ = sink.send(ServerMessage::next(&id, &part)).await;
+                                          }
+                                          None => {
+                                              let _ = sink.send(ServerMessage::complete(&id)).await;
+                                              break;
+                                          }
+                                      },
+                                      // dropping `rest` stops the deferred fetches
+                                      _ = cancel_rx.recv() => {
+                                          trace!(target: targets::WEBSOCKET_SERVER, id = %id, "Deferred operation cancelled");
+                                          break;
+                                      }
+                                  }
+                              }
+                          }));
+                          None
                       }
                       SharedRouterResponse::Stream(response) => {
                           let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);

@@ -22,7 +22,7 @@ impl FetchStepData<MultiTypeFetchStep> {
         other: &Self,
         fetch_graph: &FetchGraph<MultiTypeFetchStep>,
     ) -> bool {
-        if !self.can_merge_context(other) {
+        if !self.can_share_a_request(other) {
             return false;
         }
 

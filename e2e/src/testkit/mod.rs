@@ -568,6 +568,21 @@ impl TestSubgraphs<Started> {
             .map(|entry| entry.value().to_vec())
     }
 
+    /// Every request received so far, by subgraph name, sorted by name.
+    pub fn requests_log(&self) -> Vec<(String, Vec<RequestLike>)> {
+        let mut log: Vec<_> = self
+            .handle
+            .as_ref()
+            .expect("subgraphs not started")
+            .state
+            .request_log
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().to_vec()))
+            .collect();
+        log.sort_by(|a, b| a.0.cmp(&b.0));
+        log
+    }
+
     /// Replaces the subgraphs address in the given supergraph string with the test
     /// subgraphs address and returns the modified supergraph.
     ///

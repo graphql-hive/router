@@ -67,6 +67,7 @@ fn inline_fragment_spreads_inner(
                     selections: expanded_selections,
                     skip_if: None,
                     include_if: None,
+                    defer: None,
                 }));
             }
         }

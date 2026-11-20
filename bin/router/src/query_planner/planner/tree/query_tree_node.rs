@@ -1,3 +1,4 @@
+use crate::query_planner::ast::defer::DeferId;
 use petgraph::graph::{EdgeIndex, NodeIndex};
 use std::rc::Rc;
 use tracing::{instrument, trace};
@@ -27,6 +28,8 @@ pub struct QueryTreeNode {
     pub children: Vec<Rc<QueryTreeNode>>,
     pub selection_attributes: Option<SelectionAttributes>,
     pub condition: Option<Condition>,
+    /// The deferred part that starts here, see `PathSegment::defer`.
+    pub defer: Option<DeferId>,
     /// Distinguishes nodes originating from different top-level mutation fields.
     pub mutation_field_position: MutationFieldPosition,
 }
@@ -51,6 +54,7 @@ impl PartialEq for QueryTreeNode {
             && self.selection_attributes == other.selection_attributes
             && self.mutation_field_position == other.mutation_field_position
             && self.condition == other.condition
+            && self.defer == other.defer
             && self.context_coordinate() == other.context_coordinate()
     }
 }
@@ -97,6 +101,7 @@ impl QueryTreeNode {
             selection_attributes: selection_attributes.cloned(),
             mutation_field_position: None,
             condition: condition.cloned(),
+            defer: None,
         }
     }
 
@@ -211,6 +216,7 @@ impl QueryTreeNode {
             (*selection_attributes_at_index).as_ref(),
             segment_at_index.condition.as_ref(),
         );
+        tree_node.defer = segment_at_index.defer;
 
         // Only apply the position to the first node created from the segments
         if current_index == 0 {

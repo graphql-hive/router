@@ -153,6 +153,10 @@ pub enum ClientPipelineError {
     #[strum(serialize = "SUBSCRIPTIONS_TRANSPORT_NOT_SUPPORTED")]
     SubscriptionsTransportNotSupported,
 
+    #[error("The operation uses @defer, but the client doesn't accept an incremental response. Accept multipart/mixed or text/event-stream.")]
+    #[strum(serialize = "DEFER_TRANSPORT_NOT_SUPPORTED")]
+    DeferTransportNotSupported,
+
     #[error(transparent)]
     #[strum(serialize = "READ_BODY_STREAM_ERROR")]
     ReadBodyStreamError(ReadBodyStreamError),
@@ -416,6 +420,7 @@ impl ClientPipelineError {
             (Self::IntrospectionDisabled, _) => StatusCode::FORBIDDEN,
             (Self::SubscriptionsNotSupported, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
+            (Self::DeferTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
             (Self::ReadBodyStreamError(err), _) => err.status_code(),
             (Self::TimeoutError, _) => StatusCode::GATEWAY_TIMEOUT,
         }

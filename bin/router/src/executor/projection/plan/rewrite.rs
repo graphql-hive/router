@@ -17,6 +17,20 @@ impl ProjectionPlan {
             None => Arc::clone(self),
         }
     }
+
+    /// Like [`Self::rewrite`], for a plan rooted somewhere in the operation: the walk starts at
+    /// each of `starts` in the trie. `None` when nothing changed.
+    pub(crate) fn rewrite_from(&self, trie: &Trie, starts: &[PathIndex]) -> Option<Self> {
+        let mut patched = None;
+        for start in starts {
+            rewrite_range(self, &mut patched, self.roots, trie, *start);
+        }
+        patched.map(|fields: Vec<FieldRecord>| ProjectionPlan {
+            roots: self.roots,
+            fields: fields.into_boxed_slice(),
+            tables: self.tables.clone(),
+        })
+    }
 }
 
 fn rewrite_range(

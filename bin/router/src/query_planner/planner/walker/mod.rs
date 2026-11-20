@@ -9,7 +9,6 @@ use std::{borrow::Cow, collections::VecDeque, rc::Rc};
 
 use crate::query_planner::{
     ast::{
-        merge_path::Condition,
         operation::OperationDefinition,
         selection_item::SelectionItem,
         selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
@@ -21,7 +20,10 @@ use crate::query_planner::{
     },
     planner::walker::{
         path::UnionContext,
-        pathfinder::{find_direct_path, find_self_referencing_direct_path, NavigationTarget},
+        pathfinder::{
+            find_deferred_self_key_path, find_direct_path, find_self_referencing_direct_path,
+            NavigationTarget,
+        },
     },
     state::supergraph_state::{OperationKind, SupergraphState},
     utils::cancellation::CancellationToken,
@@ -255,7 +257,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
     if tail_type_name == &fragment.type_condition {
         // It's the same type and no conditions are applied, we can skip the fragment processing
         // and go directly to its selections.
-        if fragment.include_if.is_none() && fragment.skip_if.is_none() {
+        if fragment.include_if.is_none() && fragment.skip_if.is_none() && fragment.defer.is_none() {
             return process_selection_set(
                 graph,
                 supergraph,
@@ -267,10 +269,9 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             );
         }
 
-        // Looks like the fragment has conditions, we need to process them differently.
-        // We aim to preserve the inline fragment due to conditions, instead of eliminating it,
+        // Looks like the fragment has conditions or a `@defer`, we need to process them
+        // differently. We aim to preserve the inline fragment, instead of eliminating it,
         // and jumping straight to its selections.
-        let condition: Option<Condition> = fragment.into();
 
         let mut next_paths: Vec<OperationPath<'graph>> = Vec::with_capacity(paths.len());
         for path in paths {
@@ -295,8 +296,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
                     supergraph,
                     override_context,
                     path,
-                    &fragment.type_condition,
-                    condition.as_ref().expect("Condition should be present"),
+                    fragment,
                     cancellation_token,
                 )?)
             } else {
@@ -305,7 +305,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
                     supergraph,
                     override_context,
                     path,
-                    &NavigationTarget::ConcreteType(&fragment.type_condition, condition.clone()),
+                    &NavigationTarget::from(fragment),
                     cancellation_token,
                 )?
             };
@@ -354,7 +354,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             supergraph,
             override_context,
             path,
-            &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
+            &NavigationTarget::from(fragment),
             cancellation_token,
         )?;
 
@@ -371,7 +371,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
                 supergraph,
                 override_context,
                 path,
-                &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
+                &NavigationTarget::from(fragment),
                 &ExcludedFromLookup::new(),
                 cancellation_token,
             )?;
@@ -591,11 +591,20 @@ fn process_field<'graph, 'op: 'graph>(
         let mut advanced = false;
 
         let excluded = ExcludedFromLookup::new();
-        let direct_paths = find_direct_paths(
+        // right inside a deferred fragment, a field of this subgraph goes through the type's own
+        // key, so it gets an entity call of its own
+        let self_key_path = find_deferred_self_key_path(
             graph,
             supergraph,
             override_context,
             path,
+            cancellation_token,
+        )?;
+        let direct_paths = find_direct_paths(
+            graph,
+            supergraph,
+            override_context,
+            self_key_path.as_ref().unwrap_or(path),
             &NavigationTarget::Field {
                 field,
                 target_subgraph_ids: None,

@@ -28,12 +28,14 @@ impl From<Arc<Document>> for ConsumerSchema {
 }
 
 impl ConsumerSchema {
-    pub fn new_from_supergraph(supergraph: &Document) -> Self {
-        let document: Arc<Document> = Self::create_consumer_schema(supergraph).into();
+    /// `defer` adds the `@defer` directive, so operations that use it pass validation
+    /// and introspection shows it.
+    pub fn new_from_supergraph(supergraph: &Document, defer: bool) -> Self {
+        let document: Arc<Document> = Self::create_consumer_schema(supergraph, defer).into();
         document.into()
     }
 
-    fn create_consumer_schema(supergraph: &Document) -> Document {
+    fn create_consumer_schema(supergraph: &Document, defer: bool) -> Document {
         let mut result = PruneInaccessible::prune(supergraph);
         result = StripSchemaInternals::strip_schema_internals(&result);
         // Add introspection schema to the consumer schema
@@ -101,6 +103,18 @@ impl ConsumerSchema {
                     _ => result.definitions.push(def.clone()),
                 }
             });
+        if defer {
+            let defer_directive = graphql_tools::parser::schema::parse_schema(
+                "directive @defer(if: Boolean! = true, label: String) on FRAGMENT_SPREAD | INLINE_FRAGMENT",
+            )
+            .expect("valid @defer definition");
+            let already_defined = result.definitions.iter().any(|d| {
+                matches!(d, Definition::DirectiveDefinition(existing) if existing.name == "defer")
+            });
+            if !already_defined {
+                result.definitions.extend(defer_directive.definitions);
+            }
+        }
         result
     }
 }
@@ -139,7 +153,7 @@ mod test {
             "#,
         );
 
-        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph, false);
         let directive_count = |name: &str| {
             consumer_schema
                 .document

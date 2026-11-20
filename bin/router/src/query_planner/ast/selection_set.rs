@@ -315,6 +315,27 @@ impl FieldSelection {
     }
 }
 
+/// A `@defer` on an inline fragment (spreads are inlined before this point).
+/// `@defer(if: false)` with a literal `false` never gets a marker.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeferMarker {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// The variable in `@defer(if: $var)`. `None` means the fragment is always deferred.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub if_var: Option<String>,
+    /// Line and column of the `@defer`, until normalization numbers them in document order as
+    /// `(n, 0)` (see `defer::number_defers`), so formatting doesn't change it. Two `@defer`s
+    /// without a label are still two, so they don't get merged, and copies of one fragment made
+    /// by normalization stay one.
+    #[serde(skip)]
+    pub position: (usize, usize),
+    /// Set on the operation the planner gets, see `defer::prepare_for_planning`.
+    #[serde(skip)]
+    pub id: Option<crate::query_planner::ast::defer::DeferId>,
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InlineFragmentSelection {
@@ -324,6 +345,8 @@ pub struct InlineFragmentSelection {
     pub skip_if: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_if: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer: Option<DeferMarker>,
 }
 
 impl InlineFragmentSelection {
@@ -348,6 +371,7 @@ impl InlineFragmentSelection {
             selections,
             skip_if: self.skip_if.clone(),
             include_if: self.include_if.clone(),
+            defer: self.defer.clone(),
         }
     }
 }
@@ -356,6 +380,11 @@ impl Hash for InlineFragmentSelection {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.type_condition.hash(state);
         self.selections.hash(state);
+        // only touch the hasher when there's a defer, so hashes of operations
+        // without one stay the same
+        if let Some(defer) = &self.defer {
+            defer.hash(state);
+        }
     }
 }
 
@@ -450,6 +479,17 @@ impl PrettyDisplay for InlineFragmentSelection {
         }
         if let Some(include_if) = &self.include_if {
             write!(f, "@include(if: ${}) ", include_if)?;
+        }
+        // debug output only, `Display` never prints it since subgraphs don't get `@defer`
+        if let Some(defer) = &self.defer {
+            write!(f, "@defer")?;
+            match (&defer.label, &defer.if_var) {
+                (None, None) => {}
+                (Some(label), None) => write!(f, "(label: \"{label}\")")?,
+                (None, Some(var)) => write!(f, "(if: ${var})")?,
+                (Some(label), Some(var)) => write!(f, "(if: ${var}, label: \"{label}\")")?,
+            }
+            write!(f, " ")?;
         }
 
         writeln!(f, "{{")?;
@@ -976,6 +1016,7 @@ mod tests {
                 selections: SelectionSet::default(),
                 skip_if: None,
                 include_if: Some("first".to_string()),
+                defer: None,
             })],
         };
         let source = SelectionSet {
@@ -984,6 +1025,7 @@ mod tests {
                 selections: SelectionSet::default(),
                 skip_if: None,
                 include_if: Some("second".to_string()),
+                defer: None,
             })],
         };
 
@@ -1090,6 +1132,7 @@ mod tests {
             selections: SelectionSet::default(),
             skip_if: Some("skip".to_string()),
             include_if: Some("include".to_string()),
+            defer: None,
         };
         assert!(!fragment_condition_equal(&skip_cond, &fragment));
         assert!(!fragment_condition_equal(&include_cond, &fragment));

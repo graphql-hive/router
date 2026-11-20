@@ -260,6 +260,7 @@ impl<'a> Builder<'a> {
                     selections,
                     skip_if,
                     include_if,
+                    ..
                 }) => {
                     let type_condition = self.intern(type_condition);
                     let skip_if = self.intern_opt(skip_if.as_deref());
@@ -472,6 +473,7 @@ mod tests {
                     },
                     skip_if: None,
                     include_if: None,
+                    defer: None,
                 }),
             ],
         };

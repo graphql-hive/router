@@ -1088,3 +1088,80 @@ async fn usage_reporting_process_variables_reports_only_provided_input_fields() 
         );
     }
 }
+
+/// An error in a deferred part counts: the report goes out after the last part.
+#[ntex::test]
+async fn usage_reporting_counts_errors_of_deferred_parts() {
+    use crate::testkit::{ClientResponseExt, RequestLike, ResponseLike};
+
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let mock = MockUsageEndpoint::start();
+    let usage_endpoint = &mock.address;
+
+    // only the deferred part calls reviews, and it fails
+    let subgraphs = TestSubgraphs::builder()
+        .with_on_request(|req: RequestLike| {
+            (req.path == "/reviews").then(|| {
+                let mut headers = http::HeaderMap::new();
+                headers.insert(
+                    http::header::CONTENT_TYPE,
+                    http::HeaderValue::from_static("application/json"),
+                );
+                ResponseLike {
+                    status: axum::http::StatusCode::OK,
+                    headers,
+                    body: Some(bytes::Bytes::from_static(
+                        br#"{"data":{"_entities":[null]},"errors":[{"message":"reviews are down"}]}"#,
+                    )),
+                }
+            })
+        })
+        .build()
+        .start()
+        .await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+            supergraph:
+              source: file
+              path: {supergraph_path}
+
+            defer:
+              enabled: true
+
+            telemetry:
+              hive:
+                token: test-token
+                usage_reporting:
+                  enabled: true
+                  endpoint: {usage_endpoint}
+                  buffer_size: 1
+                  flush_interval: 100ms
+            "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    let res = router
+        .send_graphql_request(
+            "{ me { id ... @defer { reviews { id } } } }",
+            None,
+            crate::testkit::some_header_map!(http::header::ACCEPT => "multipart/mixed"),
+        )
+        .await;
+    assert!(res.status().is_success());
+    let body = res.string_body().await;
+    assert!(body.contains("DOWNSTREAM_SERVICE_ERROR"), "{body}");
+
+    mock.wait_for_reports(1).await;
+    let reports = mock.reports().await;
+    let execution = &reports[0]["operations"][0]["execution"];
+    assert_eq!(execution["ok"], false, "{execution}");
+    assert_eq!(execution["errorsTotal"], 1, "{execution}");
+}

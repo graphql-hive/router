@@ -1,0 +1,38 @@
+### user
+extend schema @link(url: "https://specs.apollo.dev/federation/v2.3", import: ["@key"])
+type Query { currentUser: User otherUser: User }
+type User @key(fields: "id") { id: ID! name: String phone: String activeOrganization: Organization allOrganizations: [Organization] }
+type Organization @key(fields: "id") { id: ID }
+### orga
+extend schema @link(url: "https://specs.apollo.dev/federation/v2.3", import: ["@key"])
+type Query { orga(id: ID): Organization }
+type User @key(fields: "id") { id: ID! }
+type Organization @key(fields: "id") { id: ID creatorUser: User name: String nonNullId: ID! suborga: [Organization] }
+### user_auth
+extend schema @link(url: "https://specs.apollo.dev/federation/v2.5", import: ["@key", "@authenticated"])
+type Query { currentUser: User otherUser: User }
+type User @key(fields: "id") { id: ID! name: String phone: String @authenticated activeOrganization: Organization }
+type Organization @key(fields: "id") { id: ID }
+### orga_auth
+extend schema @link(url: "https://specs.apollo.dev/federation/v2.5", import: ["@key", "@authenticated"])
+type Query { orga(id: ID): Organization }
+type User @key(fields: "id") { id: ID! }
+type Organization @key(fields: "id") { id: ID creatorUser: User name: String nonNullId: ID! @authenticated suborga: [Organization] }
+### computers
+extend schema @link(url: "https://specs.apollo.dev/federation/v2.3", import: ["@key"])
+type Query { computer(id: ID!): Computer }
+type Computer { id: ID! errorField: String nonNullErrorField: String! }
+### identity
+extend schema @link(url: "https://specs.apollo.dev/federation/v2.3", import: ["@key"])
+type Query { me: Identity }
+interface Identity { id: ID! name: String! }
+type User implements Identity @key(fields: "id") { fullName: String! id: ID! memberships: [UserMembership!]! name: String! }
+type UserMembership { account: Account! permission: UserPermission! }
+enum UserPermission { USER ADMIN }
+type Account @key(fields: "id") { id: ID! name: String! }
+### payments
+extend schema @link(url: "https://specs.apollo.dev/federation/v2.3", import: ["@key"])
+type Query { name: String }
+type Mutation { makePayment(userId: ID!): MakePaymentResult! }
+type MakePaymentResult { id: ID! paymentStatus: PaymentStatus }
+type PaymentStatus { id: ID! }

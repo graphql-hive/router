@@ -53,6 +53,25 @@ Arguments:
 Environment:
 
 - `GRAPHQL_DIFF_QUERIES`: number of generated queries to run
+- `GRAPHQL_DIFF_DEFER=1`: tests `@defer` on the candidate, see below
+
+## `@defer`
+
+With `GRAPHQL_DIFF_DEFER=1`, the generator puts `@defer` on inline fragments, sometimes with `if` (a variable that's `true`, `false` or not sent, or a literal) and a label, at most 4 per query. The candidate gets that query and asks for an incremental response (`multipart/mixed`), and its parts are merged back together the way a client would. The baseline gets the same query without the `@defer`s. The merged `data` has to equal the baseline's.
+
+The candidate needs `defer.enabled`, like `bench/configs/defer.config.yaml`. The baseline can be the monolith or the same router, then it compares the router with and without `@defer`:
+
+```bash
+ROUTER_CONFIG_FILE_PATH=bench/configs/defer.config.yaml ./target/debug/hive_router &
+GRAPHQL_DIFF_DEFER=1 cargo run -p graphql-differential -- \
+  http://localhost:4000/graphql \
+  http://localhost:4000/graphql \
+  bench/schema.graphql
+```
+
+At the end it says how many queries had `@defer` and how many came back in parts. A failing case also gets `plain-query.graphql`, the query the baseline got.
+
+Without `GRAPHQL_DIFF_DEFER`, a seed gives the same query it always did.
 
 Example:
 

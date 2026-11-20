@@ -139,12 +139,57 @@ pub fn project_by_operation(
     response_size_estimate: usize,
     schema_metadata: &SchemaMetadata,
 ) -> Result<Vec<u8>, ProjectionError> {
+    let Projected {
+        mut buffer,
+        mut errors,
+        ..
+    } = project_data(
+        data,
+        errors,
+        operation_type_name,
+        plan,
+        variable_values,
+        Vec::with_capacity(response_size_estimate),
+        schema_metadata,
+    )?;
+    if !errors.is_empty() {
+        trim_error_paths(&mut errors, plan);
+    }
+    write_response_tail(&mut buffer, &errors, extensions)?;
+    buffer.put(CLOSE_BRACE);
+    Ok(buffer)
+}
+
+/// What [`project_data`] wrote.
+pub(crate) struct Projected {
+    /// `buffer` with `{"data":<projected data>` (no closing brace) appended.
+    pub buffer: Vec<u8>,
+    /// `errors`, with any errors projection itself ran into (like a bad enum value).
+    pub errors: Vec<GraphQLError>,
+    /// Whether projection put a `null` where the data has a value: a null that bubbled up, a
+    /// rejected field, a value of the wrong type. When it didn't, every object of the data the
+    /// plan selects is in the output.
+    pub nulled: bool,
+}
+
+/// Appends `{"data":<projected data>` (no closing brace) to `buffer`, see [`Projected`].
+/// `data` is projected as an object of type `type_name`, `null` if it isn't an object.
+pub(crate) fn project_data(
+    data: &Value,
+    errors: Vec<GraphQLError>,
+    type_name: &str,
+    plan: &ProjectionPlan,
+    variable_values: &Option<HashMap<String, sonic_rs::Value>>,
+    buffer: Vec<u8>,
+    schema_metadata: &SchemaMetadata,
+) -> Result<Projected, ProjectionError> {
     let mut out = Projector {
         plan,
         schema: schema_metadata,
         variables: variable_values,
         errors,
-        buffer: Vec::with_capacity(response_size_estimate),
+        buffer,
+        nulled: false,
     };
     out.buffer.put(OPEN_BRACE);
     out.buffer.put(QUOTE);
@@ -160,7 +205,7 @@ pub fn project_by_operation(
         let null_propagation_decision = out.project_object_fields(
             data_map,
             root_fields,
-            &TypeName::resolved(operation_type_name),
+            &TypeName::resolved(type_name),
             &mut first,
             &mut [],
         )?;
@@ -168,6 +213,7 @@ pub fn project_by_operation(
         if null_propagation_decision.should_propagate() {
             out.buffer.truncate(null_propagation_checkpoint);
             out.buffer.put(NULL);
+            out.nulled = true;
         } else if !first {
             out.buffer.put(CLOSE_BRACE);
         } else {
@@ -178,38 +224,57 @@ pub fn project_by_operation(
         out.buffer.put(NULL);
     }
 
-    if !out.errors.is_empty() {
-        trim_error_paths(&mut out.errors, plan);
-        let serialized = sonic_rs::to_vec(&out.errors)
-            .map_err(|e| ProjectionError::ErrorsSerializationFailure(e.to_string()))?;
-        out.buffer.put(COMMA);
-        out.buffer.put(QUOTE);
-        out.buffer.put("errors".as_bytes());
-        out.buffer.put(QUOTE);
-        out.buffer.put(COLON);
-        out.buffer.put_slice(&serialized);
+    Ok(Projected {
+        buffer: out.buffer,
+        errors: out.errors,
+        nulled: out.nulled,
+    })
+}
+
+/// Writes `,"errors":[..]` and `,"extensions":{..}` when there's something to write.
+pub(crate) fn write_response_tail(
+    buffer: &mut Vec<u8>,
+    errors: &[GraphQLError],
+    extensions: &ExecutionResultExtensions<'_>,
+) -> Result<(), ProjectionError> {
+    if !errors.is_empty() {
+        write_errors(buffer, errors)?;
     }
 
     if !extensions.is_empty() {
         let serialized_extensions = sonic_rs::to_vec(extensions)
             .map_err(|e| ProjectionError::ExtensionsSerializationFailure(e.to_string()))?;
-        out.buffer.put(COMMA);
-        out.buffer.put(QUOTE);
-        out.buffer.put("extensions".as_bytes());
-        out.buffer.put(QUOTE);
-        out.buffer.put(COLON);
-        out.buffer.put_slice(&serialized_extensions);
+        buffer.put(COMMA);
+        buffer.put(QUOTE);
+        buffer.put("extensions".as_bytes());
+        buffer.put(QUOTE);
+        buffer.put(COLON);
+        buffer.put_slice(&serialized_extensions);
     }
+    Ok(())
+}
 
-    out.buffer.put(CLOSE_BRACE);
-    Ok(out.buffer)
+/// Writes `,"errors":[..]`.
+pub(crate) fn write_errors(
+    buffer: &mut Vec<u8>,
+    errors: &[GraphQLError],
+) -> Result<(), ProjectionError> {
+    let serialized = sonic_rs::to_vec(errors)
+        .map_err(|e| ProjectionError::ErrorsSerializationFailure(e.to_string()))?;
+    buffer.put(COMMA);
+    buffer.put(QUOTE);
+    buffer.put("errors".as_bytes());
+    buffer.put(QUOTE);
+    buffer.put(COLON);
+    buffer.put_slice(&serialized);
+    Ok(())
 }
 
 /// Cuts error paths at the first key the client didn't ask for. A subgraph's path can go into a
 /// field the router fetched for itself, like a `@requires` value under `_internal_qp_alias_0`, and
 /// that key means nothing to the client. The error points at the closest value it asked for then.
 /// The client's own keys are known from the plan, it may use `_internal_qp_alias_0` itself.
-fn trim_error_paths(errors: &mut [GraphQLError], plan: &ProjectionPlan) {
+pub(crate) fn trim_error_paths(errors: &mut [GraphQLError], plan: &ProjectionPlan) {
     // no fields to check against, every path would go
     if plan.is_empty() {
         return;
@@ -293,6 +358,8 @@ struct Projector<'a, 'v> {
     variables: &'v Option<HashMap<String, sonic_rs::Value>>,
     errors: Vec<GraphQLError>,
     buffer: Vec<u8>,
+    /// See [`Projected::nulled`].
+    nulled: bool,
 }
 
 impl<'a> Projector<'a, '_> {
@@ -343,6 +410,7 @@ impl<'a> Projector<'a, '_> {
                     if needs_null_propagation.should_propagate() && item_non_null {
                         self.buffer.truncate(null_propagation_checkpoint);
                         self.buffer.put(NULL);
+                        self.nulled = true;
                         return Ok(NullPropagationDecision::PropagateNullValue);
                     }
 
@@ -369,6 +437,7 @@ impl<'a> Projector<'a, '_> {
                 if null_propagation_decision.should_propagate() {
                     self.buffer.truncate(null_propagation_checkpoint);
                     self.buffer.put(NULL);
+                    self.nulled = true;
                     return Ok(NullPropagationDecision::PropagateNullValue);
                 }
 
@@ -447,6 +516,7 @@ impl<'a> Projector<'a, '_> {
 
                     let null_propagation_decision = if field.is_null_value() {
                         self.buffer.put(NULL);
+                        self.nulled = true;
                         NullPropagationDecision::PropagateNullValue
                     } else if field.is_typename() {
                         self.buffer.put(QUOTE);
@@ -484,6 +554,7 @@ impl<'a> Projector<'a, '_> {
                     let non_null = field.is_non_null();
                     write_key(&mut self.buffer, first, response_key);
                     self.buffer.put(NULL);
+                    self.nulled = true;
                     if matches!(failure, ConditionFailure::InvalidEnumValue) {
                         self.errors
                             .push(GraphQLError::from("Value is not a valid enum value"));
@@ -599,11 +670,13 @@ where
             .map(|_| ())
             .ok_or(ConditionFailure::Skip),
         Condition::Skip(variable) => {
+            // `@skip(if: $x)` always has `$x` after coercion, only `@defer(if: $v)` can leave it
+            // out, and its `if` defaults to `true`: the fragment is deferred, skipped here
             if variable_values
                 .as_ref()
                 .and_then(|values| values.get(plan.text(variable)))
                 .and_then(|value| value.as_bool())
-                .unwrap_or(false)
+                .unwrap_or(true)
             {
                 Err(ConditionFailure::Skip)
             } else {
@@ -744,7 +817,7 @@ mod tests {
             type Metadata { id: ID!, timestamp: String!, data: JSON }
             "#,
         );
-        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph, false);
         let schema_metadata = consumer_schema.schema_metadata();
         let supergraph_state = SupergraphState::new(&supergraph);
         let operation = parse_operation(
@@ -808,7 +881,7 @@ mod tests {
             type Query { nodes: [Container] }
             "#,
         );
-        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph, false);
         let schema_metadata = consumer_schema.schema_metadata();
         let supergraph_state = SupergraphState::new(&supergraph);
         let operation = parse_operation(
@@ -923,7 +996,7 @@ mod tests {
             type Foo { name: String!, nick: String }
             "#,
         );
-        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph, false);
         let schema_metadata = consumer_schema.schema_metadata();
         let supergraph_state = SupergraphState::new(&supergraph);
 
@@ -1110,7 +1183,7 @@ mod tests {
             type User { id: ID!, email: String! }
             "#,
         );
-        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph, false);
         let schema_metadata = consumer_schema.schema_metadata();
         let supergraph_state = SupergraphState::new(&supergraph);
 
@@ -1161,7 +1234,7 @@ mod tests {
             type Query { foo: String }
             "#,
         );
-        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph, false);
         let schema_metadata = consumer_schema.schema_metadata();
         let supergraph_state = SupergraphState::new(&supergraph);
 
@@ -1233,7 +1306,7 @@ mod tests {
             type Query { node: Node }
             "#,
         );
-        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph, false);
         let schema_metadata = consumer_schema.schema_metadata();
         let supergraph_state = SupergraphState::new(&supergraph);
         let operation = parse_operation(
@@ -1312,7 +1385,7 @@ mod tests {
             type Order { id: ID }
             "#,
         );
-        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph, false);
         let schema_metadata = consumer_schema.schema_metadata();
         let supergraph_state = SupergraphState::new(&supergraph);
         let operation =

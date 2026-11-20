@@ -11,6 +11,7 @@ mod tests;
 pub mod metadata;
 pub mod user_auth_context;
 
+use crate::executor::projection::defer::DeferPlans;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -55,6 +56,7 @@ pub enum AuthorizationDecision {
     Modified {
         new_operation_definition: OperationDefinition,
         new_projection_plan: Arc<ProjectionPlan>,
+        new_defer_plans: Option<Arc<DeferPlans>>,
         errors: Vec<AuthorizationError>,
     },
     /// The operation should be aborted due to unauthorized access and reject mode being enabled.
@@ -277,9 +279,14 @@ pub fn enforce_operation_authorization(
         AuthorizationDecision::Modified {
             new_operation_definition,
             new_projection_plan,
+            new_defer_plans,
             errors,
         } => (
-            normalized_payload.with_operation(new_operation_definition, new_projection_plan),
+            normalized_payload.with_operation(
+                new_operation_definition,
+                new_projection_plan,
+                new_defer_plans,
+            ),
             errors,
         ),
         AuthorizationDecision::Reject { errors } => {
@@ -387,10 +394,16 @@ pub fn apply_authorization_to_operation(
     let new_projection_plan = normalized_payload
         .projection_plan
         .rewrite(&nulled_field_trie);
+    // fields in deferred fragments are nulled the same way
+    let new_defer_plans = normalized_payload
+        .defer_plans
+        .as_ref()
+        .map(|plans| plans.rewrite(&nulled_field_trie));
 
     Ok(AuthorizationDecision::Modified {
         new_operation_definition: new_operation,
         new_projection_plan,
+        new_defer_plans,
         errors,
     })
 }

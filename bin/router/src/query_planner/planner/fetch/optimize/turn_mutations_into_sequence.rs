@@ -88,10 +88,20 @@ impl FetchGraph<MultiTypeFetchStep> {
             let previous: Vec<NodeIndex> = pair[0].iter().flatten().copied().collect();
             let next = &pair[1][0];
             let next_steps = self.reachable_from(next);
+            // Only the primary part counts: a root field can't be deferred, so the next one is
+            // primary, and the primary part never waits for deferred work. The last primary
+            // steps are the ones with no primary step after them.
+            let is_primary =
+                |step: NodeIndex| self.get_step_data(step).is_ok_and(|s| s.defer.is_none());
             let last_steps: Vec<NodeIndex> = self
                 .reachable_from(&previous)
                 .into_iter()
-                .filter(|step| self.children_of(*step).next().is_none())
+                .filter(|step| is_primary(*step))
+                .filter(|step| {
+                    !self
+                        .children_of(*step)
+                        .any(|edge| is_primary(edge.target()))
+                })
                 // A step both groups use can't wait for the second one.
                 .filter(|step| !next_steps.contains(step))
                 .collect();
