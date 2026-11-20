@@ -407,7 +407,7 @@ async fn send_request<'a>(
             }
         };
 
-        let (res, lease) = if let Some(timeout_duration) = timeout {
+        let (res, mut lease) = if let Some(timeout_duration) = timeout {
             tokio::time::timeout(timeout_duration, res_fut).await?
         } else {
             res_fut.await
@@ -426,7 +426,12 @@ async fn send_request<'a>(
 
         let (parts, body) = res.into_parts();
 
-        let body = match read_body(body).await {
+        // a pooled connection has no task of its own, the body only arrives while we poll it
+        let body = match &mut lease {
+            Some(lease) => lease.drive(read_body(body)).await,
+            None => read_body(body).await,
+        };
+        let body = match body {
             Ok(body) => {
                 if let Some(lease) = lease {
                     lease.release();

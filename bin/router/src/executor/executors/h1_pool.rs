@@ -9,11 +9,20 @@
 //! goes back to the idle list right after its response body is read, so a request only
 //! connects when every connection of its pool is busy.
 //!
+//! A connection has no task of its own. hyper's connection future sits in the pool next to its
+//! sender, and the request that holds it polls it while it waits for the connection to be ready,
+//! for the response and for the body. So a request and its socket I/O run in one task: no
+//! handoff to a connection task and back for every request, and nothing to wake on the side.
+//! The catch is that nobody polls an idle connection, so one the subgraph closed is only noticed
+//! at the next checkout, which drops it and takes another (or sends again, see `request`).
+//!
 //! Every connection also keeps its read buffer for good, and hyper grows it up to ~400KB while
 //! reading big responses. We cap it at 64KB, which takes a few more reads for a big response
 //! but costs nothing measurable, even for 3MB bodies.
 
 use std::{
+    future::{poll_fn, Future},
+    pin::{pin, Pin},
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -24,7 +33,7 @@ use http::{header::HOST, uri::Authority, HeaderValue, Request, Response, Uri};
 use http_body_util::Full;
 use hyper::{
     body::Incoming,
-    client::conn::http1::{self, SendRequest},
+    client::conn::http1::{self, Connection, SendRequest},
 };
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
@@ -34,13 +43,22 @@ use crate::executor::executors::error::SubgraphExecutorError;
 const MAX_BUF_SIZE: usize = 64 * 1024;
 
 type Sender = SendRequest<Full<Bytes>>;
+/// hyper's side of the socket. Boxed once per connection so it can move in and out of the pool.
+type Conn = Pin<Box<Connection<TokioIo<TcpStream>, Full<Bytes>>>>;
+
+/// An idle connection: the sender, the connection future nobody polls right now, and since when.
+struct Idle {
+    sender: Sender,
+    conn: Conn,
+    since: Instant,
+}
 
 pub struct H1Pool {
     idle_timeout: Duration,
     /// Idle connections per origin, the most recently used last. A per-worker pool only takes
     /// the lock from its own thread, the lock is there for the shared one and because request
     /// futures have to be `Send`.
-    idle: Mutex<AHashMap<Authority, Vec<(Sender, Instant)>>>,
+    idle: Mutex<AHashMap<Authority, Vec<Idle>>>,
 }
 
 /// A connection that is serving one request.
@@ -48,16 +66,30 @@ pub struct Lease<'a> {
     pool: &'a H1Pool,
     key: Authority,
     sender: Sender,
+    /// `None` once the connection is done (closed by the subgraph, or failed)
+    conn: Option<Conn>,
 }
 
 impl Lease<'_> {
+    /// Runs `fut`, the read of the response body, while polling the connection that feeds it.
+    pub async fn drive<F: Future>(&mut self, fut: F) -> F::Output {
+        drive(&mut self.conn, fut).await
+    }
+
     /// Puts the connection back. Only call it once the whole response body was read.
-    /// Dropping the lease instead closes the connection.
+    /// Dropping the lease instead closes the connection, and so does a connection that's done.
     pub fn release(self) {
+        let Some(conn) = self.conn else {
+            return;
+        };
         let mut idle = self.pool.idle.lock().unwrap();
         let list = idle.entry(self.key).or_default();
         evict_expired(list, self.pool.idle_timeout);
-        list.push((self.sender, Instant::now()));
+        list.push(Idle {
+            sender: self.sender,
+            conn,
+            since: Instant::now(),
+        });
     }
 }
 
@@ -69,6 +101,8 @@ impl H1Pool {
         }
     }
 
+    /// Sends `req` and returns the response head. Read its body with [`Lease::drive`], the
+    /// connection only makes progress while the lease's holder polls it.
     pub async fn request(
         &self,
         mut req: Request<Full<Bytes>>,
@@ -97,8 +131,8 @@ impl H1Pool {
         }
 
         loop {
-            let (mut sender, reused) = self.checkout(&key).await?;
-            match sender.try_send_request(req).await {
+            let (mut sender, mut conn, reused) = self.checkout(&key).await?;
+            match drive(&mut conn, sender.try_send_request(req)).await {
                 Ok(response) => {
                     return Ok((
                         response,
@@ -106,6 +140,7 @@ impl H1Pool {
                             pool: self,
                             key,
                             sender,
+                            conn,
                         },
                     ))
                 }
@@ -121,34 +156,65 @@ impl H1Pool {
     }
 
     /// A connection for `key`, and whether it was an idle one
-    async fn checkout(&self, key: &Authority) -> Result<(Sender, bool), SubgraphExecutorError> {
-        while let Some(mut sender) = self.pop(key) {
-            // The last response on it was read already, so this resolves as soon as the
-            // connection task catches up. An error means the subgraph closed it meanwhile.
-            if sender.ready().await.is_ok() {
-                return Ok((sender, true));
+    async fn checkout(
+        &self,
+        key: &Authority,
+    ) -> Result<(Sender, Option<Conn>, bool), SubgraphExecutorError> {
+        while let Some(Idle {
+            mut sender, conn, ..
+        }) = self.pop(key)
+        {
+            // Polling the connection lets it finish up the last response and take the next
+            // request. If the subgraph closed it meanwhile, it ends here and `ready` fails.
+            let mut conn = Some(conn);
+            if drive(&mut conn, sender.ready()).await.is_ok() {
+                return Ok((sender, conn, true));
             }
         }
-        Ok((connect(key).await?, false))
+        let (sender, conn) = connect(key).await?;
+        Ok((sender, Some(conn), false))
     }
 
-    fn pop(&self, key: &Authority) -> Option<Sender> {
+    fn pop(&self, key: &Authority) -> Option<Idle> {
         let mut idle = self.idle.lock().unwrap();
         let list = idle.get_mut(key)?;
         evict_expired(list, self.idle_timeout);
-        list.pop().map(|(sender, _)| sender)
+        list.pop()
     }
+}
+
+/// Polls `fut` and the connection together until `fut` is done. A connection that finishes
+/// meanwhile (the subgraph closed it, or it failed) is dropped, and whatever waits on it then
+/// fails on its own: hyper ends the sender's side of a finished connection.
+async fn drive<F: Future>(conn: &mut Option<Conn>, fut: F) -> F::Output {
+    let mut fut = pin!(fut);
+    poll_fn(|cx| {
+        // the request goes first, so a request it just queued gets written in this same poll
+        let polled = fut.as_mut().poll(cx);
+        if polled.is_ready() {
+            return polled;
+        }
+        if let Some(c) = conn.as_mut() {
+            if c.as_mut().poll(cx).is_ready() {
+                *conn = None;
+            }
+        }
+        // the connection may have just finished the request's work, the request's waker would
+        // only call us back for that
+        fut.as_mut().poll(cx)
+    })
+    .await
 }
 
 // ponytail: expired connections are only dropped when the pool touches the origin again,
 // so a pool that goes quiet keeps its idle sockets. Add a timer if that shows up.
-fn evict_expired(list: &mut Vec<(Sender, Instant)>, idle_timeout: Duration) {
+fn evict_expired(list: &mut Vec<Idle>, idle_timeout: Duration) {
     let now = Instant::now();
-    let expired = list.partition_point(|(_, since)| now - *since >= idle_timeout);
+    let expired = list.partition_point(|idle| now - idle.since >= idle_timeout);
     list.drain(..expired);
 }
 
-async fn connect(key: &Authority) -> Result<Sender, SubgraphExecutorError> {
+async fn connect(key: &Authority) -> Result<(Sender, Conn), SubgraphExecutorError> {
     // `[::1]` comes with brackets, the resolver wants them gone
     let host = key.host().trim_start_matches('[').trim_end_matches(']');
     let tcp = TcpStream::connect((host, key.port_u16().unwrap_or(80)))
@@ -160,8 +226,5 @@ async fn connect(key: &Authority) -> Result<Sender, SubgraphExecutorError> {
         .max_buf_size(MAX_BUF_SIZE)
         .handshake(TokioIo::new(tcp))
         .await?;
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
-    Ok(sender)
+    Ok((sender, Box::pin(connection)))
 }
