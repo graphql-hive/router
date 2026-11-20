@@ -82,3 +82,128 @@ it("should expose fetch ids and dependencies", async (t) => {
     t.assert.ok(batch.completes.length > 1);
   }
 });
+
+it("should expose each subgraph's resolvable entity keys", async (t) => {
+  const supergraph = await fs.readFile(
+    "../../bin/router/fixture/tests/keys-mashup.supergraph.graphql",
+    "utf-8",
+  );
+  // `A` has four keys in each subgraph, only the resolvable one counts, with its top-level fields
+  t.assert.deepStrictEqual(new QueryPlanner(supergraph).entityKeys, {
+    a: { A: [["id"]] },
+    b: { A: [["id", "compositeId"]], B: [["id"]] },
+  });
+
+  const typenameKeyed = new QueryPlanner(/* GraphQL */ `
+    enum join__Graph {
+      CONTENT @join__graph(name: "content", url: "")
+      PETSEARCH @join__graph(name: "petsearch", url: "")
+    }
+    type Query @join__type(graph: CONTENT) {
+      favoritesPage: FavoritesPage @join__field(graph: CONTENT)
+    }
+    type FavoritesPage
+      @join__type(graph: CONTENT, key: "__typename")
+      @join__type(graph: PETSEARCH, key: "__typename") {
+      title: String @join__field(graph: CONTENT)
+      petCount: Int @join__field(graph: PETSEARCH)
+    }
+  `);
+  // a key of `__typename` alone has no fields
+  t.assert.deepStrictEqual(typenameKeyed.entityKeys, {
+    content: { FavoritesPage: [[]] },
+    petsearch: { FavoritesPage: [[]] },
+  });
+});
+
+it("should expose possible types of interfaces and unions", async (t) => {
+  const supergraph = await fs.readFile(
+    "../../bin/router/fixture/tests/abstract-types.supergraph.graphql",
+    "utf-8",
+  );
+  t.assert.deepStrictEqual(new QueryPlanner(supergraph).possibleTypes, {
+    Product: ["Book", "Magazine"],
+    PublisherType: ["Agency", "Group", "Self"],
+    Similar: ["Book", "Magazine"],
+  });
+});
+
+it("should order root mutation fields with dependencies", async (t) => {
+  const supergraph = await fs.readFile(
+    "../../bin/router/fixture/tests/mutations.supergraph.graphql",
+    "utf-8",
+  );
+  const plan = new QueryPlanner(supergraph).plan(
+    `mutation {
+      addProduct(input: { name: "new", price: 599.99 }) { isExpensive }
+      five: add(num: 5)
+      ten: multiply(by: 2)
+    }`,
+    undefined,
+    new Set(),
+    0,
+  );
+  const [addProduct, isExpensive, five, ten] = collectFetches(plan.node);
+  t.assert.deepStrictEqual(addProduct.dependsOn, []);
+  t.assert.deepStrictEqual(isExpensive.dependsOn, [addProduct.id]);
+  // the next field waits for every fetch of the one before it, entity calls included
+  t.assert.deepStrictEqual(five.dependsOn, [isExpensive.id]);
+  t.assert.deepStrictEqual(ten.dependsOn, [five.id]);
+});
+
+it("should expose the response projection", async (t) => {
+  const planner = new QueryPlanner(/* GraphQL */ `
+    enum join__Graph {
+      PETS @join__graph(name: "pets", url: "")
+    }
+    type Query @join__type(graph: PETS) {
+      owner: Owner
+    }
+    type Owner @join__type(graph: PETS) {
+      grid: [[Int!]]!
+      pets: [Pet!]
+      favorite: Animal
+    }
+    interface Pet @join__type(graph: PETS) {
+      name: String!
+    }
+    type Dog implements Pet
+      @join__type(graph: PETS)
+      @join__implements(graph: PETS, interface: "Pet") {
+      name: String!
+      breed: Breed
+    }
+    type Cat implements Pet
+      @join__type(graph: PETS)
+      @join__implements(graph: PETS, interface: "Pet") {
+      name: String!
+      lives: Int
+    }
+    union Animal
+      @join__type(graph: PETS)
+      @join__unionMember(graph: PETS, member: "Dog")
+      @join__unionMember(graph: PETS, member: "Cat") = Dog | Cat
+    enum Breed @join__type(graph: PETS) {
+      LAB
+      POODLE
+    }
+  `);
+  const plan = planner.plan(
+    `query ($withPets: Boolean!) {
+      owner {
+        __typename
+        grid
+        pets @include(if: $withPets) {
+          name
+          ... on Dog { kind: breed }
+          ... on Cat { lives }
+        }
+        favorite { ... on Dog { breed } }
+      }
+    }`,
+    undefined,
+    new Set(),
+    0,
+  );
+  t.assert.snapshot(plan.projection);
+});

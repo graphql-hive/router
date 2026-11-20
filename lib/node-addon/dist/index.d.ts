@@ -6,6 +6,24 @@ export declare class QueryPlanner {
   overrideLabels: Array<string>
   overridePercentages: Array<number>
   constructor(supergraphSdl: string)
+  /**
+   * Each subgraph's resolvable `@key`s, by subgraph name and then entity type. A key is its
+   * top-level fields without `__typename`, like `["id", "org"]` for
+   * `@key(fields: "id org { id }")`, and `[]` for a key of `__typename` alone. A representation
+   * goes to a subgraph only when it has every field of at least one of its type's keys there.
+   * Then a field it misses is sent as `null`. Without keys for the type, a representation that
+   * misses any field is left out.
+   */
+  get entityKeys(): Record<string, Record<string, Array<Array<string>>>>
+  /**
+   * The types of each interface and union of the consumer schema that has any, sorted: the
+   * object types that implement an interface or belong to a union, and the interfaces that
+   * implement an interface. The router's executor checks type conditions with it. An object of
+   * type `T` satisfies the type condition `C` when `T` is `C` or `possibleTypes[C]` has `T`.
+   * For `requires` inline fragments it also accepts the other way around, `possibleTypes[T]`
+   * having `C`.
+   */
+  get possibleTypes(): Record<string, Array<string>>
   computeCacheKey(query: string, operationName: string | undefined | null, activeLabels: Set<string>, percentageValue: number): string
   plan(query: string, operationName: string | undefined | null, activeLabels: Set<string>, percentageValue: number, signal?: AbortSignal | undefined | null): QueryPlan
   planAsync(query: string, operationName: string | undefined | null, activeLabels: Set<string>, percentageValue: number, signal?: AbortSignal | undefined | null): Promise<QueryPlan>
@@ -14,7 +32,67 @@ export declare class QueryPlanner {
 export interface QueryPlan {
   kind: "QueryPlan";
   node?: PlanNode;
+  /** How the router shapes the operation's response out of the data the fetches brought. */
+  projection: ResponseProjection;
 }
+
+/**
+ * The operation's selections, merged by response key and with fragments resolved into type
+ * conditions, the way the router walks them to write the response. Each field is projected from
+ * the object of its parent type, in order:
+ *
+ * - A field with `parentTypes` is left out when the parent object is of none of them.
+ * - A field with a `condition` that fails is left out, or is `null` for a failing `fieldType`
+ *   or `enumValues` (the latter with a "Value is not a valid enum value" error).
+ * - A `typename` field is the name of the parent type.
+ * - A field with `selections` projects those from its object, or from each of its list's items.
+ *   Other fields keep their value as it is.
+ * - A missing field is `null`. A `null` in a `nonNull` field, or in a list whose `itemNonNull`
+ *   says the items are non-null, makes the parent `null` instead, up to the nearest nullable one.
+ *
+ * A parent object's type is its `__typename`, or the schema type of the field holding it, or
+ * `rootType` at the root.
+ */
+export interface ResponseProjection {
+  /** The operation's root type, the parent type of the root `fields`. */
+  rootType: string;
+  fields: ProjectionField[];
+}
+
+export interface ProjectionField {
+  /** The field's name in the schema. */
+  name: string;
+  /** Where the field goes in the response, when not under `name`. */
+  alias?: string;
+  /** The field is `__typename`. */
+  typename?: true;
+  nonNull?: true;
+  /**
+   * For a list field, whether the items of each list level are non-null, from the outside in:
+   * `[false, true]` for `[[Int!]]`.
+   */
+  itemNonNull?: boolean[];
+  /** The field applies only to a parent object of one of these types. */
+  parentTypes?: string[];
+  condition?: ProjectionCondition;
+  selections?: ProjectionField[];
+}
+
+/**
+ * When a field is projected. `include` and `skip` are `@include(if:)` and `@skip(if:)` with the
+ * variable's name. `parentType` holds when the parent object is of one of the types, `fieldType`
+ * when the field's value is. `enumValues` holds when the field's value isn't a string or is one
+ * of the values. `and` holds when both do, failing like the first that fails. `or` holds when
+ * either does, failing like the right one when neither does.
+ */
+export type ProjectionCondition =
+  | { include: string }
+  | { skip: string }
+  | { parentType: string[] }
+  | { fieldType: string[] }
+  | { enumValues: string[] }
+  | { and: [ProjectionCondition, ProjectionCondition] }
+  | { or: [ProjectionCondition, ProjectionCondition] };
 
 export type PlanNode =
   | FetchNode

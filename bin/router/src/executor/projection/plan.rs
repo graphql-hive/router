@@ -222,7 +222,7 @@ bitflags::bitflags! {
     /// One byte per level of a field's type, from the outside in.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub(crate) struct ShapeFlags: u8 {
+    pub struct ShapeFlags: u8 {
         const LIST = 1 << 0;
         const NON_NULL = 1 << 1;
     }
