@@ -112,6 +112,35 @@ struct SubgraphCircuitBreaker {
 }
 type CircuitBreakersBySubgraph = DashMap<SubgraphName, SubgraphCircuitBreaker>;
 
+/// Runs `fut` through the circuit breaker, but leaves the breaker out of it when the request
+/// timed out waiting for a slot: that request never reached the subgraph.
+///
+/// recloser has no "doesn't count" outcome. An error its predicate skips is recorded as a
+/// success, which would water down the failure rate and could close a half-open breaker
+/// without the subgraph ever answering. A breaker future that's dropped before it finishes
+/// records nothing, though. So on a slot timeout we park the inner future, drop the breaker
+/// future, and hand the error back as the outer `Err`.
+async fn call_unless_slot_timeout<T>(
+    recloser: &AsyncRecloser,
+    fut: impl std::future::Future<Output = Result<T, SubgraphExecutorError>>,
+) -> Result<Result<T, recloser::Error<SubgraphExecutorError>>, SubgraphExecutorError> {
+    let (slot_timeout_tx, slot_timeout_rx) = tokio::sync::oneshot::channel();
+    let fut = async move {
+        match fut.await {
+            Err(err @ SubgraphExecutorError::RequestSlotTimeout) => {
+                let _ = slot_timeout_tx.send(err);
+                std::future::pending().await
+            }
+            other => other,
+        }
+    };
+    tokio::select! {
+        biased;
+        res = recloser.call(fut) => Ok(res),
+        Ok(slot_timeout) = slot_timeout_rx => Err(slot_timeout),
+    }
+}
+
 lazy_static::lazy_static! {
     /// Default HTTP statuses tracked as failures by the circuit breaker when
     /// the user does not configure `error_status_codes` explicitly. These
@@ -524,9 +553,10 @@ impl SubgraphExecutorMap {
                         });
                         let circuit_breaker_metrics =
                             &self.telemetry_context.metrics.circuit_breaker;
-                        recloser
-                            .call(exec_fut)
-                            .map(|exec_res| match exec_res {
+                        match call_unless_slot_timeout(&recloser, exec_fut).await {
+                            // never reached the subgraph, so the breaker doesn't hear about it
+                            Err(slot_timeout) => Err(slot_timeout),
+                            Ok(exec_res) => match exec_res {
                                 Err(recloser::Error::Inner(e)) => {
                                     // The call was permitted by the breaker but the
                                     // inner future returned an error. The breaker
@@ -552,8 +582,8 @@ impl SubgraphExecutorMap {
                                     circuit_breaker_metrics.record_success(subgraph_name);
                                     Ok(res)
                                 }
-                            })
-                            .await
+                            },
+                        }
                     }
                     None => exec_fut.await,
                 };
@@ -1209,5 +1239,96 @@ pub fn compile_duration_or_expression(
             let hints = ProgramHints::from_program(&program);
             Ok(ValueOrProgram::Program(Box::new(program), hints))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use hive_console_sdk::circuit_breaker::CircuitBreakerBuilder;
+    use recloser::AsyncRecloser;
+
+    use super::call_unless_slot_timeout;
+    use crate::executor::executors::error::SubgraphExecutorError;
+
+    #[derive(Debug, PartialEq)]
+    enum Outcome {
+        Ok,
+        Failed,
+        SlotTimeout,
+        Rejected,
+    }
+
+    fn breaker(error_threshold: f32, volume: usize, half_open: usize) -> AsyncRecloser {
+        CircuitBreakerBuilder::default()
+            .error_threshold(error_threshold)
+            .volume_threshold(volume)
+            .half_open_attempts(half_open)
+            .reset_timeout(Duration::from_millis(50))
+            .build_async()
+            .unwrap()
+    }
+
+    async fn call(breaker: &AsyncRecloser, result: Result<(), SubgraphExecutorError>) -> Outcome {
+        match call_unless_slot_timeout(breaker, async { result }).await {
+            Ok(Ok(())) => Outcome::Ok,
+            Ok(Err(recloser::Error::Inner(_))) => Outcome::Failed,
+            Ok(Err(recloser::Error::Rejected)) => Outcome::Rejected,
+            Err(_) => Outcome::SlotTimeout,
+        }
+    }
+
+    // any error that came back from the subgraph side
+    fn upstream_error() -> Result<(), SubgraphExecutorError> {
+        Err(SubgraphExecutorError::TimeoutExpressionResolution(
+            "upstream".into(),
+        ))
+    }
+
+    fn slot_timeout() -> Result<(), SubgraphExecutorError> {
+        Err(SubgraphExecutorError::RequestSlotTimeout)
+    }
+
+    #[tokio::test]
+    async fn slot_timeouts_dont_count_as_failures() {
+        let b = breaker(0.5, 2, 1);
+        for _ in 0..10 {
+            assert_eq!(call(&b, slot_timeout()).await, Outcome::SlotTimeout);
+        }
+        assert_eq!(call(&b, Ok(())).await, Outcome::Ok);
+    }
+
+    #[tokio::test]
+    async fn slot_timeouts_dont_water_down_the_failure_rate() {
+        // 75%: if each slot timeout counted as a success, alternating them with real failures
+        // would hold the rate at 50% and the breaker would never open
+        let b = breaker(0.75, 4, 1);
+        for _ in 0..6 {
+            call(&b, upstream_error()).await;
+            call(&b, slot_timeout()).await;
+        }
+        assert_eq!(call(&b, Ok(())).await, Outcome::Rejected);
+    }
+
+    #[tokio::test]
+    async fn slot_timeouts_dont_count_as_half_open_probes() {
+        // a closed sample of 5, a half-open sample of 1
+        let b = breaker(0.5, 5, 1);
+        for _ in 0..8 {
+            call(&b, upstream_error()).await;
+        }
+        assert_eq!(call(&b, Ok(())).await, Outcome::Rejected);
+
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        // half-open now, so two failed probes open it again. If these slot timeouts counted
+        // as successful probes, the breaker would close instead, and two failures wouldn't
+        // fill its closed sample of 5.
+        for _ in 0..3 {
+            assert_eq!(call(&b, slot_timeout()).await, Outcome::SlotTimeout);
+        }
+        call(&b, upstream_error()).await;
+        call(&b, upstream_error()).await;
+        assert_eq!(call(&b, Ok(())).await, Outcome::Rejected);
     }
 }

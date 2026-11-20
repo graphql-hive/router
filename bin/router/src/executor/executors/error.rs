@@ -52,6 +52,9 @@ pub enum SubgraphExecutorError {
     #[error("Request to subgraph timed out")]
     #[strum(serialize = "SUBGRAPH_REQUEST_TIMEOUT")]
     RequestTimeout(#[from] tokio::time::error::Elapsed),
+    #[error("Request to subgraph timed out waiting for a free slot under traffic_shaping.max_connections_per_host")]
+    #[strum(serialize = "SUBGRAPH_REQUEST_SLOT_TIMEOUT")]
+    RequestSlotTimeout,
     #[error("Failed to read response body from subgraph \"{0}\": {1}")]
     #[strum(serialize = "SUBGRAPH_RESPONSE_BODY_READ_FAILURE")]
     ResponseBodyReadFailure(String, String, Arc<HeaderMap>),
