@@ -221,7 +221,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
             "sending HTTP callback subscription request to subgraph",
         );
 
-        let req_fut = self.http_client.client().request(req);
+        let req_fut = self.http_client.request(req);
         let res = if let Some(timeout_duration) = timeout {
             tokio::time::timeout(timeout_duration, req_fut)
                 .await?

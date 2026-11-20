@@ -24,10 +24,6 @@ use dashmap::DashMap;
 use futures::{stream::BoxStream, FutureExt};
 use hive_console_sdk::circuit_breaker::{CircuitBreakerBuilder, CircuitBreakerError};
 use http::{StatusCode, Uri};
-use hyper_util::{
-    client::legacy::Client,
-    rt::{TokioExecutor, TokioTimer},
-};
 use recloser::AsyncRecloser;
 use tokio::sync::Semaphore;
 use tracing::{debug, error};
@@ -41,7 +37,7 @@ use crate::executor::{
         error::SubgraphExecutorError,
         http::{HTTPSubgraphExecutor, HttpClientProvider, SubgraphHttpResponse},
         http_callback::{CallbackSubscriptionsMap, HttpCallbackSubgraphExecutor},
-        tls::{build_https_client_config, build_https_connector, get_merged_tls_config},
+        tls::{build_https_client_config, get_merged_tls_config},
         websocket::WsSubgraphExecutor,
         websocket_pool::{WebSocketConnectionId, WebSocketPool, WebSocketTarget},
     },
@@ -189,25 +185,19 @@ pub struct SubgraphExecutorMap {
     /// endpoint, and inbound connection fingerprint.
     websocket_pool: Arc<WebSocketPool>,
 }
+
 impl SubgraphExecutorMap {
     fn new(
         config: Arc<SubgraphExecutorConfig>,
         global_timeout: DurationOrProgram,
         telemetry_context: Arc<TelemetryContext>,
     ) -> Result<Self, SubgraphExecutorError> {
-        let mut client_builder = Client::builder(TokioExecutor::new());
-        client_builder
-            .pool_timer(TokioTimer::new())
-            .pool_idle_timeout(config.traffic_shaping.all.pool_idle_timeout)
-            .pool_max_idle_per_host(config.traffic_shaping.max_connections_per_host);
-        if config.traffic_shaping.all.allow_only_http2 {
-            client_builder.http2_only(true);
-        }
         let client = HttpClientProvider::new(
-            config.traffic_shaping.http_client_mode,
-            client_builder,
-            build_https_connector(config.traffic_shaping.all.tls.as_ref())?,
-        );
+            &config.traffic_shaping,
+            config.traffic_shaping.all.tls.as_ref(),
+            config.traffic_shaping.all.pool_idle_timeout,
+            config.traffic_shaping.all.allow_only_http2,
+        )?;
 
         let max_connections_per_host = config.traffic_shaping.max_connections_per_host;
 
@@ -1009,19 +999,12 @@ impl SubgraphExecutorMap {
                 self.config.traffic_shaping.all.tls.as_ref(),
                 subgraph_config.tls.as_ref(),
             );
-            let mut client_builder = Client::builder(TokioExecutor::new());
-            client_builder
-                .pool_timer(TokioTimer::new())
-                .pool_idle_timeout(pool_idle_timeout)
-                .pool_max_idle_per_host(self.max_connections_per_host);
-            if subgraph_allow_only_http2 {
-                client_builder.http2_only(true);
-            }
             config.client = Arc::new(HttpClientProvider::new(
-                self.config.traffic_shaping.http_client_mode,
-                client_builder,
-                build_https_connector(tls_config.as_ref())?,
-            ));
+                &self.config.traffic_shaping,
+                tls_config.as_ref(),
+                pool_idle_timeout,
+                subgraph_allow_only_http2,
+            )?);
         }
 
         // Apply other subgraph-specific overrides

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use crate::config::{
     primitives::{file_path::FilePath, single_or_multiple::SingleOrMultiple},
@@ -12,6 +12,7 @@ use rustls::{
     ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme,
 };
 
+use crate::executor::executors::connection_age::AgedConnector;
 use crate::executor::executors::error::{SubgraphExecutorError, TlsCertificatesError};
 
 pub fn from_cert_file_config_to_certificate_der<'a>(
@@ -151,15 +152,23 @@ pub fn build_https_client_config(
 
 pub fn build_https_connector(
     tls_config: Option<&ClientTLSConfig>,
-) -> Result<HttpsConnector<HttpConnector>, SubgraphExecutorError> {
+    max_connection_age: Option<Duration>,
+    tcp_keepalive: Option<Duration>,
+) -> Result<HttpsConnector<AgedConnector>, SubgraphExecutorError> {
     let mut http = HttpConnector::new();
     http.enforce_http(false);
     http.set_nodelay(true);
+    if tcp_keepalive.is_some() {
+        // probe after `tcp_keepalive` of silence, then every `tcp_keepalive`, give up after 3
+        http.set_keepalive(tcp_keepalive);
+        http.set_keepalive_interval(tcp_keepalive);
+        http.set_keepalive_retries(Some(3));
+    }
     Ok(HttpsConnectorBuilder::new()
         .with_tls_config(build_https_client_config(tls_config)?)
         .https_or_http()
         .enable_all_versions()
-        .wrap_connector(http))
+        .wrap_connector(AgedConnector::new(http, max_connection_age)))
 }
 
 pub fn get_merged_tls_config(
