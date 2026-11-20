@@ -1519,3 +1519,401 @@ fn requires_after_two_entity_hops() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+// `shippingEstimate` in `shipping` requires `weight` from `inventory`, so `shipping` gets called
+// again for it with its key `id sku`. The product came from `products`, which has no `sku`, it
+// only came in through `catalog` on the way to `shipping`. So the key comes from the call to
+// `shipping`, not from `products`, which can't resolve it.
+#[test]
+fn requires_reenters_with_a_key_its_source_lacks() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation("{ product { shippingEstimate } }");
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-reentry-key-from-elsewhere.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            product {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "product") {
+          Fetch(service: "catalog") {
+            {
+              ... on Product {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                sku
+              }
+            }
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "inventory") {
+            {
+              ... on Product {
+                __typename
+                sku
+              }
+            } =>
+            {
+              ... on Product {
+                weight
+              }
+            }
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "shipping") {
+            {
+              ... on Product {
+                __typename
+                id
+                sku
+                weight
+              }
+            } =>
+            {
+              ... on Product {
+                shippingEstimate
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+// The same, but `shipping` is also called for `carrier`, so that call stays its own step and the
+// key is added to its output. `inventory` then waits for `shipping` too, though `sku` from
+// `catalog` is enough for it.
+#[test]
+fn requires_reenters_with_a_key_its_source_lacks_from_a_call_of_its_own(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation("{ product { carrier shippingEstimate } }");
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-reentry-key-from-elsewhere.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            product {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "product") {
+          Fetch(service: "catalog") {
+            {
+              ... on Product {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                sku
+              }
+            }
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "inventory") {
+            {
+              ... on Product {
+                __typename
+                sku
+              }
+            } =>
+            {
+              ... on Product {
+                weight
+              }
+            }
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "shipping") {
+            {
+              ... on Product {
+                __typename
+                id
+                sku
+                weight
+              }
+            } =>
+            {
+              ... on Product {
+                carrier
+                shippingEstimate
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+// `shipping` has two keys, `id sku` and `upc`. `products` can't resolve the first one, it has no
+// `sku`, but it has `upc`. So `shipping` gets called again with `upc` read from `products`.
+#[test]
+fn requires_reenters_with_a_key_its_source_has() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation("{ product { shippingEstimate } }");
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-reentry-key-two-keys.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            product {
+              __typename
+              upc
+            }
+          }
+        },
+        Flatten(path: "product") {
+          Fetch(service: "inventory") {
+            {
+              ... on Product {
+                __typename
+                upc
+              }
+            } =>
+            {
+              ... on Product {
+                weight
+              }
+            }
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "shipping") {
+            {
+              ... on Product {
+                __typename
+                weight
+                upc
+              }
+            } =>
+            {
+              ... on Product {
+                shippingEstimate
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+// `shipping` is keyed by `id sku region`, and no other subgraph has all three: `sku` comes from
+// `catalog` and `region` from `regions`. They're all in the response before the call to
+// `shipping` though, so `shipping` gets called once, after `inventory`, with what's there.
+#[test]
+fn requires_reenters_with_a_key_from_more_than_one_subgraph() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation("{ product { carrier shippingEstimate } }");
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-reentry-key-split.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            product {
+              __typename
+              id
+            }
+          }
+        },
+        Parallel {
+          Flatten(path: "product") {
+            Fetch(service: "regions") {
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Product {
+                  region
+                }
+              }
+            },
+          },
+          Flatten(path: "product") {
+            Fetch(service: "catalog") {
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Product {
+                  sku
+                }
+              }
+            },
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "inventory") {
+            {
+              ... on Product {
+                __typename
+                sku
+              }
+            } =>
+            {
+              ... on Product {
+                weight
+              }
+            }
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "shipping") {
+            {
+              ... on Product {
+                __typename
+                id
+                sku
+                region
+                weight
+              }
+            } =>
+            {
+              ... on Product {
+                carrier
+                shippingEstimate
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+// Like `requires_reenters_with_a_key_its_source_lacks_from_a_call_of_its_own`, with `carrier`
+// under `@include`. It still goes to the one call to `shipping`, under its condition.
+#[test]
+fn requires_reenters_with_a_key_its_source_lacks_next_to_a_conditional_field(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        "query ($a: Boolean!) { product { carrier @include(if: $a) shippingEstimate } }",
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-reentry-key-from-elsewhere.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            product {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "product") {
+          Fetch(service: "catalog") {
+            {
+              ... on Product {
+                __typename
+                id
+              }
+            } =>
+            ($a:Boolean!) {
+              ... on Product {
+                sku
+                ... on Product @include(if: $a) {
+                  sku
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "inventory") {
+            {
+              ... on Product {
+                __typename
+                sku
+              }
+            } =>
+            {
+              ... on Product {
+                weight
+              }
+            }
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "shipping") {
+            {
+              ... on Product {
+                __typename
+                id
+                sku
+                weight
+              }
+            } =>
+            ($a:Boolean!) {
+              ... on Product {
+                ... on Product @include(if: $a) {
+                  carrier
+                }
+                shippingEstimate
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
