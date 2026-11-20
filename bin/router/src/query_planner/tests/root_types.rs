@@ -108,6 +108,8 @@ fn shareable_subscription_field_uses_one_stream() -> Result<(), Box<dyn Error>> 
     // `orderUpdated` lives in both subgraphs, `total` only in a and `eta` only in b.
     // Two streams can't be put together, so one subgraph streams
     // and the rest comes through an entity call on each event.
+    // Composition rejects a subscription field in more than one subgraph, @shareable or not,
+    // so Hive never hands us this schema. The planner should still stream from one subgraph.
     let supergraph = r#"
         enum join__Graph {
             A @join__graph(name: "a", url: "")
