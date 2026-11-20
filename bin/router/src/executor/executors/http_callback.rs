@@ -221,16 +221,11 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
             "sending HTTP callback subscription request to subgraph",
         );
 
-        let req_fut = self.http_client.request(req);
-        let res = if let Some(timeout_duration) = timeout {
-            tokio::time::timeout(timeout_duration, req_fut)
-                .await?
-                .map_err(SubgraphExecutorError::RequestFailure)?
-        } else {
-            req_fut
-                .await
-                .map_err(SubgraphExecutorError::RequestFailure)?
-        };
+        let res = self
+            .http_client
+            .request(req, timeout)
+            .await?
+            .map_err(SubgraphExecutorError::RequestFailure)?;
 
         debug!(
             target: targets::HTTP_CALLBACK,

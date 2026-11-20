@@ -1,4 +1,5 @@
-//! Retires subgraph connections once they hit `max_connection_age`.
+//! Retires subgraph connections that shouldn't be reused: ones past `max_connection_age`, and
+//! ones whose request timed out (HTTP/1 closes those itself, HTTP/2 doesn't).
 //!
 //! The connector stamps each new connection with a deadline. A request that ran on a
 //! connection past it poisons the connection when it ends, so the pool stops handing it out.
@@ -22,6 +23,7 @@ use hyper_util::client::legacy::connect::{
 use hyper_util::rt::TokioIo;
 use rand::prelude::*;
 use tokio::net::TcpStream;
+use tokio::time::error::Elapsed;
 use tower_service::Service;
 
 use super::http::HttpClient;
@@ -127,28 +129,44 @@ impl Write for AgedStream {
     }
 }
 
-/// Sends `req` and retires the connection it goes over if that connection is past its deadline.
-///
-/// The check runs when the request ends, finished or dropped, so a request that hangs and gets
-/// cancelled still stops others from reusing an old connection. Checking at the end, not when
-/// the connection is picked, saves a wakeup per request.
-///
-/// A connection only gets checked when it carries a request. One that goes quiet past its
-/// deadline is closed by `pool_idle_timeout` instead.
-pub async fn request_and_retire_old(
+/// Sends `req`, poisoning its connection when it's past its deadline (if `check_age`) or when
+/// `timeout` runs out. The age check runs when the request ends, finished or dropped, so it
+/// doesn't cost an extra wakeup per request. Like `tokio::time::timeout`, the outer `Err`
+/// means the timeout ran out.
+pub async fn request_and_retire(
     client: &HttpClient,
     mut req: Request<Full<Bytes>>,
-) -> Result<Response<Incoming>, hyper_util::client::legacy::Error> {
-    let _check = AgeCheck(capture_connection(&mut req));
-    client.request(req).await
+    timeout: Option<Duration>,
+    check_age: bool,
+) -> Result<Result<Response<Incoming>, hyper_util::client::legacy::Error>, Elapsed> {
+    let connection = AgeCheck {
+        connection: capture_connection(&mut req),
+        check_age,
+    };
+    let result = match timeout {
+        Some(timeout) => tokio::time::timeout(timeout, client.request(req)).await,
+        None => Ok(client.request(req).await),
+    };
+    if result.is_err() {
+        if let Some(connected) = connection.connection.connection_metadata().as_ref() {
+            connected.poison();
+        }
+    }
+    result
 }
 
-/// Poisons the connection when dropped, if it's past its deadline.
-struct AgeCheck(CaptureConnection);
+/// Checks the connection's age when the request is done, or dropped while still running.
+struct AgeCheck {
+    connection: CaptureConnection,
+    check_age: bool,
+}
 
 impl Drop for AgeCheck {
     fn drop(&mut self) {
-        if let Some(connected) = self.0.connection_metadata().as_ref() {
+        if !self.check_age {
+            return;
+        }
+        if let Some(connected) = self.connection.connection_metadata().as_ref() {
             if is_past_deadline(connected) {
                 connected.poison();
             }
@@ -184,7 +202,7 @@ mod tests {
     use crate::executor::executors::http::HttpClientProvider;
 
     /// Local subgraph that counts accepted TCP connections. Requests with an `x-hang` header
-    /// never get a response, like a pod that's stuck.
+    /// never get a response, like a pod that's stuck, and ones with `x-slow` take 300ms.
     async fn start_server(http2: bool) -> (String, Arc<AtomicUsize>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/", listener.local_addr().unwrap());
@@ -195,6 +213,9 @@ mod tests {
                 let (stream, _) = listener.accept().await.unwrap();
                 counter.fetch_add(1, Ordering::SeqCst);
                 let service = service_fn(|req: hyper::Request<hyper::body::Incoming>| async move {
+                    if req.headers().contains_key("x-slow") {
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                    }
                     if req.headers().contains_key("x-hang") {
                         std::future::pending::<()>().await;
                     }
@@ -234,7 +255,7 @@ mod tests {
         let req = hyper::Request::get(url)
             .body(Full::new(Bytes::new()))
             .unwrap();
-        let res = client.request(req).await.unwrap();
+        let res = client.request(req, None).await.unwrap().unwrap();
         // read the body so an HTTP/1 connection goes back to the pool
         res.into_body().collect().await.unwrap();
     }
@@ -262,7 +283,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retires_old_http2_connection_even_when_the_request_times_out() {
+    async fn retires_old_http2_connection_even_when_the_request_hangs() {
         let (url, accepted) = start_server(true).await;
         let client = client(Some(Duration::from_millis(100)), true);
 
@@ -274,10 +295,64 @@ mod tests {
             .header("x-hang", "1")
             .body(Full::new(Bytes::new()))
             .unwrap();
-        let timed_out = tokio::time::timeout(Duration::from_millis(50), client.request(req)).await;
+        // cancel it from outside, so only the age check can retire the connection
+        let timed_out =
+            tokio::time::timeout(Duration::from_millis(50), client.request(req, None)).await;
         assert!(timed_out.is_err());
 
         // so the next request has to open a new connection
+        get(&client, &url).await;
+        assert_eq!(accepted.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn retires_http2_connection_when_a_request_times_out() {
+        let (url, accepted) = start_server(true).await;
+        let client = client(None, true);
+
+        get(&client, &url).await;
+
+        let req = hyper::Request::get(&url)
+            .header("x-hang", "1")
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        let timed_out = client.request(req, Some(Duration::from_millis(50))).await;
+        assert!(timed_out.is_err());
+
+        // the stuck connection is retired, so the next request opens a new one
+        get(&client, &url).await;
+        assert_eq!(accepted.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn retiring_an_http2_connection_lets_its_running_requests_finish() {
+        let (url, accepted) = start_server(true).await;
+        let client = client(None, true);
+
+        get(&client, &url).await;
+
+        let slow = hyper::Request::get(&url)
+            .header("x-slow", "1")
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        let hang = hyper::Request::get(&url)
+            .header("x-hang", "1")
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        // both go over the same connection, and the stuck one times out while the slow one runs
+        let (slow, hang) =
+            tokio::join!(client.request(slow, Some(Duration::from_secs(5))), async {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                client.request(hang, Some(Duration::from_millis(50))).await
+            });
+        assert!(hang.is_err());
+        assert_eq!(accepted.load(Ordering::SeqCst), 1);
+
+        // the slow one still gets its whole response over the retired connection
+        let body = slow.unwrap().unwrap().into_body().collect().await.unwrap();
+        assert_eq!(body.to_bytes(), "ok");
+
+        // and new requests open a fresh connection
         get(&client, &url).await;
         assert_eq!(accepted.load(Ordering::SeqCst), 2);
     }

@@ -219,6 +219,8 @@ pub struct HttpClientProvider {
     clients: HttpClients,
     /// On when `max_connection_age` is set. Only then do requests pay for the age check.
     retire_old_connections: bool,
+    /// Plain HTTP only speaks HTTP/2 when this forces it.
+    http2_only: bool,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -271,6 +273,7 @@ impl HttpClientProvider {
         Ok(Self {
             clients,
             retire_old_connections: all.max_connection_age.is_some(),
+            http2_only,
         })
     }
 
@@ -284,14 +287,33 @@ impl HttpClientProvider {
         }
     }
 
+    /// Sends `req`, failing with the outer `Err` if `timeout` runs out first, like
+    /// `tokio::time::timeout`.
     pub async fn request(
         &self,
         req: hyper::Request<Full<Bytes>>,
-    ) -> Result<hyper::Response<hyper::body::Incoming>, hyper_util::client::legacy::Error> {
-        if self.retire_old_connections {
-            connection_age::request_and_retire_old(self.client(), req).await
-        } else {
-            self.client().request(req).await
+        timeout: Option<Duration>,
+    ) -> Result<
+        Result<hyper::Response<hyper::body::Incoming>, hyper_util::client::legacy::Error>,
+        tokio::time::error::Elapsed,
+    > {
+        let client = self.client();
+        // HTTP/1 closes a timed-out connection itself, HTTP/2 doesn't. Retiring it needs a
+        // handle that costs an allocation, so only take one when HTTP/2 is possible.
+        let retire_on_timeout = timeout.is_some()
+            && (self.http2_only || req.uri().scheme() == Some(&http::uri::Scheme::HTTPS));
+        if self.retire_old_connections || retire_on_timeout {
+            return connection_age::request_and_retire(
+                client,
+                req,
+                timeout,
+                self.retire_old_connections,
+            )
+            .await;
+        }
+        match timeout {
+            Some(timeout) => tokio::time::timeout(timeout, client.request(req)).await,
+            None => Ok(client.request(req).await),
         }
     }
 }
@@ -665,7 +687,7 @@ async fn send_request<'a>(
 
         // one deadline for the headers and the body, so a subgraph can't stall mid-body forever
         let deadline = timeout.map(|timeout| tokio::time::Instant::now() + timeout);
-        let res = until(deadline, http_client.request(req)).await??;
+        let res = http_client.request(req, timeout).await??;
 
         http_request_span.record_response(&res);
         http_request_capture.set_status_code(res.status().as_u16());
@@ -1149,13 +1171,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             "establishing subscription connection"
         );
 
-        let res_fut = self.http_client.request(req);
-
-        let res = if let Some(timeout_duration) = connection_timeout {
-            tokio::time::timeout(timeout_duration, res_fut).await?
-        } else {
-            res_fut.await
-        }?;
+        let res = self.http_client.request(req, connection_timeout).await??;
 
         debug!(
             target: targets::HTTP_CLIENT,
