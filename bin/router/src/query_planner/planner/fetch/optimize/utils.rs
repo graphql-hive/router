@@ -1,7 +1,7 @@
 use ahash::{HashMap, HashSet, HashSetExt};
 use std::collections::VecDeque;
 
-use crate::query_planner::planner::plan_nodes::FetchNodePathSegment;
+use crate::query_planner::planner::plan_nodes::{FetchId, FetchNodePathSegment};
 
 use petgraph::{
     graph::NodeIndex,
@@ -211,11 +211,7 @@ pub(crate) fn perform_fetch_step_merge(
         fetch_graph.connect(parent_index, target_index);
     }
     // 3. Drop other -> child and parent -> other
-    for step in fetch_graph.graph.node_weights_mut() {
-        if step.context_producers.remove(&source_id) {
-            step.context_producers.insert(target_id);
-        }
-    }
+    fetch_graph.replace_context_producer(source_id, target_id);
     fetch_graph.remove_step(source_index);
 
     Ok(())
@@ -273,6 +269,18 @@ pub fn is_reachable_via_alternative_upstream_path(
 }
 
 impl FetchGraph<MultiTypeFetchStep> {
+    /// Steps that got context from `from` get it from `to` now, as `from` was merged into it.
+    pub(crate) fn replace_context_producer(&mut self, from: FetchId, to: FetchId) {
+        if !self.uses_context {
+            return;
+        }
+        for step in self.graph.node_weights_mut() {
+            if step.context_producers.remove(&from) {
+                step.context_producers.insert(to);
+            }
+        }
+    }
+
     pub(crate) fn merge_context_producers(&mut self) -> Result<(), FetchGraphError> {
         if !self.operation_kind.is_query() {
             return Ok(());
