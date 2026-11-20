@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -14,7 +16,7 @@ use crate::executor::executors::subscription_buffer;
 use crate::executor::hooks::on_subgraph_http_request::{
     OnSubgraphHttpRequestHookPayload, OnSubgraphHttpResponseHookPayload,
 };
-use crate::executor::json_writer::write_named_operation;
+use crate::executor::json_writer::{named_operation_parts, write_named_operation};
 use crate::executor::plugin_context::PluginRequestState;
 use crate::executor::plugin_trait::{EndControlFlow, StartControlFlow};
 use crate::executor::plugins::hooks;
@@ -44,9 +46,9 @@ use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use thread_local::ThreadLocal;
 use tokio::sync::Semaphore;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
-use crate::executor::executors::common::SubgraphExecutionRequest;
+use crate::executor::executors::common::{sha256_hex, SubgraphExecutionRequest};
 use crate::executor::executors::error::SubgraphExecutorError;
 use crate::executor::utils::consts::CLOSE_BRACE;
 use crate::executor::utils::consts::COLON;
@@ -68,11 +70,144 @@ pub struct HTTPSubgraphExecutor {
     pub telemetry_context: Arc<TelemetryContext>,
     pub subgraph_buffer_capacity: usize,
     pub compression: TrafficShapingSubgraphRequestCompressionConfig,
+    apq: SubgraphApq,
 }
 
-const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
-const FIRST_QUOTE_STR: &[u8] = b"{\"query\":";
-const OPERATION_NAME_STR: &[u8] = b",\"operationName\":";
+/// How long APQ stays off after a subgraph says it doesn't support it.
+const APQ_COOLDOWN: Duration = Duration::from_secs(5 * 60);
+
+struct SubgraphApq {
+    configured: bool,
+    /// Until when APQ is off, in ms since `since`. 0 when it's on.
+    off_until: AtomicU64,
+    since: Instant,
+}
+
+impl SubgraphApq {
+    fn new(configured: bool) -> Self {
+        Self {
+            configured,
+            off_until: AtomicU64::new(0),
+            since: Instant::now(),
+        }
+    }
+
+    fn should_send_hash(&self) -> bool {
+        if !self.configured {
+            return false;
+        }
+        let off_until = self.off_until.load(Ordering::Relaxed);
+        off_until == 0 || self.cooldown_over(off_until, self.now_ms())
+    }
+
+    /// Returns whether this started a new cooldown, so a burst of rejections logs once.
+    fn record_not_supported(&self) -> bool {
+        self.record_not_supported_at(self.now_ms())
+    }
+
+    fn cooldown_over(&self, off_until: u64, now_ms: u64) -> bool {
+        if now_ms < off_until {
+            return false;
+        }
+        // `Err(0)`: someone else cleared it. Any other `Err`: someone renewed it.
+        matches!(
+            self.off_until
+                .compare_exchange(off_until, 0, Ordering::Relaxed, Ordering::Relaxed),
+            Ok(_) | Err(0)
+        )
+    }
+
+    fn record_not_supported_at(&self, now_ms: u64) -> bool {
+        let previous = self
+            .off_until
+            .fetch_max(now_ms + APQ_COOLDOWN.as_millis() as u64, Ordering::Relaxed);
+        previous <= now_ms
+    }
+
+    fn now_ms(&self) -> u64 {
+        self.since.elapsed().as_millis() as u64
+    }
+}
+
+const QUERY_STR: &[u8] = b"\"query\":";
+const VARIABLES_STR: &[u8] = b"\"variables\":{";
+const OPERATION_NAME_STR: &[u8] = b"\"operationName\":";
+const EXTENSIONS_STR: &[u8] = b"\"extensions\":{";
+const PERSISTED_QUERY_STR: &[u8] = b"\"persistedQuery\":{\"version\":1,\"sha256Hash\":\"";
+
+#[derive(Clone, Copy)]
+pub enum Apq<'h> {
+    Off,
+    HashOnly(&'h str),
+    QueryAndHash(&'h str),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ApqError {
+    NotFound,
+    NotSupported,
+    /// Failed without an APQ error. If the plain query then works, the subgraph ignores APQ.
+    Failed,
+}
+
+enum HashOnlyResult<'a> {
+    Done(SubgraphResponse<'static>),
+    Rejected(SubgraphExecutionRequest<'a>, ApqError),
+}
+
+/// SHA-256 of the query as sent, operation name included.
+fn query_hash<'a>(execution_request: &SubgraphExecutionRequest<'a>) -> Cow<'a, str> {
+    match (
+        &execution_request.operation_name,
+        execution_request.query_hash,
+    ) {
+        // a plugin may have swapped the query, so the cache only counts for the plan's own one
+        (None, Some((plan_query, cached))) if std::ptr::eq(plan_query, execution_request.query) => {
+            Cow::Borrowed(cached.get(plan_query))
+        }
+        (None, _) => Cow::Owned(sha256_hex([execution_request.query])),
+        (Some(name), _) => Cow::Owned(sha256_hex(named_operation_parts(
+            name,
+            execution_request.document_name_write_pos,
+            execution_request.query,
+        ))),
+    }
+}
+
+/// An APQ error, but only if nothing ran (no data, no error path).
+fn apq_rejection(response: &SubgraphResponse<'_>) -> Option<ApqError> {
+    if !response.data.is_null()
+        || response
+            .errors
+            .iter()
+            .flatten()
+            .any(|error| error.path.is_some())
+    {
+        return None;
+    }
+    let errors = response.errors.as_deref().unwrap_or_default();
+    let apq_error = errors.iter().find_map(|error| {
+        match (error.extensions.code.as_deref(), error.message.as_str()) {
+            (Some("PERSISTED_QUERY_NOT_FOUND"), _) | (_, "PersistedQueryNotFound") => {
+                Some(ApqError::NotFound)
+            }
+            (Some("PERSISTED_QUERY_NOT_SUPPORTED"), _) | (_, "PersistedQueryNotSupported") => {
+                Some(ApqError::NotSupported)
+            }
+            _ => None,
+        }
+    });
+    apq_error.or((!errors.is_empty()).then_some(ApqError::Failed))
+}
+
+#[inline]
+fn put_field(body: &mut Vec<u8>, needs_comma: &mut bool, field: &[u8]) {
+    if *needs_comma {
+        body.put(COMMA);
+    }
+    body.put(field);
+    *needs_comma = true;
+}
 
 pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
 
@@ -132,25 +267,53 @@ struct HttpRequestTelemetryCapture<'a> {
 pub fn build_request_body(
     execution_request: &SubgraphExecutionRequest<'_>,
 ) -> Result<Vec<u8>, SubgraphExecutorError> {
-    let mut body = Vec::with_capacity(4096);
-    body.put(FIRST_QUOTE_STR);
+    build_request_body_with_apq(execution_request, Apq::Off)
+}
 
-    if let Some(operation_name) = &execution_request.operation_name {
-        write_named_operation(
-            &mut body,
-            operation_name.as_bytes(),
-            execution_request.document_name_write_pos,
-            execution_request.query,
-        );
-    } else {
-        write_and_escape_string(&mut body, execution_request.query);
+pub fn build_request_body_with_apq(
+    execution_request: &SubgraphExecutionRequest<'_>,
+    apq: Apq<'_>,
+) -> Result<Vec<u8>, SubgraphExecutorError> {
+    let capacity = match apq {
+        // no query, so mostly the raw variables
+        Apq::HashOnly(_) => {
+            256 + execution_request
+                .raw_variable_values
+                .iter()
+                .flatten()
+                .map(|(name, value)| name.len() + value.len() + 4)
+                .sum::<usize>()
+        }
+        _ => 4096,
+    };
+    let mut body = Vec::with_capacity(capacity);
+    body.put_u8(b'{');
+    let mut needs_comma = false;
+
+    let apq_hash = match apq {
+        Apq::Off => None,
+        Apq::HashOnly(hash) | Apq::QueryAndHash(hash) => Some(hash),
+    };
+
+    if !matches!(apq, Apq::HashOnly(_)) {
+        put_field(&mut body, &mut needs_comma, QUERY_STR);
+        if let Some(operation_name) = &execution_request.operation_name {
+            write_named_operation(
+                &mut body,
+                operation_name.as_bytes(),
+                execution_request.document_name_write_pos,
+                execution_request.query,
+            );
+        } else {
+            write_and_escape_string(&mut body, execution_request.query);
+        }
     }
 
     let mut first_variable = true;
     if let Some(variables) = &execution_request.variables {
         for (variable_name, variable_value) in variables {
             if first_variable {
-                body.put(FIRST_VARIABLE_STR);
+                put_field(&mut body, &mut needs_comma, VARIABLES_STR);
                 first_variable = false;
             } else {
                 body.put(COMMA);
@@ -167,7 +330,7 @@ pub fn build_request_body(
     if let Some(raw_variable_values) = &execution_request.raw_variable_values {
         for (variable_name, variable_value) in raw_variable_values {
             if first_variable {
-                body.put(FIRST_VARIABLE_STR);
+                put_field(&mut body, &mut needs_comma, VARIABLES_STR);
                 first_variable = false;
             } else {
                 body.put(COMMA);
@@ -185,20 +348,38 @@ pub fn build_request_body(
     }
 
     if let Some(operation_name) = &execution_request.operation_name {
-        body.put(OPERATION_NAME_STR);
+        put_field(&mut body, &mut needs_comma, OPERATION_NAME_STR);
         body.put(QUOTE);
         body.put(operation_name.as_bytes());
         body.put(QUOTE);
     }
 
+    let mut first_extension = true;
+    if let Some(hash) = apq_hash {
+        put_field(&mut body, &mut needs_comma, EXTENSIONS_STR);
+        first_extension = false;
+        body.put(PERSISTED_QUERY_STR);
+        body.put(hash.as_bytes());
+        body.put(&b"\"}"[..]);
+    }
     if let Some(extensions) = &execution_request.extensions {
-        if !extensions.is_empty() {
-            let as_value = sonic_rs::to_value(extensions).unwrap();
-
-            body.put(COMMA);
-            body.put("\"extensions\":".as_bytes());
-            body.extend_from_slice(as_value.to_string().as_bytes());
+        for (name, value) in extensions {
+            if apq_hash.is_some() && name == "persistedQuery" {
+                continue;
+            }
+            if first_extension {
+                put_field(&mut body, &mut needs_comma, EXTENSIONS_STR);
+                first_extension = false;
+            } else {
+                body.put(COMMA);
+            }
+            write_and_escape_string(&mut body, name);
+            body.put(COLON);
+            sonic_rs::to_writer(&mut body, value).expect("extension values are JSON values");
         }
+    }
+    if !first_extension {
+        body.put(CLOSE_BRACE);
     }
 
     body.put(CLOSE_BRACE);
@@ -219,6 +400,7 @@ impl HTTPSubgraphExecutor {
         subgraph_buffer_capacity: usize,
         compression: TrafficShapingSubgraphRequestCompressionConfig,
         accept_encoding: AcceptEncodingConfig,
+        apq_enabled: bool,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -256,6 +438,7 @@ impl HTTPSubgraphExecutor {
             telemetry_context,
             subgraph_buffer_capacity,
             compression,
+            apq: SubgraphApq::new(apq_enabled),
         }
     }
 }
@@ -465,23 +648,25 @@ pub enum DeduplicationHint {
     NotDeduped,
 }
 
-#[async_trait]
-impl SubgraphExecutor for HTTPSubgraphExecutor {
-    fn executor_name(&self) -> &str {
-        "http"
-    }
-
-    fn endpoint(&self) -> &http::Uri {
-        &self.endpoint
-    }
-
-    async fn execute<'a>(
-        &self,
-        mut execution_request: SubgraphExecutionRequest<'a>,
+impl HTTPSubgraphExecutor {
+    /// One HTTP request. Gives the request back, without its headers, and whether a plugin
+    /// answered instead of the subgraph or replaced its answer.
+    async fn attempt<'s, 'a: 's, 'p: 's>(
+        &'s self,
+        execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
-        plugin_req_state: Option<&'a PluginRequestState<'a>>,
-    ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
-        let mut body = build_request_body(&execution_request)?;
+        plugin_req_state: Option<&'p PluginRequestState<'p>>,
+        apq: Apq<'_>,
+    ) -> Result<
+        (
+            SubgraphResponse<'static>,
+            SubgraphExecutionRequest<'s>,
+            bool,
+        ),
+        SubgraphExecutorError,
+    > {
+        let mut execution_request: SubgraphExecutionRequest<'s> = execution_request;
+        let mut body = build_request_body_with_apq(&execution_request, apq)?;
 
         self.header_map.iter().for_each(|(key, value)| {
             execution_request.headers.insert(key, value.clone());
@@ -530,6 +715,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
         let mut deduplication_hint = DeduplicationHint::NotDeduped;
         let mut http_request_capture = None;
+        let mut answered_by_plugin = response.is_some();
 
         let mut response = match response {
             Some(resp) => resp,
@@ -540,7 +726,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     subgraph_name: &self.subgraph_name,
                     method,
                     body,
-                    headers: execution_request.headers,
+                    headers: std::mem::take(&mut execution_request.headers),
                     timeout,
                     telemetry_context: &self.telemetry_context,
                     compression: self.compression,
@@ -651,6 +837,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     EndControlFlow::Proceed => { /* continue to next plugin */ }
                     EndControlFlow::EndWithResponse(early_response) => {
                         end_payload.response = early_response;
+                        answered_by_plugin = true;
                         // Break so other plugins are not called
                         break;
                     }
@@ -685,7 +872,128 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             );
         }
 
-        response_result
+        response_result.map(|response| (response, execution_request, answered_by_plugin))
+    }
+
+    async fn send_hash_only<'s, 'a: 's, 'p: 's>(
+        &'s self,
+        mut execution_request: SubgraphExecutionRequest<'a>,
+        timeout: Option<Duration>,
+        plugin_req_state: Option<&'p PluginRequestState<'p>>,
+        hash: &str,
+    ) -> Result<HashOnlyResult<'s>, SubgraphExecutorError> {
+        // a retry starts from the request as it came in, hooks can change all of it.
+        // The representations can be big, so the retry takes them from the first attempt
+        let has_hooks = plugin_req_state.is_some_and(|state| !state.plugins.is_empty());
+        let original = has_hooks.then(|| {
+            let raw_variable_values = execution_request.raw_variable_values.take();
+            let original = execution_request.clone();
+            execution_request.raw_variable_values = raw_variable_values;
+            original
+        });
+        let headers = if has_hooks {
+            HeaderMap::new()
+        } else {
+            execution_request.headers.clone()
+        };
+
+        let is_query = execution_request.is_query;
+        let (response, execution_request, answered_by_plugin) = self
+            .attempt(
+                execution_request,
+                timeout,
+                plugin_req_state,
+                Apq::HashOnly(hash),
+            )
+            .await?;
+        let apq_error = match apq_rejection(&response) {
+            // a plugin's answer is final
+            _ if answered_by_plugin => None,
+            // only an APQ error proves a mutation didn't run
+            Some(ApqError::Failed) if !is_query => None,
+            apq_error => apq_error,
+        };
+        let Some(apq_error) = apq_error else {
+            return Ok(HashOnlyResult::Done(response));
+        };
+        let retry = match original {
+            Some(original) => SubgraphExecutionRequest {
+                raw_variable_values: execution_request.raw_variable_values,
+                ..original
+            },
+            None => SubgraphExecutionRequest {
+                headers,
+                ..execution_request
+            },
+        };
+        Ok(HashOnlyResult::Rejected(retry, apq_error))
+    }
+
+    fn turn_apq_off(&self) {
+        if self.apq.record_not_supported() {
+            warn!(
+                target: targets::HTTP_CLIENT,
+                subgraph = self.subgraph_name,
+                "subgraph doesn't support automatic persisted queries, turning them off for {}s",
+                APQ_COOLDOWN.as_secs(),
+            );
+        }
+    }
+}
+
+#[async_trait]
+impl SubgraphExecutor for HTTPSubgraphExecutor {
+    fn executor_name(&self) -> &str {
+        "http"
+    }
+
+    fn endpoint(&self) -> &http::Uri {
+        &self.endpoint
+    }
+
+    async fn execute<'a>(
+        &self,
+        execution_request: SubgraphExecutionRequest<'a>,
+        timeout: Option<Duration>,
+        plugin_req_state: Option<&'a PluginRequestState<'a>>,
+    ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
+        if !self.apq.should_send_hash() {
+            return self
+                .attempt(execution_request, timeout, plugin_req_state, Apq::Off)
+                .await
+                .map(|(response, ..)| response);
+        }
+
+        let started = Instant::now();
+        let hash = query_hash(&execution_request);
+        let (execution_request, apq_error) = match self
+            .send_hash_only(execution_request, timeout, plugin_req_state, &hash)
+            .await?
+        {
+            HashOnlyResult::Done(response) => return Ok(response),
+            HashOnlyResult::Rejected(execution_request, apq_error) => {
+                (execution_request, apq_error)
+            }
+        };
+
+        if apq_error == ApqError::NotSupported {
+            self.turn_apq_off();
+        }
+        let apq = match apq_error {
+            ApqError::NotFound => Apq::QueryAndHash(&hash),
+            ApqError::NotSupported | ApqError::Failed => Apq::Off,
+        };
+
+        // both attempts share one timeout
+        let timeout = timeout.map(|timeout| timeout.saturating_sub(started.elapsed()));
+        let (response, ..) = self
+            .attempt(execution_request, timeout, plugin_req_state, apq)
+            .await?;
+        // the plain query worked where the hash didn't, so the subgraph ignores APQ
+        if apq_error == ApqError::Failed && !response.data.is_null() {
+            self.turn_apq_off();
+        }
+        Ok(response)
     }
 
     async fn subscribe<'a>(
@@ -1012,6 +1320,8 @@ mod tests {
             custom_scalar_paths: None,
             response_shape: None,
             connection_fingerprint: None,
+            query_hash: None,
+            is_query: false,
         };
 
         let body = build_request_body(&execution_request).expect("request body should serialize");
@@ -1024,6 +1334,105 @@ mod tests {
                 "query": "query GetMe_accounts_0 { me { id } }",
                 "operationName": "GetMe_accounts_0",
             })
+        );
+    }
+
+    #[test]
+    fn apq_hash_covers_forwarded_operation_name() {
+        use super::{build_request_body_with_apq, query_hash, Apq};
+
+        let id = sonic_rs::json!("1");
+        let execution_request = SubgraphExecutionRequest {
+            query: "query($id:ID!){user(id:$id){id}}",
+            document_name_write_pos: 5,
+            dedupe: false,
+            operation_name: Some("GetUser_accounts_0".to_string()),
+            variables: Some([("id", &id)].into_iter().collect()),
+            headers: HeaderMap::new(),
+            raw_variable_values: None,
+            extensions: None,
+            custom_scalar_paths: None,
+            response_shape: None,
+            connection_fingerprint: None,
+            query_hash: None,
+            is_query: false,
+        };
+        let hash = query_hash(&execution_request);
+
+        let body = build_request_body_with_apq(&execution_request, Apq::QueryAndHash(&hash))
+            .expect("request body should serialize");
+        let with_query: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let query = with_query["query"].as_str().unwrap();
+        assert_eq!(query, "query GetUser_accounts_0($id:ID!){user(id:$id){id}}");
+        assert_eq!(
+            hash,
+            "dc1e705408c9a80c7499e0a849917146cb42cb2eee65281ad68ea203b4cac8c1"
+        );
+
+        let body = build_request_body_with_apq(&execution_request, Apq::HashOnly(&hash))
+            .expect("request body should serialize");
+        let hash_only: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            hash_only,
+            json!({
+                "variables": { "id": "1" },
+                "operationName": "GetUser_accounts_0",
+                "extensions": { "persistedQuery": { "version": 1, "sha256Hash": hash } },
+            })
+        );
+    }
+
+    #[test]
+    fn apq_cooldown() {
+        use super::{SubgraphApq, APQ_COOLDOWN};
+        let off_until = 2_000 + APQ_COOLDOWN.as_millis() as u64;
+
+        assert!(!SubgraphApq::new(false).should_send_hash());
+        let apq = SubgraphApq::new(true);
+        assert!(apq.should_send_hash());
+
+        assert!(apq.record_not_supported_at(1_000));
+        assert!(!apq.record_not_supported_at(2_000));
+        assert!(!apq.record_not_supported_at(1_500));
+        assert!(!apq.cooldown_over(off_until, off_until - 1));
+        // renewed in the meantime
+        assert!(!apq.cooldown_over(off_until - 1_000, off_until));
+        assert!(apq.cooldown_over(off_until, off_until));
+        assert!(apq.should_send_hash());
+    }
+
+    #[test]
+    fn apq_rejection_only_when_nothing_ran() {
+        use super::{apq_rejection, ApqError};
+        use crate::executor::response::subgraph_response::SubgraphResponse;
+
+        let rejection = |body: &'static str| {
+            apq_rejection(&SubgraphResponse::deserialize_from_bytes(body.into(), None).unwrap())
+        };
+
+        assert_eq!(
+            rejection(
+                r#"{"errors":[{"message":"x","extensions":{"code":"PERSISTED_QUERY_NOT_FOUND"}}]}"#
+            ),
+            Some(ApqError::NotFound)
+        );
+        assert_eq!(
+            rejection(r#"{"data":null,"errors":[{"message":"PersistedQueryNotSupported"}]}"#),
+            Some(ApqError::NotSupported)
+        );
+        assert_eq!(
+            rejection(r#"{"errors":[{"message":"Must provide query string."}]}"#),
+            Some(ApqError::Failed)
+        );
+        assert_eq!(
+            rejection(r#"{"data":{"a":1},"errors":[{"message":"PersistedQueryNotFound"}]}"#),
+            None
+        );
+        assert_eq!(
+            rejection(
+                r#"{"data":null,"errors":[{"message":"PersistedQueryNotFound","path":["a"]}]}"#
+            ),
+            None
         );
     }
 }

@@ -477,6 +477,8 @@ mod tests {
             custom_scalar_paths: None,
             response_shape: None,
             connection_fingerprint: None,
+            query_hash: None,
+            is_query: false,
         }
     }
 

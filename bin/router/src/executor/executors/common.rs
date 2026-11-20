@@ -1,4 +1,10 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
+
+use aws_lc_rs::digest;
 
 use crate::executor::response::shaped::ResponseShape;
 use crate::query_planner::planner::plan_nodes::CustomScalarPaths;
@@ -84,6 +90,7 @@ impl InboundRequestFingerprint {
     }
 }
 
+#[derive(Clone)]
 pub struct SubgraphExecutionRequest<'a> {
     /// Holds the query string to be executed.
     /// The query string contains an anonymous GraphQL document.
@@ -104,6 +111,40 @@ pub struct SubgraphExecutionRequest<'a> {
     ///
     /// `None` disables pooled lookup and preserves the request's normal transport behavior.
     pub connection_fingerprint: Option<ConnectionFingerprint>,
+    /// The plan's query and its cached hash for APQ. Only used while `query` is that query.
+    pub query_hash: Option<(&'a str, &'a QueryHash)>,
+    /// Only a query is sent again after an error, a mutation may have run already.
+    pub is_query: bool,
+}
+
+/// SHA-256 (hex) of a plan's query, computed on first use.
+#[derive(Debug, Clone, Default)]
+pub struct QueryHash(OnceLock<Box<[u8; 64]>>);
+
+impl QueryHash {
+    pub fn get(&self, query: &str) -> &str {
+        let hex = self.0.get_or_init(|| Box::new(sha256_hex_bytes([query])));
+        std::str::from_utf8(&hex[..]).expect("hex is ASCII")
+    }
+}
+
+pub fn sha256_hex<'a>(parts: impl IntoIterator<Item = &'a str>) -> String {
+    let hex = sha256_hex_bytes(parts);
+    std::str::from_utf8(&hex).expect("hex is ASCII").to_string()
+}
+
+fn sha256_hex_bytes<'a>(parts: impl IntoIterator<Item = &'a str>) -> [u8; 64] {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut context = digest::Context::new(&digest::SHA256);
+    for part in parts {
+        context.update(part.as_bytes());
+    }
+    let mut hex = [0u8; 64];
+    for (i, byte) in context.finish().as_ref().iter().enumerate() {
+        hex[i * 2] = HEX[(byte >> 4) as usize];
+        hex[i * 2 + 1] = HEX[(byte & 0xf) as usize];
+    }
+    hex
 }
 
 impl SubgraphExecutionRequest<'_> {

@@ -1225,12 +1225,13 @@ mod stored_size_tests {
             ("PlanNode", size_of::<PlanNode>(), 32),
             // `run_if` is an `Option<Vec<_>>`, `entity_reuse` an `Option<Arc<_>>`. Executable nodes
             // keep no dependency ids, the plan's schedule has them by position
-            ("FetchNode", size_of::<FetchNode>(), 272),
-            ("BatchFetchNode", size_of::<BatchFetchNode>(), 168),
+            // +16 B for the operation's cached APQ hash
+            ("FetchNode", size_of::<FetchNode>(), 288),
+            ("BatchFetchNode", size_of::<BatchFetchNode>(), 184),
             (
                 "SubgraphFetchOperation",
                 size_of::<crate::query_planner::ast::operation::SubgraphFetchOperation>(),
-                48,
+                64,
             ),
         ] {
             assert_eq!(

@@ -15,6 +15,21 @@ pub fn write_named_operation(
     name_write_pos: usize,
     input: &str,
 ) {
+    let name = std::str::from_utf8(name).expect("GraphQL operation names must be valid UTF-8");
+
+    writer.put(&b"\""[..]);
+    for part in named_operation_parts(name, name_write_pos, input) {
+        format_string(part, writer, false);
+    }
+    writer.put(&b"\""[..]);
+}
+
+/// The query with `name` put in, as pieces to write or hash in order.
+pub fn named_operation_parts<'a>(
+    name: &'a str,
+    name_write_pos: usize,
+    input: &'a str,
+) -> [&'a str; 4] {
     let pos = name_write_pos;
     debug_assert!(pos <= input.len());
     debug_assert!(
@@ -23,28 +38,12 @@ pub fn write_named_operation(
         &input[..input.len().min(20)]
     );
 
-    let name = std::str::from_utf8(name).expect("GraphQL operation names must be valid UTF-8");
-
-    writer.put(&b"\""[..]);
-
     if pos == 0 && input.starts_with('{') {
-        format_string("query ", writer, false);
-        format_string(name, writer, false);
-        format_string(" ", writer, false);
-        format_string(input, writer, false);
-        writer.put(&b"\""[..]);
-        return;
+        return ["query ", name, " ", input];
     }
 
-    format_string(&input[..pos], writer, false);
-
-    if pos > 0 {
-        format_string(" ", writer, false);
-    }
-
-    format_string(name, writer, false);
-    format_string(&input[pos..], writer, false);
-    writer.put(&b"\""[..]);
+    let space = if pos > 0 { " " } else { "" };
+    [&input[..pos], space, name, &input[pos..]]
 }
 
 pub fn write_f64(writer: &mut Vec<u8>, value: f64) {

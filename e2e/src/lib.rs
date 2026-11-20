@@ -95,6 +95,8 @@ mod skip_entity_fetch;
 #[cfg(test)]
 mod storage;
 #[cfg(test)]
+mod subgraph_apq;
+#[cfg(test)]
 mod subgraph_compression;
 #[cfg(test)]
 mod subscriptions;

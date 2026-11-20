@@ -117,6 +117,7 @@ hyper-rustls = { workspace = true, features = ["aws-lc-rs"]}
 dashmap = { workspace = true }
 notify = { workspace = true }
 memchr = "2.8.1"
+aws-lc-rs = { version = "1.18.1", default-features = false, features = ["aws-lc-sys"] }
 percent-encoding = "2.3.2"
 matchit = "0.9.2"
 

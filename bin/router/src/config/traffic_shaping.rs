@@ -287,6 +287,10 @@ pub struct TrafficShapingExecutorSubgraphConfig {
     /// When omitted, `traffic_shaping.all.max_aliases_per_request` is used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_aliases_per_request: Option<usize>,
+
+    /// Overrides `traffic_shaping.all.automatic_persisted_queries` for this subgraph.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automatic_persisted_queries: Option<bool>,
 }
 
 /// Controls which transport queries and mutations use for WebSocket-enabled subgraphs.
@@ -533,6 +537,19 @@ pub struct TrafficShapingExecutorGlobalConfig {
     /// argument groups of a fetch go in one request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_aliases_per_request: Option<usize>,
+
+    /// Sends Automatic Persisted Queries (APQ) to subgraphs: the query's SHA-256 hash instead of
+    /// the query, and both when the subgraph doesn't know the hash yet. A subgraph that answers
+    /// `PERSISTED_QUERY_NOT_SUPPORTED`, or fails the hash but answers the same query sent in full
+    /// (a server without APQ), gets plain queries for the next 5 minutes. Only queries detect a
+    /// server without APQ, so turn it off for a subgraph that lacks APQ and only gets mutations.
+    ///
+    /// Only turn it on for subgraphs that support APQ. Not used for subscriptions.
+    ///
+    /// Per-subgraph values under `traffic_shaping.subgraphs.<name>.automatic_persisted_queries` take precedence.
+    /// Disabled by default.
+    #[serde(default)]
+    pub automatic_persisted_queries: bool,
 }
 
 fn default_request_timeout() -> DurationOrExpression {
@@ -567,6 +584,7 @@ impl Default for TrafficShapingExecutorGlobalConfig {
             websocket: Default::default(),
             compression: Default::default(),
             max_aliases_per_request: None,
+            automatic_persisted_queries: false,
         }
     }
 }
