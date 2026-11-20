@@ -933,18 +933,22 @@ fn execute_deferred(
                 .is_some_and(|deadline| std::time::Instant::now() >= deadline);
             if !past {
                 run.start(&executor, &mut exec_ctx);
+                // the parts with fetches still to finish, each once. Worked out here and not
+                // for every fragment, there can be one per list item. Its own list too, the run
+                // gives up its errors before the part is written
+                let mut busy: SmallVec<[DeferId; 8]> = SmallVec::new();
+                for (fills, done) in fills.iter().zip(run.done()) {
+                    if let Some(id) = fills.filter(|id| !done && !busy.contains(id)) {
+                        busy.push(id);
+                    }
+                }
                 // a fragment's part is its `@defer` at its path, any list index matching. A
-                // fragment with no part, like one only on introspection fields, has no fetches.
-                // A copy of what's done, the run gives up its errors before the part is written
-                let done: SmallVec<[bool; 16]> = SmallVec::from_slice(run.done());
+                // fragment with no part, like one only on introspection fields, has no fetches
                 let ready = |group: &DeferGroup, path: &[GraphQLErrorPathSegment]| {
                     let position = group.marker.position;
-                    !fills.iter().zip(&done).any(|(fills, done)| {
-                        !done
-                            && fills.is_some_and(|id| {
-                                let part = &defer.layout.parts[id.index()];
-                                part.position == position && is_part_path(&part.path, path)
-                            })
+                    !busy.iter().any(|id| {
+                        let part = &defer.layout.parts[id.index()];
+                        part.position == position && is_part_path(&part.path, path)
                     })
                 };
                 if writer.has_ready(ready) {
