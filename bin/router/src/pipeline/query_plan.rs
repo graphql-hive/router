@@ -101,8 +101,6 @@ pub async fn plan_operation_with_cache(
             filtered_operation_for_plan.operation_kind,
             Some(OperationKind::Subscription)
         );
-        // one plan covers every `@defer(if:)` value, see `prepare_for_planning`
-        let has_defer = has_defer(&filtered_operation_for_plan.selection_set);
         let plan_cache_key = calculate_cache_key(operation_for_plan_hash, &stable_override_context);
         let is_plan_operation_empty = filtered_operation_for_plan.selection_set.is_empty();
         let is_projection_plan_empty = normalized_operation.projection_plan.is_empty();
@@ -124,7 +122,8 @@ pub async fn plan_operation_with_cache(
         };
 
         let plan = || {
-            let deferred = has_defer.then(|| {
+            // one plan covers every `@defer(if:)` value, see `prepare_for_planning`
+            let deferred = has_defer(&filtered_operation_for_plan.selection_set).then(|| {
                 prepare_for_planning(
                     filtered_operation_for_plan,
                     &supergraph.snapshot.planner.supergraph,
