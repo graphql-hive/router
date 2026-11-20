@@ -57,24 +57,22 @@ impl User {
             SocialAccount::TwitterAccount(TwitterAccount {
                 url: format!(
                     "https://twitter.com/{}",
-                    self.username.as_ref().unwrap_or(&"unknown".to_string())
+                    self.username.as_deref().unwrap_or("unknown")
                 ),
-                handle: format!(
-                    "@{}",
-                    self.username.as_ref().unwrap_or(&"unknown".to_string())
-                ),
+                handle: format!("@{}", self.username.as_deref().unwrap_or("unknown")),
                 followers: 1000,
             }),
             SocialAccount::GitHubAccount(GitHubAccount {
                 url: format!(
                     "https://github.com/{}",
-                    self.username.as_ref().unwrap_or(&"unknown".to_string())
+                    self.username.as_deref().unwrap_or("unknown")
                 ),
                 handle: self
                     .username
                     .as_ref()
-                    .unwrap_or(&"unknown".to_string())
-                    .clone(),
+                    .as_deref()
+                    .unwrap_or("unknown")
+                    .to_string(),
                 repo_count: 42,
             }),
         ]
