@@ -837,11 +837,20 @@ pub async fn execute_planned_request<'exec>(
             }))
         }
         // drop the `guard` as soon as the response is ready
-        QueryPlanExecutionResult::Single(result) => Ok(single_response(
-            result,
-            response_mode,
-            &response_header_sink,
-        )),
+        QueryPlanExecutionResult::Single(result) => {
+            // that protocol is for subscriptions, fail here so the request isn't reported as a success
+            if matches!(
+                response_mode,
+                ResponseMode::StreamOnly(StreamContentType::ApolloMultipartHTTP)
+            ) {
+                return Err(ClientPipelineError::UnsupportedContentType.into());
+            }
+            Ok(single_response(
+                result,
+                response_mode,
+                &response_header_sink,
+            ))
+        }
     }
 }
 
