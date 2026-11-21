@@ -167,11 +167,8 @@ pub struct Graph<'graph> {
     /// The edges `upsert_edge` added, by head and tail, only while building. `push_edge`
     /// never adds one like them, so they're the only ones to look through.
     upserted: HashMap<(NodeIndex, NodeIndex), Vec<EdgeIndex>>,
-    /// The edges out of a node to a field, by the field name's hash. The walker looks a field up
-    /// on every path, and a type can have hundreds of fields to go through otherwise.
-    field_edges: HashMap<(NodeIndex, u64), Vec<EdgeIndex>>,
-    /// The entity and interface object moves out of each node that has any.
-    entity_moves: HashMap<NodeIndex, Vec<EdgeIndex>>,
+    /// The field and entity moves out of every node, see `EdgeIndexes`.
+    edge_indexes: EdgeIndexes,
 }
 
 impl<'graph> Graph<'graph> {
@@ -225,30 +222,40 @@ impl<'graph> Graph<'graph> {
         Ok(instance)
     }
 
-    /// Fills `field_edges` and `entity_moves`, keeping the order `edges_from` gives.
+    /// Fills `edge_indexes`, keeping the order `edges_from` gives.
     fn index_edges(&mut self) {
-        let mut field_edges: HashMap<(NodeIndex, u64), Vec<EdgeIndex>> = HashMap::new();
-        let mut entity_moves: HashMap<NodeIndex, Vec<EdgeIndex>> = HashMap::new();
+        let mut indexes = EdgeIndexes {
+            starts: Vec::with_capacity(self.graph.node_count() + 1),
+            edges: Vec::with_capacity(self.graph.edge_count()),
+        };
+        let mut entity_moves = Vec::new();
         for node in self.graph.node_indices() {
+            let fields_start = indexes.edges.len();
             for edge in self.edges_from(node) {
                 match edge.weight() {
-                    Edge::FieldMove(field) => field_edges
-                        .entry((node, name_hash(field.name)))
-                        .or_default()
-                        .push(edge.id()),
-                    Edge::ReentryMove(reentry) => field_edges
-                        .entry((node, name_hash(&reentry.name)))
-                        .or_default()
-                        .push(edge.id()),
+                    Edge::FieldMove(field) => {
+                        indexes.edges.push((name_hash(field.name), edge.id()))
+                    }
+                    Edge::ReentryMove(reentry) => {
+                        indexes.edges.push((name_hash(&reentry.name), edge.id()))
+                    }
                     Edge::EntityMove(_) | Edge::InterfaceObjectTypeMove(_) => {
-                        entity_moves.entry(node).or_default().push(edge.id())
+                        entity_moves.push((0, edge.id()))
                     }
                     _ => {}
                 }
             }
+            // stable, so the edges of one field keep their order
+            indexes.edges[fields_start..].sort_by_key(|(hash, _)| *hash);
+            let entities_start = indexes.edges.len();
+            indexes.edges.append(&mut entity_moves);
+            indexes
+                .starts
+                .push((fields_start as u32, entities_start as u32));
         }
-        self.field_edges = field_edges;
-        self.entity_moves = entity_moves;
+        let end = indexes.edges.len() as u32;
+        indexes.starts.push((end, end));
+        self.edge_indexes = indexes;
     }
 
     /// The field and re-entry moves out of `node` to the field `name`, like going through
@@ -261,11 +268,13 @@ impl<'graph> Graph<'graph> {
     where
         's: 'n,
     {
-        self.field_edges
-            .get(&(node, name_hash(name)))
-            .into_iter()
-            .flatten()
-            .map(|index| self.edge_reference(*index))
+        let hash = name_hash(name);
+        let fields = self.edge_indexes.fields(node);
+        let first = fields.partition_point(|(other, _)| *other < hash);
+        fields[first..]
+            .iter()
+            .take_while(move |(other, _)| *other == hash)
+            .map(|(_, index)| self.edge_reference(*index))
             .filter(move |edge| match edge.weight() {
                 Edge::FieldMove(field) => field.name == name,
                 Edge::ReentryMove(reentry) => reentry.name == name,
@@ -276,11 +285,10 @@ impl<'graph> Graph<'graph> {
     /// The entity and interface object moves out of `node`, like going through `edges_from` for
     /// them.
     pub fn entity_moves_from(&self, node: NodeIndex) -> impl Iterator<Item = EdgeReference<'_>> {
-        self.entity_moves
-            .get(&node)
-            .into_iter()
-            .flatten()
-            .map(|index| self.edge_reference(*index))
+        self.edge_indexes
+            .entity_moves(node)
+            .iter()
+            .map(|(_, index)| self.edge_reference(*index))
     }
 
     pub(crate) fn edge_reference(&self, index: EdgeIndex) -> EdgeReference<'_> {
@@ -1594,6 +1602,38 @@ struct ProvidesContext<'a> {
 impl Display for Graph<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", Dot::with_config(&self.graph, &[]))
+    }
+}
+
+/// The field moves out of each node, sorted by the field name's hash, then its entity moves, all
+/// in one list. The walker looks a field up on every path, and a type can have hundreds of fields
+/// to go through otherwise. One list instead of a map of lists keeps building the graph cheap.
+#[derive(Debug, Default)]
+struct EdgeIndexes {
+    /// Per node, where its field moves and where its entity moves start in `edges`, and one more
+    /// entry for the end.
+    starts: Vec<(u32, u32)>,
+    edges: Vec<(u64, EdgeIndex)>,
+}
+
+impl EdgeIndexes {
+    fn fields(&self, node: NodeIndex) -> &[(u64, EdgeIndex)] {
+        match self.starts.get(node.index()) {
+            Some(&(fields, entities)) => &self.edges[fields as usize..entities as usize],
+            None => &[],
+        }
+    }
+
+    fn entity_moves(&self, node: NodeIndex) -> &[(u64, EdgeIndex)] {
+        match (
+            self.starts.get(node.index()),
+            self.starts.get(node.index() + 1),
+        ) {
+            (Some(&(_, entities)), Some(&(next, _))) => {
+                &self.edges[entities as usize..next as usize]
+            }
+            _ => &[],
+        }
     }
 }
 
