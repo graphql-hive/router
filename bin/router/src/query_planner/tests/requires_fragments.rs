@@ -216,10 +216,6 @@ fn conditional_requires_stay_out_of_an_unconditional_call() -> Result<(), Box<dy
             userFromA {
               __typename
               id
-              profile {
-                __typename
-                displayName
-              }
               ... on User @skip(if: $skip) {
                 __typename
                 profile {
@@ -236,12 +232,30 @@ fn conditional_requires_stay_out_of_an_unconditional_call() -> Result<(), Box<dy
                 }
                 id
               }
+              profile {
+                __typename
+                displayName
+              }
             }
           }
         },
         BatchFetch(service: "b") {
           {
-            _e0(if: !$skip) {
+            _e0 {
+              paths: [
+                "userFromA"
+              ]
+              {
+                ... on User {
+                  __typename
+                  profile {
+                    displayName
+                  }
+                  id
+                }
+              }
+            }
+            _e1(if: !$skip) {
               paths: [
                 "userFromA"
               ]
@@ -263,30 +277,16 @@ fn conditional_requires_stay_out_of_an_unconditional_call() -> Result<(), Box<dy
                 }
               }
             }
-            _e1 {
-              paths: [
-                "userFromA"
-              ]
-              {
-                ... on User {
-                  __typename
-                  profile {
-                    displayName
-                  }
-                  id
-                }
-              }
-            }
           }
           {
             _e0: _entities(representations: $__batch_reps_0) {
               ... on User {
-                permissions
+                basicPermissions
               }
             }
             _e1: _entities(representations: $__batch_reps_1) {
               ... on User {
-                basicPermissions
+                permissions
               }
             }
           }
@@ -330,12 +330,12 @@ fn merged_conditional_requires_stay_out_of_an_unconditional_call() -> Result<(),
             userFromA {
               __typename
               id
+              ... on User @skip(if: $skip) {
+                ...a
+              }
               profile {
                 __typename
                 displayName
-              }
-              ... on User @skip(if: $skip) {
-                ...a
               }
             }
             userFromA @include(if: $include) {
@@ -361,7 +361,7 @@ fn merged_conditional_requires_stay_out_of_an_unconditional_call() -> Result<(),
         },
         BatchFetch(service: "b") {
           {
-            _e0(if: $include) {
+            _e0 {
               paths: [
                 "userFromA"
               ]
@@ -370,14 +370,6 @@ fn merged_conditional_requires_stay_out_of_an_unconditional_call() -> Result<(),
                   __typename
                   profile {
                     displayName
-                    ... on AdminAccount {
-                      accountType
-                      adminLevel
-                    }
-                    ... on GuestAccount {
-                      accountType
-                      guestToken
-                    }
                   }
                   id
                 }
@@ -405,7 +397,7 @@ fn merged_conditional_requires_stay_out_of_an_unconditional_call() -> Result<(),
                 }
               }
             }
-            _e2 {
+            _e2(if: $include) {
               paths: [
                 "userFromA"
               ]
@@ -414,6 +406,14 @@ fn merged_conditional_requires_stay_out_of_an_unconditional_call() -> Result<(),
                   __typename
                   profile {
                     displayName
+                    ... on AdminAccount {
+                      accountType
+                      adminLevel
+                    }
+                    ... on GuestAccount {
+                      accountType
+                      guestToken
+                    }
                   }
                   id
                 }
@@ -423,7 +423,7 @@ fn merged_conditional_requires_stay_out_of_an_unconditional_call() -> Result<(),
           {
             _e0: _entities(representations: $__batch_reps_0) {
               ... on User {
-                ...a
+                basicPermissions
               }
             }
             _e1: _entities(representations: $__batch_reps_1) {
@@ -433,7 +433,7 @@ fn merged_conditional_requires_stay_out_of_an_unconditional_call() -> Result<(),
             }
             _e2: _entities(representations: $__batch_reps_2) {
               ... on User {
-                basicPermissions
+                ...a
               }
             }
           }
@@ -475,15 +475,15 @@ fn merged_conditional_inputs_stay_out_of_an_unconditional_call() -> Result<(), B
             userFromA {
               __typename
               id
-              profile {
-                __typename
-                displayName
+              ... on User @include(if: $include) {
+                ...a
               }
               ... on User @skip(if: $skip) {
                 ...a
               }
-              ... on User @include(if: $include) {
-                ...a
+              profile {
+                __typename
+                displayName
               }
             }
           }
@@ -506,7 +506,21 @@ fn merged_conditional_inputs_stay_out_of_an_unconditional_call() -> Result<(), B
         },
         BatchFetch(service: "b") {
           {
-            _e0(if: !$skip || $include) {
+            _e0 {
+              paths: [
+                "userFromA"
+              ]
+              {
+                ... on User {
+                  __typename
+                  profile {
+                    displayName
+                  }
+                  id
+                }
+              }
+            }
+            _e1(if: !$skip || $include) {
               paths: [
                 "userFromA"
               ]
@@ -528,35 +542,21 @@ fn merged_conditional_inputs_stay_out_of_an_unconditional_call() -> Result<(), B
                 }
               }
             }
-            _e1 {
-              paths: [
-                "userFromA"
-              ]
-              {
-                ... on User {
-                  __typename
-                  profile {
-                    displayName
-                  }
-                  id
-                }
-              }
-            }
           }
           ($include:Boolean!,$skip:Boolean!) {
             _e0: _entities(representations: $__batch_reps_0) {
               ... on User {
-                ... on User @include(if: $include) {
-                  other: permissions
-                }
-                ... on User @skip(if: $skip) {
-                  permissions
-                }
+                basicPermissions
               }
             }
             _e1: _entities(representations: $__batch_reps_1) {
               ... on User {
-                basicPermissions
+                ... on User @skip(if: $skip) {
+                  permissions
+                }
+                ... on User @include(if: $include) {
+                  other: permissions
+                }
               }
             }
           }

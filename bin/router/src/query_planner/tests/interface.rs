@@ -624,8 +624,8 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
           {
             _e0 {
               paths: [
-                "magazine.@"
                 "book.@"
+                "magazine.@"
               ]
               {
                 ... on Book {

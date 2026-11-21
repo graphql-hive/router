@@ -154,14 +154,10 @@ fn client_alias_named_like_a_key_field_under_a_condition() -> Result<(), Box<dyn
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
-          query ($x:Boolean!) {
+          {
             userInA {
               __typename
               _internal_qp_alias_0: id
-              ... on User @include(if: $x) {
-                __typename
-                _internal_qp_alias_0: id
-              }
             }
           }
         },

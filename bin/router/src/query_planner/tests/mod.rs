@@ -161,8 +161,8 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
               _e0 {
                 paths: [
                   "topProducts.@.reviews.@.author.reviews.@.product"
-                  "users.@.reviews.@.product"
                   "users.@.reviews.@.product.reviews.@.author.reviews.@.product"
+                  "users.@.reviews.@.product"
                 ]
                 {
                   ... on Product {
@@ -175,9 +175,9 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
             {
               _e0: _entities(representations: $__batch_reps_0) {
                 ... on Product {
+                  name
                   price
                   weight
-                  name
                 }
               }
             }
@@ -211,8 +211,8 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
             _e0 {
               paths: [
                 "topProducts.@.reviews.@.author.reviews.@.product"
-                "users.@.reviews.@.product"
                 "users.@.reviews.@.product.reviews.@.author.reviews.@.product"
+                "users.@.reviews.@.product"
               ]
               {
                 ... on Product {

@@ -283,7 +283,7 @@ impl<'graph> Graph<'graph> {
             .map(|index| self.edge_reference(*index))
     }
 
-    fn edge_reference(&self, index: EdgeIndex) -> EdgeReference<'_> {
+    pub(crate) fn edge_reference(&self, index: EdgeIndex) -> EdgeReference<'_> {
         // a slice underneath, so `nth` doesn't go through the edges before it
         self.graph
             .edge_references()

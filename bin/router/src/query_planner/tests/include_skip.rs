@@ -783,10 +783,10 @@ fn qp_include_field_level() -> Result<(), Box<dyn Error>> {
             } =>
             ($bool:Boolean) {
               ... on Product {
-                isCheap
                 ... on Product @include(if: $bool) {
                   name
                 }
+                isCheap
               }
             }
           },
@@ -846,10 +846,10 @@ fn qp_include_field_level_unconditional_before_conditional() -> Result<(), Box<d
             } =>
             ($bool:Boolean) {
               ... on Product {
+                isCheap
                 ... on Product @include(if: $bool) {
                   name
                 }
-                isCheap
               }
             }
           },
@@ -910,8 +910,8 @@ fn qp_include_field_level_all_merged_fields_conditional() -> Result<(), Box<dyn 
             } =>
             {
               ... on Product {
-                isCheap
                 name
+                isCheap
               }
             }
           },
@@ -970,10 +970,10 @@ fn qp_skip_field_level() -> Result<(), Box<dyn Error>> {
             } =>
             ($bool:Boolean) {
               ... on Product {
-                isCheap
                 ... on Product @skip(if: $bool) {
                   name
                 }
+                isCheap
               }
             }
           },
@@ -1033,10 +1033,10 @@ fn qp_skip_field_level_unconditional_before_conditional() -> Result<(), Box<dyn 
             } =>
             ($bool:Boolean) {
               ... on Product {
+                isCheap
                 ... on Product @skip(if: $bool) {
                   name
                 }
-                isCheap
               }
             }
           },
@@ -1098,8 +1098,8 @@ fn qp_skip_field_level_all_merged_fields_conditional() -> Result<(), Box<dyn Err
             } =>
             {
               ... on Product {
-                isCheap
                 name
+                isCheap
               }
             }
           },
@@ -1161,8 +1161,8 @@ fn qp_skip_and_include_field_level_all_merged_fields_conditional() -> Result<(),
             } =>
             {
               ... on Product {
-                isCheap
                 name
+                isCheap
               }
             }
           },
@@ -1205,10 +1205,10 @@ fn qp_mixed_include_skip_field_level_keeps_conditions_scoped() -> Result<(), Box
               __typename
               price
               id
-              ... on Product @include(if: $include) {
+              ... on Product @skip(if: $skip) {
                 ...a
               }
-              ... on Product @skip(if: $skip) {
+              ... on Product @include(if: $include) {
                 ...a
               }
             }
@@ -1230,11 +1230,11 @@ fn qp_mixed_include_skip_field_level_keeps_conditions_scoped() -> Result<(), Box
             } =>
             ($include:Boolean,$skip:Boolean) {
               ... on Product {
-                ... on Product @skip(if: $skip) {
-                  isCheap
-                }
                 ... on Product @include(if: $include) {
                   name
+                }
+                ... on Product @skip(if: $skip) {
+                  isCheap
                 }
               }
             }
@@ -1329,9 +1329,9 @@ fn qp_nested_include_skip_conditions_in_complex_products_query() -> Result<(), B
               } =>
               {
                 ... on Product {
+                  name
                   price
                   weight
-                  name
                 }
               }
             },
@@ -1678,22 +1678,6 @@ fn conditional_root_fragment_survives_merges() -> Result<(), Box<dyn Error>> {
         },
         Parallel {
           Flatten(path: "|[Query].userInB") {
-            Fetch(service: "c", if: $x) {
-              {
-                ... on User {
-                  __typename
-                  name
-                  id
-                }
-              } =>
-              {
-                ... on User {
-                  cName
-                }
-              }
-            },
-          },
-          Flatten(path: "|[Query].userInB") {
             Fetch(service: "a", if: $x) {
               {
                 ... on User {
@@ -1705,6 +1689,22 @@ fn conditional_root_fragment_survives_merges() -> Result<(), Box<dyn Error>> {
               {
                 ... on User {
                   aName
+                }
+              }
+            },
+          },
+          Flatten(path: "|[Query].userInB") {
+            Fetch(service: "c", if: $x) {
+              {
+                ... on User {
+                  __typename
+                  name
+                  id
+                }
+              } =>
+              {
+                ... on User {
+                  cName
                 }
               }
             },
