@@ -131,10 +131,12 @@ fn handle_selection_set<'field, 'schema>(
                     unreachable!("fragment spread is not expected at this stage")
                 }
                 SelectionItem::InlineFragment(fragment) => {
-                    let fragment_type = subgraph_state
-                        .definitions
-                        .get(&fragment.type_condition)
-                        .unwrap();
+                    // same as for fields below a type the subgraph doesn't declare: skipped
+                    let Some(fragment_type) =
+                        subgraph_state.definitions.get(&fragment.type_condition)
+                    else {
+                        continue;
+                    };
                     let fragment_enter_path = path.push(Segment::TypeCondition(
                         Rc::new(BTreeSet::from([fragment.type_condition.clone()])),
                         fragment.into(),
@@ -165,24 +167,23 @@ fn handle_field<'field, 'schema>(
     encountered_field_to_type: &mut HashMap<&'field str, &'schema TypeNode>,
     mismatches_found: &mut MismatchesFound,
 ) -> Option<&'schema str> {
-    let parent_def_fields = parent_def.fields().unwrap();
     let field_name = field.name.as_str();
     let field_identifier = field.selection_identifier();
-    let field_type = parent_def_fields
-        .iter()
-        .find_map(|f| {
-            if f.name == field_name {
-                Some(
-                    f.join_field
-                        .as_ref()
-                        .and_then(|jf| jf.type_in_graph.as_ref())
-                        .unwrap_or(&f.field_type),
-                )
-            } else {
-                None
-            }
+    let in_subgraph = parent_def.fields().into_iter().flatten().find_map(|f| {
+        (f.name == field_name).then(|| {
+            f.join_field
+                .as_ref()
+                .and_then(|jf| jf.type_in_graph.as_ref())
+                .unwrap_or(&f.field_type)
         })
-        .unwrap();
+    });
+    // a supergraph can leave out the `external: true` entry of a provided field, so the
+    // subgraph's type doesn't list it even though the subgraph serves it. Its supergraph type
+    // does the job then.
+    let field_type = in_subgraph.or_else(|| {
+        let definition = state.definitions.get(parent_def.name())?;
+        Some(&definition.fields().get(field_name)?.field_type)
+    })?;
 
     if let Some(maybe_conflicting_type) = encountered_field_to_type.get(field_identifier) {
         if !same_response_shape(state, maybe_conflicting_type, field_type) {
