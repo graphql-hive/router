@@ -114,6 +114,45 @@ struct Splitter<'a> {
     supergraph: &'a SupergraphState,
 }
 
+/// An item of a selection set being split: one of the operation's, or a fragment made for it.
+enum Part<'s> {
+    Kept(&'s SelectionItem),
+    Made(SelectionItem),
+}
+
+impl Part<'_> {
+    fn item(&self) -> &SelectionItem {
+        match self {
+            Part::Kept(item) => item,
+            Part::Made(item) => item,
+        }
+    }
+}
+
+/// `item` with `selections` in place of its own.
+fn with_selections(item: &SelectionItem, selections: SelectionSet) -> SelectionItem {
+    match item {
+        SelectionItem::Field(field) => SelectionItem::Field(FieldSelection {
+            name: field.name.clone(),
+            alias: field.alias.clone(),
+            selections,
+            arguments: field.arguments.clone(),
+            skip_if: field.skip_if.clone(),
+            include_if: field.include_if.clone(),
+            omit_from_response: field.omit_from_response,
+        }),
+        SelectionItem::InlineFragment(fragment) => {
+            SelectionItem::InlineFragment(InlineFragmentSelection {
+                type_condition: fragment.type_condition.clone(),
+                selections,
+                skip_if: fragment.skip_if.clone(),
+                include_if: fragment.include_if.clone(),
+            })
+        }
+        SelectionItem::FragmentSpread(_) => item.clone(),
+    }
+}
+
 /// Fragments that go together: the first one's type, and the items all of them select.
 struct Cluster<'s> {
     members: Vec<usize>,
@@ -133,8 +172,7 @@ impl<'a> Splitter<'a> {
         grouped: &mut Vec<(Vec<usize>, Rc<[String]>)>,
     ) -> Option<SelectionSet> {
         let clusters = self.clusters(selection_set, subgraphs);
-        let mut items = Vec::with_capacity(selection_set.items.len());
-        let mut changed = !clusters.is_empty();
+        let mut parts = Vec::with_capacity(selection_set.items.len());
         let mut new_groups = Vec::new();
         for (index, item) in selection_set.items.iter().enumerate() {
             let cluster = clusters
@@ -152,15 +190,21 @@ impl<'a> Splitter<'a> {
                                 _ => None,
                             })
                             .collect();
-                        new_groups.push((items.len(), also));
-                        items.push(SelectionItem::InlineFragment(InlineFragmentSelection {
-                            type_condition: fragment.type_condition.clone(),
-                            selections: SelectionSet {
-                                items: cluster.shared.iter().map(|item| (*item).clone()).collect(),
+                        new_groups.push((parts.len(), also));
+                        parts.push(Part::Made(SelectionItem::InlineFragment(
+                            InlineFragmentSelection {
+                                type_condition: fragment.type_condition.clone(),
+                                selections: SelectionSet {
+                                    items: cluster
+                                        .shared
+                                        .iter()
+                                        .map(|item| (*item).clone())
+                                        .collect(),
+                                },
+                                skip_if: fragment.skip_if.clone(),
+                                include_if: fragment.include_if.clone(),
                             },
-                            skip_if: fragment.skip_if.clone(),
-                            include_if: fragment.include_if.clone(),
-                        }));
+                        )));
                     }
                     let rest: Vec<SelectionItem> = fragment
                         .selections
@@ -170,63 +214,84 @@ impl<'a> Splitter<'a> {
                         .cloned()
                         .collect();
                     if !rest.is_empty() {
-                        items.push(SelectionItem::InlineFragment(InlineFragmentSelection {
-                            type_condition: fragment.type_condition.clone(),
-                            selections: SelectionSet { items: rest },
-                            skip_if: fragment.skip_if.clone(),
-                            include_if: fragment.include_if.clone(),
-                        }));
+                        parts.push(Part::Made(SelectionItem::InlineFragment(
+                            InlineFragmentSelection {
+                                type_condition: fragment.type_condition.clone(),
+                                selections: SelectionSet { items: rest },
+                                skip_if: fragment.skip_if.clone(),
+                                include_if: fragment.include_if.clone(),
+                            },
+                        )));
                     }
                 }
-                (item, _) => items.push(item.clone()),
+                (item, _) => parts.push(Part::Kept(item)),
             }
         }
-        // then below every item
-        for (index, item) in items.iter_mut().enumerate() {
+        // then below every item, before copying any: an item with nothing split below it is
+        // copied once, by the first level that changes
+        let mut changed = !clusters.is_empty();
+        let mut below = Vec::with_capacity(parts.len());
+        for (index, part) in parts.iter().enumerate() {
             position.push(index);
-            match item {
-                SelectionItem::Field(field) => {
-                    if let Some(return_type) = self
-                        .supergraph
-                        .field_return_type_name(type_name, &field.name)
-                        .map(str::to_string)
-                    {
-                        let subgraphs = self.resolving(type_name, field);
-                        if let Some(selections) = self.selection_set(
-                            &field.selections,
-                            &return_type,
-                            &subgraphs,
-                            position,
-                            grouped,
-                        ) {
-                            field.selections = selections;
-                            changed = true;
-                        }
-                    }
-                }
-                SelectionItem::InlineFragment(fragment) => {
-                    let fragment_type = fragment.type_condition.clone();
-                    if let Some(selections) = self.selection_set(
-                        &fragment.selections,
-                        &fragment_type,
-                        subgraphs,
-                        position,
-                        grouped,
-                    ) {
-                        fragment.selections = selections;
-                        changed = true;
-                    }
-                }
-                SelectionItem::FragmentSpread(_) => {}
-            }
+            let selections = self.below(part.item(), type_name, subgraphs, position, grouped);
             position.pop();
+            changed |= selections.is_some();
+            below.push(selections);
         }
         for (index, also) in new_groups {
             let mut at = position.clone();
             at.push(index);
             grouped.push((at, also));
         }
-        changed.then_some(SelectionSet { items })
+        if !changed {
+            return None;
+        }
+        let items = parts
+            .into_iter()
+            .zip(below)
+            .map(|(part, below)| match (part, below) {
+                (Part::Kept(item), None) => item.clone(),
+                (Part::Kept(item), Some(selections)) => with_selections(item, selections),
+                (Part::Made(item), Some(selections)) => with_selections(&item, selections),
+                (Part::Made(item), None) => item,
+            })
+            .collect();
+        Some(SelectionSet { items })
+    }
+
+    /// The selections of `item` on `type_name`, with their fragments split, `None` when
+    /// nothing in them is.
+    fn below(
+        &self,
+        item: &SelectionItem,
+        type_name: &str,
+        subgraphs: &[&str],
+        position: &mut Vec<usize>,
+        grouped: &mut Vec<(Vec<usize>, Rc<[String]>)>,
+    ) -> Option<SelectionSet> {
+        match item {
+            SelectionItem::Field(field) => {
+                let return_type = self
+                    .supergraph
+                    .field_return_type_name(type_name, &field.name)?;
+                let subgraphs = self.resolving(type_name, field);
+                self.selection_set(
+                    &field.selections,
+                    return_type,
+                    &subgraphs,
+                    position,
+                    grouped,
+                )
+            }
+            SelectionItem::InlineFragment(fragment) => self.selection_set(
+                &fragment.selections,
+                &fragment.type_condition,
+                subgraphs,
+                position,
+                grouped,
+            ),
+            SelectionItem::FragmentSpread(_) => None,
+        }
     }
 
     /// The subgraphs that resolve `field` on `type_name`, where the objects it returns are.
