@@ -762,7 +762,7 @@ fn create_input_selection_set(
 fn create_output_operation(
     step: &FetchStepData<MultiTypeFetchStep>,
     supergraph: &SupergraphState,
-) -> PlanningFetchOperation {
+) -> OperationDefinition {
     let mut variables = vec![VariableDefinition {
         name: "representations".to_string(),
         variable_type: TypeNode::NonNull(Box::new(TypeNode::List(Box::new(TypeNode::NonNull(
@@ -778,7 +778,7 @@ fn create_output_operation(
     let mut selections = step.output.to_non_root_selection_set();
     typename::add_typename_for_projection_to_entities(&mut selections, supergraph);
 
-    let operation_def = OperationDefinition {
+    OperationDefinition {
         name: None,
         operation_kind: Some(OperationKind::Query),
         variable_definitions: Some(variables),
@@ -799,11 +799,49 @@ fn create_output_operation(
                 omit_from_response: false,
             })],
         },
-    };
+    }
+}
 
-    let document = minify_operation(operation_def, supergraph).expect("Failed to minify");
+/// Writes out the operations of the fetches that are still drafts, see
+/// `PlanningFetchOperation::draft`: the ones that didn't get batched.
+pub(crate) fn finish_drafts(node: &mut PlanNode<Planning>, supergraph: &SupergraphState) {
+    match node {
+        PlanNode::Fetch(fetch) => finish_draft(fetch, supergraph),
+        PlanNode::Flatten(flatten) => finish_drafts(&mut flatten.node, supergraph),
+        PlanNode::Sequence(SequenceNode { nodes }) | PlanNode::Parallel(ParallelNode { nodes }) => {
+            for node in nodes {
+                finish_drafts(node, supergraph);
+            }
+        }
+        PlanNode::Subscription(subscription) => finish_draft(&mut subscription.primary, supergraph),
+        PlanNode::Defer(defer) => {
+            let deferred = defer.deferred.iter_mut().map(|deferred| &mut deferred.node);
+            for node in std::iter::once(&mut defer.primary.node)
+                .chain(deferred)
+                .flatten()
+            {
+                finish_drafts(node, supergraph);
+            }
+        }
+        PlanNode::BatchFetch(_) => {}
+    }
+}
 
-    PlanningFetchOperation::from_anonymous_operation(document)
+fn finish_draft(fetch: &mut FetchNode<Planning>, supergraph: &SupergraphState) {
+    if !fetch.operation.is_draft() {
+        return;
+    }
+    let operation = std::mem::replace(
+        &mut fetch.operation.document.operation,
+        OperationDefinition {
+            name: None,
+            operation_kind: None,
+            selection_set: SelectionSet::default(),
+            variable_definitions: None,
+        },
+    );
+    let document = minify_operation(operation, supergraph).expect("Failed to minify");
+    fetch.operation = PlanningFetchOperation::from_anonymous_operation(document);
 }
 
 impl FetchNode<Planning> {
@@ -817,7 +855,16 @@ impl FetchNode<Planning> {
         match step.is_entity_call() {
             true => {
                 let planner_requires = create_input_selection_set(&step.input);
-                let mut operation = create_output_operation(step, supergraph);
+                let operation = create_output_operation(step, supergraph);
+                // written out once batching is done, see `finish_drafts`. One with contextual
+                // arguments is never batched, and gets its groups from the written-out one.
+                let mut operation = if step.context_variable_definitions.is_empty() {
+                    PlanningFetchOperation::draft(operation)
+                } else {
+                    PlanningFetchOperation::from_anonymous_operation(
+                        minify_operation(operation, supergraph).expect("Failed to minify"),
+                    )
+                };
                 let custom_scalar_paths = custom_scalar_paths_from_fetch_output(
                     &step.output,
                     supergraph,

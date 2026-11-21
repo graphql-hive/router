@@ -662,10 +662,8 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
             }
           }
           fragment a on DeliveryEstimates {
-            ... on DeliveryEstimates {
-              fastestDelivery
-              estimatedDelivery
-            }
+            fastestDelivery
+            estimatedDelivery
           }
         },
       },

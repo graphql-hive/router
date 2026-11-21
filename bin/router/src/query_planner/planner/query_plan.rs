@@ -9,7 +9,7 @@ use petgraph::{
 use crate::query_planner::{
     planner::{
         fetch::state::MultiTypeFetchStep,
-        plan_nodes::{planning::PlanNode, FetchIdList},
+        plan_nodes::{finish_drafts, planning::PlanNode, FetchIdList},
         query_plan::optimize::{optimize_root_node, optimize_top_level_sequence},
         QueryPlannerOptions,
     },
@@ -197,7 +197,8 @@ pub fn build_query_plan_from_fetch_graph(
     };
 
     // Then run full recursive optimization + batching rewrites.
-    let root_node = optimize_root_node(root_node, supergraph, options)?;
+    let mut root_node = optimize_root_node(root_node, supergraph, options)?;
+    finish_drafts(&mut root_node, supergraph);
 
     QueryPlan::new(Some(root_node))
 }
