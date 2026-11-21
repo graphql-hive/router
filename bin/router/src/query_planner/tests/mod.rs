@@ -67,92 +67,72 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
             }
           },
         },
-        Parallel {
-          Flatten(path: "topProducts.@") {
-            Fetch(service: "inventory") {
+        BatchFetch(service: "reviews") {
+          {
+            _e0 {
+              paths: [
+                "topProducts.@"
+              ]
               {
                 ... on Product {
                   __typename
-                  price
-                  weight
                   upc
                 }
-              } =>
+              }
+            }
+            _e1 {
+              paths: [
+                "users.@"
+              ]
               {
-                ... on Product {
-                  shippingEstimate
-                  inStock
-                }
-              }
-            },
-          },
-          BatchFetch(service: "reviews") {
-            {
-              _e0 {
-                paths: [
-                  "topProducts.@"
-                ]
-                {
-                  ... on Product {
-                    __typename
-                    upc
-                  }
-                }
-              }
-              _e1 {
-                paths: [
-                  "users.@"
-                ]
-                {
-                  ... on User {
-                    __typename
-                    id
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Product {
-                  reviews {
-                    ...a
-                  }
-                }
-              }
-              _e1: _entities(representations: $__batch_reps_1) {
                 ... on User {
-                  reviews {
-                    id
-                    body
-                    product {
-                      __typename
-                      upc
-                      reviews {
-                        ...a
-                      }
-                    }
-                  }
+                  __typename
+                  id
                 }
               }
             }
-            fragment a on Review {
-              id
-              body
-              author {
-                __typename
-                id
-                username
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Product {
+                reviews {
+                  ...a
+                }
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on User {
                 reviews {
                   id
                   body
                   product {
                     __typename
                     upc
+                    reviews {
+                      ...a
+                    }
                   }
                 }
               }
             }
-          },
+          }
+          fragment a on Review {
+            id
+            body
+            author {
+              __typename
+              id
+              username
+              reviews {
+                id
+                body
+                product {
+                  __typename
+                  upc
+                }
+              }
+            }
+          }
         },
         Parallel {
           BatchFetch(service: "products") {
@@ -222,14 +202,35 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
                 }
               }
             }
+            _e1 {
+              paths: [
+                "topProducts.@"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  price
+                  weight
+                  upc
+                }
+              }
+            }
           }
           {
             _e0: _entities(representations: $__batch_reps_0) {
               ... on Product {
-                inStock
-                shippingEstimate
+                ...a
               }
             }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Product {
+                ...a
+              }
+            }
+          }
+          fragment a on Product {
+            inStock
+            shippingEstimate
           }
         },
       },

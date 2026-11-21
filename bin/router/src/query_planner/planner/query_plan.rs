@@ -1,3 +1,4 @@
+use ahash::HashSet;
 use smallvec::smallvec;
 use std::collections::VecDeque;
 
@@ -9,11 +10,14 @@ use petgraph::{
 use crate::query_planner::{
     planner::{
         fetch::state::MultiTypeFetchStep,
-        plan_nodes::{planning::PlanNode, FetchIdList},
+        plan_nodes::{
+            planning::{FetchNode, PlanNode},
+            FetchId, FetchIdList,
+        },
         query_plan::optimize::{optimize_root_node, optimize_top_level_sequence},
         QueryPlannerOptions,
     },
-    state::supergraph_state::SupergraphState,
+    state::supergraph_state::{OperationKind, SupergraphState},
     utils::cancellation::CancellationToken,
 };
 
@@ -64,7 +68,7 @@ pub fn build_query_plan_from_fetch_graph(
         }
     }
 
-    let mut overall_plan_sequence: Vec<PlanNode> = Vec::new();
+    let mut waves: Vec<Vec<PlanNode>> = Vec::new();
     // by step: the fetch ids a child waits for when it depends on that step, its own fetch, or,
     // for a step without a fetch (it never runs), what it waits for itself
     let mut provides: Vec<FetchIdList> = vec![FetchIdList::new(); steps];
@@ -129,12 +133,19 @@ pub fn build_query_plan_from_fetch_graph(
         }
 
         // a wave can end up empty when none of its fetches would ever run
-        if current_wave_nodes.len() > 1 {
-            overall_plan_sequence.push(PlanNode::Parallel(ParallelNode {
-                nodes: current_wave_nodes,
-            }));
+        if !current_wave_nodes.is_empty() {
+            waves.push(current_wave_nodes);
+        }
+    }
+
+    delay_leaf_entity_fetches(&mut waves);
+
+    let mut overall_plan_sequence: Vec<PlanNode> = Vec::with_capacity(waves.len());
+    for wave in waves {
+        if wave.len() > 1 {
+            overall_plan_sequence.push(PlanNode::Parallel(ParallelNode { nodes: wave }));
         } else {
-            overall_plan_sequence.extend(current_wave_nodes);
+            overall_plan_sequence.extend(wave);
         }
     }
 
@@ -169,4 +180,74 @@ pub fn build_query_plan_from_fetch_graph(
     let root_node = optimize_root_node(root_node, supergraph, options)?;
 
     QueryPlan::new(Some(root_node))
+}
+
+/// The entity fetch of a wave entry, `Flatten(Fetch)`, when nothing about it ties it to its wave:
+/// no `@include`/`@skip` and no `@fromContext` values.
+fn movable_entity_fetch(node: &PlanNode) -> Option<&FetchNode> {
+    let PlanNode::Flatten(flatten) = node else {
+        return None;
+    };
+    let fetch = flatten.node.as_fetch()?;
+    (fetch.run_if.is_none() && fetch.context.is_none()).then_some(fetch)
+}
+
+/// Moves an entity fetch that no other fetch waits for into the nearest later wave that already
+/// has an entity fetch to the same subgraph, where batching sends the two in one request.
+///
+/// Waves are built as early as possible, so `topProducts { inStock }` goes out right after
+/// `topProducts`, and `inStock` of products found deeper down goes out three waves later: two
+/// requests to the same subgraph. The later wave runs anyway, so moving the first fetch there
+/// makes the plan no longer, and nothing waits for its data but the response. It still waits only
+/// for what it waited for before, the batch it joins waits for both.
+///
+/// Queries only: the root fields of a mutation run in order, and those plans are left alone.
+fn delay_leaf_entity_fetches(waves: &mut Vec<Vec<PlanNode>>) {
+    let mutation = waves.iter().flatten().any(|node| {
+        node.as_fetch()
+            .is_some_and(|fetch| fetch.operation_kind == Some(OperationKind::Mutation))
+    });
+    if mutation || waves.len() < 2 {
+        return;
+    }
+
+    // fetches some other fetch waits for, for its data or to copy entities from it
+    let waited_for: HashSet<FetchId> = waves
+        .iter()
+        .flatten()
+        .flat_map(|node| {
+            let fetch = match node {
+                PlanNode::Flatten(flatten) => flatten.node.as_fetch(),
+                other => other.as_fetch(),
+            };
+            fetch
+                .into_iter()
+                .flat_map(|fetch| fetch.depends_on.iter().copied())
+        })
+        .collect();
+
+    // from the back, so a fetch moved into a wave can move on with the ones it joined
+    for from in (0..waves.len() - 1).rev() {
+        let mut index = 0;
+        while index < waves[from].len() {
+            let target = movable_entity_fetch(&waves[from][index])
+                .filter(|fetch| !waited_for.contains(&fetch.id))
+                .and_then(|fetch| {
+                    (from + 1..waves.len()).find(|&to| {
+                        waves[to].iter().any(|other| {
+                            movable_entity_fetch(other)
+                                .is_some_and(|other| other.service_name == fetch.service_name)
+                        })
+                    })
+                });
+            match target {
+                Some(to) => {
+                    let node = waves[from].remove(index);
+                    waves[to].push(node);
+                }
+                None => index += 1,
+            }
+        }
+    }
+    waves.retain(|wave| !wave.is_empty());
 }
