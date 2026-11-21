@@ -3,7 +3,7 @@ use crate::query_planner::ast::merge_path::{Condition, FieldPathSegment, MergePa
 use crate::query_planner::ast::operation::{OperationDefinition, VariableDefinition};
 use crate::query_planner::ast::selection_item::SelectionItem;
 use crate::query_planner::ast::selection_set::{
-    FieldSelection, InlineFragmentSelection, SelectionSet,
+    response_keys_conflict, FieldSelection, InlineFragmentSelection, SelectionSet,
 };
 use crate::query_planner::ast::type_aware_selection::TypeAwareSelection;
 use crate::query_planner::ast::value::Value;
@@ -82,11 +82,16 @@ pub struct FetchGraph<State> {
     /// holds the object the entity call extends. Only kept while the graph is built: merges
     /// would make the indexes stale, so `to_multi_type` drops it.
     pub(crate) entity_owners: HashMap<NodeIndex, NodeIndex>,
-    /// For each entity call step, the type and subgraph its objects came from, as a graph node.
-    pub(crate) entity_sources: HashMap<NodeIndex, NodeIndex>,
-    /// For each entity call step, the entity move it was made for, so the subgraph it calls and
-    /// the key it calls it with.
-    pub(crate) entity_moves: HashMap<NodeIndex, EdgeIndex>,
+    /// For each entity call step and the type it calls (as a graph node), the type and subgraph
+    /// its objects came from, as a graph node. By type, as a step can take several, see
+    /// `batched`.
+    pub(crate) entity_sources: HashMap<(NodeIndex, NodeIndex), NodeIndex>,
+    /// For each entity call step and the type it calls (as a graph node), the entity move it was
+    /// made for, so the key it calls the subgraph with.
+    pub(crate) entity_moves: HashMap<(NodeIndex, NodeIndex), EdgeIndex>,
+    /// Entity calls that take the objects of several types at one spot, see `joins_other_types`.
+    /// Only kept while the graph is built.
+    pub(crate) batched: HashSet<NodeIndex>,
     /// The keys of the fields the planner adds itself. Only needed while the graph is built.
     pub(crate) response_keys: ResponseKeys,
     pub(crate) context_producers: HashMap<(MergePath, (EdgeIndex, usize)), Vec<NodeIndex>>,
@@ -134,6 +139,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             entity_owners: HashMap::new(),
             entity_sources: HashMap::new(),
             entity_moves: HashMap::new(),
+            batched: HashSet::new(),
             response_keys: ResponseKeys::default(),
             context_producers: HashMap::new(),
             context_variables: HashMap::new(),
@@ -155,6 +161,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             entity_owners: HashMap::new(),
             entity_sources: HashMap::new(),
             entity_moves: HashMap::new(),
+            batched: HashSet::new(),
             response_keys: ResponseKeys::default(),
             context_producers: HashMap::new(),
             context_variables: HashMap::new(),
@@ -178,8 +185,32 @@ impl FetchGraph<SingleTypeFetchStep> {
         response_path: &MergePath,
         condition: Option<&Condition>,
     ) -> impl Iterator<Item = NodeIndex> + '_ {
-        let entity_call =
-            entity_call_hash(subgraph_name, input_type_name, response_path, condition);
+        self.children_making(
+            parent,
+            entity_call_hash(subgraph_name, input_type_name, response_path, condition),
+        )
+    }
+
+    /// The children of `parent` that take the objects at `response_path`, whatever their type,
+    /// see `joins_other_types`. Newest first, and they still need checking too.
+    fn batched_entity_calls(
+        &self,
+        parent: NodeIndex,
+        subgraph_name: &SubgraphName,
+        response_path: &MergePath,
+        condition: Option<&Condition>,
+    ) -> impl Iterator<Item = NodeIndex> + '_ {
+        self.children_making(
+            parent,
+            batched_call_hash(subgraph_name, response_path, condition),
+        )
+    }
+
+    fn children_making(
+        &self,
+        parent: NodeIndex,
+        entity_call: u64,
+    ) -> impl Iterator<Item = NodeIndex> + '_ {
         self.children_by_entity_call
             .as_ref()
             .expect("the children are indexed until the graph is built")
@@ -196,7 +227,7 @@ impl FetchGraph<SingleTypeFetchStep> {
                     parent.index(),
                 );
                 debug_assert_eq!(
-                    self.get_step_data(child).ok().and_then(entity_call_hash_of),
+                    self.entity_call_hash_of(child),
                     Some(entity_call),
                     "indexed step [{}] changed what it's reused on",
                     child.index(),
@@ -246,6 +277,25 @@ impl FetchGraph<SingleTypeFetchStep> {
 }
 
 impl<State> FetchGraph<State> {
+    /// The hash of the entity call a step in the graph makes, what `children_by_entity_call`
+    /// files it under: `entity_call_hash`, or `batched_call_hash` when it takes several types.
+    fn entity_call_hash_of(&self, index: NodeIndex) -> Option<u64> {
+        let step = self.graph.node_weight(index)?;
+        if self.batched.contains(&index) {
+            return Some(batched_call_hash(
+                &step.service_name,
+                &step.response_path,
+                step.condition.as_ref(),
+            ));
+        }
+        Some(entity_call_hash(
+            &step.service_name,
+            step.input.first_definition_name()?,
+            &step.response_path,
+            step.condition.as_ref(),
+        ))
+    }
+
     pub fn all_nodes(&self) -> NodeReferences<'_, FetchStepData<State>> {
         self.graph.node_references()
     }
@@ -313,11 +363,9 @@ impl<State> FetchGraph<State> {
             return edge.id();
         }
         let edge = self.graph.add_edge(parent_index, child_index, ());
-        if let (Some(index), Some(entity_call)) = (
+        if let (Some(entity_call), Some(index)) = (
+            self.entity_call_hash_of(child_index),
             self.children_by_entity_call.as_mut(),
-            self.graph
-                .node_weight(child_index)
-                .and_then(entity_call_hash_of),
         ) {
             index
                 .entry((parent_index, entity_call))
@@ -679,15 +727,61 @@ fn entity_call_hash(
     hasher.finish()
 }
 
-/// `entity_call_hash` of a step already in the graph.
-fn entity_call_hash_of<State>(step: &FetchStepData<State>) -> Option<u64> {
-    let input_type_name = step.input.first_definition_name()?;
-    Some(entity_call_hash(
-        &step.service_name,
-        input_type_name,
-        &step.response_path,
-        step.condition.as_ref(),
-    ))
+/// Like `entity_call_hash`, for an entity call that takes the objects of several types at the
+/// end of `response_path`, see `joins_other_types`. Every type there gets the same hash.
+fn batched_call_hash(
+    subgraph_name: &SubgraphName,
+    response_path: &MergePath,
+    condition: Option<&Condition>,
+) -> u64 {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = ahash::AHasher::default();
+    subgraph_name.hash(&mut hasher);
+    condition.hash(&mut hasher);
+    if let Some((Segment::TypeCondition(_, type_condition), rest)) =
+        response_path.inner.split_last()
+    {
+        rest.hash(&mut hasher);
+        type_condition.hash(&mut hasher);
+    }
+    // so it's never the hash of a plain call to the same spot
+    "batched".hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Whether an entity call for `input_type_name` at `response_path` can take the objects of
+/// other types there too, as one call: the path ends with a type condition on that type, like
+/// `search.@|[Book]`, and the call reads and writes that type. The calls for `Movie` and `Song`
+/// there go to the same subgraph with their own key and fields, and each type gets its own
+/// selection set, so they can't get in each other's way.
+fn joins_other_types(
+    response_path: &MergePath,
+    input_type_name: &str,
+    output_type_name: &str,
+) -> bool {
+    if input_type_name != output_type_name {
+        return false;
+    }
+    let Some((Segment::TypeCondition(type_names, _), rest)) = response_path.inner.split_last()
+    else {
+        return false;
+    };
+    type_names.len() == 1
+        && type_names.contains(input_type_name)
+        // two type conditions in a row mean both, a union of them would be wrong
+        && !matches!(rest.last(), Some(Segment::TypeCondition(..)))
+}
+
+/// Whether two paths are the same but for the types of the type condition at their end.
+fn same_but_last_types(left: &MergePath, right: &MergePath) -> bool {
+    match (left.inner.split_last(), right.inner.split_last()) {
+        (
+            Some((Segment::TypeCondition(_, left_condition), left_rest)),
+            Some((Segment::TypeCondition(_, right_condition), right_rest)),
+        ) => left_condition == right_condition && left_rest == right_rest,
+        _ => false,
+    }
 }
 
 // TODO: simplfy args
@@ -703,8 +797,24 @@ fn ensure_fetch_step_for_subgraph(
     requires: Option<&TypeAwareSelection<'_>>,
     conditions: Conditions<'_>,
     created_from_requires: bool,
+    batchable: bool,
 ) -> Result<NodeIndex, FetchGraphError> {
     let condition = conditions.current;
+    let batched = batchable
+        && requires.is_none()
+        && joins_other_types(response_path, input_type_name, output_type_name);
+    if batched {
+        return ensure_batched_fetch_step(
+            fetch_graph,
+            parent_fetch_step_index,
+            subgraph_name,
+            input_type_name,
+            response_path,
+            key,
+            conditions,
+            created_from_requires,
+        );
+    }
     let matching_child_index = if requires.is_some() {
         None
     } else {
@@ -726,10 +836,7 @@ fn ensure_fetch_step_for_subgraph(
                         conditions.from_root,
                     )
                         // the requested key fields have to be part of the input
-                        && key.is_none_or(|key| {
-                            step.input.definition_name() == key.type_name
-                                && step.input.selection_set().contains(&key.selection_set)
-                        })
+                        && key.is_none_or(|key| step.input.contains(key.type_name, &key.selection_set))
                         // a step made for requirements is only reused for requirements, and
                         // the other way around: the optimizations keep the two apart too
                         && step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES)
@@ -778,6 +885,115 @@ fn ensure_fetch_step_for_subgraph(
             Ok(step_index)
         }
     }
+}
+
+/// The step for an entity call that can take the objects of other types at the same spot too,
+/// see `joins_other_types`. One that has the type already, when it was made for the same key,
+/// or another key that doesn't clash with it. Otherwise one at that spot that doesn't have the
+/// type yet, which takes it on. Or a new one.
+#[allow(clippy::too_many_arguments)]
+fn ensure_batched_fetch_step(
+    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    parent_fetch_step_index: NodeIndex,
+    subgraph_name: &SubgraphName,
+    type_name: &str,
+    response_path: &MergePath,
+    key: Option<&TypeAwareSelection<'_>>,
+    conditions: Conditions<'_>,
+    created_from_requires: bool,
+) -> Result<NodeIndex, FetchGraphError> {
+    let condition = conditions.current;
+    let mut with_type_and_key = None;
+    let mut with_type = None;
+    let mut without_type = None;
+    for child_index in fetch_graph.batched_entity_calls(
+        parent_fetch_step_index,
+        subgraph_name,
+        response_path,
+        condition,
+    ) {
+        let step = fetch_graph.get_step_data(child_index)?;
+        if step.service_name != *subgraph_name
+            || step.condition.as_ref() != condition
+            || step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES) != created_from_requires
+            || !same_but_last_types(&step.response_path, response_path)
+        {
+            continue;
+        }
+        match step.input.selections_for_definition(type_name) {
+            Some(input) => {
+                let has_key = key.is_none_or(|key| input.contains(&key.selection_set));
+                if has_key {
+                    with_type_and_key = Some(child_index);
+                    break;
+                }
+                if with_type.is_none()
+                    && key.is_none_or(|key| !response_keys_conflict(input, &key.selection_set))
+                {
+                    with_type = Some(child_index);
+                }
+            }
+            None => {
+                without_type = without_type.or(Some(child_index));
+            }
+        }
+    }
+
+    let step_index = match with_type_and_key.or(with_type).or(without_type) {
+        Some(step_index) => step_index,
+        None => {
+            let step_index = create_fetch_step_for_entity_call(
+                fetch_graph,
+                parent_fetch_step_index,
+                subgraph_name,
+                type_name,
+                type_name,
+                response_path,
+                conditions,
+                created_from_requires,
+            );
+            fetch_graph.batched.insert(step_index);
+            step_index
+        }
+    };
+    let step = fetch_graph.get_step_data_mut(step_index)?;
+    step.gated_by
+        .retain(|condition| conditions.from_root.contains(condition));
+    if step.input.selections_for_definition(type_name).is_none() {
+        trace!(
+            "fetch step [{}] takes the {} objects at {} too",
+            step_index.index(),
+            type_name,
+            response_path
+        );
+        step.input.add_definition(type_name);
+        step.input.add_to(
+            type_name,
+            &SelectionSet {
+                items: vec![SelectionItem::Field(FieldSelection::new_typename())],
+            },
+        )?;
+        step.output.add_definition(type_name);
+        if let Some((Segment::TypeCondition(type_names, type_condition), rest)) =
+            step.response_path.inner.split_last()
+        {
+            let mut type_names = BTreeSet::clone(type_names);
+            type_names.insert(type_name.to_string());
+            step.response_path = MergePath::new(
+                rest.iter()
+                    .cloned()
+                    .chain(std::iter::once(Segment::TypeCondition(
+                        Rc::new(type_names),
+                        type_condition.clone(),
+                    )))
+                    .collect(),
+            );
+        }
+    }
+    if let Some(key) = key {
+        step.input.add_to(type_name, &key.selection_set)?;
+    }
+    Ok(step_index)
 }
 
 fn ensure_fetch_step_for_requirement(
@@ -1079,14 +1295,15 @@ fn process_entity_move_edge(
         None,
         conditions,
         created_from_requires,
+        !is_interface && !head_type.is_interface_object,
     )?;
     fetch_graph
         .entity_sources
-        .entry(fetch_step_index)
+        .entry((fetch_step_index, tail_node_index))
         .or_insert(head_node_index);
     fetch_graph
         .entity_moves
-        .entry(fetch_step_index)
+        .entry((fetch_step_index, tail_node_index))
         .or_insert(edge_index);
 
     let fetch_step = fetch_graph.get_step_data_mut(fetch_step_index)?;
@@ -1095,7 +1312,9 @@ fn process_entity_move_edge(
         requirement,
         fetch_step_index.index()
     );
-    fetch_step.input.add(&requirement.selection_set)?;
+    fetch_step
+        .input
+        .add_to(input_type_name, &requirement.selection_set)?;
 
     if is_interface && !narrowed {
         // We use `output_type_name` as there's no connection from `Interface` to `Object`,
@@ -1121,9 +1340,7 @@ fn process_entity_move_edge(
     }
 
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
-    parent_fetch_step
-        .output
-        .add_selection_typename(fetch_path)?;
+    parent_fetch_step.add_output_typename_at(response_path, fetch_path)?;
 
     // Make the fetch step a child of the parent fetch step
     trace!(
@@ -1223,6 +1440,7 @@ fn process_interface_object_type_move_edge(
         None,
         conditions,
         created_from_requires,
+        false,
     )?;
 
     trace!(
@@ -1268,9 +1486,7 @@ fn process_interface_object_type_move_edge(
     }));
 
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
-    parent_fetch_step
-        .output
-        .add_selection_typename(fetch_path)?;
+    parent_fetch_step.add_output_typename_at(response_path, fetch_path)?;
 
     // In all cases it's `__typename` that needs to be resolved by another subgraph.
     trace!("Creating a fetch step for requirement of @interfaceObject");
@@ -1438,7 +1654,8 @@ fn process_subgraph_reentry(
         created_from_requires,
     );
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
-    parent_fetch_step.output.add_at_path(
+    parent_fetch_step.add_output_at(
+        response_path,
         fetch_path,
         SelectionSet {
             items: vec![SelectionItem::Field(FieldSelection {
@@ -1524,7 +1741,8 @@ fn process_selfie_edge(
         parent_fetch_step_index.index(),
         target_type_name,
     );
-    parent_fetch_step.output.add_at_path(
+    parent_fetch_step.add_output_at(
+        response_path,
         fetch_path,
         SelectionSet {
             items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
@@ -1627,7 +1845,8 @@ fn process_abstract_edge(
         target_type_name,
     );
 
-    parent_fetch_step.output.add_at_path(
+    parent_fetch_step.add_output_at(
+        response_path,
         fetch_path,
         SelectionSet {
             items: vec![
@@ -1726,7 +1945,8 @@ fn process_plain_field_edge(
         parent_fetch_step_index.index()
     );
 
-    parent_fetch_step.output.add_at_path(
+    parent_fetch_step.add_output_at(
+        response_path,
         fetch_path,
         SelectionSet {
             items: vec![SelectionItem::Field(FieldSelection {
@@ -1882,7 +2102,7 @@ fn decide_reentry<'a>(
     } else {
         fetch_graph
             .entity_sources
-            .get(&parent_fetch_step_index)
+            .get(&(parent_fetch_step_index, head_node_index))
             .copied()
     };
     let own_key = |fetch_graph: &mut FetchGraph<SingleTypeFetchStep>| {
@@ -2045,7 +2265,7 @@ fn process_requires_field_edge(
     if let Some(holder_node) = reentry.holder {
         fetch_graph
             .entity_sources
-            .entry(field_fetch)
+            .entry((field_fetch, head_node_index))
             .or_insert(holder_node);
     }
 
@@ -2063,7 +2283,8 @@ fn process_requires_field_edge(
         .unwrap_or(0);
     let field_fetch_step = fetch_graph.get_step_data_mut(field_fetch)?;
 
-    field_fetch_step.output.add_at_path(
+    field_fetch_step.add_output_at(
+        response_path,
         &MergePath::default(),
         SelectionSet {
             items: vec![SelectionItem::Field(FieldSelection {
@@ -2128,13 +2349,8 @@ fn process_requires_field_edge(
 
     // A key that's already in the response only needs us to wait for the fetches that put it there.
     if reentry.key_fetched_by.is_empty() {
-        reentry_step
-            .output
-            .add_at_path(&key_to_reenter_at, key_output)?;
-
-        reentry_step
-            .output
-            .add_selection_typename(&key_to_reenter_at)?;
+        reentry_step.add_output_at(response_path, &key_to_reenter_at, key_output)?;
+        reentry_step.add_output_typename_at(response_path, &key_to_reenter_at)?;
     }
     for &step in &reentry.key_fetched_by {
         fetch_graph.connect(step, field_fetch);
@@ -2166,6 +2382,7 @@ fn process_requires_field_edge(
             query_node,
             &reentry,
             &key_input,
+            head_node_index,
             head_subgraph_name,
             head_type_name,
             response_path,
@@ -2414,6 +2631,7 @@ fn add_requirements_fetch(
     query_node: &QueryTreeNode,
     reentry: &Reentry<'_>,
     key_input: &TypeAwareSelection<'_>,
+    head_node_index: NodeIndex,
     subgraph_name: &SubgraphName,
     type_name: &str,
     response_path: &MergePath,
@@ -2448,7 +2666,7 @@ fn add_requirements_fetch(
     if let Some(holder_node) = reentry.holder {
         fetch_graph
             .entity_sources
-            .entry(requirements_fetch)
+            .entry((requirements_fetch, head_node_index))
             .or_insert(holder_node);
     }
 
@@ -2511,10 +2729,11 @@ fn add_requirements_fetch(
         let output = fetch_graph
             .response_keys
             .output(&place_of(response_path), &key.selection_set);
-        fetch_graph
-            .get_step_data_mut(reentry.from)?
-            .output
-            .add_at_path(key_to_reenter_at, output)?;
+        fetch_graph.get_step_data_mut(reentry.from)?.add_output_at(
+            response_path,
+            key_to_reenter_at,
+            output,
+        )?;
     }
 
     Ok(requirements_fetch)
@@ -2643,7 +2862,7 @@ fn key_of_entity_call<'a>(
     step: NodeIndex,
     node: NodeIndex,
 ) -> Result<Option<&'a TypeAwareSelection<'a>>, FetchGraphError> {
-    let Some(&edge_index) = fetch_graph.entity_moves.get(&step) else {
+    let Some(&edge_index) = fetch_graph.entity_moves.get(&(step, node)) else {
         return Ok(None);
     };
     if graph.get_edge_tail(&edge_index)? != node {
@@ -2691,8 +2910,7 @@ fn process_query_node(
             for requirement in query_node.context_requirements() {
                 fetch_graph
                     .get_step_data_mut(parent_fetch_step_index)?
-                    .output
-                    .add_selection_typename(fetch_path)?;
+                    .add_output_typename_at(response_path, fetch_path)?;
                 let producers = process_query_node(
                     graph,
                     fetch_graph,
@@ -2999,7 +3217,9 @@ pub fn build_fetch_graph_from_query_tree(
 
     // fine to unwrap as we have already checked the length
     fetch_graph.root_index = Some(*root_indexes.first().unwrap());
+    let batched = std::mem::take(&mut fetch_graph.batched);
     let mut fetch_graph = fetch_graph.to_multi_type();
+    fetch_graph.finish_batched_steps(batched, supergraph)?;
     fetch_graph.optimize(supergraph, options, cancellation_token)?;
     fetch_graph.collect_variable_usages()?;
 
