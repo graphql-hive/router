@@ -234,13 +234,13 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
-        Fetch(service: "a") {
+        Fetch(service: "b") {
           {
             media {
               __typename
               ... on Book {
-                __typename
                 id
+                title
               }
               ... on Movie {
                 __typename
@@ -249,22 +249,15 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Flatten(path: "media.@") {
+        Flatten(path: "media.@|[Movie]") {
           Fetch(service: "c") {
             {
-              ... on Book {
-                __typename
-                id
-              }
               ... on Movie {
                 __typename
                 id
               }
             } =>
             {
-              ... on Book {
-                title
-              }
               ... on Movie {
                 title
               }
@@ -282,9 +275,9 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
-            "serviceName": "a",
+            "serviceName": "b",
             "operationKind": "query",
-            "operation": "{media{__typename ...on Book{__typename id} ...on Movie{__typename id}}}"
+            "operation": "{media{__typename ...on Book{id title} ...on Movie{__typename id}}}"
           },
           {
             "kind": "Flatten",
@@ -292,28 +285,19 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
               {
                 "Field": "media"
               },
-              "@"
+              "@",
+              {
+                "TypeCondition": [
+                  "Movie"
+                ]
+              }
             ],
             "node": {
               "kind": "Fetch",
               "serviceName": "c",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Book{title} ...on Movie{title}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Movie{title}}}",
               "requires": [
-                {
-                  "kind": "InlineFragment",
-                  "typeCondition": "Book",
-                  "selections": [
-                    {
-                      "kind": "Field",
-                      "name": "__typename"
-                    },
-                    {
-                      "kind": "Field",
-                      "name": "id"
-                    }
-                  ]
-                },
                 {
                   "kind": "InlineFragment",
                   "typeCondition": "Movie",

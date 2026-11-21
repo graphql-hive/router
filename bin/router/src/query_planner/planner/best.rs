@@ -88,12 +88,19 @@ pub fn find_best_combination(
     let mut plan = base.tree.clone();
     let mut fetches = base.fetches;
     let mut picks = Vec::with_capacity(groups.len());
-    for (alternatives, usable) in groups.iter().zip(&usable) {
+    for (position, (alternatives, usable)) in groups.iter().zip(&usable).enumerate() {
         cancellation_token.bail_if_cancelled()?;
         for key in usable {
             *users.get_mut(key).expect("counted above") -= 1;
         }
-        let pick = cheapest_to_add(graph, alternatives, plan.as_ref(), &fetches, &users)?;
+        let pick = cheapest_to_add(
+            graph,
+            alternatives,
+            plan.as_ref(),
+            &fetches,
+            &users,
+            &groups[position + 1..],
+        )?;
         fetches.add(&alternatives[pick]);
         add(graph, &mut plan, &alternatives[pick])?;
         picks.push(pick);
@@ -200,6 +207,7 @@ fn cheapest_to_add(
     plan: Option<&QueryTree>,
     fetches: &Fetches,
     users: &HashMap<FetchKey, u32>,
+    remaining: &[Alternatives<'_>],
 ) -> Result<usize, GraphError> {
     let tied = most_by(0..alternatives.len(), |index| {
         let (waves, added) = fetches.added_by(&alternatives[index]);
@@ -215,6 +223,30 @@ fn cheapest_to_add(
             .filter(|key| !fetches.keys.contains(*key))
             .map(|key| users.get(key).copied().unwrap_or(0))
             .sum::<u32>()
+    });
+    if let [index] = tied[..] {
+        return Ok(index);
+    }
+    // Then the one more leaves still to pick need nothing else for: their whole path is in the
+    // fetches the plan makes with it. Two root fetches every leaf could use tie above, but the one
+    // that has a field itself, like one with `@provides`, saves the other leaves a hop.
+    let tied = most_by(tied.into_iter(), |index| {
+        let added: Vec<&FetchKey> = alternatives[index]
+            .fetches
+            .iter()
+            .filter(|key| !fetches.keys.contains(*key))
+            .collect();
+        remaining
+            .iter()
+            .filter(|leaf| {
+                leaf.iter().any(|candidate| {
+                    candidate
+                        .fetches
+                        .iter()
+                        .all(|key| fetches.keys.contains(key) || added.contains(&key))
+                })
+            })
+            .count()
     });
     if let [index] = tied[..] {
         return Ok(index);
