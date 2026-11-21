@@ -95,7 +95,7 @@ impl FetchGraph<MultiTypeFetchStep> {
             groups[group_index].push(node_index);
         }
 
-        // worked out when first needed, and again after each merge, as it moves edges around
+        // worked out when first needed, then kept up to date after each merge
         let mut cached_waves: Option<Vec<usize>> = None;
         for group in groups.iter().filter(|group| group.len() > 1) {
             for target_index in group {
@@ -124,7 +124,12 @@ impl FetchGraph<MultiTypeFetchStep> {
                     let other_step = self.get_step_data(*other_index)?;
                     if target_step.can_merge_leafs(other_step) {
                         perform_fetch_step_merge(*target_index, *other_index, self, false)?;
-                        cached_waves = None;
+                        // The merged step waits for the parents of both, so it runs in the later
+                        // of the two waves. Nothing else moves: every child of both ran after
+                        // that already, that's what let them merge.
+                        if let Some(waves) = &mut cached_waves {
+                            waves[target_index.index()] = merged_wave;
+                        }
                     }
                 }
             }
