@@ -1,5 +1,5 @@
 mod core;
-mod extractors;
+pub(crate) mod extractors;
 
 pub use core::{
     DocumentIdResolver, DocumentIdResolverInput, HttpRequestContext, PersistedDocumentExtractError,

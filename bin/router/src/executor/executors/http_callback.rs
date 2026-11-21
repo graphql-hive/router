@@ -27,6 +27,7 @@ use crate::executor::response::subgraph_response::SubgraphResponse;
 
 pub const CALLBACK_PROTOCOL_VERSION: &str = "callback/1.0";
 pub const SUBSCRIPTION_PROTOCOL_HEADER: &str = "subscription-protocol";
+pub const CALLBACK_EXTENSIONS_SUBSCRIPTION_KEY: &str = "subscription";
 
 #[derive(Clone)]
 pub struct CallbackSubscription {
@@ -135,7 +136,10 @@ impl HttpCallbackSubgraphExecutor {
             "verifier": verifier,
             "heartbeatIntervalMs": self.heartbeat_interval_ms
         });
-        extensions.insert("subscription".to_string(), subscription_ext);
+        extensions.insert(
+            CALLBACK_EXTENSIONS_SUBSCRIPTION_KEY.to_string(),
+            subscription_ext,
+        );
 
         build_request_body(execution_request)
     }
