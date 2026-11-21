@@ -762,6 +762,59 @@ pub fn find_selection_set_by_path_mut<'a>(
     Some(current_selection_set)
 }
 
+/// Like `find_selection_set_by_path_mut`, but a type condition with several types, like
+/// `product|[Book|Movie]`, goes into the fragment of each, so it finds one selection set for each
+/// type. The fragments are different items, so they're found in one walk, in the order they're
+/// in. `false` when one of them isn't there.
+pub fn find_selection_sets_by_path_mut<'a>(
+    selection_set: &'a mut SelectionSet,
+    path: &[Segment],
+    found: &mut Vec<&'a mut SelectionSet>,
+) -> bool {
+    let Some((segment, rest)) = path.split_first() else {
+        found.push(selection_set);
+        return true;
+    };
+    match segment {
+        Segment::List => find_selection_sets_by_path_mut(selection_set, rest, found),
+        Segment::TypeCondition(type_names, condition) if type_names.len() > 1 => {
+            // the first fragment of each type, like a path with only that type would find
+            let mut taken: Vec<&str> = Vec::with_capacity(type_names.len());
+            for item in selection_set.items.iter_mut() {
+                let SelectionItem::InlineFragment(fragment) = item else {
+                    continue;
+                };
+                let Some(type_name) = type_names.get(&fragment.type_condition) else {
+                    continue;
+                };
+                if taken.contains(&type_name.as_str())
+                    || !fragment_condition_equal(condition, fragment)
+                {
+                    continue;
+                }
+                taken.push(type_name.as_str());
+                if !find_selection_sets_by_path_mut(&mut fragment.selections, rest, found) {
+                    return false;
+                }
+            }
+            taken.len() == type_names.len()
+        }
+        segment => {
+            let Some(item) = selection_set
+                .items
+                .iter_mut()
+                .find(|item| segment_selects(segment, item))
+            else {
+                return false;
+            };
+            match item_selections_mut(item) {
+                Some(selections) => find_selection_sets_by_path_mut(selections, rest, found),
+                None => false,
+            }
+        }
+    }
+}
+
 pub fn field_condition_equal(cond: &Option<Condition>, field: &FieldSelection) -> bool {
     match cond {
         Some(cond) => match cond {
