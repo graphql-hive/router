@@ -31,8 +31,8 @@ incremental = true
 debug = "line-tables-only"
 
 # For A/B perf runs: ~4 min clean and ~2.5 min after an edit, vs ~22 min for the fat LTO of
-# `release`. Router CPU per request on the bench op came out within 1% of fat LTO. Still check
-# the winner with `profiling` before trusting it.
+# `release`. Router CPU per request on the bench op came out 1-4% higher than with fat LTO, the
+# same for every variant, so it ranks them right. Check the winner's numbers with `profiling`.
 [profile.bench-fast]
 inherits = "release"
 lto = "thin"

@@ -1596,3 +1596,68 @@ matters more with all workers feeding one appender. Costs: ~80 lines replacing
 Tests after this round: fmt, clippy (lib) clean, workspace build, `test_all` 2118/2118, e2e
 847/848 (`file_watch_works`), with the indexed pipeline and reuse forced on 844/848 (the four
 in the glossary).
+
+## 2026-11-21 — matching prototype-router's CPU per request
+
+Goal (agreed before an unattended night): router CPU per request within 5% of
+[prototype-router](https://github.com/rhino88/prototype-router) (commit `6dc7500`) at 1 and 10
+workers. Bench op, dedupe off, indexed pipeline + `experimental_http1_pool` + `per_worker`.
+Router on :4037, subgraphs on :4237 (other sessions use the defaults), the same harness for
+both. Other sessions build and bench on this machine too, so every run waited for ≥70% idle CPU
+and was redone when other processes used more than a core during its 15 s window (or the
+reading went negative, a process starting and exiting inside it). Stop rule: goal reached, or
+5 attempts in a row without a measurable gain.
+
+Start, router µs/req (3 rounds, medians): 1 worker 206 vs the prototype's 203, 10 workers 337
+vs 265. The single-worker gap was closed by the indexed pipeline already; with many workers we
+paid ~2.4x the context switches per request (20 vs 8.5) and ~50 µs more system time.
+
+| attempt | change | 1 worker | 10 workers | kept |
+|---|---|---|---|---|
+| 1 | pooled connections polled in the request's task, no spawned connection task (`cbe8d4b6b`) | 211 → 225 | 342 → 305 | yes |
+| 2 | poll only the side that was woken, a waker each for request and connection (`2d934e51a`) | 232 → 226 | 318 → 304 | yes |
+| 3 | read buffer cap 64 → 128 / 256 KB | 223 / 220 / 219 | 319 / 325 / 336 | no, noise |
+| 4 | exact read size 128 / 256 KB (one read per response) | 228 / 226 / 235 | 292 / 306 / 314 | no, noise, RSS +35–60 MB |
+| 5 | planner: an entity fetch nothing waits for joins a later wave's batch to the same subgraph (`b7da4f877`) | 216 → 199 | 287 → 259 | yes |
+
+Socket messages per request (rusage `msgsnd`/`msgrcv`, 1 worker, they don't move with load):
+
+| | sent | received | ctx switches |
+|---|---|---|---|
+| spawned connection task | 8.0 | 9.9 | 1.17 |
+| inline (attempts 1–2) | 8.0 | 9.9 | 0.18 |
+| exact 128 KB reads | 8.0 | 8.0 | 0.34 |
+| prototype | 7.0 | 7.0 | 0.18 |
+
+Inline polling brought the context switches down to the prototype's. The remaining difference
+was one subgraph request per client request (7 vs 6): our waves are as early as possible, so
+`topProducts { inStock }` and the nested products' `inStock` were two inventory requests three
+waves apart. The prototype holds the first back to share a request; attempt 5 does the same for
+fetches nothing waits for, into a wave that runs anyway, so the plan gets no longer. One read
+per response (attempt 4) cut ~1.9 reads per request but no CPU we could measure.
+
+Final, the same commit in both build profiles, 3 rounds:
+
+| | 1 worker | 10 workers |
+|---|---|---|
+| final, fat LTO (`profiling`) | 195 | 247 |
+| final, `bench-fast` | 199 | 258 |
+| prototype | 200 | 248 |
+
+Goal reached: −2.5% at 1 worker, level at 10. req/s is still ~10% lower at 10 workers (5,963
+vs 6,660): on this laptop the subgraphs take most of the cores, and ours cost ~1,100 µs/req
+against the prototype's ~1,000. Its subgraph queries skip `__typename` where the type is
+known; that trim is drafted in stash "typename-trim-wip-prototype-analysis-9d7ab1" (21 planner
+snapshots left to accept). Memory isn't part of the goal but differs: 1 worker ~70 MB RSS vs
+18 MB, 10 workers ~77 vs ~65 MB.
+
+`bench-fast` came out 2–4% behind fat LTO with this code (within 1% when first checked), so
+it ranks variants the same but the final numbers need the fat build.
+
+Planner benchmarks for attempt 5, base `2d934e51a` vs new, thin LTO on both sides, 2
+alternating rounds: no regression; most planning benchmarks 1–6% faster, the rest within ±3%.
+
+Checks for every kept commit: clippy and fmt clean on the touched files, `test_all` green,
+e2e 869/869 with `ROUTER_TRAFFIC_SHAPING_EXPERIMENTAL_HTTP1_POOL=true`, and for attempt 5 also
+869/869 with defaults. Attempt 5 changed three planner snapshots (bench op,
+`override_with_requires_many`, an entity reuse test) and two e2e request counts (inventory 2 → 1).
