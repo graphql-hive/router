@@ -769,7 +769,7 @@ async fn send_request<'a>(
         let pool = http_client
             .pool()
             .filter(|_| endpoint.scheme() == Some(&http::uri::Scheme::HTTP));
-        let (res, lease) = match pool {
+        let (res, mut lease) = match pool {
             Some(pool) => {
                 let (res, lease) = until(deadline, pool.request(req)).await??;
                 (res, Some(lease))
@@ -790,7 +790,12 @@ async fn send_request<'a>(
 
         let (parts, body) = res.into_parts();
 
-        let body = match until(deadline, read_body(body)).await? {
+        // a pooled connection has no task of its own, the body only arrives while we poll it
+        let body = match &mut lease {
+            Some(lease) => until(deadline, lease.drive(read_body(body))).await?,
+            None => until(deadline, read_body(body)).await?,
+        };
+        let body = match body {
             Ok(body) => {
                 if let Some(lease) = lease {
                     lease.release();
