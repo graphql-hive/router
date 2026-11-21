@@ -1,6 +1,6 @@
 use ahash::{HashMap, HashMapExt, HashSet};
 use std::collections::{BTreeSet, VecDeque};
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use petgraph::{graph::NodeIndex, Direction};
@@ -94,7 +94,7 @@ impl FetchGraph<MultiTypeFetchStep> {
             // The map is for lookup; keeping groups in a Vec preserves sibling order and
             // therefore deterministic merge/selection order across planner instances.
             let mut group_indexes = HashMap::<BatchKey, usize>::new();
-            let mut groups = Vec::<Vec<(NodeIndex, u64)>>::new();
+            let mut groups = Vec::<Vec<NodeIndex>>::new();
             for sibling_index in &siblings_indices {
                 queue.push_back(*sibling_index);
 
@@ -122,7 +122,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                         group_index
                     }
                 };
-                groups[group_index].push((*sibling_index, normalized_path));
+                groups[group_index].push(*sibling_index);
             }
 
             // If each candidate group contains only one step, no pair can be batched.
@@ -131,15 +131,15 @@ impl FetchGraph<MultiTypeFetchStep> {
             }
 
             for group in groups {
-                let mut targets = Vec::<(NodeIndex, u64)>::new();
+                let mut targets = Vec::<NodeIndex>::new();
 
-                for (source_index, source_normalized_path) in group {
+                for source_index in group {
                     if self.graph.node_weight(source_index).is_none() {
                         continue;
                     }
 
                     let mut merged = false;
-                    for (target_index, target_normalized_path) in &targets {
+                    for target_index in &targets {
                         if self.graph.node_weight(*target_index).is_none() {
                             continue;
                         }
@@ -174,12 +174,6 @@ impl FetchGraph<MultiTypeFetchStep> {
                             self.get_pair_of_steps_mut(*target_index, source_index)?;
                         let original_me_path = me.response_path.clone();
                         let original_other_path = other.response_path.clone();
-                        let possible_types_by_position = possible_types_by_position(
-                            supergraph,
-                            root_type,
-                            &original_me_path,
-                            *target_normalized_path,
-                        );
 
                         // Declare the source types on the target so subsequent compatible
                         // merges can add selections for those types.
@@ -204,8 +198,14 @@ impl FetchGraph<MultiTypeFetchStep> {
                         merged_step.response_path = merge_batched_response_paths(
                             &original_me_path,
                             &original_other_path,
-                            *target_normalized_path,
-                            &possible_types_by_position,
+                            &|position| {
+                                possible_types_at(
+                                    supergraph,
+                                    root_type,
+                                    &original_me_path,
+                                    position,
+                                )
+                            },
                         );
                         if merged_step.is_fetching_multiple_types() {
                             if let Some(condition) = merged_step.condition.clone() {
@@ -231,7 +231,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                     }
 
                     if !merged {
-                        targets.push((source_index, source_normalized_path));
+                        targets.push(source_index);
                     }
                 }
             }
@@ -296,15 +296,13 @@ impl FetchGraph<MultiTypeFetchStep> {
                     .iter()
                     .filter(|segment| !matches!(segment, Segment::TypeCondition(..)))
                     .count();
-                let possible_types = possible_types_by_position(supergraph, root_type, &rest, 0);
-                if possible_types
-                    .get(&(0, position))
-                    .is_some_and(|possible_types| {
+                if possible_types_at(supergraph, root_type, &rest, position).is_some_and(
+                    |possible_types| {
                         possible_types
                             .iter()
                             .all(|type_name| type_names.contains(type_name))
-                    })
-                {
+                    },
+                ) {
                     step.response_path = rest;
                 }
             }
@@ -322,62 +320,56 @@ impl FetchGraph<MultiTypeFetchStep> {
     }
 }
 
-/// Every object type the value at each slot of `path` can be, keyed like the type conditions
-/// `merge_batched_response_paths` looks at: (path hash without type conditions, slot).
-/// A slot is left out when its type can't be worked out, and then nothing gets stripped there.
-/// The sets are borrowed from the supergraph, cloning them per merge was most of the time.
-fn possible_types_by_position<'a>(
+/// Every object type the value at slot `position` of `path` can be, the way
+/// `merge_batched_response_paths` counts slots: fields and lists, not type conditions. `None` when
+/// its type can't be worked out, and then nothing gets stripped there. Borrowed from the
+/// supergraph, and only for the slot asked about: working out every slot for every merge was
+/// most of what a merge cost.
+fn possible_types_at<'a>(
     supergraph: &'a SupergraphState,
-    root_type: &str,
+    root_type: &'a str,
     path: &MergePath,
-    normalized_path_key: u64,
-) -> HashMap<(u64, usize), &'a HashSet<String>> {
-    let mut result = HashMap::new();
+    position: usize,
+) -> Option<&'a HashSet<String>> {
     // The named type of the value at the current slot, and the type condition on it.
-    let mut current_type = Some(root_type.to_string());
+    let mut current_type = Some(root_type);
     let mut type_condition: Option<&BTreeSet<String>> = None;
-    let mut position = 0;
+    let mut slot = 0;
 
     for segment in path.inner.iter() {
         match segment {
-            Segment::TypeCondition(type_names, _) => type_condition = Some(type_names),
-            Segment::List => position += 1,
+            Segment::TypeCondition(type_names, _) => {
+                type_condition = Some(type_names);
+                continue;
+            }
+            Segment::List => slot += 1,
             Segment::Field(field, _, _) => {
                 let parent_type = type_condition
-                    .and_then(|type_names| type_names.first().cloned())
+                    .and_then(|type_names| type_names.first().map(String::as_str))
                     .or(current_type);
                 current_type = parent_type.and_then(|parent_type| {
-                    supergraph
-                        .field_return_type_name(&parent_type, field.field_name())
-                        .map(str::to_string)
+                    supergraph.field_return_type_name(parent_type, field.field_name())
                 });
                 type_condition = None;
-                position += 1;
+                slot += 1;
             }
         }
-
-        if matches!(segment, Segment::TypeCondition(..)) {
-            continue;
-        }
-        if let Some(possible_types) = current_type
-            .as_deref()
-            .and_then(|type_name| supergraph.all_possible_types(type_name))
-            // An interface nothing implements has an empty set. "Every type is merged" would be
-            // true for it, so leave it out and keep the type condition.
-            .filter(|possible_types| !possible_types.is_empty())
-        {
-            result.insert((normalized_path_key, position), possible_types);
+        if slot == position {
+            return current_type
+                .and_then(|type_name| supergraph.all_possible_types(type_name))
+                // An interface nothing implements has an empty set. "Every type is merged" would
+                // be true for it, so leave it out and keep the type condition.
+                .filter(|possible_types| !possible_types.is_empty());
         }
     }
 
-    result
+    None
 }
 
-fn merge_batched_response_paths(
+fn merge_batched_response_paths<'a>(
     me: &MergePath,
     other: &MergePath,
-    normalized_path_key: u64,
-    possible_types_by_position: &HashMap<(u64, usize), &HashSet<String>>,
+    possible_types_at: &dyn Fn(usize) -> Option<&'a HashSet<String>>,
 ) -> MergePath {
     // Merge rule at each slot (type-condition part only):
     // - If non-type-condition shape differs -> keep `me` unchanged
@@ -419,16 +411,14 @@ fn merge_batched_response_paths(
         (had_type_condition, type_condition_members, condition)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn merged_type_condition_segment(
-        normalized_path_key: u64,
+    fn merged_type_condition_segment<'a>(
         non_type_condition_position: usize,
         type_condition_changed: bool,
         me_had_type_condition: bool,
         other_had_type_condition: bool,
         merged_type_condition_members: BTreeSet<&str>,
         condition: Option<&Condition>,
-        possible_types_by_position: &HashMap<(u64, usize), &HashSet<String>>,
+        possible_types_at: &dyn Fn(usize) -> Option<&'a HashSet<String>>,
     ) -> Option<Segment> {
         // We keep a type condition only when both sides had one at this position.
         if !me_had_type_condition
@@ -456,8 +446,7 @@ fn merge_batched_response_paths(
         // Strip the type condition only when the merged types are every type the value there
         // can be. What the siblings happen to ask for isn't enough: with `Animal` being
         // `Cat | Dog | Bird`, dropping `|[Cat|Dog]` would send birds too.
-        let possible_types =
-            possible_types_by_position.get(&(normalized_path_key, non_type_condition_position));
+        let possible_types = possible_types_at(non_type_condition_position);
         if condition.is_none()
             && possible_types.is_some_and(|possible_types| {
                 possible_types
@@ -506,14 +495,13 @@ fn merge_batched_response_paths(
 
         // Keep or remove type condition here based on merged and possible types.
         if let Some(merged_type_condition_segment) = merged_type_condition_segment(
-            normalized_path_key,
             non_type_condition_position,
             type_condition_changed,
             me_had_type_condition,
             other_had_type_condition,
             merged_type_condition_members,
             condition,
-            possible_types_by_position,
+            possible_types_at,
         ) {
             merged.push(merged_type_condition_segment);
         }
@@ -543,7 +531,7 @@ fn merge_batched_response_paths(
 
 /// Hash the response path while ignoring type-condition members, so sibling type branches group.
 fn normalized_path_hash(path: &MergePath) -> u64 {
-    let mut hasher = DefaultHasher::new();
+    let mut hasher = ahash::AHasher::default();
 
     for segment in path.inner.iter() {
         match segment {
@@ -581,7 +569,7 @@ fn normalized_path_hash(path: &MergePath) -> u64 {
 
 /// Keep candidates with different type-condition positions or directives in separate groups.
 fn type_condition_layout_hash(path: &MergePath) -> u64 {
-    let mut hasher = DefaultHasher::new();
+    let mut hasher = ahash::AHasher::default();
 
     for (position, segment) in path.inner.iter().enumerate() {
         if let Segment::TypeCondition(_, condition) = segment {
@@ -791,7 +779,7 @@ fn outputs_differ_for_a_shared_type(
 mod tests {
     use std::rc::Rc;
 
-    use ahash::{HashMap, HashMapExt, HashSet};
+    use ahash::{HashMap, HashSet};
 
     use crate::query_planner::{
         ast::merge_path::{Condition, FieldPathSegment, MergePath, Segment},
@@ -839,9 +827,7 @@ mod tests {
         let me = path_with_condition(&["Book"], condition.clone());
         let other = path_with_condition(&["Book"], condition);
 
-        let normalized_path_key = normalized_path_hash(&me);
-        let merged =
-            merge_batched_response_paths(&me, &other, normalized_path_key, &HashMap::new());
+        let merged = merge_batched_response_paths(&me, &other, &|_| None);
 
         assert_eq!(merged, me);
     }
@@ -858,12 +844,11 @@ mod tests {
         let possible_types_by_position =
             HashMap::from_iter([((normalized_path_key, 2), &possible_types)]);
 
-        let merged = merge_batched_response_paths(
-            &me,
-            &other,
-            normalized_path_key,
-            &possible_types_by_position,
-        );
+        let merged = merge_batched_response_paths(&me, &other, &|position| {
+            possible_types_by_position
+                .get(&(normalized_path_key, position))
+                .copied()
+        });
 
         assert_eq!(merged, path_with_condition(&["Book", "User"], condition));
     }
@@ -881,12 +866,11 @@ mod tests {
         let possible_types_by_position =
             HashMap::from_iter([((normalized_path_key, 2), &possible_types)]);
 
-        let merged = merge_batched_response_paths(
-            &me,
-            &other,
-            normalized_path_key,
-            &possible_types_by_position,
-        );
+        let merged = merge_batched_response_paths(&me, &other, &|position| {
+            possible_types_by_position
+                .get(&(normalized_path_key, position))
+                .copied()
+        });
 
         assert_eq!(
             format!("{}", FlattenNodePath::from(merged)),
@@ -903,12 +887,11 @@ mod tests {
         let possible_types_by_position =
             HashMap::from_iter([((normalized_path_key, 2), &possible_types)]);
 
-        let merged = merge_batched_response_paths(
-            &me,
-            &other,
-            normalized_path_key,
-            &possible_types_by_position,
-        );
+        let merged = merge_batched_response_paths(&me, &other, &|position| {
+            possible_types_by_position
+                .get(&(normalized_path_key, position))
+                .copied()
+        });
 
         assert_eq!(
             format!("{}", FlattenNodePath::from(merged)),
