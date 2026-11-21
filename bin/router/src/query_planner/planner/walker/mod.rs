@@ -613,15 +613,25 @@ impl<'graph> OperationWalk<'graph> {
                         .as_ref()
                         .and_then(|ids| ids.as_deref());
 
-                    let indirect_paths = find_indirect_paths(
+                    let target = direct_target.in_subgraphs(target_subgraph_ids);
+                    let indirect_paths = moves.indirect_paths(
                         graph,
-                        supergraph,
-                        override_context,
                         path,
-                        &direct_target.in_subgraphs(target_subgraph_ids),
-                        &excluded,
-                        cancellation_token,
-                        Some(moves),
+                        field,
+                        target_subgraph_ids,
+                        &target,
+                        || {
+                            find_indirect_paths(
+                                graph,
+                                supergraph,
+                                override_context,
+                                path,
+                                &target,
+                                &excluded,
+                                cancellation_token,
+                                Some(moves),
+                            )
+                        },
                     )?;
                     trace!("Indirect paths found: {}", indirect_paths.len());
 

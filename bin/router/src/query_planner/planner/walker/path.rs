@@ -156,6 +156,13 @@ impl PathSegment {
     }
 }
 
+/// One edge a path takes, with what it requires, see `OperationPath::steps_after`.
+pub(crate) struct PathStep {
+    edge_index: EdgeIndex,
+    requirement_tree: Option<Rc<QueryTreeNode>>,
+    context_requirements: Vec<Rc<ContextRequirement>>,
+}
+
 #[derive(Clone)]
 pub struct OperationPath<'graph> {
     pub root_node: NodeIndex,
@@ -432,6 +439,56 @@ impl<'graph> OperationPath<'graph> {
         OperationPath::new(new_root_node.unwrap(), previous_new_segment)
             // The requirement continuation reuses other's tail, so it also must reuse its union context
             .with_union_context(other.union_context.clone())
+    }
+
+    /// The steps this path takes after `start`, when it goes on from it: the edge of each,
+    /// with what it requires. `None` when it doesn't start with `start`.
+    pub(crate) fn steps_after(&self, start: &OperationPath<'graph>) -> Option<Vec<PathStep>> {
+        let start_depth = start
+            .last_segment
+            .as_ref()
+            .map_or(0, |segment| segment.depth);
+        let mut steps = Vec::new();
+        let mut segment = self.last_segment.as_ref();
+        while let Some(current) = segment.filter(|segment| segment.depth > start_depth) {
+            steps.push(PathStep {
+                edge_index: current.edge_index,
+                requirement_tree: current.requirement_tree.clone(),
+                context_requirements: current
+                    .context_requirements
+                    .as_deref()
+                    .map(<[_]>::to_vec)
+                    .unwrap_or_default(),
+            });
+            segment = current.prev.as_ref();
+        }
+        let same_start = match (segment, start.last_segment.as_ref()) {
+            (Some(ours), Some(theirs)) => Rc::ptr_eq(ours, theirs),
+            (None, None) => self.root_node == start.root_node,
+            _ => false,
+        };
+        steps.reverse();
+        same_start.then_some(steps)
+    }
+
+    /// This path, going on with `steps` taken from another path, see `steps_after`.
+    pub(crate) fn replay(
+        &self,
+        graph: &'graph Graph<'graph>,
+        steps: &[PathStep],
+        target: &NavigationTarget,
+    ) -> OperationPath<'graph> {
+        let mut path = self.clone();
+        for step in steps {
+            path = path.advance(
+                graph,
+                &graph.edge_reference(step.edge_index),
+                step.requirement_tree.clone(),
+                step.context_requirements.clone(),
+                target,
+            );
+        }
+        path
     }
 
     fn with_union_context(mut self, scope: Option<UnionContext<'graph>>) -> Self {

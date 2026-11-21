@@ -31,7 +31,9 @@ use crate::query_planner::{
 use super::{
     error::WalkOperationError,
     excluded::ExcludedFromLookup,
-    path::{ContextRequirement, OperationPath, PathSegment, SelectionAttributes, UnionContext},
+    path::{
+        ContextRequirement, OperationPath, PathSegment, PathStep, SelectionAttributes, UnionContext,
+    },
 };
 
 #[derive(Debug)]
@@ -109,6 +111,19 @@ pub struct MoveRequirements<'graph> {
     /// By the path's last segment, root and the edge. The segment is kept, so its address isn't
     /// reused by another path while it's a key.
     checked: RefCell<HashMap<(usize, NodeIndex, EdgeIndex), Vec<CheckedMove<'graph>>>>,
+    /// The indirect searches done so far, by the node they started from and the field. A field
+    /// gets searched for from the same node many times in one operation, like under every type
+    /// of a union. What a search finds doesn't depend on how the path got to that node: the
+    /// requirements are resolved from there on. So the steps it found go on from the next path
+    /// too, without searching again.
+    searches: RefCell<HashMap<(NodeIndex, &'graph str), Vec<IndirectSearch<'graph>>>>,
+}
+
+struct IndirectSearch<'graph> {
+    union_context: Option<UnionContext<'graph>>,
+    field: &'graph FieldSelection,
+    target_subgraph_ids: Option<Box<[u16]>>,
+    found: Rc<[Vec<PathStep>]>,
 }
 
 struct CheckedMove<'graph> {
@@ -118,6 +133,59 @@ struct CheckedMove<'graph> {
 }
 
 impl<'graph> MoveRequirements<'graph> {
+    /// `find_indirect_paths` from `path` to `field`, or what it found from the same node before,
+    /// see `searches`. Not with `@fromContext` fields in the graph: they read their value from
+    /// an ancestor, so a search depends on the whole path.
+    pub fn indirect_paths(
+        &self,
+        graph: &'graph Graph<'graph>,
+        path: &OperationPath<'graph>,
+        field: &'graph FieldSelection,
+        target_subgraph_ids: Option<&[u16]>,
+        target: &NavigationTarget<'_>,
+        search: impl FnOnce() -> Result<Vec<OperationPath<'graph>>, WalkOperationError>,
+    ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
+        if graph.has_context_arguments {
+            return search();
+        }
+        let key = (path.tail(), field.name.as_str());
+        let found = self.searches.borrow().get(&key).and_then(|searches| {
+            searches
+                .iter()
+                .find(|search| {
+                    search.union_context == path.union_context
+                        && search.target_subgraph_ids.as_deref() == target_subgraph_ids
+                        && same_field(search.field, field)
+                })
+                .map(|search| Rc::clone(&search.found))
+        });
+        if let Some(found) = found {
+            return Ok(found
+                .iter()
+                .map(|steps| path.replay(graph, steps, target))
+                .collect());
+        }
+        let paths = search()?;
+        // only when every path goes on from ours, it always does
+        if let Some(found) = paths
+            .iter()
+            .map(|found| found.steps_after(path))
+            .collect::<Option<Vec<_>>>()
+        {
+            self.searches
+                .borrow_mut()
+                .entry(key)
+                .or_default()
+                .push(IndirectSearch {
+                    union_context: path.union_context.clone(),
+                    field,
+                    target_subgraph_ids: target_subgraph_ids.map(Box::from),
+                    found: found.into(),
+                });
+        }
+        Ok(paths)
+    }
+
     fn get_or_check(
         &self,
         path: &OperationPath<'graph>,
@@ -151,6 +219,27 @@ impl<'graph> MoveRequirements<'graph> {
             });
         Ok(requirement)
     }
+}
+
+/// Whether a search for `a` finds what one for `b` does: the same field with the same arguments
+/// and selections, which is all `RequirementCycleChecker` looks at. Not the alias or conditions.
+fn same_field(a: &FieldSelection, b: &FieldSelection) -> bool {
+    a.name == b.name
+        && a.arguments() == b.arguments()
+        && same_selections(&a.selections, &b.selections)
+}
+
+fn same_selections(a: &SelectionSet, b: &SelectionSet) -> bool {
+    a.items.len() == b.items.len()
+        && a.items.iter().zip(&b.items).all(|pair| match pair {
+            (SelectionItem::Field(a), SelectionItem::Field(b)) => same_field(a, b),
+            (SelectionItem::InlineFragment(a), SelectionItem::InlineFragment(b)) => {
+                a.type_condition == b.type_condition
+                    && same_selections(&a.selections, &b.selections)
+            }
+            (SelectionItem::FragmentSpread(a), SelectionItem::FragmentSpread(b)) => a == b,
+            _ => false,
+        })
 }
 
 #[derive(Debug)]

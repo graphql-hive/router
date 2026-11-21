@@ -169,6 +169,9 @@ pub struct Graph<'graph> {
     upserted: HashMap<(NodeIndex, NodeIndex), Vec<EdgeIndex>>,
     /// The field and entity moves out of every node, see `EdgeIndexes`.
     edge_indexes: EdgeIndexes,
+    /// Whether a field takes an argument from `@fromContext`. Resolving one looks up the path for
+    /// the ancestor that sets it, so a search from one spot can't be reused at another.
+    pub(crate) has_context_arguments: bool,
 }
 
 impl<'graph> Graph<'graph> {
@@ -229,11 +232,13 @@ impl<'graph> Graph<'graph> {
             edges: Vec::with_capacity(self.graph.edge_count()),
         };
         let mut entity_moves = Vec::new();
+        let mut has_context_arguments = false;
         for node in self.graph.node_indices() {
             let fields_start = indexes.edges.len();
             for edge in self.edges_from(node) {
                 match edge.weight() {
                     Edge::FieldMove(field) => {
+                        has_context_arguments |= !field.context_arguments.is_empty();
                         indexes.edges.push((name_hash(field.name), edge.id()))
                     }
                     Edge::ReentryMove(reentry) => {
@@ -256,6 +261,7 @@ impl<'graph> Graph<'graph> {
         let end = indexes.edges.len() as u32;
         indexes.starts.push((end, end));
         self.edge_indexes = indexes;
+        self.has_context_arguments = has_context_arguments;
     }
 
     /// The field and re-entry moves out of `node` to the field `name`, like going through
