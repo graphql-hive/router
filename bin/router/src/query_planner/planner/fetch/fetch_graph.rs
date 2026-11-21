@@ -1137,8 +1137,7 @@ fn joins_other_types(
     else {
         return false;
     };
-    type_names.len() == 1
-        && type_names.contains(input_type_name)
+    type_names.contains(input_type_name)
         // two type conditions in a row mean both, a union of them would be wrong
         && !matches!(rest.last(), Some(Segment::TypeCondition(..)))
 }
@@ -1317,49 +1316,61 @@ fn ensure_batched_fetch_step(
             step_index
         }
     };
-    let new_type = fetch_graph
-        .get_step_data(step_index)?
-        .input
-        .selections_for_definition(type_name)
-        .is_none();
-    if new_type {
-        fetch_graph.touch(step_index);
-    }
-    let step = fetch_graph.get_step_data_mut(step_index)?;
-    step.gated_by
+    fetch_graph
+        .get_step_data_mut(step_index)?
+        .gated_by
         .retain(|condition| conditions.from_root.contains(condition));
-    if new_type {
-        trace!(
-            "fetch step [{}] takes the {} objects at {} too",
-            step_index.index(),
-            type_name,
-            response_path
-        );
-        step.input.add_definition(type_name);
-        step.input.add_to(
-            type_name,
-            &SelectionSet {
-                items: vec![SelectionItem::Field(FieldSelection::new_typename())],
-            },
-        )?;
-        step.output.add_definition(type_name);
-        if let Some((Segment::TypeCondition(type_names, type_condition), rest)) =
-            step.response_path.inner.split_last()
-        {
-            let mut type_names = BTreeSet::clone(type_names);
-            type_names.insert(type_name.to_string());
-            step.response_path = MergePath::new(
-                rest.iter()
-                    .cloned()
-                    .chain(std::iter::once(Segment::TypeCondition(
-                        Rc::new(type_names),
-                        type_condition.clone(),
-                    )))
-                    .collect(),
+    // the call's type, and the ones planned with it, see `SelectionAttributes::also`. They
+    // read the same key.
+    let type_names: Vec<String> = match response_path.last() {
+        Some(Segment::TypeCondition(type_names, _)) => type_names.iter().cloned().collect(),
+        _ => vec![type_name.to_string()],
+    };
+    for type_name in &type_names {
+        let new_type = fetch_graph
+            .get_step_data(step_index)?
+            .input
+            .selections_for_definition(type_name)
+            .is_none();
+        if new_type {
+            fetch_graph.touch(step_index);
+            let step = fetch_graph.get_step_data_mut(step_index)?;
+            trace!(
+                "fetch step [{}] takes the {} objects at {} too",
+                step_index.index(),
+                type_name,
+                response_path
             );
+            step.input.add_definition(type_name);
+            step.input.add_to(
+                type_name,
+                &SelectionSet {
+                    items: vec![SelectionItem::Field(FieldSelection::new_typename())],
+                },
+            )?;
+            step.output.add_definition(type_name);
+            if let Some((Segment::TypeCondition(step_types, type_condition), rest)) =
+                step.response_path.inner.split_last()
+            {
+                if !step_types.contains(type_name) {
+                    let mut step_types = BTreeSet::clone(step_types);
+                    step_types.insert(type_name.clone());
+                    step.response_path = MergePath::new(
+                        rest.iter()
+                            .cloned()
+                            .chain(std::iter::once(Segment::TypeCondition(
+                                Rc::new(step_types),
+                                type_condition.clone(),
+                            )))
+                            .collect(),
+                    );
+                }
+            }
+        }
+        if let Some(key) = key {
+            fetch_graph.add_input(step_index, type_name, &key.selection_set)?;
         }
     }
-    // the caller adds the key to the input, see `process_entity_move_edge`
     Ok(step_index)
 }
 
@@ -1774,11 +1785,21 @@ fn process_entity_move_edge(
         requirement,
         fetch_step_index.index()
     );
-    fetch_graph.add_input(
-        fetch_step_index,
-        input_type_name,
-        &requirement.selection_set,
-    )?;
+    // the types planned with it read the same, see `SelectionAttributes::also`
+    match response_path.last() {
+        Some(Segment::TypeCondition(type_names, _))
+            if type_names.len() > 1 && type_names.contains(*input_type_name) =>
+        {
+            for type_name in type_names.iter() {
+                fetch_graph.add_input(fetch_step_index, type_name, &requirement.selection_set)?;
+            }
+        }
+        _ => fetch_graph.add_input(
+            fetch_step_index,
+            input_type_name,
+            &requirement.selection_set,
+        )?,
+    }
     if is_interface && !narrowed {
         fetch_graph.touch(fetch_step_index);
     }
@@ -2312,33 +2333,39 @@ fn process_abstract_edge(
         target_type_name,
     );
 
+    // the type, and the ones planned with it, see `SelectionAttributes::also`
+    let mut type_names = BTreeSet::from([target_type_name.clone()]);
+    if let Some(also) = query_node
+        .selection_attributes
+        .as_ref()
+        .and_then(|attributes| attributes.also.as_ref())
+    {
+        type_names.extend(also.iter().cloned());
+    }
+    let mut items = vec![SelectionItem::Field(FieldSelection::new_typename())];
+    for type_name in type_names.iter() {
+        items.push(SelectionItem::InlineFragment(InlineFragmentSelection {
+            type_condition: type_name.clone(),
+            selections: SelectionSet::default(),
+            skip_if: segment_condition.as_ref().and_then(Condition::to_skip_if),
+            include_if: segment_condition
+                .as_ref()
+                .and_then(Condition::to_include_if),
+        }));
+    }
     fetch_graph.add_output(
         parent_fetch_step_index,
         response_path,
         fetch_path,
-        SelectionSet {
-            items: vec![
-                SelectionItem::Field(FieldSelection::new_typename()),
-                SelectionItem::InlineFragment(InlineFragmentSelection {
-                    type_condition: target_type_name.clone(),
-                    selections: SelectionSet::default(),
-                    skip_if: segment_condition.as_ref().and_then(Condition::to_skip_if),
-                    include_if: segment_condition
-                        .as_ref()
-                        .and_then(Condition::to_include_if),
-                }),
-            ],
-        },
+        SelectionSet { items },
     )?;
 
+    let type_names = Rc::new(type_names);
     let child_response_path = response_path.push(Segment::TypeCondition(
-        Rc::new(BTreeSet::from([target_type_name.clone()])),
+        Rc::clone(&type_names),
         segment_condition.clone(),
     ));
-    let child_fetch_path = fetch_path.push(Segment::TypeCondition(
-        Rc::new(BTreeSet::from([target_type_name.clone()])),
-        segment_condition,
-    ));
+    let child_fetch_path = fetch_path.push(Segment::TypeCondition(type_names, segment_condition));
 
     process_children_for_fetch_steps(
         graph,

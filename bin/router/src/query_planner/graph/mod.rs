@@ -173,6 +173,9 @@ pub struct Graph<'graph> {
     /// the ancestor that sets it, so a search from one spot can't be reused at another. Set
     /// once the edges are indexed, read through `has_context_arguments`.
     has_context_arguments: bool,
+    /// Object types the planner can't tell apart, see `interchangeable_types`, by the group
+    /// they're in. Only types that share a group with another are here.
+    pub(crate) type_groups: HashMap<&'graph str, u32>,
 }
 
 impl<'graph> Graph<'graph> {
@@ -213,6 +216,7 @@ impl<'graph> Graph<'graph> {
         instance.build_graph(supergraph_state)?;
         instance.upserted = HashMap::new();
         instance.index_edges();
+        instance.type_groups = interchangeable_types(supergraph_state);
 
         for node in instance.graph.node_weights_mut() {
             if let Node::SubgraphType(subgraph_type) = node {
@@ -224,6 +228,15 @@ impl<'graph> Graph<'graph> {
         }
 
         Ok(instance)
+    }
+
+    /// Whether `a` and `b` are object types the planner can't tell apart, see
+    /// `interchangeable_types`.
+    pub(crate) fn interchangeable(&self, a: &str, b: &str) -> bool {
+        match (self.type_groups.get(a), self.type_groups.get(b)) {
+            (Some(a), Some(b)) => a == b,
+            _ => false,
+        }
     }
 
     /// Fills `edge_indexes`, keeping the order `edges_from` gives.
@@ -1659,4 +1672,168 @@ fn name_hash(name: &str) -> u64 {
     let mut hasher = rustc_hash::FxHasher::default();
     name.hash(&mut hasher);
     hasher.finish()
+}
+
+/// Object types every subgraph treats the same way, in groups. The same keys and the same
+/// subgraphs, the same interfaces and unions in each, the same fields with the same
+/// `@join__field` in each: everything the graph is built from but the name. A type that names
+/// itself, like `next: Movie`, has nothing in common with another one. The planner plans the same
+/// selections on two of them once, see the walker.
+fn interchangeable_types(state: &SupergraphState) -> HashMap<&str, u32> {
+    use std::fmt::Write;
+
+    let mut unions: HashMap<&str, Vec<String>> = HashMap::new();
+    for (name, definition) in state.definitions.iter() {
+        if let SupergraphDefinition::Union(union_type) = definition {
+            for member in &union_type.union_members {
+                unions
+                    .entry(member.member.as_str())
+                    .or_default()
+                    .push(format!("{name}@{}", member.graph));
+            }
+        }
+    }
+    // the selections of `@provides`, `@requires` and `@key`: a type named in one, like
+    // `@provides(fields: "... on Book { title }")`, gets something the others don't
+    let mut selections = String::new();
+    for definition in state.definitions.values() {
+        if let SupergraphDefinition::Object(object) = definition {
+            for join in &object.join_type {
+                if let Some(key) = &join.key {
+                    selections.push_str(key);
+                    selections.push(' ');
+                }
+            }
+        }
+        if let SupergraphDefinition::Interface(interface) = definition {
+            for join in &interface.join_type {
+                if let Some(key) = &join.key {
+                    selections.push_str(key);
+                    selections.push(' ');
+                }
+            }
+        }
+        for field in definition.fields().values() {
+            for join in &field.join_field {
+                for selection in [&join.provides, &join.requires].into_iter().flatten() {
+                    selections.push_str(selection);
+                    selections.push(' ');
+                }
+            }
+        }
+    }
+    let named_in_selections = |name: &str| {
+        selections.match_indices(name).any(|(at, _)| {
+            let before = selections[..at].chars().next_back();
+            let after = selections[at + name.len()..].chars().next();
+            !before.is_some_and(|c| c.is_alphanumeric() || c == '_')
+                && !after.is_some_and(|c| c.is_alphanumeric() || c == '_')
+        })
+    };
+    let mut by_signature: HashMap<String, Vec<&str>> = HashMap::new();
+    for (name, definition) in state.definitions.iter() {
+        let SupergraphDefinition::Object(object) = definition else {
+            continue;
+        };
+        // an interface object in some subgraph turns into these types with its own moves
+        let behind_interface_object = object.join_implements.iter().any(|join| {
+            matches!(
+                state.definitions.get(&join.interface),
+                Some(SupergraphDefinition::Interface(interface))
+                    if interface.join_type.iter().any(|join| join.is_interface_object)
+            )
+        });
+        if object.root_type.is_some() || behind_interface_object || named_in_selections(name) {
+            continue;
+        }
+        let mut signature = String::new();
+        let sorted = |items: Vec<String>, signature: &mut String| {
+            let mut items = items;
+            items.sort();
+            for item in items {
+                let _ = write!(signature, "{item};");
+            }
+            signature.push('|');
+        };
+        sorted(
+            object
+                .join_type
+                .iter()
+                .map(|join| format!("{join:?}"))
+                .collect(),
+            &mut signature,
+        );
+        sorted(
+            object
+                .join_implements
+                .iter()
+                .map(|join| format!("{join:?}"))
+                .collect(),
+            &mut signature,
+        );
+        sorted(
+            unions.get(name.as_str()).cloned().unwrap_or_default(),
+            &mut signature,
+        );
+        sorted(
+            object.used_in_subgraphs.iter().cloned().collect(),
+            &mut signature,
+        );
+        let _ = write!(
+            signature,
+            "{:?}{:?}{:?}{:?}|",
+            object.requires_scopes, object.policy, object.authenticated, object.cost
+        );
+        let mut fields: Vec<_> = object.fields.values().collect();
+        fields.sort_by(|a, b| a.name.cmp(&b.name));
+        for field in fields {
+            let mut join_fields: Vec<String> = field
+                .join_field
+                .iter()
+                .map(|join| format!("{join:?}"))
+                .collect();
+            join_fields.sort();
+            let mut arguments: Vec<String> = field
+                .argument_types
+                .iter()
+                .map(|(name, type_node)| format!("{name}:{type_node:?}"))
+                .collect();
+            arguments.sort();
+            let _ = write!(
+                signature,
+                "{}:{:?}:{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?};",
+                field.name,
+                field.field_type,
+                field.inaccessible,
+                join_fields,
+                arguments,
+                field.requires_scopes,
+                field.policy,
+                field.authenticated,
+                field.cost,
+                field.list_size,
+                field.resolvable_in,
+            );
+        }
+        // a type that names itself can't be swapped for another
+        if signature.contains(name.as_str()) {
+            continue;
+        }
+        by_signature
+            .entry(signature)
+            .or_default()
+            .push(name.as_str());
+    }
+    let mut groups = HashMap::new();
+    let mut signatures: Vec<_> = by_signature
+        .into_values()
+        .filter(|names| names.len() > 1)
+        .collect();
+    signatures.sort();
+    for (group, names) in signatures.into_iter().enumerate() {
+        for name in names {
+            groups.insert(name, group as u32);
+        }
+    }
+    groups
 }

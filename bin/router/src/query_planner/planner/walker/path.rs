@@ -17,6 +17,10 @@ use crate::query_planner::{
 pub struct SelectionAttributes {
     pub alias: Option<String>,
     pub arguments: Option<ArgumentsMap>,
+    /// On a type condition, the other object types planned with it: types the planner can't
+    /// tell apart, with the same selections, see `Graph::interchangeable`. What's planned for
+    /// the type is planned for them too.
+    pub also: Option<Rc<[String]>>,
 }
 
 /// Equal attributes. Paths into a field share one `Rc`, so it's mostly the same allocation, and
@@ -34,7 +38,7 @@ pub fn same_attributes(
 
 impl PartialEq for SelectionAttributes {
     fn eq(&self, other: &Self) -> bool {
-        self.alias == other.alias && self.arguments == other.arguments
+        self.alias == other.alias && self.arguments == other.arguments && self.also == other.also
     }
 }
 
@@ -244,11 +248,11 @@ impl<'graph> OperationPath<'graph> {
                 .then(|| context_requirements.into()),
             selection_attributes: match target {
                 NavigationTarget::Field { attributes, .. } => Some(Rc::clone(attributes)),
-                NavigationTarget::ConcreteType(_, _) => None,
+                NavigationTarget::ConcreteType(_, _, attributes) => attributes.clone(),
             },
             condition: match target {
                 NavigationTarget::Field { field, .. } => (*field).into(),
-                NavigationTarget::ConcreteType(_, condition) => condition.clone(),
+                NavigationTarget::ConcreteType(_, condition, _) => condition.clone(),
             },
         };
         let new_segment = Rc::new(new_segment_data);
