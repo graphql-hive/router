@@ -23,12 +23,17 @@
 use std::{
     future::{poll_fn, Future},
     pin::{pin, Pin},
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    task::{Context, Poll, Wake, Waker},
     time::{Duration, Instant},
 };
 
 use ahash::AHashMap;
 use bytes::Bytes;
+use futures::task::AtomicWaker;
 use http::{header::HOST, uri::Authority, HeaderValue, Request, Response, Uri};
 use http_body_util::Full;
 use hyper::{
@@ -50,7 +55,56 @@ type Conn = Pin<Box<Connection<TokioIo<TcpStream>, Full<Bytes>>>>;
 struct Idle {
     sender: Sender,
     conn: Conn,
+    wakers: Arc<Wakers>,
     since: Instant,
+}
+
+/// One side of [`drive`]: the request or the connection. Its waker notes that this side has
+/// something to do and wakes the task, so `drive` polls only the side that was woken.
+struct Side {
+    woken: AtomicBool,
+    task: Arc<AtomicWaker>,
+}
+
+impl Wake for Side {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.woken.store(true, Ordering::Release);
+        self.task.wake();
+    }
+}
+
+/// The wakers `drive` polls the two sides with. Made once per connection, so a request doesn't
+/// allocate any.
+struct Wakers {
+    task: Arc<AtomicWaker>,
+    request: Arc<Side>,
+    request_waker: Waker,
+    conn: Arc<Side>,
+    conn_waker: Waker,
+}
+
+impl Wakers {
+    fn new() -> Arc<Self> {
+        let task = Arc::new(AtomicWaker::new());
+        let side = || {
+            Arc::new(Side {
+                woken: AtomicBool::new(true),
+                task: Arc::clone(&task),
+            })
+        };
+        let (request, conn) = (side(), side());
+        Arc::new(Wakers {
+            request_waker: Waker::from(Arc::clone(&request)),
+            conn_waker: Waker::from(Arc::clone(&conn)),
+            task,
+            request,
+            conn,
+        })
+    }
 }
 
 pub struct H1Pool {
@@ -68,12 +122,13 @@ pub struct Lease<'a> {
     sender: Sender,
     /// `None` once the connection is done (closed by the subgraph, or failed)
     conn: Option<Conn>,
+    wakers: Arc<Wakers>,
 }
 
 impl Lease<'_> {
     /// Runs `fut`, the read of the response body, while polling the connection that feeds it.
     pub async fn drive<F: Future>(&mut self, fut: F) -> F::Output {
-        drive(&mut self.conn, fut).await
+        drive(&mut self.conn, &self.wakers, fut).await
     }
 
     /// Puts the connection back. Only call it once the whole response body was read.
@@ -88,6 +143,7 @@ impl Lease<'_> {
         list.push(Idle {
             sender: self.sender,
             conn,
+            wakers: self.wakers,
             since: Instant::now(),
         });
     }
@@ -131,8 +187,8 @@ impl H1Pool {
         }
 
         loop {
-            let (mut sender, mut conn, reused) = self.checkout(&key).await?;
-            match drive(&mut conn, sender.try_send_request(req)).await {
+            let (mut sender, mut conn, wakers, reused) = self.checkout(&key).await?;
+            match drive(&mut conn, &wakers, sender.try_send_request(req)).await {
                 Ok(response) => {
                     return Ok((
                         response,
@@ -141,6 +197,7 @@ impl H1Pool {
                             key,
                             sender,
                             conn,
+                            wakers,
                         },
                     ))
                 }
@@ -159,20 +216,23 @@ impl H1Pool {
     async fn checkout(
         &self,
         key: &Authority,
-    ) -> Result<(Sender, Option<Conn>, bool), SubgraphExecutorError> {
+    ) -> Result<(Sender, Option<Conn>, Arc<Wakers>, bool), SubgraphExecutorError> {
         while let Some(Idle {
-            mut sender, conn, ..
+            mut sender,
+            conn,
+            wakers,
+            ..
         }) = self.pop(key)
         {
             // Polling the connection lets it finish up the last response and take the next
             // request. If the subgraph closed it meanwhile, it ends here and `ready` fails.
             let mut conn = Some(conn);
-            if drive(&mut conn, sender.ready()).await.is_ok() {
-                return Ok((sender, conn, true));
+            if drive(&mut conn, &wakers, sender.ready()).await.is_ok() {
+                return Ok((sender, conn, wakers, true));
             }
         }
         let (sender, conn) = connect(key).await?;
-        Ok((sender, Some(conn), false))
+        Ok((sender, Some(conn), Wakers::new(), false))
     }
 
     fn pop(&self, key: &Authority) -> Option<Idle> {
@@ -186,22 +246,48 @@ impl H1Pool {
 /// Polls `fut` and the connection together until `fut` is done. A connection that finishes
 /// meanwhile (the subgraph closed it, or it failed) is dropped, and whatever waits on it then
 /// fails on its own: hyper ends the sender's side of a finished connection.
-async fn drive<F: Future>(conn: &mut Option<Conn>, fut: F) -> F::Output {
+///
+/// Each side gets its own waker, and a wakeup only polls the side it came from. Most wakeups
+/// are for one of them: the socket is readable (the connection), or the connection handed the
+/// request its response (the request).
+async fn drive<F: Future>(conn: &mut Option<Conn>, wakers: &Wakers, fut: F) -> F::Output {
     let mut fut = pin!(fut);
+    // a new future hasn't been polled yet, and the connection may have work left from the
+    // previous step
+    wakers.request.woken.store(true, Ordering::Relaxed);
+    wakers.conn.woken.store(true, Ordering::Relaxed);
     poll_fn(|cx| {
-        // the request goes first, so a request it just queued gets written in this same poll
-        let polled = fut.as_mut().poll(cx);
-        if polled.is_ready() {
-            return polled;
-        }
-        if let Some(c) = conn.as_mut() {
-            if c.as_mut().poll(cx).is_ready() {
-                *conn = None;
+        wakers.task.register(cx.waker());
+        // a side woken while we poll has also woken the task, so stopping early loses nothing,
+        // the cap only keeps a future that keeps waking itself from spinning here
+        for _ in 0..4 {
+            // the request goes first, so a request it just queued gets written in this same poll
+            if wakers.request.woken.swap(false, Ordering::AcqRel) {
+                let mut request_cx = Context::from_waker(&wakers.request_waker);
+                if let Poll::Ready(output) = fut.as_mut().poll(&mut request_cx) {
+                    return Poll::Ready(output);
+                }
+            }
+            // once the connection is gone, only the request's own wakeups are left
+            if let Some(c) = conn.as_mut() {
+                if wakers.conn.woken.swap(false, Ordering::AcqRel) {
+                    let mut conn_cx = Context::from_waker(&wakers.conn_waker);
+                    if c.as_mut().poll(&mut conn_cx).is_ready() {
+                        *conn = None;
+                        // what waits on it is told by hyper, but poll it to see that now
+                        wakers.request.woken.store(true, Ordering::Relaxed);
+                    }
+                }
+            }
+            // the connection usually hands the request its response while we polled it: go
+            // again now, not after another trip through the scheduler
+            if !wakers.request.woken.load(Ordering::Acquire) {
+                return Poll::Pending;
             }
         }
-        // the connection may have just finished the request's work, the request's waker would
-        // only call us back for that
-        fut.as_mut().poll(cx)
+        // the request still has work, come back after others had a turn
+        cx.waker().wake_by_ref();
+        Poll::Pending
     })
     .await
 }
