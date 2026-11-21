@@ -241,6 +241,87 @@ impl FetchGraph<MultiTypeFetchStep> {
     }
 }
 
+impl FetchGraph<MultiTypeFetchStep> {
+    /// Finishes the entity calls that took the objects of several types while the graph was
+    /// built, see `joins_other_types` in the builder, like batching them here would: the type
+    /// condition their path ends with goes when it's every type the objects there can be, and a
+    /// condition on the call moves to the types under the type condition.
+    pub(crate) fn finish_batched_steps(
+        &mut self,
+        steps: impl IntoIterator<Item = NodeIndex>,
+        supergraph: &SupergraphState,
+    ) -> Result<(), FetchGraphError> {
+        let root_type = supergraph
+            .root_type_name(Some(&self.operation_kind))
+            .map_err(|err| FetchGraphError::Internal(err.to_string()))?;
+        for index in steps {
+            let step = self.get_step_data_mut(index)?;
+            // a type that has nothing to fetch, its fields went to other calls
+            let empty: Vec<String> = step
+                .output
+                .iter_selections()
+                .filter(|(_, output)| output.is_empty())
+                .map(|(type_name, _)| type_name.clone())
+                .collect();
+            if empty.len() < step.output.iter_selections().count() {
+                for type_name in &empty {
+                    step.output.remove_definition(type_name);
+                    step.input.remove_definition(type_name);
+                }
+                if let Some((Segment::TypeCondition(type_names, condition), rest)) =
+                    step.response_path.inner.split_last()
+                {
+                    let mut type_names = BTreeSet::clone(type_names);
+                    type_names.retain(|type_name| !empty.contains(type_name));
+                    step.response_path = MergePath::new(
+                        rest.iter()
+                            .cloned()
+                            .chain(std::iter::once(Segment::TypeCondition(
+                                Rc::new(type_names),
+                                condition.clone(),
+                            )))
+                            .collect(),
+                    );
+                }
+            }
+            if !step.is_fetching_multiple_types() {
+                continue;
+            }
+            if let Some((Segment::TypeCondition(type_names, None), rest)) =
+                step.response_path.inner.split_last()
+            {
+                let rest = MergePath::new(rest.to_vec());
+                let position = rest
+                    .inner
+                    .iter()
+                    .filter(|segment| !matches!(segment, Segment::TypeCondition(..)))
+                    .count();
+                let possible_types = possible_types_by_position(supergraph, root_type, &rest, 0);
+                if possible_types
+                    .get(&(0, position))
+                    .is_some_and(|possible_types| {
+                        possible_types
+                            .iter()
+                            .all(|type_name| type_names.contains(type_name))
+                    })
+                {
+                    step.response_path = rest;
+                }
+            }
+            if let Some(condition) = step.condition.clone() {
+                if let Some(type_names) =
+                    type_condition_types_from_response_path(&step.response_path)
+                {
+                    step.output
+                        .wrap_with_condition_for_types(condition, &type_names);
+                    step.condition = None;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Every object type the value at each slot of `path` can be, keyed like the type conditions
 /// `merge_batched_response_paths` looks at: (path hash without type conditions, slot).
 /// A slot is left out when its type can't be worked out, and then nothing gets stripped there.

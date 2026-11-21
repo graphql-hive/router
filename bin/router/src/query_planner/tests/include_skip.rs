@@ -1417,6 +1417,21 @@ fn qp_abstract_interface_mixed_conditions_stay_scoped() -> Result<(), Box<dyn Er
           }
         },
         Parallel {
+          Flatten(path: "products.@|[Book]") {
+            Fetch(service: "books", if: $showReviews) {
+              {
+                ... on Book {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Book {
+                  title
+                }
+              }
+            },
+          },
           Flatten(path: "products.@") {
             Fetch(service: "reviews", if: $showReviews) {
               {
@@ -1435,21 +1450,6 @@ fn qp_abstract_interface_mixed_conditions_stay_scoped() -> Result<(), Box<dyn Er
                 }
                 ... on Magazine {
                   reviewsCount
-                }
-              }
-            },
-          },
-          Flatten(path: "products.@|[Book]") {
-            Fetch(service: "books", if: $showReviews) {
-              {
-                ... on Book {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Book {
-                  title
                 }
               }
             },

@@ -748,21 +748,6 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
           },
         },
         Parallel {
-          Flatten(path: "products.@.reviews.@.product|[Book]") {
-            Fetch(service: "books", if: $title) {
-              {
-                ... on Book {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Book {
-                  title
-                }
-              }
-            },
-          },
           Flatten(path: "products.@.reviews.@.product|[Magazine]") {
             Fetch(service: "products") {
               {
@@ -774,6 +759,21 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
               {
                 ... on Magazine {
                   sku
+                }
+              }
+            },
+          },
+          Flatten(path: "products.@.reviews.@.product|[Book]") {
+            Fetch(service: "books", if: $title) {
+              {
+                ... on Book {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Book {
+                  title
                 }
               }
             },
@@ -862,6 +862,44 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
           },
         },
         Parallel {
+          BatchFetch(service: "products") {
+            {
+              _e0 {
+                paths: [
+                  "products.@.reviews.@.product|[Magazine]"
+                ]
+                {
+                  ... on Magazine {
+                    __typename
+                    id
+                  }
+                }
+              }
+              _e1(if: $title) {
+                paths: [
+                  "products.@.reviews.@.product|[Book]"
+                ]
+                {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                }
+              }
+            }
+            {
+              _e0: _entities(representations: $__batch_reps_0) {
+                ... on Magazine {
+                  sku
+                }
+              }
+              _e1: _entities(representations: $__batch_reps_1) {
+                ... on Book {
+                  sku
+                }
+              }
+            }
+          },
           Flatten(path: "products.@.reviews.@.product|[Book]") {
             Fetch(service: "books", if: $title) {
               {
@@ -876,44 +914,6 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
                 }
               }
             },
-          },
-          BatchFetch(service: "products") {
-            {
-              _e0(if: $title) {
-                paths: [
-                  "products.@.reviews.@.product|[Book]"
-                ]
-                {
-                  ... on Book {
-                    __typename
-                    id
-                  }
-                }
-              }
-              _e1 {
-                paths: [
-                  "products.@.reviews.@.product|[Magazine]"
-                ]
-                {
-                  ... on Magazine {
-                    __typename
-                    id
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Book {
-                  sku
-                }
-              }
-              _e1: _entities(representations: $__batch_reps_1) {
-                ... on Magazine {
-                  sku
-                }
-              }
-            }
           },
         },
       },
@@ -1006,6 +1006,44 @@ fn nested_interface_field_with_redundant_inline_fragments_other_type_order(
           },
         },
         Parallel {
+          BatchFetch(service: "products") {
+            {
+              _e0 {
+                paths: [
+                  "products.@.reviews.@.product|[Magazine]"
+                ]
+                {
+                  ... on Magazine {
+                    __typename
+                    id
+                  }
+                }
+              }
+              _e1(if: $title) {
+                paths: [
+                  "products.@.reviews.@.product|[Tome]"
+                ]
+                {
+                  ... on Tome {
+                    __typename
+                    id
+                  }
+                }
+              }
+            }
+            {
+              _e0: _entities(representations: $__batch_reps_0) {
+                ... on Magazine {
+                  sku
+                }
+              }
+              _e1: _entities(representations: $__batch_reps_1) {
+                ... on Tome {
+                  sku
+                }
+              }
+            }
+          },
           Flatten(path: "products.@.reviews.@.product|[Tome]") {
             Fetch(service: "books", if: $title) {
               {
@@ -1020,44 +1058,6 @@ fn nested_interface_field_with_redundant_inline_fragments_other_type_order(
                 }
               }
             },
-          },
-          BatchFetch(service: "products") {
-            {
-              _e0(if: $title) {
-                paths: [
-                  "products.@.reviews.@.product|[Tome]"
-                ]
-                {
-                  ... on Tome {
-                    __typename
-                    id
-                  }
-                }
-              }
-              _e1 {
-                paths: [
-                  "products.@.reviews.@.product|[Magazine]"
-                ]
-                {
-                  ... on Magazine {
-                    __typename
-                    id
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Tome {
-                  sku
-                }
-              }
-              _e1: _entities(representations: $__batch_reps_1) {
-                ... on Magazine {
-                  sku
-                }
-              }
-            }
           },
         },
       },
