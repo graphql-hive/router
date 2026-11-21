@@ -3,7 +3,8 @@ use crate::query_planner::ast::merge_path::{Condition, FieldPathSegment, MergePa
 use crate::query_planner::ast::operation::{OperationDefinition, VariableDefinition};
 use crate::query_planner::ast::selection_item::SelectionItem;
 use crate::query_planner::ast::selection_set::{
-    response_keys_conflict, FieldSelection, InlineFragmentSelection, SelectionSet,
+    find_selection_set_by_segments, response_keys_conflict, FieldSelection,
+    InlineFragmentSelection, SelectionSet,
 };
 use crate::query_planner::ast::type_aware_selection::TypeAwareSelection;
 use crate::query_planner::ast::value::Value;
@@ -27,7 +28,9 @@ use crate::query_planner::planner::tree::query_tree_node::{MutationFieldPosition
 use crate::query_planner::planner::walker::path::OperationPath;
 use crate::query_planner::planner::walker::pathfinder::can_satisfy_edge;
 use crate::query_planner::planner::QueryPlannerOptions;
-use crate::query_planner::state::supergraph_state::{OperationKind, SubgraphName, SupergraphState};
+use crate::query_planner::state::supergraph_state::{
+    OperationKind, SubgraphName, SupergraphDefinition, SupergraphState,
+};
 use crate::query_planner::utils::cancellation::CancellationToken;
 use ahash::{HashMap, HashMapExt};
 use petgraph::algo::has_path_connecting;
@@ -255,6 +258,128 @@ impl FetchGraph<SingleTypeFetchStep> {
 }
 
 impl FetchGraph<SingleTypeFetchStep> {
+    /// A step made to fetch required fields can turn out to fetch nothing new: another step
+    /// already gets the same fields at the same spot in the response, like the user's own
+    /// selection of that field, or a field a `@provides` hands over. Whatever waits for it waits
+    /// for that other step instead, and it goes. Only when the other step starts no later and
+    /// runs whenever it would, so nothing waits longer and no value goes missing.
+    fn drop_covered_requirement_steps(&mut self, supergraph: &SupergraphState) {
+        let candidates: Vec<NodeIndex> = self
+            .graph
+            .node_indices()
+            .filter(|&index| {
+                let step = &self.graph[index];
+                step.flags.contains(FetchStepFlags::FETCHES_REQUIREMENTS)
+                    && step.output_rewrites.is_none()
+                    && !step.output.is_fetching_multiple_types()
+                    && !self.batched.contains(&index)
+                    && !self.requires_for_types.contains(&index)
+            })
+            .collect();
+        if candidates.is_empty() {
+            return;
+        }
+        // steps by the length of their response path, a candidate only looks at the shorter ones
+        let mut by_length: Vec<Vec<NodeIndex>> = Vec::new();
+        for index in self.graph.node_indices() {
+            let length = self.graph[index].response_path.inner.len();
+            if by_length.len() <= length {
+                by_length.resize_with(length + 1, Vec::new);
+            }
+            by_length[length].push(index);
+        }
+        let mut depths = vec![0; self.graph.node_bound()];
+        for candidate in candidates {
+            let Some(cover) = self.covering_step(supergraph, candidate, &by_length, &mut depths)
+            else {
+                continue;
+            };
+            let children: Vec<NodeIndex> = self
+                .children_of(candidate)
+                .map(|edge| edge.target())
+                .collect();
+            for child in children {
+                self.connect(cover, child);
+            }
+            self.remove_step(candidate);
+            // what came after it can start earlier now, the depths are worked out again
+            depths.fill(0);
+        }
+    }
+
+    /// A step that already returns everything `candidate` does, at the same spot, see
+    /// `drop_covered_requirement_steps`.
+    fn covering_step(
+        &self,
+        supergraph: &SupergraphState,
+        candidate: NodeIndex,
+        by_length: &[Vec<NodeIndex>],
+        depths: &mut [u32],
+    ) -> Option<NodeIndex> {
+        let step = &self.graph[candidate];
+        let (type_name, output) = step.output.iter().next()?;
+        if output.is_empty() {
+            return None;
+        }
+        // `__typename` of an interface or a union is the concrete type, but an interface object's
+        // subgraph answers it with the interface's name. So that one has to come from the same
+        // subgraph, the rest is the same value wherever it comes from.
+        let same_subgraph = abstract_typename(supergraph, type_name, output);
+        let path = &step.response_path.inner;
+        let mut depth = None;
+        for len in (0..=path.len()).rev() {
+            let Some(steps) = by_length.get(len) else {
+                continue;
+            };
+            let rest = &path[len..];
+            for &other in steps {
+                if other == candidate || !self.graph.contains_node(other) {
+                    continue;
+                }
+                let other_step = &self.graph[other];
+                if *other_step.response_path.inner != path[..len]
+                    || (same_subgraph && other_step.service_name != step.service_name)
+                    || other_step.output_rewrites.is_some()
+                    || other_step.mutation_field_position != step.mutation_field_position
+                    // it runs whenever the candidate does
+                    || !other_step
+                        .gated_by
+                        .iter()
+                        .chain(other_step.condition.as_ref())
+                        .all(|condition| step.gated_by.contains(condition))
+                {
+                    continue;
+                }
+                // It starts no later. That also means it doesn't wait for the candidate or for
+                // anything after it, those all start later.
+                let depth = *depth.get_or_insert_with(|| self.depth(candidate, depths));
+                if self.depth(other, depths) > depth
+                    || !other_step.output.iter().any(|(_, selections)| {
+                        find_selection_set_by_segments(selections, rest)
+                            .is_some_and(|found| found.contains(output))
+                    })
+                {
+                    continue;
+                }
+                return Some(other);
+            }
+        }
+        None
+    }
+
+    /// How many steps run one after another up to and including `index`, kept in `depths`.
+    /// A step at the root is 1.
+    fn depth(&self, index: NodeIndex, depths: &mut [u32]) -> u32 {
+        if depths[index.index()] == 0 {
+            depths[index.index()] = 1 + self
+                .parents_of(index)
+                .map(|edge| self.depth(edge.source(), depths))
+                .max()
+                .unwrap_or(0);
+        }
+        depths[index.index()]
+    }
+
     /// Keeps `write` for every recording that started after `step` was made, see `Replay`.
     fn record(&mut self, step: NodeIndex, write: impl Fn() -> Write) {
         for recording in self.recordings.iter_mut() {
@@ -1257,8 +1382,11 @@ fn ensure_fetch_step_for_subgraph(
                 conditions,
                 created_from_requires,
             );
+            let step = fetch_graph.get_step_data_mut(step_index)?;
+            if created_from_requires {
+                step.flags |= FetchStepFlags::FETCHES_REQUIREMENTS;
+            }
             if let Some(selection) = key {
-                let step = fetch_graph.get_step_data_mut(step_index)?;
                 step.input.add(&selection.selection_set)?
             }
 
@@ -3221,6 +3349,8 @@ fn add_requirements_fetch(
         conditions,
         true,
     );
+    fetch_graph.get_step_data_mut(requirements_fetch)?.flags |=
+        FetchStepFlags::FETCHES_REQUIREMENTS;
     trace!(
         "Adding {} to fetch([{}]).input",
         key_input,
@@ -3424,6 +3554,37 @@ fn satisfiable_from(
         .satisfiable
         .insert((edge_ref.id(), from), satisfiable);
     Ok(satisfiable)
+}
+
+/// Whether `selection_set`, on `type_name`, asks for the `__typename` of something that isn't an
+/// object type, or of something it can't tell.
+fn abstract_typename(
+    supergraph: &SupergraphState,
+    type_name: &str,
+    selection_set: &SelectionSet,
+) -> bool {
+    let definition = supergraph.definitions.get(type_name);
+    selection_set.items.iter().any(|item| match item {
+        SelectionItem::Field(field) if field.name == "__typename" => {
+            !matches!(definition, Some(SupergraphDefinition::Object(_)))
+        }
+        SelectionItem::Field(field) => {
+            !field.selections.is_empty()
+                && definition
+                    .and_then(|definition| definition.fields().get(&field.name))
+                    .is_none_or(|field_definition| {
+                        abstract_typename(
+                            supergraph,
+                            field_definition.field_type.inner_type(),
+                            &field.selections,
+                        )
+                    })
+        }
+        SelectionItem::InlineFragment(fragment) => {
+            abstract_typename(supergraph, &fragment.type_condition, &fragment.selections)
+        }
+        SelectionItem::FragmentSpread(_) => true,
+    })
 }
 
 fn no_satisfiable_key() -> FetchGraphError {
@@ -3806,6 +3967,7 @@ pub fn build_fetch_graph_from_query_tree(
 
     // fine to unwrap as we have already checked the length
     fetch_graph.root_index = Some(*root_indexes.first().unwrap());
+    fetch_graph.drop_covered_requirement_steps(supergraph);
     let mut batched = std::mem::take(&mut fetch_graph.batched);
     batched.extend(std::mem::take(&mut fetch_graph.requires_for_types));
     let mut fetch_graph = fetch_graph.to_multi_type();

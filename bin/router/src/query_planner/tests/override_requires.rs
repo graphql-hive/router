@@ -89,31 +89,6 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
           }
         },
         Parallel {
-          BatchFetch(service: "c") {
-            {
-              _e0 {
-                paths: [
-                  "userInC"
-                  "userInA"
-                  "userInB"
-                ]
-                {
-                  ... on User {
-                    __typename
-                    name
-                    id
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on User {
-                  cName
-                }
-              }
-            }
-          },
           BatchFetch(service: "a") {
             {
               _e0 {
@@ -135,6 +110,31 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
               _e0: _entities(representations: $__batch_reps_0) {
                 ... on User {
                   aName
+                }
+              }
+            }
+          },
+          BatchFetch(service: "c") {
+            {
+              _e0 {
+                paths: [
+                  "userInC"
+                  "userInA"
+                  "userInB"
+                ]
+                {
+                  ... on User {
+                    __typename
+                    name
+                    id
+                  }
+                }
+              }
+            }
+            {
+              _e0: _entities(representations: $__batch_reps_0) {
+                ... on User {
+                  cName
                 }
               }
             }
@@ -219,9 +219,9 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
             "nodes": [
               {
                 "kind": "BatchFetch",
-                "serviceName": "c",
+                "serviceName": "a",
                 "operationKind": "query",
-                "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on User{cName}}}",
+                "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on User{aName}}}",
                 "entityBatch": {
                   "aliases": [
                     {
@@ -270,9 +270,9 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
               },
               {
                 "kind": "BatchFetch",
-                "serviceName": "a",
+                "serviceName": "c",
                 "operationKind": "query",
-                "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on User{aName}}}",
+                "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on User{cName}}}",
                 "entityBatch": {
                   "aliases": [
                     {
