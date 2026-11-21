@@ -34,6 +34,40 @@ pub struct FetchStepSelections<State> {
     _state: PhantomData<State>,
 }
 
+/// `fetch_path` once for each type of its type conditions that have several, like
+/// `product|[Book|Movie].reviews` as `product|[Book].reviews` and `product|[Movie].reviews`: a
+/// step's selections have a fragment for each. `None` when they each have one.
+fn paths_per_type(fetch_path: &MergePath) -> Option<Vec<MergePath>> {
+    let several_types = fetch_path.inner.iter().any(
+        |segment| matches!(segment, Segment::TypeCondition(type_names, _) if type_names.len() > 1),
+    );
+    if !several_types {
+        return None;
+    }
+    let mut paths: Vec<Vec<Segment>> = vec![Vec::with_capacity(fetch_path.len())];
+    for segment in fetch_path.inner.iter() {
+        match segment {
+            Segment::TypeCondition(type_names, condition) if type_names.len() > 1 => {
+                paths = paths
+                    .into_iter()
+                    .flat_map(|path| {
+                        type_names.iter().map(move |type_name| {
+                            let mut path = path.clone();
+                            path.push(Segment::TypeCondition(
+                                Rc::new(BTreeSet::from([type_name.clone()])),
+                                condition.clone(),
+                            ));
+                            path
+                        })
+                    })
+                    .collect();
+            }
+            segment => paths.iter_mut().for_each(|path| path.push(segment.clone())),
+        }
+    }
+    Some(paths.into_iter().map(MergePath::new).collect())
+}
+
 /// Where the objects of `type_name` are, when a step's selections move to `fetch_path` of
 /// another step. With one type that's `fetch_path`. With several, like `search.@|[Book|Movie]`
 /// or `search.@`, each type's fields go under its own type condition there: `search.@|[Movie]`.
@@ -285,6 +319,12 @@ impl FetchStepSelections<SingleTypeFetchStep> {
         selection_set: SelectionSet,
         as_first: bool,
     ) -> Result<(), FetchStepSelectionsError> {
+        if let Some(paths) = paths_per_type(fetch_path) {
+            for path in paths {
+                self.add_at_path_of(definition_name, &path, selection_set.clone(), as_first)?;
+            }
+            return Ok(());
+        }
         let current = match definition_name {
             Some(definition_name) => self.selections.get_mut(definition_name),
             None => self.selections.values_mut().next(),
@@ -552,35 +592,10 @@ impl FetchStepSelections<MultiTypeFetchStep> {
         fetch_path: &MergePath,
         selection_set: SelectionSet,
     ) -> Result<(), FetchStepSelectionsError> {
-        let several_types = fetch_path.inner.iter().any(|segment| {
-            matches!(segment, Segment::TypeCondition(type_names, _) if type_names.len() > 1)
-        });
-        if !several_types {
+        let Some(paths) = paths_per_type(fetch_path) else {
             return self.add_at_path_inner(definition_name, fetch_path, selection_set, false);
-        }
-        let mut paths: Vec<Vec<Segment>> = vec![Vec::with_capacity(fetch_path.len())];
-        for segment in fetch_path.inner.iter() {
-            match segment {
-                Segment::TypeCondition(type_names, condition) if type_names.len() > 1 => {
-                    paths = paths
-                        .into_iter()
-                        .flat_map(|path| {
-                            type_names.iter().map(move |type_name| {
-                                let mut path = path.clone();
-                                path.push(Segment::TypeCondition(
-                                    Rc::new(BTreeSet::from([type_name.clone()])),
-                                    condition.clone(),
-                                ));
-                                path
-                            })
-                        })
-                        .collect();
-                }
-                segment => paths.iter_mut().for_each(|path| path.push(segment.clone())),
-            }
-        }
+        };
         for path in paths {
-            let path = MergePath::new(path);
             self.add_at_path_inner(definition_name, &path, selection_set.clone(), false)?;
         }
         Ok(())

@@ -30,6 +30,7 @@ use best_path::{find_leaf_paths, BestPathTracker};
 use error::WalkOperationError;
 use excluded::ExcludedFromLookup;
 use path::OperationPath;
+use path::SelectionAttributes;
 use pathfinder::{find_direct_paths, find_indirect_paths, MoveRequirements};
 use tracing::{instrument, span, trace, Level};
 use utils::get_entrypoints;
@@ -55,7 +56,13 @@ struct OperationWalk<'graph> {
     moves: MoveRequirements<'graph>,
 }
 
-type WorkItem<'graph, 'op> = (&'op SelectionItem, Rc<Vec<OperationPath<'graph>>>);
+/// A selection to plan, the paths to it, and for a fragment, the other types it's planned for,
+/// see `grouped_items`.
+type WorkItem<'graph, 'op> = (
+    &'op SelectionItem,
+    Rc<Vec<OperationPath<'graph>>>,
+    Option<Rc<SelectionAttributes>>,
+);
 type ResolutionStack<'graph, 'op> = Vec<WorkItem<'graph, 'op>>;
 
 #[instrument(level = "trace", skip_all)]
@@ -95,14 +102,14 @@ pub fn walk_operation<'graph, 'op: 'graph>(
     for selection_item in selection_set.items.iter() {
         let mut stack_to_resolve: VecDeque<WorkItem> = VecDeque::new();
 
-        stack_to_resolve.push_back((selection_item, Rc::clone(&initial_paths)));
+        stack_to_resolve.push_back((selection_item, Rc::clone(&initial_paths), None));
 
         let mut paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
 
-        while let Some((selection_item, paths)) = stack_to_resolve.pop_front() {
+        while let Some((selection_item, paths, also)) = stack_to_resolve.pop_front() {
             cancellation_token.bail_if_cancelled()?;
             let (next_stack_to_resolve, new_paths_per_leaf) =
-                walk.process_selection(selection_item, &paths, &[])?;
+                walk.process_selection(selection_item, also, &paths, &[])?;
 
             paths_per_leaf.extend(new_paths_per_leaf);
             for item in next_stack_to_resolve.into_iter().rev() {
@@ -123,6 +130,7 @@ impl<'graph> OperationWalk<'graph> {
     fn process_selection<'op: 'graph>(
         &self,
         selection_item: &'op SelectionItem,
+        also: Option<Rc<SelectionAttributes>>,
         paths: &[OperationPath<'graph>],
         fields_to_resolve_locally: &[String],
     ) -> Result<
@@ -138,7 +146,7 @@ impl<'graph> OperationWalk<'graph> {
         match selection_item {
             SelectionItem::InlineFragment(fragment) => {
                 let (next_selection_items, new_paths_per_leaf) =
-                    self.process_inline_fragment(fragment, paths, fields_to_resolve_locally)?;
+                    self.process_inline_fragment(fragment, also, paths, fields_to_resolve_locally)?;
                 paths_per_leaf.extend(new_paths_per_leaf);
                 stack_to_resolve.extend(next_selection_items);
             }
@@ -173,9 +181,9 @@ impl<'graph> OperationWalk<'graph> {
         let mut stack_to_resolve: ResolutionStack = vec![];
         let mut paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
 
-        for item in selection_set.items.iter() {
+        for (item, also) in grouped_items(self.graph, self.supergraph, &selection_set.items) {
             let (next_stack_to_resolve, new_paths_per_leaf) =
-                self.process_selection(item, paths, fields_to_resolve_locally)?;
+                self.process_selection(item, also, paths, fields_to_resolve_locally)?;
             paths_per_leaf.extend(new_paths_per_leaf);
             stack_to_resolve.extend(next_stack_to_resolve);
         }
@@ -189,6 +197,7 @@ impl<'graph> OperationWalk<'graph> {
     fn process_inline_fragment<'op: 'graph>(
         &self,
         fragment: &'op InlineFragmentSelection,
+        also: Option<Rc<SelectionAttributes>>,
         paths: &[OperationPath<'graph>],
         fields_to_resolve_locally: &[String],
     ) -> Result<
@@ -293,6 +302,7 @@ impl<'graph> OperationWalk<'graph> {
                         &NavigationTarget::ConcreteType(
                             &fragment.type_condition,
                             condition.clone(),
+                            None,
                         ),
                         cancellation_token,
                     )?
@@ -338,7 +348,11 @@ impl<'graph> OperationWalk<'graph> {
                 supergraph,
                 override_context,
                 path,
-                &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
+                &NavigationTarget::ConcreteType(
+                    &fragment.type_condition,
+                    fragment.into(),
+                    also.clone(),
+                ),
                 cancellation_token,
             )?;
 
@@ -355,7 +369,11 @@ impl<'graph> OperationWalk<'graph> {
                     supergraph,
                     override_context,
                     path,
-                    &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
+                    &NavigationTarget::ConcreteType(
+                        &fragment.type_condition,
+                        fragment.into(),
+                        also.clone(),
+                    ),
                     &ExcludedFromLookup::new(),
                     cancellation_token,
                     Some(moves),
@@ -736,6 +754,7 @@ impl<'graph> OperationWalk<'graph> {
                 for child_selection in &field.selections.items {
                     let finding = self.process_selection(
                         child_selection,
+                        None,
                         std::slice::from_ref(candidate_path),
                         &fields_to_resolve_locally,
                     );
@@ -779,8 +798,10 @@ impl<'graph> OperationWalk<'graph> {
         } else {
             trace!("Found {} paths", next_paths.len());
             let next_paths = Rc::new(next_paths);
-            for next_selection_items in &field.selections.items {
-                next_stack_to_resolve.push((next_selection_items, Rc::clone(&next_paths)));
+            for (next_selection_items, also) in
+                grouped_items(graph, supergraph, &field.selections.items)
+            {
+                next_stack_to_resolve.push((next_selection_items, Rc::clone(&next_paths), also));
             }
         }
 
@@ -825,4 +846,110 @@ fn field_target_subgraph_ids<'s>(
     }
 
     Ok(target_subgraph_ids.filter(|ids| !ids.is_empty()))
+}
+
+/// `items`, with fragments on types the planner can't tell apart that select the same, see
+/// `Graph::interchangeable`, as one: the first of them, with the others in `also`. Type
+/// expansion makes one of those for every type that implements an interface, and they're
+/// planned once instead. Not a fragment whose own fields have `@requires`: those are planned per
+/// type. Not with `@fromContext` in the graph: a field reads from its ancestors.
+fn grouped_items<'op>(
+    graph: &Graph<'_>,
+    supergraph: &SupergraphState,
+    items: &'op [SelectionItem],
+) -> Vec<(&'op SelectionItem, Option<Rc<SelectionAttributes>>)> {
+    let groupable = |fragment: &InlineFragmentSelection| {
+        graph
+            .type_groups
+            .contains_key(fragment.type_condition.as_str())
+            && !requires_own_fields(supergraph, &fragment.type_condition, &fragment.selections)
+    };
+    if graph.has_context_arguments()
+        || graph.type_groups.is_empty()
+        || items
+            .iter()
+            .all(|item| !matches!(item, SelectionItem::InlineFragment(_)))
+    {
+        return items.iter().map(|item| (item, None)).collect();
+    }
+    let mut grouped: Vec<(&'op SelectionItem, Vec<String>)> = Vec::with_capacity(items.len());
+    for item in items {
+        if let SelectionItem::InlineFragment(fragment) = item {
+            if groupable(fragment) {
+                let joined = grouped.iter_mut().find(|(first, _)| match first {
+                    SelectionItem::InlineFragment(first) => {
+                        graph.interchangeable(&first.type_condition, &fragment.type_condition)
+                            && first.skip_if == fragment.skip_if
+                            && first.include_if == fragment.include_if
+                            && same_selections(&first.selections, &fragment.selections)
+                            && groupable(first)
+                    }
+                    _ => false,
+                });
+                if let Some((_, also)) = joined {
+                    also.push(fragment.type_condition.clone());
+                    continue;
+                }
+            }
+        }
+        grouped.push((item, Vec::new()));
+    }
+    grouped
+        .into_iter()
+        .map(|(item, also)| {
+            let also = (!also.is_empty()).then(|| {
+                Rc::new(SelectionAttributes {
+                    alias: None,
+                    arguments: None,
+                    also: Some(also.into()),
+                })
+            });
+            (item, also)
+        })
+        .collect()
+}
+
+/// Whether a field `selections` takes on `type_name` itself has `@requires` somewhere.
+fn requires_own_fields(
+    supergraph: &SupergraphState,
+    type_name: &str,
+    selections: &SelectionSet,
+) -> bool {
+    let Some(definition) = supergraph.definitions.get(type_name) else {
+        return true;
+    };
+    selections.items.iter().any(|item| match item {
+        SelectionItem::Field(field) => definition
+            .fields()
+            .get(&field.name)
+            .is_some_and(|field| field.join_field.iter().any(|join| join.requires.is_some())),
+        SelectionItem::InlineFragment(fragment) => {
+            requires_own_fields(supergraph, type_name, &fragment.selections)
+        }
+        SelectionItem::FragmentSpread(_) => true,
+    })
+}
+
+/// Whether two selection sets select exactly the same: the same fields, aliases, arguments,
+/// conditions and fragments, all the way down.
+fn same_selections(a: &SelectionSet, b: &SelectionSet) -> bool {
+    a.items.len() == b.items.len()
+        && a.items.iter().zip(&b.items).all(|pair| match pair {
+            (SelectionItem::Field(a), SelectionItem::Field(b)) => {
+                a.name == b.name
+                    && a.alias == b.alias
+                    && a.arguments() == b.arguments()
+                    && a.skip_if == b.skip_if
+                    && a.include_if == b.include_if
+                    && same_selections(&a.selections, &b.selections)
+            }
+            (SelectionItem::InlineFragment(a), SelectionItem::InlineFragment(b)) => {
+                a.type_condition == b.type_condition
+                    && a.skip_if == b.skip_if
+                    && a.include_if == b.include_if
+                    && same_selections(&a.selections, &b.selections)
+            }
+            (SelectionItem::FragmentSpread(a), SelectionItem::FragmentSpread(b)) => a == b,
+            _ => false,
+        })
 }

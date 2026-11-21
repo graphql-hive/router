@@ -279,7 +279,8 @@ pub enum NavigationTarget<'op, 'ids> {
         /// The field's alias and arguments, for every path advanced to it
         attributes: Rc<SelectionAttributes>,
     },
-    ConcreteType(&'op str, Option<Condition>),
+    /// A type condition, and the other types planned with it, see `SelectionAttributes::also`.
+    ConcreteType(&'op str, Option<Condition>, Option<Rc<SelectionAttributes>>),
 }
 
 impl<'op, 'ids> NavigationTarget<'op, 'ids> {
@@ -290,6 +291,7 @@ impl<'op, 'ids> NavigationTarget<'op, 'ids> {
             attributes: Rc::new(SelectionAttributes {
                 alias: field.alias.clone(),
                 arguments: field.arguments.clone(),
+                also: None,
             }),
         }
     }
@@ -307,8 +309,8 @@ impl<'op, 'ids> NavigationTarget<'op, 'ids> {
                 target_subgraph_ids,
                 attributes: Rc::clone(attributes),
             },
-            NavigationTarget::ConcreteType(type_name, condition) => {
-                NavigationTarget::ConcreteType(type_name, condition.clone())
+            NavigationTarget::ConcreteType(type_name, condition, also) => {
+                NavigationTarget::ConcreteType(type_name, condition.clone(), also.clone())
             }
         }
     }
@@ -324,7 +326,7 @@ impl<'op> From<&'op NavigationTarget<'op, '_>> for NavigationTargetKey<'op> {
     fn from(target: &'op NavigationTarget<'op, '_>) -> Self {
         match target {
             NavigationTarget::Field { field, .. } => NavigationTargetKey::Field(&field.name),
-            NavigationTarget::ConcreteType(type_name, _) => {
+            NavigationTarget::ConcreteType(type_name, _, _) => {
                 NavigationTargetKey::ConcreteType(type_name)
             }
         }
@@ -433,7 +435,7 @@ impl<'graph> PathSearch<'graph> {
             RequirementCycleChecker::new(self.supergraph, tail_node.name_str());
 
         // Respect the path's current union scope when targeting a concrete type.
-        if let NavigationTarget::ConcreteType(type_name, _) = target {
+        if let NavigationTarget::ConcreteType(type_name, _, _) = target {
             if !path.can_resolve_union_member(type_name) {
                 return Ok(Vec::new());
             }
@@ -702,7 +704,7 @@ pub fn find_self_referencing_direct_path<'graph>(
         if let Some(new_path) = path_search.try_advance_direct_path(
             path,
             &edge_ref,
-            &NavigationTarget::ConcreteType(type_name, Some(condition.clone())),
+            &NavigationTarget::ConcreteType(type_name, Some(condition.clone()), None),
         )? {
             trace!("Finished finding direct path, found one",);
             return Ok(new_path);
@@ -760,7 +762,7 @@ where
     let path_tail_index = path.tail();
 
     match target {
-        NavigationTarget::ConcreteType(type_name, _)
+        NavigationTarget::ConcreteType(type_name, _, _)
             if !path.can_resolve_union_member(type_name) =>
         {
             Box::new(std::iter::empty())
@@ -781,7 +783,7 @@ where
                 None => Box::new(edges),
             }
         }
-        NavigationTarget::ConcreteType(type_name, _condition) => Box::new(
+        NavigationTarget::ConcreteType(type_name, _, _) => Box::new(
             graph
                 .edges_from(path_tail_index)
                 .filter(move |e| match e.weight() {
@@ -1249,7 +1251,7 @@ impl<'graph> PathSearch<'graph> {
                     path,
                     // @skip/@include can't be used in @requires and @provides,
                     // that's why we pass no condition
-                    &NavigationTarget::ConcreteType(type_name, None),
+                    &NavigationTarget::ConcreteType(type_name, None, None),
                 )?);
             }
         }
@@ -1262,7 +1264,7 @@ impl<'graph> PathSearch<'graph> {
                 path_from_rc,
                 // @skip/@include can't be used in @requires and @provides,
                 // that's why we pass no condition
-                &NavigationTarget::ConcreteType(type_name, None),
+                &NavigationTarget::ConcreteType(type_name, None, None),
                 excluded,
                 None,
             )?);
