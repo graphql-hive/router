@@ -225,8 +225,8 @@ fn an_alias_outside_the_fragment_rules_out_its_objects() -> Result<(), Box<dyn E
     insta::assert_snapshot!(describe(&query_plan), @r"
     [2] products at root <- - after []
     [4] reviews at products.@|[Book] <- - after [2]
-    [3] books at products.@|[Book] <- - after [2]
-    [5] books at products.@|[Book].reviews.@.product|[Book] <- - after [4]
+    [3, 5] books at products.@|[Book].reviews.@.product|[Book] <- - after [2, 4]
+    [3, 5] books at products.@|[Book] <- - after [2, 4]
     ");
 
     Ok(())
