@@ -620,7 +620,16 @@ fn process_field<'graph, 'op: 'graph>(
         )?;
         trace!("Direct paths found: {}", direct_paths.len());
 
-        let found_direct_paths_to_leaf = !direct_paths.is_empty() && field.is_leaf();
+        // A leaf reached without leaving the subgraph can't be beaten by going elsewhere, unless
+        // it needs `@requires`: that's another fetch and wave, and a subgraph that has the field
+        // without requirements may be one hop away.
+        let found_direct_paths_to_leaf = field.is_leaf()
+            && direct_paths.iter().any(|direct_path| {
+                direct_path
+                    .last_segment
+                    .as_ref()
+                    .is_none_or(|segment| segment.requirement_tree.is_none())
+            });
 
         if !direct_paths.is_empty() {
             advanced = true;
