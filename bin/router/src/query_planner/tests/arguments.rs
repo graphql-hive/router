@@ -252,13 +252,15 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
             {
               ... on Post {
                 _internal_qp_alias_0: comments(limit: 3) {
-                  __typename
-                  id
+                  ...a
                 }
                 comments(limit: 1) {
-                  id
+                  ...a
                 }
               }
+            }
+            fragment a on Comment {
+              id
             }
           },
         },
@@ -325,7 +327,7 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "d",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Post{_internal_qp_alias_0: comments(limit: 3){__typename id} comments(limit: 1){id}}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Post{_internal_qp_alias_0: comments(limit: 3){...a} comments(limit: 1){...a}}}}\n\nfragment a on Comment {id}\n",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -474,13 +476,15 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
             ($limit:Int=1) {
               ... on Post {
                 _internal_qp_alias_0: comments(limit: 3) {
-                  __typename
-                  id
+                  ...a
                 }
                 comments(limit: $limit) {
-                  id
+                  ...a
                 }
               }
+            }
+            fragment a on Comment {
+              id
             }
           },
         },
@@ -550,7 +554,7 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
                 "limit"
               ],
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!, $limit:Int=1){_entities(representations: $representations){...on Post{_internal_qp_alias_0: comments(limit: 3){__typename id} comments(limit: $limit){id}}}}",
+              "operation": "query($representations:[_Any!]!, $limit:Int=1){_entities(representations: $representations){...on Post{_internal_qp_alias_0: comments(limit: 3){...a} comments(limit: $limit){...a}}}}\n\nfragment a on Comment {id}\n",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -710,13 +714,15 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
             ($limit:Int=1) {
               ... on Post {
                 _internal_qp_alias_0: comments(limit: 3) {
-                  __typename
-                  id
+                  ...a
                 }
                 comments(limit: $limit) {
-                  id
+                  ...a
                 }
               }
+            }
+            fragment a on Comment {
+              id
             }
           },
         },
@@ -786,7 +792,7 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
                 "limit"
               ],
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!, $limit:Int=1){_entities(representations: $representations){...on Post{_internal_qp_alias_0: comments(limit: 3){__typename id} comments(limit: $limit){id}}}}",
+              "operation": "query($representations:[_Any!]!, $limit:Int=1){_entities(representations: $representations){...on Post{_internal_qp_alias_0: comments(limit: 3){...a} comments(limit: $limit){...a}}}}\n\nfragment a on Comment {id}\n",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -1664,7 +1670,6 @@ fn requires_with_arguments() -> Result<(), Box<dyn Error>> {
             {
               ... on Post {
                 comments(limit: 3) {
-                  __typename
                   id
                 }
               }
@@ -1879,7 +1884,6 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
             }
           }
           fragment a on Product {
-            __typename
             id
             name
           }
@@ -1929,7 +1933,6 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
               _e0: _entities(representations: $__batch_reps_0) {
                 ... on Product {
                   category {
-                    __typename
                     id
                   }
                 }
@@ -2010,7 +2013,6 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
             }
           }
           fragment a on Product {
-            __typename
             id
             name
           }
@@ -2060,7 +2062,6 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               _e0: _entities(representations: $__batch_reps_0) {
                 ... on Product {
                   category {
-                    __typename
                     id
                   }
                 }
@@ -2108,7 +2109,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               "secondProductId"
             ],
             "operationKind": "query",
-            "operation": "query($secondProductId:ID!){firstProduct: productFromD(id: \"1\"){...a} secondProduct: productFromD(id: $secondProductId){...a}}\n\nfragment a on Product {__typename id name}\n"
+            "operation": "query($secondProductId:ID!){firstProduct: productFromD(id: \"1\"){...a} secondProduct: productFromD(id: $secondProductId){...a}}\n\nfragment a on Product {id name}\n"
           },
           {
             "kind": "Parallel",
@@ -2159,7 +2160,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
                 "kind": "BatchFetch",
                 "serviceName": "b",
                 "operationKind": "query",
-                "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{category{__typename id}}}}",
+                "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{category{id}}}}",
                 "entityBatch": {
                   "aliases": [
                     {
@@ -2290,7 +2291,6 @@ fn requires_with_argument_conflict_after_entity_hop() -> Result<(), Box<dyn Erro
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }

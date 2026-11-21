@@ -1124,7 +1124,6 @@ fn context_selection_crosses_subgraphs_multiple_times() -> Result<(), Box<dyn Er
             t {
               __typename
               a {
-                __typename
                 id
               }
               u {
@@ -1145,7 +1144,6 @@ fn context_selection_crosses_subgraphs_multiple_times() -> Result<(), Box<dyn Er
             {
               ... on A {
                 b {
-                  __typename
                   id
                 }
               }
@@ -1197,7 +1195,7 @@ fn context_selection_crosses_subgraphs_multiple_times() -> Result<(), Box<dyn Er
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{t{__typename a{__typename id} u{__typename id}}}"
+            "operation": "{t{__typename a{id} u{__typename id}}}"
           },
           {
             "kind": "Flatten",
@@ -1213,7 +1211,7 @@ fn context_selection_crosses_subgraphs_multiple_times() -> Result<(), Box<dyn Er
               "kind": "Fetch",
               "serviceName": "b",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on A{b{__typename id}}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on A{b{id}}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -1808,7 +1806,6 @@ fn multiple_context_arguments_merge_into_an_ancestor_fetch() -> Result<(), Box<d
         Fetch(service: "b") {
           {
             customer {
-              __typename
               id
               identifiers {
                 id5
@@ -1853,7 +1850,7 @@ fn multiple_context_arguments_merge_into_an_ancestor_fetch() -> Result<(), Box<d
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "{customer{__typename id identifiers{id5} mid}}"
+            "operation": "{customer{id identifiers{id5} mid}}"
           },
           {
             "kind": "Flatten",
@@ -2982,7 +2979,6 @@ fn cross_subgraph_merges_into_two_fetches() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             user {
-              __typename
               id
               userCurrency {
                 isoCode
@@ -3024,7 +3020,7 @@ fn cross_subgraph_merges_into_two_fetches() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{user{__typename id userCurrency{isoCode}}}"
+            "operation": "{user{id userCurrency{isoCode}}}"
           },
           {
             "kind": "Flatten",
@@ -3531,7 +3527,6 @@ fn same_context_value_under_a_condition_shares_its_variable() -> Result<(), Box<
         Fetch(service: "a") {
           {
             user {
-              __typename
               id
               userCurrency {
                 isoCode

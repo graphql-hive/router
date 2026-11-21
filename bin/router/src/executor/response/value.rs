@@ -173,7 +173,7 @@ impl<'a> Value<'a> {
 
         match self {
             Value::Object(obj) => {
-                Value::hash_object_with_requires(state, obj, selections, possible_types);
+                Value::hash_object_with_requires(state, obj, selections, possible_types, None);
             }
             Value::Array(arr) => {
                 for item in arr {
@@ -197,6 +197,8 @@ impl<'a> Value<'a> {
         obj: &[(&'a str, Value<'a>)],
         selections: RequiresSelectionSetRef<'_>,
         possible_types: &PossibleTypes,
+        // the type of the fragment the object is under, for an object without `__typename`
+        fragment_type: Option<&str>,
     ) {
         // Read __typename at most once per object, and only when a fragment
         // needs it. Also remember when it is missing: each fragment then
@@ -212,6 +214,12 @@ impl<'a> Value<'a> {
                         let (key, value) = &obj[idx];
                         key.hash(state);
                         value.hash_with_requires(state, selections, possible_types);
+                    } else if let Some(fragment_type) =
+                        fragment_type.filter(|_| name == TYPENAME_FIELD_NAME)
+                    {
+                        // not asked of the subgraph where the type is known, hashed like it was
+                        TYPENAME_FIELD_NAME.hash(state);
+                        fragment_type.hash(state);
                     }
                 }
                 RequiresSelection::InlineFragment {
@@ -226,7 +234,13 @@ impl<'a> Value<'a> {
                         .unwrap_or(type_condition);
 
                     if possible_types.entity_satisfies_type_condition(type_name, type_condition) {
-                        Value::hash_object_with_requires(state, obj, selections, possible_types);
+                        Value::hash_object_with_requires(
+                            state,
+                            obj,
+                            selections,
+                            possible_types,
+                            Some(type_name),
+                        );
                     }
                 }
                 RequiresSelection::FragmentSpread(_) => {

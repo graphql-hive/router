@@ -98,7 +98,6 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
             }
           }
           fragment a on Product {
-            __typename
             id
           }
         },
@@ -909,7 +908,6 @@ fn issue_1539_requires_after_entity_hop() -> Result<(), Box<dyn Error>> {
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -981,7 +979,6 @@ fn issue_1539_requires_after_entity_hop_with_explicit_requirement() -> Result<()
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -1109,7 +1106,6 @@ fn issue_1539_requires_on_self_referential_entity() -> Result<(), Box<dyn Error>
         Fetch(service: "users") {
           {
             order {
-              __typename
               id
             }
           }
@@ -1211,7 +1207,6 @@ fn issue_1308_conditional_rank_keeps_concrete_requires_types() -> Result<(), Box
         Fetch(service: "catalog") {
           {
             cage {
-              __typename
               id
             }
           }
@@ -1492,7 +1487,6 @@ fn issue_1647_include_on_field_after_conditional_entity_call() -> Result<(), Box
             record(id: $id) @include(if: $withDetails) {
               __typename
               ... on User {
-                __typename
                 id
                 email
               }
@@ -1569,7 +1563,6 @@ fn issue_1647_include_on_fragment_after_conditional_entity_call() -> Result<(), 
             record(id: $id) @include(if: $withDetails) {
               __typename
               ... on User {
-                __typename
                 id
                 email
               }
@@ -1787,7 +1780,6 @@ fn requires_jump_key_only_in_the_requiring_subgraph() -> Result<(), Box<dyn Erro
             } =>
             {
               ... on Item {
-                __typename
                 id
               }
             }
@@ -1977,7 +1969,6 @@ fn requires_jump_key_follows_progressive_override() -> Result<(), Box<dyn Error>
             } =>
             {
               ... on Item {
-                __typename
                 id
               }
             }

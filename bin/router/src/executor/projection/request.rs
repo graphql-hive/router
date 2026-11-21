@@ -124,11 +124,10 @@ pub fn project_requires(
 
             let parent_first = first;
             let mut first = true;
-            let type_keys = subgraph_keys.and_then(|subgraph_keys| {
-                Value::object_get(entity_obj, TYPENAME_FIELD_NAME)
-                    .and_then(Value::as_str)
-                    .and_then(|type_name| subgraph_keys.get(type_name))
-            });
+            let type_name = object_type_name(entity_obj, requires_selections);
+            let type_keys = subgraph_keys
+                .zip(type_name)
+                .and_then(|(subgraph_keys, type_name)| subgraph_keys.get(type_name));
             let object_start_offset = buffer.len();
             let applied = project_requires_map_mut(
                 possible_types,
@@ -139,6 +138,7 @@ pub fn project_requires(
                 response_key,
                 parent_first,
                 type_keys.is_some(),
+                type_name,
             );
             // The subgraph finds an entity by any one of its keys. Without a complete one, it's
             // left out, whatever was written for it.
@@ -174,9 +174,7 @@ pub fn project_requires(
                 && !applied.missing_field
                 && (nested || (applied.typename && typename_finds_it))
             {
-                if let Some(type_name) =
-                    Value::object_get(entity_obj, TYPENAME_FIELD_NAME).and_then(Value::as_str)
-                {
+                if let Some(type_name) = type_name {
                     write_response_key(parent_first, response_key, buffer);
                     buffer.put(OPEN_BRACE);
                     write_typename_field(buffer, type_name);
@@ -196,6 +194,27 @@ pub fn project_requires(
     true
 }
 
+/// The object's `__typename`. The planner doesn't ask for it where the field's type is an object
+/// type, an entity there is of the one type its selection has a fragment for.
+fn object_type_name<'a>(
+    entity_obj: &'a [(&'a str, Value<'a>)],
+    requires_selections: RequiresSelectionSetRef<'a>,
+) -> Option<&'a str> {
+    if let Some(type_name) =
+        Value::object_get(entity_obj, TYPENAME_FIELD_NAME).and_then(Value::as_str)
+    {
+        return Some(type_name);
+    }
+    let mut fragments = requires_selections
+        .iter()
+        .filter_map(|selection| match selection {
+            RequiresSelection::InlineFragment { type_condition, .. } => Some(type_condition),
+            _ => None,
+        });
+    let only = fragments.next()?;
+    fragments.next().is_none().then_some(only)
+}
+
 /// What the selections that apply to an object ask for.
 #[derive(Default)]
 struct AppliedSelections<'r> {
@@ -209,7 +228,8 @@ struct AppliedSelections<'r> {
 }
 
 /// `keys_known` is whether `entity_obj` is the entity and its subgraph's keys are known. It has
-/// a complete key then, so a field it misses is sent as `null`.
+/// a complete key then, so a field it misses is sent as `null`. `type_name` is the object's
+/// type, from its `__typename` or from the fragment it's under.
 #[allow(clippy::too_many_arguments)]
 fn project_requires_map_mut<'r>(
     possible_types: &PossibleTypes,
@@ -220,9 +240,11 @@ fn project_requires_map_mut<'r>(
     parent_response_key: Option<&str>,
     parent_first: bool,
     keys_known: bool,
+    type_name: Option<&str>,
 ) -> AppliedSelections<'r> {
-    // First, check if __typename is present in the entity object, we'll use it later
-    let type_name = Value::object_get(entity_obj, TYPENAME_FIELD_NAME).and_then(Value::as_str);
+    let type_name = Value::object_get(entity_obj, TYPENAME_FIELD_NAME)
+        .and_then(Value::as_str)
+        .or(type_name);
     let mut applied = AppliedSelections::default();
 
     for requires_selection in requires_selections.iter() {
@@ -319,6 +341,7 @@ fn project_requires_map_mut<'r>(
                         parent_response_key,
                         parent_first,
                         keys_known,
+                        Some(type_name),
                     );
                     applied.typename |= fragment.typename;
                     applied.missing_field |= fragment.missing_field;

@@ -1111,7 +1111,6 @@ fn deep_requires() -> Result<(), Box<dyn Error>> {
             {
               ... on Post {
                 comments(limit: 3) {
-                  __typename
                   id
                 }
               }
@@ -1189,7 +1188,6 @@ fn requires_reentry_selects_entity_typename() -> Result<(), Box<dyn Error>> {
             productSearchResult(partialCriteria: "partialCriteria") {
               __typename
               searchCriteria {
-                __typename
                 partialCriteria
               }
             }
@@ -1267,7 +1265,6 @@ fn chained_requires_after_entity_hop() -> Result<(), Box<dyn Error>> {
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -1361,7 +1358,6 @@ fn requires_from_two_subgraphs_after_entity_hop() -> Result<(), Box<dyn Error>> 
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -1455,7 +1451,6 @@ fn requires_after_two_entity_hops() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             user {
-              __typename
               id
             }
           }
@@ -1471,7 +1466,6 @@ fn requires_after_two_entity_hops() -> Result<(), Box<dyn Error>> {
             {
               ... on User {
                 cart {
-                  __typename
                   id
                 }
               }

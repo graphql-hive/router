@@ -1284,7 +1284,6 @@ fn qp_nested_include_skip_conditions_in_complex_products_query() -> Result<(), B
         Fetch(service: "products") {
           {
             topProducts {
-              __typename
               name
               upc
             }
@@ -1303,7 +1302,6 @@ fn qp_nested_include_skip_conditions_in_complex_products_query() -> Result<(), B
                 reviews {
                   body
                   author @skip(if: $skipAuthor) {
-                    __typename
                     id
                     reviews @include(if: $nestedReviews) {
                       body
@@ -1590,7 +1588,6 @@ fn qp_abstract_union_member_conditions_stay_scoped() -> Result<(), Box<dyn Error
             }
           }
           fragment a on Product {
-            __typename
             id
           }
         },
@@ -1750,7 +1747,6 @@ fn entity_call_under_nested_conditional_fragments() -> Result<(), Box<dyn Error>
               id
               ... on User @include(if: $a) {
                 ... on User @include(if: $b) {
-                  __typename
                   id
                 }
               }
@@ -1810,7 +1806,6 @@ fn batched_entity_calls_keep_the_condition_of_their_fragment() -> Result<(), Box
         Fetch(service: "accounts") {
           {
             users {
-              __typename
               id
             }
           }
@@ -1829,7 +1824,6 @@ fn batched_entity_calls_keep_the_condition_of_their_fragment() -> Result<(), Box
                   product {
                     upc
                     ... on Product @include(if: $a) {
-                      __typename
                       upc
                     }
                   }
@@ -1900,10 +1894,8 @@ fn condition_kept_when_another_branch_fetches_the_same_field() -> Result<(), Box
         Fetch(service: "users") {
           query ($c:Boolean!) {
             user {
-              __typename
               id
               ... on User @skip(if: $c) {
-                __typename
                 id
               }
             }
@@ -1938,7 +1930,6 @@ fn condition_kept_when_another_branch_fetches_the_same_field() -> Result<(), Box
             _e0: _entities(representations: $__batch_reps_0) {
               ... on User {
                 orders {
-                  __typename
                   id
                 }
               }
@@ -2053,7 +2044,6 @@ fn field_condition_kept_when_the_field_is_also_unconditional() -> Result<(), Box
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -2250,7 +2240,6 @@ fn spread_condition_kept_around_same_type_fragment_with_its_own() -> Result<(), 
                 __typename
                 ... on Dog @include(if: $x) {
                   ... on Dog @skip(if: $y) {
-                    __typename
                     id
                   }
                 }
@@ -2303,7 +2292,6 @@ fn spread_condition_kept_around_same_type_fragment_with_its_own() -> Result<(), 
               pet {
                 __typename
                 ... on Dog @include(if: $x) {
-                  __typename
                   id
                 }
               }
@@ -2364,7 +2352,6 @@ fn entity_call_under_nested_fragments_needs_every_condition() -> Result<(), Box<
                 __typename
                 ... on Dog @include(if: $x) {
                   ... on Dog @include(if: $z) {
-                    __typename
                     id
                   }
                 }
@@ -2421,7 +2408,6 @@ fn entity_call_under_nested_fragments_needs_every_condition() -> Result<(), Box<
                 __typename
                 ... on Dog @include(if: $x) {
                   ... on Dog @skip(if: $y) @include(if: $z) {
-                    __typename
                     id
                   }
                 }
@@ -2628,7 +2614,6 @@ fn condition_on_a_fragment_of_the_same_type_goes_to_its_fragments() -> Result<()
               pet {
                 __typename
                 ... on Dog {
-                  __typename
                   id
                 }
               }
@@ -2689,7 +2674,6 @@ fn fetch_that_never_runs_is_left_out() -> Result<(), Box<dyn Error>> {
           me {
             name
             ... on User @skip(if: $a) @include(if: $a) {
-              __typename
               id
             }
           }
@@ -2798,7 +2782,6 @@ fn abstract_field_selected_again_under_a_condition_in_an_entity_call_asks_for_it
         Fetch(service: "books") {
           {
             books {
-              __typename
               id
             }
           }

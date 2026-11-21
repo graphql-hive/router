@@ -26,7 +26,9 @@ use crate::query_planner::planner::tree::query_tree_node::{MutationFieldPosition
 use crate::query_planner::planner::walker::path::OperationPath;
 use crate::query_planner::planner::walker::pathfinder::can_satisfy_edge;
 use crate::query_planner::planner::QueryPlannerOptions;
-use crate::query_planner::state::supergraph_state::{OperationKind, SubgraphName, SupergraphState};
+use crate::query_planner::state::supergraph_state::{
+    OperationKind, SubgraphName, SupergraphDefinition, SupergraphState,
+};
 use crate::query_planner::utils::cancellation::CancellationToken;
 use ahash::{HashMap, HashMapExt};
 use petgraph::algo::has_path_connecting;
@@ -1085,10 +1087,21 @@ fn process_entity_move_edge(
             .insert(FetchStepFlags::USED_FOR_TYPE_CONDITION);
     }
 
-    let (parent_fetch_step, arena) = fetch_graph.step_and_arena_mut(parent_fetch_step_index)?;
-    parent_fetch_step
-        .output
-        .add_selection_typename(arena, fetch_path)?;
+    // Where the entity's type is an object type, that's its `__typename`, so the subgraph isn't
+    // asked for it. The representation takes it from the input's fragment. An interface, and
+    // an `@interfaceObject` standing in for one, still need it to tell the type.
+    let type_is_known = !is_interface
+        && !head_type.is_interface_object
+        && matches!(
+            supergraph.definitions.get(*input_type_name),
+            Some(SupergraphDefinition::Object(_))
+        );
+    if !type_is_known {
+        let (parent_fetch_step, arena) = fetch_graph.step_and_arena_mut(parent_fetch_step_index)?;
+        parent_fetch_step
+            .output
+            .add_selection_typename(arena, fetch_path)?;
+    }
 
     // Make the fetch step a child of the parent fetch step
     trace!(

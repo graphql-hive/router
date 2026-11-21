@@ -8,6 +8,7 @@ use crate::{
         introspection::schema::{PossibleTypes, SchemaMetadata},
         response::{merge::EntityMerger, value::Value},
         utils::{
+            consts::TYPENAME_FIELD_NAME,
             prehashed_map::PrehashedMap,
             traverse::{traverse_and_callback, traverse_and_callback_mut},
         },
@@ -29,7 +30,7 @@ pub(super) fn index_sources<'d, 'v>(
 ) {
     for source in &reuse.sources {
         traverse_and_callback(data, source.as_slice(), possible_types, &mut |object, _| {
-            if object.is_object() && holds_every_field(object, required_selections) {
+            if object.is_object() && holds_every_field(object, required_selections, false) {
                 seen.entry(object.to_hash(required_selections, possible_types))
                     .or_insert(Known::InResponse(object));
             }
@@ -84,20 +85,27 @@ pub fn merge_copies<'v>(
 /// A field is read under its name, like the hash and the representation do: in
 /// `price: _internal_qp_alias_0` the fetch wrote the value under `_internal_qp_alias_0`, and
 /// `price` is only what it's called in the representation.
-fn holds_every_field(value: &Value, selections: RequiresSelectionSetRef<'_>) -> bool {
+///
+/// `typed` is whether `value` is under a fragment, whose type is the `__typename` the planner
+/// doesn't ask for where the type is known. The representation and its hash take it from there.
+fn holds_every_field(value: &Value, selections: RequiresSelectionSetRef<'_>, typed: bool) -> bool {
     match value {
         Value::Null => false,
         Value::Object(fields) => selections.iter().all(|selection| match selection {
             RequiresSelection::Field {
                 name, selections, ..
-            } => Value::object_get(fields, name)
-                .is_some_and(|field| holds_every_field(field, selections)),
+            } => match Value::object_get(fields, name) {
+                Some(field) => holds_every_field(field, selections, false),
+                None => typed && name == TYPENAME_FIELD_NAME,
+            },
             RequiresSelection::InlineFragment { selections, .. } => {
-                holds_every_field(value, selections)
+                holds_every_field(value, selections, true)
             }
             RequiresSelection::FragmentSpread(_) => false,
         }),
-        Value::Array(items) => items.iter().all(|item| holds_every_field(item, selections)),
+        Value::Array(items) => items
+            .iter()
+            .all(|item| holds_every_field(item, selections, typed)),
         _ => selections.is_empty(),
     }
 }

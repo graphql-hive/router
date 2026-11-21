@@ -600,7 +600,7 @@ impl Arena {
         })
     }
 
-    fn item_is_subset(&self, source: NodeId, target: NodeId) -> bool {
+    pub fn item_is_subset(&self, source: NodeId, target: NodeId) -> bool {
         let (s, t) = (self.node(source), self.node(target));
         match (s.kind, t.kind) {
             (Kind::Field, Kind::Field) => {

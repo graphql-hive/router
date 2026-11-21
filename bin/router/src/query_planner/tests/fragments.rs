@@ -352,7 +352,6 @@ fn simple_inline_fragment() -> Result<(), Box<dyn Error>> {
         Fetch(service: "store") {
           {
             products {
-              __typename
               id
             }
           }
@@ -426,7 +425,6 @@ fn fragment_spread() -> Result<(), Box<dyn Error>> {
         Fetch(service: "store") {
           {
             products {
-              __typename
               id
             }
           }

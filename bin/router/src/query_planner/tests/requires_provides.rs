@@ -35,7 +35,6 @@ fn simple_requires_provides() -> Result<(), Box<dyn Error>> {
         Fetch(service: "accounts") {
           {
             me {
-              __typename
               id
             }
           }
@@ -57,7 +56,6 @@ fn simple_requires_provides() -> Result<(), Box<dyn Error>> {
                     username
                   }
                   product {
-                    __typename
                     upc
                   }
                 }
@@ -93,7 +91,7 @@ fn simple_requires_provides() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "accounts",
             "operationKind": "query",
-            "operation": "{me{__typename id}}"
+            "operation": "{me{id}}"
           },
           {
             "kind": "Flatten",
@@ -106,7 +104,7 @@ fn simple_requires_provides() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "reviews",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{reviews{id author{id username} product{__typename upc}}}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{reviews{id author{id username} product{upc}}}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -267,7 +265,6 @@ fn requires_on_same_type_nested_in_entity_call() -> Result<(), Box<dyn Error>> {
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -357,7 +354,6 @@ fn requires_on_same_type_nested_under_provides() -> Result<(), Box<dyn Error>> {
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -457,7 +453,6 @@ fn provided_union_keeps_members_that_are_not_provided() -> Result<(), Box<dyn Er
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -480,7 +475,6 @@ fn provided_union_keeps_members_that_are_not_provided() -> Result<(), Box<dyn Er
                       stock
                     }
                     ... on Movie {
-                      __typename
                       id
                     }
                   }
@@ -540,7 +534,6 @@ fn provides_does_not_leak_to_another_parent() -> Result<(), Box<dyn Error>> {
         Fetch(service: "catalog") {
           {
             store {
-              __typename
               id
             }
           }
@@ -556,7 +549,6 @@ fn provides_does_not_leak_to_another_parent() -> Result<(), Box<dyn Error>> {
             {
               ... on Store {
                 orders {
-                  __typename
                   id
                   weight
                 }
@@ -612,7 +604,6 @@ fn provides_does_not_apply_to_another_field() -> Result<(), Box<dyn Error>> {
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -628,7 +619,6 @@ fn provides_does_not_apply_to_another_field() -> Result<(), Box<dyn Error>> {
             {
               ... on User {
                 pastOrders {
-                  __typename
                   id
                 }
               }
@@ -688,7 +678,6 @@ fn provides_reaches_copies_made_earlier() -> Result<(), Box<dyn Error>> {
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -751,7 +740,6 @@ fn requires_provided_after_entity_hop() -> Result<(), Box<dyn Error>> {
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -814,7 +802,6 @@ fn requires_partly_provided_after_entity_hop() -> Result<(), Box<dyn Error>> {
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -906,7 +893,6 @@ fn requires_provided_through_type_condition() -> Result<(), Box<dyn Error>> {
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -969,7 +955,6 @@ fn requires_provided_through_interface_condition() -> Result<(), Box<dyn Error>>
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }

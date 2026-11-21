@@ -312,7 +312,7 @@ mod http_tests {
             "expected no requests to products subgraph"
         );
 
-        insta::assert_snapshot!(body, @r###"
+        insta::assert_snapshot!(body, @r#"
         {
           "extensions": {
             "queryPlan": {
@@ -322,7 +322,7 @@ mod http_tests {
                 "nodes": [
                   {
                     "kind": "Fetch",
-                    "operation": "{topProducts{__typename name price upc}}",
+                    "operation": "{topProducts{name price upc}}",
                     "operationKind": "query",
                     "serviceName": "products"
                   },
@@ -330,7 +330,7 @@ mod http_tests {
                     "kind": "Flatten",
                     "node": {
                       "kind": "Fetch",
-                      "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{reviews{author{__typename id}}}}}",
+                      "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{reviews{author{id}}}}}",
                       "operationKind": "query",
                       "requires": [
                         {
@@ -400,7 +400,7 @@ mod http_tests {
             }
           }
         }
-        "###);
+        "#);
     }
 
     #[ntex::test]

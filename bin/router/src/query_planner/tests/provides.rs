@@ -30,7 +30,6 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
         Fetch(service: "products") {
           {
             products {
-              __typename
               upc
             }
           }
@@ -67,7 +66,7 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "{products{__typename upc}}"
+            "operation": "{products{upc}}"
           },
           {
             "kind": "Flatten",
@@ -243,7 +242,6 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
                 id
               }
               ... on Movie {
-                __typename
                 id
               }
             }
@@ -277,7 +275,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "{media{__typename ...on Book{title id} ...on Movie{__typename id}}}"
+            "operation": "{media{__typename ...on Book{title id} ...on Movie{id}}}"
           },
           {
             "kind": "Flatten",
@@ -600,15 +598,8 @@ fn provides_on_interface_2_test() -> Result<(), Box<dyn Error>> {
               ... on Book {
                 animals {
                   __typename
-                  ... on Cat {
-                    __typename
-                    id
-                    name
-                  }
-                  ... on Dog {
-                    id
-                    name
-                  }
+                  id
+                  name
                 }
               }
               id

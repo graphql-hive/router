@@ -79,7 +79,6 @@ fn two_fields_simple_overrides() -> Result<(), Box<dyn Error>> {
           Fetch(service: "a") {
             {
               aFeed {
-                __typename
                 id
               }
             }
@@ -122,7 +121,7 @@ fn two_fields_simple_overrides() -> Result<(), Box<dyn Error>> {
                 "kind": "Fetch",
                 "serviceName": "a",
                 "operationKind": "query",
-                "operation": "{aFeed{__typename id}}"
+                "operation": "{aFeed{id}}"
               }
             ]
           },
@@ -191,7 +190,6 @@ fn override_object_field_but_interface_is_requested() -> Result<(), Box<dyn Erro
               __typename
               id
               ... on ImagePost {
-                __typename
                 id
               }
             }
@@ -255,7 +253,6 @@ fn progressive_override_percentage_test() -> Result<(), Box<dyn Error>> {
           Fetch(service: "a") {
             {
               aFeed {
-                __typename
                 id
               }
             }
@@ -295,7 +292,6 @@ fn progressive_override_percentage_test() -> Result<(), Box<dyn Error>> {
           Fetch(service: "b") {
             {
               bFeed {
-                __typename
                 id
               }
             }
@@ -447,7 +443,6 @@ fn progressive_override_of_union_field() -> Result<(), Box<dyn Error>> {
         Fetch(service: "b") {
           {
             me {
-              __typename
               id
             }
           }
@@ -534,7 +529,6 @@ fn progressive_override_of_provides_field() -> Result<(), Box<dyn Error>> {
         Fetch(service: "b") {
           {
             me {
-              __typename
               id
             }
           }
@@ -628,7 +622,6 @@ fn progressive_override_of_provides_union_field() -> Result<(), Box<dyn Error>> 
         Fetch(service: "b") {
           {
             me {
-              __typename
               id
             }
           }

@@ -2321,7 +2321,11 @@ impl<'r> RepresentationWriter<'r> {
                 }
                 let parent_first = first;
                 let mut first = true;
-                let mut type_name = self.typename_of(layout, object);
+                // the planner doesn't ask for `__typename` where the field's type is an object
+                // type, the object is then of the one type its selection has a fragment for
+                let mut type_name = self
+                    .typename_of(layout, object)
+                    .or_else(|| self.only_fragment_type(selections.clone()));
                 // the entity target is sent as another type (an `@interfaceObject`'s interface), like the
                 // other pipeline's input rewrites: when it has a `__typename` that matches
                 for rewrite in self.typename_rewrite.iter().filter(|_| !nested) {
@@ -2376,6 +2380,19 @@ impl<'r> RepresentationWriter<'r> {
             }
         }
         true
+    }
+
+    /// The type condition of the selection's only inline fragment
+    fn only_fragment_type(&self, selections: std::ops::Range<u32>) -> Option<&'r str> {
+        let requires = self.requires;
+        let mut fragments = requires.nodes[selections.start as usize..selections.end as usize]
+            .iter()
+            .filter_map(|node| match node {
+                RequiresNode::InlineFragment { type_condition, .. } => Some(&**type_condition),
+                _ => None,
+            });
+        let only = fragments.next()?;
+        fragments.next().is_none().then_some(only)
     }
 
     #[allow(clippy::too_many_arguments)]

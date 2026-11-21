@@ -59,7 +59,6 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
           Fetch(service: "accounts") {
             {
               users {
-                __typename
                 id
                 username
                 name
@@ -120,7 +119,6 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
             id
             body
             author {
-              __typename
               id
               username
               reviews {

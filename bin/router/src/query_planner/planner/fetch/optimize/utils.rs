@@ -11,7 +11,10 @@ use tracing::{instrument, trace};
 
 use crate::query_planner::{
     ast::{
-        flat::arena::Arena,
+        flat::{
+            arena::{Arena, NodeId},
+            Kind,
+        },
         merge_path::{MergePath, Segment},
     },
     planner::fetch::{
@@ -590,11 +593,21 @@ impl FetchStepData<MultiTypeFetchStep> {
 
         // We must already have `other`'s input at that path.
         // If we do not, the fields we move here would have no object to sit in.
+        // `__typename` aside: it's only there to build representations, and once merged there's
+        // none to build. Where the type is known we don't even ask for it.
         let path = other.response_path.slice_from(self.response_path.len());
         self.output
             .selections_for_definition(output_type)
             .and_then(|output| arena.find_by_path(output, &path))
-            .is_some_and(|at_path| arena.is_subset(at_path, input_selections))
+            .is_some_and(|at_path| {
+                arena.items(input_selections).iter().all(|&item| {
+                    is_plain_typename(arena, item)
+                        || arena
+                            .items(at_path)
+                            .iter()
+                            .any(|&ours| arena.item_is_subset(ours, item))
+                })
+            })
     }
 
     pub fn has_arguments_conflicts_with(&self, arena: &Arena, other: &Self) -> bool {
@@ -611,6 +624,15 @@ impl FetchStepData<MultiTypeFetchStep> {
 
         self.input.response_keys_conflict_with(arena, &other.input)
     }
+}
+
+fn is_plain_typename(arena: &Arena, item: NodeId) -> bool {
+    let node = arena.node(item);
+    node.kind == Kind::Field
+        && arena.str(node.name) == "__typename"
+        && arena.opt_str(node.alias).is_none()
+        && arena.opt_str(node.skip_if).is_none()
+        && arena.opt_str(node.include_if).is_none()
 }
 
 #[cfg(test)]
