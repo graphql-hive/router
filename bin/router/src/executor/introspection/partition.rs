@@ -3,6 +3,7 @@ use crate::query_planner::ast::{
     selection_item::SelectionItem,
     selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
 };
+use crate::query_planner::state::supergraph_state::OperationKind;
 
 /// Represents an operation that has been partitioned into a part for subgraphs
 /// and an optional part for introspection (router-level).
@@ -16,8 +17,11 @@ pub struct PartitionedOperation {
 /// Partitions an operation into a part for subgraphs and an optional part for introspection (router-level)
 pub fn partition_operation(mut op: OperationDefinition) -> PartitionedOperation {
     let selection_set = std::mem::take(&mut op.selection_set);
+    // `__typename` of the root type needs no subgraph: the projection writes the root type's
+    // name. A subscription still sends it, it has to select its one field from somewhere.
+    let drop_root_typename = !matches!(op.operation_kind, Some(OperationKind::Subscription));
     let (downstream_selection_set, introspection_selection_set) =
-        partition_selection_set(selection_set, SelectionSetLevel::Root);
+        partition_selection_set(selection_set, SelectionSetLevel::Root, drop_root_typename);
 
     let introspection_operation = if introspection_selection_set.is_empty() {
         None
@@ -60,6 +64,7 @@ enum SelectionSetLevel {
 fn partition_selection_set(
     selection_set: SelectionSet,
     level: SelectionSetLevel,
+    drop_root_typename: bool,
 ) -> (SelectionSet, SelectionSet) {
     let mut downstream_items = vec![];
     let mut introspection_items = vec![];
@@ -67,6 +72,12 @@ fn partition_selection_set(
     for item in selection_set.items {
         match item {
             SelectionItem::Field(field) => {
+                if drop_root_typename
+                    && field.name == "__typename"
+                    && matches!(level, SelectionSetLevel::Root)
+                {
+                    continue;
+                }
                 if field.name.starts_with("__") && field.name != "__typename" {
                     introspection_items.push(SelectionItem::Field(field));
                 } else {
@@ -82,7 +93,7 @@ fn partition_selection_set(
                     } = field;
 
                     let (downstream_selections, introspection_selections) =
-                        partition_selection_set(selections, SelectionSetLevel::Nested);
+                        partition_selection_set(selections, SelectionSetLevel::Nested, false);
 
                     let has_downstream = !downstream_selections.is_empty();
                     let has_introspection = !introspection_selections.is_empty();
@@ -125,8 +136,11 @@ fn partition_selection_set(
                 let mut type_condition = Some(inline_fragment.type_condition);
                 let mut skip_if = inline_fragment.skip_if;
                 let mut include_if = inline_fragment.include_if;
-                let (downstream_selections, introspection_selections) =
-                    partition_selection_set(inline_fragment.selections, level.clone());
+                let (downstream_selections, introspection_selections) = partition_selection_set(
+                    inline_fragment.selections,
+                    level.clone(),
+                    drop_root_typename,
+                );
 
                 let has_downstream = !downstream_selections.is_empty();
                 let has_introspection = !introspection_selections.is_empty();

@@ -4746,4 +4746,59 @@ mod issues_e2e_tests {
             );
         }
     }
+
+    /// `__typename` of the root type needs no subgraph: the router knows it's `Query`. Alone it
+    /// sends nothing, next to other fields it isn't asked of the subgraph.
+    #[ntex::test]
+    async fn root_typename_is_answered_without_a_subgraph() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "a": { "query": { "t": { "x": 7 } } },
+                "b": { "query": { "t": { "__typename": "T", "id": "1" } } },
+                "c": { "entities": [{ "__typename": "T", "id": "1", "x": 7, "y": 41 }] }
+            })))
+            .build()
+            .start()
+            .await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.aliased-key-collision.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ __typename alias: __typename }", None, None)
+            .await;
+        assert_eq!(
+            res.string_body().await,
+            r#"{"data":{"__typename":"Query","alias":"Query"}}"#
+        );
+        for subgraph in ["a", "b", "c"] {
+            assert!(
+                subgraphs
+                    .get_requests_log(subgraph)
+                    .is_none_or(|requests| requests.is_empty()),
+                "{subgraph} was called"
+            );
+        }
+
+        let res = router
+            .send_graphql_request("{ __typename t { x } }", None, None)
+            .await;
+        assert_eq!(
+            res.string_body().await,
+            r#"{"data":{"__typename":"Query","t":{"x":7}}}"#
+        );
+        let requests = subgraphs.get_requests_log("a").expect("a was called");
+        let body: serde_json::Value =
+            serde_json::from_slice(requests.last().unwrap().body.as_deref().unwrap()).unwrap();
+        assert_eq!(body["query"], json!("{t{x}}"));
+    }
 }
