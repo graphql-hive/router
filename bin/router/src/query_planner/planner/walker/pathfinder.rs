@@ -119,6 +119,8 @@ pub struct MoveRequirements<'graph> {
     /// requirements are resolved from there on. So the steps it found go on from the next path
     /// too, without searching again.
     searches: RefCell<SearchesByStart<'graph>>,
+    /// The fragments planned for more types than their own, see `fragment_groups`.
+    pub(crate) groups: Option<&'graph super::fragment_groups::FragmentGroups>,
 }
 
 type SearchesByStart<'graph> =

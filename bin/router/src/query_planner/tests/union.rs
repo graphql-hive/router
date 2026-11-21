@@ -953,12 +953,12 @@ fn union_list_test() -> Result<(), Box<dyn Error>> {
                   id
                   items {
                     __typename
-                    ... on DigitalBook {
+                    ... on PaperBook {
                       product {
                         ...a
                       }
                     }
-                    ... on PaperBook {
+                    ... on DigitalBook {
                       product {
                         ...a
                       }

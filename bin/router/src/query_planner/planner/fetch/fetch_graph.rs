@@ -1078,6 +1078,30 @@ fn children_shape(
     (hasher.finish(), heavy)
 }
 
+/// Makes `step` take the objects of `type_name` too, when it doesn't yet, see
+/// `SelectionAttributes::also`: an input and an output for it.
+fn take_type(
+    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    step_index: NodeIndex,
+    type_name: &str,
+) -> Result<(), FetchGraphError> {
+    let step = fetch_graph.get_step_data(step_index)?;
+    if step.input.selections_for_definition(type_name).is_some() {
+        return Ok(());
+    }
+    fetch_graph.touch(step_index);
+    let step = fetch_graph.get_step_data_mut(step_index)?;
+    step.input.add_definition(type_name);
+    step.input.add_to(
+        type_name,
+        &SelectionSet {
+            items: vec![SelectionItem::Field(FieldSelection::new_typename())],
+        },
+    )?;
+    step.output.add_definition(type_name);
+    Ok(())
+}
+
 /// Hashes `segments` without the types of their type conditions.
 fn hash_without_types(segments: &[Segment], hasher: &mut ahash::AHasher) {
     use std::hash::Hash;
@@ -1791,6 +1815,7 @@ fn process_entity_move_edge(
             if type_names.len() > 1 && type_names.contains(*input_type_name) =>
         {
             for type_name in type_names.iter() {
+                take_type(fetch_graph, fetch_step_index, type_name)?;
                 fetch_graph.add_input(fetch_step_index, type_name, &requirement.selection_set)?;
             }
         }
