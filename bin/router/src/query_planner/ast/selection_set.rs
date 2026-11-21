@@ -586,6 +586,95 @@ pub fn merge_selection_set(
     Ok(())
 }
 
+/// `merge_selection_set`, taking `source`: what's new moves in instead of being copied.
+pub fn merge_selection_set_owned(
+    target: &mut SelectionSet,
+    source: SelectionSet,
+    as_first: bool,
+) -> Result<(), ResponseKeyConflict> {
+    if source.items.is_empty() {
+        return Ok(());
+    }
+
+    let mut pending_items = Vec::with_capacity(source.items.len());
+    for source_item in source.items {
+        // where it goes in `target`, if something there takes it
+        let mut matching = None;
+        for (index, target_item) in target.items.iter().enumerate() {
+            match (&source_item, target_item) {
+                (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
+                    if source_field.selection_identifier()
+                        == target_field.selection_identifier()
+                        && (source_field.name != target_field.name
+                            || source_field.arguments() != target_field.arguments()) =>
+                {
+                    return Err(ResponseKeyConflict(
+                        source_field.selection_identifier().to_string(),
+                    ));
+                }
+                (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
+                    if source_field == target_field
+                        && field_condition_equal(
+                            &Option::<Condition>::from(source_field),
+                            target_field,
+                        ) =>
+                {
+                    matching = Some(index);
+                    break;
+                }
+                (
+                    SelectionItem::InlineFragment(source_fragment),
+                    SelectionItem::InlineFragment(target_fragment),
+                ) if source_fragment.type_condition == target_fragment.type_condition
+                    && fragment_condition_equal(
+                        &Option::<Condition>::from(source_fragment),
+                        target_fragment,
+                    ) =>
+                {
+                    matching = Some(index);
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        match (matching, source_item) {
+            (Some(index), SelectionItem::Field(mut source_field)) => {
+                if let SelectionItem::Field(target_field) = &mut target.items[index] {
+                    merge_field_omit_from_response(target_field, &source_field);
+                    merge_selection_set_owned(
+                        &mut target_field.selections,
+                        std::mem::take(&mut source_field.selections),
+                        as_first,
+                    )?;
+                }
+            }
+            (Some(index), SelectionItem::InlineFragment(source_fragment)) => {
+                if let SelectionItem::InlineFragment(target_fragment) = &mut target.items[index] {
+                    merge_selection_set_owned(
+                        &mut target_fragment.selections,
+                        source_fragment.selections,
+                        as_first,
+                    )?;
+                }
+            }
+            (_, source_item) => pending_items.push(source_item),
+        }
+    }
+
+    if !pending_items.is_empty() {
+        if as_first {
+            let mut new_items = pending_items;
+            new_items.append(&mut target.items);
+            target.items = new_items;
+        } else {
+            target.items.extend(pending_items);
+        }
+    }
+
+    Ok(())
+}
+
 #[inline]
 fn merge_field_omit_from_response(target: &mut FieldSelection, source: &FieldSelection) {
     // A skipped `__typename` is only there for an empty object.
