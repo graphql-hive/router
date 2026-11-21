@@ -108,6 +108,9 @@ pub struct FetchGraph<State> {
     /// The same field at the same place is the same value however many times something needs
     /// it, so it's planned once. Only kept while the graph is built.
     pub(crate) planned_requires: HashMap<PlannedRequires, NodeIndex>,
+    /// Whether an edge's requirements resolve right where a node is, without leaving its
+    /// subgraph, see `satisfiable_from`. Only kept while the graph is built.
+    satisfiable: HashMap<(EdgeIndex, NodeIndex), bool>,
     /// The id the next step gets. Only goes up: the step count drops when a step is removed, and
     /// an id from it could be one a step still has.
     next_fetch_id: u32,
@@ -138,6 +141,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             operation_variables: HashSet::new(),
             children_by_entity_call: None,
             planned_requires: HashMap::new(),
+            satisfiable: HashMap::new(),
             next_fetch_id: self.next_fetch_id,
         }
     }
@@ -158,6 +162,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             operation_variables: HashSet::new(),
             children_by_entity_call: Some(HashMap::new()),
             planned_requires: HashMap::new(),
+            satisfiable: HashMap::new(),
             next_fetch_id: 1,
         }
     }
@@ -1222,6 +1227,7 @@ fn process_interface_object_type_move_edge(
     let requirement_node_index = query_node.requirements.first().unwrap().node_index;
     let key_to_reenter_subgraph = find_satisfiable_key(
         graph,
+        fetch_graph,
         supergraph,
         override_context,
         requirement_node_index,
@@ -1877,9 +1883,10 @@ fn process_requires_field_edge(
     // a key of this subgraph, so that key is in the response before it runs, whichever fetches
     // put it there. We go in with the same key and wait for the same fetches. The call itself is
     // the last resort: it's in this subgraph, so it resolves its own keys and returns one.
-    let own_key = || {
+    let own_key = |fetch_graph: &mut FetchGraph<SingleTypeFetchStep>| {
         find_satisfiable_key(
             graph,
+            fetch_graph,
             supergraph,
             override_context,
             head_node_index,
@@ -1893,6 +1900,7 @@ fn process_requires_field_edge(
         Some(holder) if real_parent_fetch_step_index != parent_fetch_step_index => {
             if let Some(key) = find_satisfiable_key(
                 graph,
+                fetch_graph,
                 supergraph,
                 override_context,
                 head_node_index,
@@ -1909,11 +1917,19 @@ fn process_requires_field_edge(
                     .collect();
                 (real_parent_fetch_step_index, None, key)
             } else {
-                (parent_fetch_step_index, Some(head_node_index), own_key()?)
+                (
+                    parent_fetch_step_index,
+                    Some(head_node_index),
+                    own_key(fetch_graph)?,
+                )
             }
         }
         // We don't know the subgraph the objects came from, or we're in it already.
-        _ => (real_parent_fetch_step_index, holder_node, own_key()?),
+        _ => (
+            real_parent_fetch_step_index,
+            holder_node,
+            own_key(fetch_graph)?,
+        ),
     };
     let requires_input = requires.map(|requires| fetch_graph.read_at(response_path, requires));
     let key_input = fetch_graph.read_at(response_path, key_to_reenter_subgraph);
@@ -2174,40 +2190,37 @@ fn process_requires_field_edge(
     // the subgraph the objects came from resolves, that step fetches nothing of its own: they can
     // leave from the step that holds the objects instead, like other entity calls do, and share
     // fetches with them.
-    let leave_from_holder = requires.is_some()
+    let mut leave_from_holder = requires.is_some()
         && key_already_fetched_by.is_empty()
         && field_move.context_arguments.is_empty()
-        && !*is_interface_object
-        && match (holder_node, query_node.requirements.first()) {
-            (Some(holder), Some(requirements)) => {
-                !requirements.children.is_empty()
-                    && requirements.children.iter().all(|child| {
-                        child.edge_from_parent.is_some_and(|edge_index| {
-                            let edge_ref = graph.edge_reference(edge_index);
-                            {
-                                matches!(edge_ref.weight(), Edge::EntityMove(_))
-                                    && can_satisfy_edge(
-                                        graph,
-                                        supergraph,
-                                        override_context,
-                                        &edge_ref,
-                                        &OperationPath {
-                                            root_node: holder,
-                                            last_segment: None,
-                                            cost: 0,
-                                            union_context: None,
-                                        },
-                                        &Default::default(),
-                                        true,
-                                        &CancellationToken::new(),
-                                    )
-                                    .is_ok_and(|satisfied| satisfied.is_some())
-                            }
-                        })
-                    })
+        && !*is_interface_object;
+    match (holder_node, query_node.requirements.first()) {
+        (Some(holder), Some(requirements)) if leave_from_holder => {
+            leave_from_holder = !requirements.children.is_empty();
+            for child in requirements.children.iter() {
+                let Some(edge_index) = child.edge_from_parent else {
+                    leave_from_holder = false;
+                    break;
+                };
+                let edge_ref = graph.edge_reference(edge_index);
+                if !matches!(edge_ref.weight(), Edge::EntityMove(_))
+                    || !satisfiable_from(
+                        graph,
+                        fetch_graph,
+                        supergraph,
+                        override_context,
+                        &edge_ref,
+                        holder,
+                    )
+                    .unwrap_or(false)
+                {
+                    leave_from_holder = false;
+                    break;
+                }
             }
-            _ => false,
-        };
+        }
+        _ => leave_from_holder = false,
+    }
     let (step_for_requirements_index, requirements_fetch_path) =
         if requires.is_none() || head_node.is_using_provides() || leave_from_holder {
             (real_parent_fetch_step_index, key_to_reenter_at)
@@ -2280,23 +2293,14 @@ fn process_requires_field_edge(
                         continue;
                     };
                     // Only what the holder's subgraph resolves on that spot, no jumps.
-                    if can_satisfy_edge(
+                    if satisfiable_from(
                         graph,
+                        fetch_graph,
                         supergraph,
                         override_context,
                         &edge_ref,
-                        &OperationPath {
-                            root_node: holder_node,
-                            last_segment: None,
-                            cost: 0,
-                            union_context: None,
-                        },
-                        &Default::default(),
-                        true,
-                        &CancellationToken::new(),
-                    )?
-                    .is_some()
-                    {
+                        holder_node,
+                    )? {
                         jump_keys.push((key, true));
                     }
                 }
@@ -2443,6 +2447,7 @@ fn process_requires_field_edge(
 ))]
 fn find_satisfiable_key<'a>(
     graph: &'a Graph<'a>,
+    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     supergraph: &'a SupergraphState,
     override_context: &'a PlannerOverrideContext,
     node_index: NodeIndex,
@@ -2467,26 +2472,14 @@ fn find_satisfiable_key<'a>(
     entity_moves_edges_to_self.sort_by_key(|edge| std::cmp::Reverse(edge.weight().cost()));
 
     for edge_ref in entity_moves_edges_to_self {
-        if can_satisfy_edge(
+        if satisfiable_from(
             graph,
+            fetch_graph,
             supergraph,
             override_context,
             &edge_ref,
-            &OperationPath {
-                root_node: from,
-                last_segment: None,
-                cost: 0,
-                union_context: None,
-            },
-            &Default::default(),
-            true,
-            // It's safe to use a noop CancellationToken here,
-            // as the result of this function is guaranteed to be successful,
-            // and fast.
-            &CancellationToken::new(),
-        )?
-        .is_some()
-        {
+            from,
+        )? {
             return edge_ref.weight().requirements().map(Some).ok_or_else(|| {
                 FetchGraphError::Internal(String::from("Resolved empty Satisfiable Key"))
             });
@@ -2494,6 +2487,44 @@ fn find_satisfiable_key<'a>(
     }
 
     Ok(None)
+}
+
+/// Whether the requirements of `edge_ref` resolve right where `from` is, without leaving its
+/// subgraph. The same few keys get asked about for every `@requires` field, so the answer is kept.
+fn satisfiable_from(
+    graph: &Graph<'_>,
+    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    supergraph: &SupergraphState,
+    override_context: &PlannerOverrideContext,
+    edge_ref: &EdgeReference<'_>,
+    from: NodeIndex,
+) -> Result<bool, FetchGraphError> {
+    if let Some(&satisfiable) = fetch_graph.satisfiable.get(&(edge_ref.id(), from)) {
+        return Ok(satisfiable);
+    }
+    let satisfiable = can_satisfy_edge(
+        graph,
+        supergraph,
+        override_context,
+        edge_ref,
+        &OperationPath {
+            root_node: from,
+            last_segment: None,
+            cost: 0,
+            union_context: None,
+        },
+        &Default::default(),
+        true,
+        // It's safe to use a noop CancellationToken here,
+        // as the result of this function is guaranteed to be successful,
+        // and fast.
+        &CancellationToken::new(),
+    )?
+    .is_some();
+    fetch_graph
+        .satisfiable
+        .insert((edge_ref.id(), from), satisfiable);
+    Ok(satisfiable)
 }
 
 fn no_satisfiable_key() -> FetchGraphError {
