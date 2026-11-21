@@ -10,9 +10,9 @@ use crate::query_planner::{
         merge_path::{Condition, MergePath, Segment},
         selection_item::SelectionItem,
         selection_set::{
-            find_selection_set_by_path_mut, merge_selection_set, merge_selection_set_owned,
-            response_keys_conflict, selection_items_are_subset_of, FieldSelection,
-            InlineFragmentSelection, ResponseKeyConflict, SelectionSet,
+            find_selection_set_by_path_mut, find_selection_sets_by_path_mut, merge_selection_set,
+            merge_selection_set_owned, response_keys_conflict, selection_items_are_subset_of,
+            FieldSelection, InlineFragmentSelection, ResponseKeyConflict, SelectionSet,
         },
     },
     planner::fetch::state::{MultiTypeFetchStep, SingleTypeFetchStep},
@@ -319,12 +319,6 @@ impl FetchStepSelections<SingleTypeFetchStep> {
         selection_set: SelectionSet,
         as_first: bool,
     ) -> Result<(), FetchStepSelectionsError> {
-        if let Some(paths) = paths_per_type(fetch_path) {
-            for path in paths {
-                self.add_at_path_of(definition_name, &path, selection_set.clone(), as_first)?;
-            }
-            return Ok(());
-        }
         let current = match definition_name {
             Some(definition_name) => self.selections.get_mut(definition_name),
             None => self.selections.values_mut().next(),
@@ -334,13 +328,33 @@ impl FetchStepSelections<SingleTypeFetchStep> {
                 definition_name.unwrap_or_default().to_string(),
             )
         })?;
-        let at_path = find_selection_set_by_path_mut(current, fetch_path).ok_or_else(|| {
+        let missing = || {
             FetchStepSelectionsError::MissingPathInSelection(
                 fetch_path.to_string(),
                 definition_name.unwrap_or_default().to_string(),
             )
-        })?;
-        merge_selection_set_owned(at_path, selection_set, as_first)?;
+        };
+        let several_types = fetch_path.inner.iter().any(
+            |segment| matches!(segment, Segment::TypeCondition(type_names, _) if type_names.len() > 1),
+        );
+        if !several_types {
+            let at_path =
+                find_selection_set_by_path_mut(current, fetch_path).ok_or_else(missing)?;
+            merge_selection_set_owned(at_path, selection_set, as_first)?;
+            return Ok(());
+        }
+        // a fragment for each type, see `paths_per_type`
+        let mut found = Vec::new();
+        if !find_selection_sets_by_path_mut(current, &fetch_path.inner, &mut found) {
+            return Err(missing());
+        }
+        let last = found.pop();
+        for at_path in found {
+            merge_selection_set_owned(at_path, selection_set.clone(), as_first)?;
+        }
+        if let Some(at_path) = last {
+            merge_selection_set_owned(at_path, selection_set, as_first)?;
+        }
         Ok(())
     }
 }
