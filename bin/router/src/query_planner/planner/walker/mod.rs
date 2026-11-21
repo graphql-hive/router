@@ -1,6 +1,7 @@
 mod best_path;
 pub(crate) mod error;
 mod excluded;
+pub(crate) mod fragment_groups;
 pub(crate) mod path;
 pub(crate) mod pathfinder;
 pub(crate) mod utils;
@@ -65,13 +66,33 @@ type WorkItem<'graph, 'op> = (
 );
 type ResolutionStack<'graph, 'op> = Vec<WorkItem<'graph, 'op>>;
 
-#[instrument(level = "trace", skip_all)]
 pub fn walk_operation<'graph, 'op: 'graph>(
     graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     operation: &'op OperationDefinition,
     cancellation_token: &'graph CancellationToken,
+) -> Result<ResolvedOperation<'graph>, WalkOperationError> {
+    walk_operation_with_groups(
+        graph,
+        supergraph,
+        override_context,
+        operation,
+        cancellation_token,
+        None,
+    )
+}
+
+/// `walk_operation`, with fragments planned for more types than their own, see
+/// `fragment_groups`.
+#[instrument(level = "trace", skip_all)]
+pub fn walk_operation_with_groups<'graph, 'op: 'graph>(
+    graph: &'graph Graph<'graph>,
+    supergraph: &'graph SupergraphState,
+    override_context: &'graph PlannerOverrideContext,
+    operation: &'op OperationDefinition,
+    cancellation_token: &'graph CancellationToken,
+    groups: Option<&'graph fragment_groups::FragmentGroups>,
 ) -> Result<ResolvedOperation<'graph>, WalkOperationError> {
     let operation_kind = operation
         .operation_kind
@@ -90,12 +111,14 @@ pub fn walk_operation<'graph, 'op: 'graph>(
 
     let mut paths_grouped_by_root_field: Vec<BestPathsPerLeaf> =
         Vec::with_capacity(operation.selection_set.items.len());
+    let mut moves = MoveRequirements::default();
+    moves.groups = groups;
     let walk = OperationWalk {
         graph,
         supergraph,
         override_context,
         cancellation_token,
-        moves: MoveRequirements::default(),
+        moves,
     };
 
     // It's critical to iterate over root fiels and preserve their original order
@@ -181,7 +204,8 @@ impl<'graph> OperationWalk<'graph> {
         let mut stack_to_resolve: ResolutionStack = vec![];
         let mut paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
 
-        for (item, also) in grouped_items(self.graph, self.supergraph, &selection_set.items) {
+        for item in selection_set.items.iter() {
+            let also = self.moves.groups.and_then(|groups| groups.of(item));
             let (next_stack_to_resolve, new_paths_per_leaf) =
                 self.process_selection(item, also, paths, fields_to_resolve_locally)?;
             paths_per_leaf.extend(new_paths_per_leaf);
@@ -798,9 +822,10 @@ impl<'graph> OperationWalk<'graph> {
         } else {
             trace!("Found {} paths", next_paths.len());
             let next_paths = Rc::new(next_paths);
-            for (next_selection_items, also) in
-                grouped_items(graph, supergraph, &field.selections.items)
-            {
+            for next_selection_items in field.selections.items.iter() {
+                let also = moves
+                    .groups
+                    .and_then(|groups| groups.of(next_selection_items));
                 next_stack_to_resolve.push((next_selection_items, Rc::clone(&next_paths), also));
             }
         }
@@ -846,110 +871,4 @@ fn field_target_subgraph_ids<'s>(
     }
 
     Ok(target_subgraph_ids.filter(|ids| !ids.is_empty()))
-}
-
-/// `items`, with fragments on types the planner can't tell apart that select the same, see
-/// `Graph::interchangeable`, as one: the first of them, with the others in `also`. Type
-/// expansion makes one of those for every type that implements an interface, and they're
-/// planned once instead. Not a fragment whose own fields have `@requires`: those are planned per
-/// type. Not with `@fromContext` in the graph: a field reads from its ancestors.
-fn grouped_items<'op>(
-    graph: &Graph<'_>,
-    supergraph: &SupergraphState,
-    items: &'op [SelectionItem],
-) -> Vec<(&'op SelectionItem, Option<Rc<SelectionAttributes>>)> {
-    let groupable = |fragment: &InlineFragmentSelection| {
-        graph
-            .type_groups
-            .contains_key(fragment.type_condition.as_str())
-            && !requires_own_fields(supergraph, &fragment.type_condition, &fragment.selections)
-    };
-    if graph.has_context_arguments()
-        || graph.type_groups.is_empty()
-        || items
-            .iter()
-            .all(|item| !matches!(item, SelectionItem::InlineFragment(_)))
-    {
-        return items.iter().map(|item| (item, None)).collect();
-    }
-    let mut grouped: Vec<(&'op SelectionItem, Vec<String>)> = Vec::with_capacity(items.len());
-    for item in items {
-        if let SelectionItem::InlineFragment(fragment) = item {
-            if groupable(fragment) {
-                let joined = grouped.iter_mut().find(|(first, _)| match first {
-                    SelectionItem::InlineFragment(first) => {
-                        graph.interchangeable(&first.type_condition, &fragment.type_condition)
-                            && first.skip_if == fragment.skip_if
-                            && first.include_if == fragment.include_if
-                            && same_selections(&first.selections, &fragment.selections)
-                            && groupable(first)
-                    }
-                    _ => false,
-                });
-                if let Some((_, also)) = joined {
-                    also.push(fragment.type_condition.clone());
-                    continue;
-                }
-            }
-        }
-        grouped.push((item, Vec::new()));
-    }
-    grouped
-        .into_iter()
-        .map(|(item, also)| {
-            let also = (!also.is_empty()).then(|| {
-                Rc::new(SelectionAttributes {
-                    alias: None,
-                    arguments: None,
-                    also: Some(also.into()),
-                })
-            });
-            (item, also)
-        })
-        .collect()
-}
-
-/// Whether a field `selections` takes on `type_name` itself has `@requires` somewhere.
-fn requires_own_fields(
-    supergraph: &SupergraphState,
-    type_name: &str,
-    selections: &SelectionSet,
-) -> bool {
-    let Some(definition) = supergraph.definitions.get(type_name) else {
-        return true;
-    };
-    selections.items.iter().any(|item| match item {
-        SelectionItem::Field(field) => definition
-            .fields()
-            .get(&field.name)
-            .is_some_and(|field| field.join_field.iter().any(|join| join.requires.is_some())),
-        SelectionItem::InlineFragment(fragment) => {
-            requires_own_fields(supergraph, type_name, &fragment.selections)
-        }
-        SelectionItem::FragmentSpread(_) => true,
-    })
-}
-
-/// Whether two selection sets select exactly the same: the same fields, aliases, arguments,
-/// conditions and fragments, all the way down.
-fn same_selections(a: &SelectionSet, b: &SelectionSet) -> bool {
-    a.items.len() == b.items.len()
-        && a.items.iter().zip(&b.items).all(|pair| match pair {
-            (SelectionItem::Field(a), SelectionItem::Field(b)) => {
-                a.name == b.name
-                    && a.alias == b.alias
-                    && a.arguments() == b.arguments()
-                    && a.skip_if == b.skip_if
-                    && a.include_if == b.include_if
-                    && same_selections(&a.selections, &b.selections)
-            }
-            (SelectionItem::InlineFragment(a), SelectionItem::InlineFragment(b)) => {
-                a.type_condition == b.type_condition
-                    && a.skip_if == b.skip_if
-                    && a.include_if == b.include_if
-                    && same_selections(&a.selections, &b.selections)
-            }
-            (SelectionItem::FragmentSpread(a), SelectionItem::FragmentSpread(b)) => a == b,
-            _ => false,
-        })
 }

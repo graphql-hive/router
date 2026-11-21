@@ -120,6 +120,8 @@ pub struct MoveRequirements<'graph> {
     /// `OperationPath::narrowed_to`, so that's in the key too. So the steps it found go on from
     /// the next path too, without searching again.
     searches: RefCell<SearchesByStart<'graph>>,
+    /// The fragments planned for more types than their own, see `fragment_groups`.
+    pub(crate) groups: Option<&'graph super::fragment_groups::FragmentGroups>,
 }
 
 type SearchesByStart<'graph> = HashMap<

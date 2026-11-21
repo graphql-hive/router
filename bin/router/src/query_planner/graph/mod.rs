@@ -176,6 +176,9 @@ pub struct Graph<'graph> {
     /// Object types the planner can't tell apart, see `interchangeable_types`, by the group
     /// they're in. Only types that share a group with another are here.
     pub(crate) type_groups: HashMap<&'graph str, u32>,
+    /// What decides how each object type that could share a group is planned, field by field,
+    /// see `interchangeable_for`.
+    pub(crate) type_profiles: HashMap<&'graph str, TypeProfile<'graph>>,
 }
 
 impl<'graph> Graph<'graph> {
@@ -216,7 +219,7 @@ impl<'graph> Graph<'graph> {
         instance.build_graph(supergraph_state)?;
         instance.upserted = HashMap::new();
         instance.index_edges();
-        instance.type_groups = interchangeable_types(supergraph_state);
+        (instance.type_groups, instance.type_profiles) = interchangeable_types(supergraph_state);
 
         for node in instance.graph.node_weights_mut() {
             if let Node::SubgraphType(subgraph_type) = node {
@@ -237,6 +240,40 @@ impl<'graph> Graph<'graph> {
             (Some(a), Some(b)) => a == b,
             _ => false,
         }
+    }
+
+    /// Whether the planner plans `fields` on `a` and on `b` the same way, from objects in
+    /// `subgraphs`: interchangeable types, or for these fields, types that every subgraph keys
+    /// the same way, in the same interfaces and unions where both are, with the same
+    /// `@join__field`s for each of these fields, and in each of `subgraphs`. A subgraph only one
+    /// of them is in then has none of these fields, and with one key everywhere, no path goes
+    /// through it.
+    pub(crate) fn interchangeable_for<'f>(
+        &self,
+        a: &str,
+        b: &str,
+        mut fields: impl Iterator<Item = &'f str>,
+        mut subgraphs: impl Iterator<Item = &'f str>,
+    ) -> bool {
+        if self.interchangeable(a, b) {
+            return true;
+        }
+        let (Some(a), Some(b)) = (self.type_profiles.get(a), self.type_profiles.get(b)) else {
+            return false;
+        };
+        a.key == b.key
+            && a.subgraphs.iter().all(|(subgraph, memberships)| {
+                b.subgraphs
+                    .get(subgraph)
+                    .is_none_or(|theirs| theirs == memberships)
+            })
+            && subgraphs.all(|subgraph| {
+                a.subgraphs.contains_key(subgraph) && b.subgraphs.contains_key(subgraph)
+            })
+            && fields.all(|field| {
+                field == "__typename"
+                    || matches!((a.fields.get(field), b.fields.get(field)), (Some(a), Some(b)) if a == b)
+            })
     }
 
     /// Fills `edge_indexes`, keeping the order `edges_from` gives.
@@ -1703,7 +1740,10 @@ fn name_hash(name: &str) -> u64 {
 /// `@join__field` in each: everything the graph is built from but the name. A type that names
 /// itself, like `next: Movie`, has nothing in common with another one. The planner plans the same
 /// selections on two of them once, see the walker.
-fn interchangeable_types(state: &SupergraphState) -> HashMap<&str, u32> {
+fn interchangeable_types(
+    state: &SupergraphState,
+) -> (HashMap<&str, u32>, HashMap<&str, TypeProfile<'_>>) {
+    let mut profiles = HashMap::new();
     use std::fmt::Write;
 
     let mut unions: HashMap<&str, Vec<String>> = HashMap::new();
@@ -1759,12 +1799,13 @@ fn interchangeable_types(state: &SupergraphState) -> HashMap<&str, u32> {
         let SupergraphDefinition::Object(object) = definition else {
             continue;
         };
-        // an interface object in some subgraph turns into these types with its own moves
+        // an interface object in some subgraph turns into these types with its own moves, and
+        // an interface with a key is called as the interface, with a type rewritten per type
         let behind_interface_object = object.join_implements.iter().any(|join| {
             matches!(
                 state.definitions.get(&join.interface),
                 Some(SupergraphDefinition::Interface(interface))
-                    if interface.join_type.iter().any(|join| join.is_interface_object)
+                    if interface.join_type.iter().any(|join| join.is_interface_object || join.key.is_some())
             )
         });
         if object.root_type.is_some() || behind_interface_object || named_in_selections(name) {
@@ -1808,9 +1849,47 @@ fn interchangeable_types(state: &SupergraphState) -> HashMap<&str, u32> {
             "{:?}{:?}{:?}{:?}|",
             object.requires_scopes, object.policy, object.authenticated, object.cost
         );
+        let mut profile = TypeProfile {
+            key: None,
+            subgraphs: HashMap::new(),
+            fields: HashMap::new(),
+        };
+        let mut keys: Vec<String> = object
+            .join_type
+            .iter()
+            // a subgraph that can't resolve it is never gone into, it's only where objects
+            // come from, and they leave with the same key
+            .map(|join| format!("{:?}", join.key))
+            .collect();
+        keys.sort();
+        keys.dedup();
+        if keys.len() == 1 && object.join_type.iter().all(|join| join.key.is_some()) {
+            profile.key = keys.pop();
+        }
+        for join in &object.join_type {
+            let mut memberships: Vec<String> = object
+                .join_implements
+                .iter()
+                .filter(|implements| implements.graph_id == join.graph_id)
+                .map(|implements| implements.interface.clone())
+                .chain(
+                    unions
+                        .get(name.as_str())
+                        .into_iter()
+                        .flatten()
+                        .filter(|member| member.ends_with(&format!("@{}", join.graph_id)))
+                        .cloned(),
+                )
+                .collect();
+            memberships.sort();
+            profile
+                .subgraphs
+                .insert(join.graph_id.as_str(), memberships.join(","));
+        }
         let mut fields: Vec<_> = object.fields.values().collect();
         fields.sort_by(|a, b| a.name.cmp(&b.name));
         for field in fields {
+            let field_start = signature.len();
             let mut join_fields: Vec<String> = field
                 .join_field
                 .iter()
@@ -1838,6 +1917,19 @@ fn interchangeable_types(state: &SupergraphState) -> HashMap<&str, u32> {
                 field.list_size,
                 field.resolvable_in,
             );
+            let mut field_signature = signature[field_start..].to_string();
+            // in every subgraph that has the type, so in the one the objects are in, and a path
+            // there beats any other: which subgraphs those are doesn't matter
+            if field.join_field.is_empty() {
+                let subgraphs = format!("{:?};", field.resolvable_in);
+                field_signature.truncate(field_signature.len() - subgraphs.len());
+            }
+            if !field_signature.contains(name.as_str()) {
+                profile.fields.insert(field.name.as_str(), field_signature);
+            }
+        }
+        if profile.key.is_some() {
+            profiles.insert(name.as_str(), profile);
         }
         // a type that names itself can't be swapped for another
         if signature.contains(name.as_str()) {
@@ -1859,5 +1951,18 @@ fn interchangeable_types(state: &SupergraphState) -> HashMap<&str, u32> {
             groups.insert(name, group as u32);
         }
     }
-    groups
+    (groups, profiles)
+}
+
+/// What decides how the planner plans the fields of an object type, field by field, for types
+/// that aren't the same everywhere, see `Graph::interchangeable_for`.
+#[derive(Debug, Default)]
+pub(crate) struct TypeProfile<'graph> {
+    /// Its key, when every subgraph that has it keys it with the same fields. A path between
+    /// two subgraphs then never needs a third one.
+    key: Option<String>,
+    /// The subgraphs that have it, with the interfaces and unions it's in there.
+    subgraphs: HashMap<&'graph str, String>,
+    /// Each field that doesn't name the type, with its type, arguments and `@join__field`s.
+    fields: HashMap<&'graph str, String>,
 }
