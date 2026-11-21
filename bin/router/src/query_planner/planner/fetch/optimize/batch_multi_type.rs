@@ -242,10 +242,10 @@ impl FetchGraph<MultiTypeFetchStep> {
 }
 
 impl FetchGraph<MultiTypeFetchStep> {
-    /// Finishes the entity calls that took the objects of several types while the graph was
-    /// built, see `joins_other_types` in the builder, like batching them here would: the type
-    /// condition their path ends with goes when it's every type the objects there can be, and a
-    /// condition on the call moves to the types under the type condition.
+    /// Finishes the entity calls that took the objects at several spots or of several types while
+    /// the graph was built, see `Batch` in the builder, like batching them here would: a type
+    /// condition that took several types goes when it's every type the objects there can be, and
+    /// a condition on the call moves to the types under the type condition.
     pub(crate) fn finish_batched_steps(
         &mut self,
         steps: impl IntoIterator<Item = NodeIndex>,
@@ -284,27 +284,29 @@ impl FetchGraph<MultiTypeFetchStep> {
                     );
                 }
             }
-            if !step.is_fetching_multiple_types() {
-                continue;
-            }
+            // the type condition at the end goes when its types are every type there. Others
+            // stay until the merges are done: what a step merged into its parent takes goes
+            // under each of their types, see `strip_exhaustive_type_conditions`.
             if let Some((Segment::TypeCondition(type_names, None), rest)) =
                 step.response_path.inner.split_last()
             {
-                let rest = MergePath::new(rest.to_vec());
                 let position = rest
-                    .inner
                     .iter()
                     .filter(|segment| !matches!(segment, Segment::TypeCondition(..)))
                     .count();
-                if possible_types_at(supergraph, root_type, &rest, position).is_some_and(
-                    |possible_types| {
-                        possible_types
-                            .iter()
-                            .all(|type_name| type_names.contains(type_name))
-                    },
-                ) {
-                    step.response_path = rest;
+                if type_names.len() > 1
+                    && possible_types_at(supergraph, root_type, &step.response_path, position)
+                        .is_some_and(|possible_types| {
+                            possible_types
+                                .iter()
+                                .all(|type_name| type_names.contains(type_name))
+                        })
+                {
+                    step.response_path = MergePath::new(rest.to_vec());
                 }
+            }
+            if !step.is_fetching_multiple_types() {
+                continue;
             }
             if let Some(condition) = step.condition.clone() {
                 if let Some(type_names) =
@@ -314,6 +316,52 @@ impl FetchGraph<MultiTypeFetchStep> {
                         .wrap_with_condition_for_types(condition, &type_names);
                     step.condition = None;
                 }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl FetchGraph<MultiTypeFetchStep> {
+    /// Drops a type condition that took several types, while the graph was built, when they're
+    /// every type the objects there can be, like batching does as it merges. After the merges:
+    /// until then, see `add_at_each_path`, merging a step into its parent needs to know them.
+    pub(crate) fn strip_exhaustive_type_conditions(
+        &mut self,
+        supergraph: &SupergraphState,
+    ) -> Result<(), FetchGraphError> {
+        let root_type = supergraph
+            .root_type_name(Some(&self.operation_kind))
+            .map_err(|err| FetchGraphError::Internal(err.to_string()))?;
+        for step in self.graph.node_weights_mut() {
+            let several_types = step.response_path.inner.iter().any(|segment| {
+                matches!(segment, Segment::TypeCondition(type_names, None) if type_names.len() > 1)
+            });
+            if !several_types {
+                continue;
+            }
+            let original = step.response_path.clone();
+            let mut position = 0;
+            let mut kept = Vec::with_capacity(original.len());
+            for segment in original.inner.iter() {
+                match segment {
+                    Segment::TypeCondition(type_names, None)
+                        if type_names.len() > 1
+                            && possible_types_at(supergraph, root_type, &original, position)
+                                .is_some_and(|possible_types| {
+                                    possible_types
+                                        .iter()
+                                        .all(|type_name| type_names.contains(type_name))
+                                }) => {}
+                    Segment::TypeCondition(..) => kept.push(segment.clone()),
+                    segment => {
+                        position += 1;
+                        kept.push(segment.clone());
+                    }
+                }
+            }
+            if kept.len() != original.len() {
+                step.response_path = MergePath::new(kept);
             }
         }
         Ok(())

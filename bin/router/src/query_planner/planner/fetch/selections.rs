@@ -521,7 +521,7 @@ impl FetchStepSelections<MultiTypeFetchStep> {
         for (definition_name, selection_set) in other.selections {
             let path = path_of_type(several, fetch_path, &definition_name);
             let target_type = maybe_merge_into.as_ref().unwrap_or(&definition_name);
-            self.add_at_path_inner(target_type, &path, selection_set, false)?;
+            self.add_at_each_path(target_type, &path, selection_set)?;
         }
 
         Ok(())
@@ -537,9 +537,52 @@ impl FetchStepSelections<MultiTypeFetchStep> {
         let several = other.is_fetching_multiple_types();
         for (other_definition_name, selection_set) in other.selections {
             let path = path_of_type(several, fetch_path, &other_definition_name);
-            self.add_at_path_inner(definition_name, &path, selection_set, false)?;
+            self.add_at_each_path(definition_name, &path, selection_set)?;
         }
 
+        Ok(())
+    }
+
+    /// Adds `selection_set` at `fetch_path`, and when a type condition on it has several types,
+    /// under each of them: a step that took the objects of several branches, like
+    /// `product.|[Book|Movie].reviews.@`, merged into one that has them apart.
+    fn add_at_each_path(
+        &mut self,
+        definition_name: &str,
+        fetch_path: &MergePath,
+        selection_set: SelectionSet,
+    ) -> Result<(), FetchStepSelectionsError> {
+        let several_types = fetch_path.inner.iter().any(|segment| {
+            matches!(segment, Segment::TypeCondition(type_names, _) if type_names.len() > 1)
+        });
+        if !several_types {
+            return self.add_at_path_inner(definition_name, fetch_path, selection_set, false);
+        }
+        let mut paths: Vec<Vec<Segment>> = vec![Vec::with_capacity(fetch_path.len())];
+        for segment in fetch_path.inner.iter() {
+            match segment {
+                Segment::TypeCondition(type_names, condition) if type_names.len() > 1 => {
+                    paths = paths
+                        .into_iter()
+                        .flat_map(|path| {
+                            type_names.iter().map(move |type_name| {
+                                let mut path = path.clone();
+                                path.push(Segment::TypeCondition(
+                                    Rc::new(BTreeSet::from([type_name.clone()])),
+                                    condition.clone(),
+                                ));
+                                path
+                            })
+                        })
+                        .collect();
+                }
+                segment => paths.iter_mut().for_each(|path| path.push(segment.clone())),
+            }
+        }
+        for path in paths {
+            let path = MergePath::new(path);
+            self.add_at_path_inner(definition_name, &path, selection_set.clone(), false)?;
+        }
         Ok(())
     }
 
