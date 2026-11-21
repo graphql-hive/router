@@ -1329,9 +1329,9 @@ fn qp_nested_include_skip_conditions_in_complex_products_query() -> Result<(), B
               } =>
               {
                 ... on Product {
-                  name
                   price
                   weight
+                  name
                 }
               }
             },

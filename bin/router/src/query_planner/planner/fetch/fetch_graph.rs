@@ -718,9 +718,10 @@ fn ensure_fetch_step_for_subgraph(
                             step.input.definition_name() == key.type_name
                                 && step.input.selection_set().contains(&key.selection_set)
                         })
-                        // steps with requirements aren't reused here, the optimizations
-                        // try that later
-                        && !step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES)
+                        // a step made for requirements is only reused for requirements, and
+                        // the other way around: the optimizations keep the two apart too
+                        && step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES)
+                            == created_from_requires
                 })
             })
     };

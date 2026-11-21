@@ -142,21 +142,6 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
         },
         Parallel {
           Flatten(path: "viewer.review|[UserReview].product") {
-            Fetch(service: "c") {
-              {
-                ... on Product {
-                  __typename
-                  pid
-                }
-              } =>
-              {
-                ... on Product {
-                  c
-                }
-              }
-            },
-          },
-          Flatten(path: "viewer.review|[UserReview].product") {
             Fetch(service: "d") {
               {
                 ... on Product {
@@ -167,6 +152,21 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
               {
                 ... on Product {
                   d
+                }
+              }
+            },
+          },
+          Flatten(path: "viewer.review|[UserReview].product") {
+            Fetch(service: "c") {
+              {
+                ... on Product {
+                  __typename
+                  pid
+                }
+              } =>
+              {
+                ... on Product {
+                  c
                 }
               }
             },

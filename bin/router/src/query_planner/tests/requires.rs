@@ -42,8 +42,8 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Product {
-                _internal_qp_alias_0: price(withDiscount: false)
                 price(withDiscount: true)
+                _internal_qp_alias_0: price(withDiscount: false)
               }
             }
           },
@@ -57,7 +57,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
               {
                 ... on Product {
                   __typename
-                  price
+                  price: _internal_qp_alias_0
                   upc
                 }
               }
@@ -69,7 +69,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
               {
                 ... on Product {
                   __typename
-                  price: _internal_qp_alias_0
+                  price
                   upc
                 }
               }
@@ -78,12 +78,12 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
           {
             _e0: _entities(representations: $__batch_reps_0) {
               ... on Product {
-                isExpensive
+                reducedPrice
               }
             }
             _e1: _entities(representations: $__batch_reps_1) {
               ... on Product {
-                reducedPrice
+                isExpensive
               }
             }
           }
@@ -115,7 +115,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "products",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{_internal_qp_alias_0: price(withDiscount: false) price(withDiscount: true)}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price(withDiscount: true) _internal_qp_alias_0: price(withDiscount: false)}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -138,7 +138,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
             "kind": "BatchFetch",
             "serviceName": "inventory",
             "operationKind": "query",
-            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{isExpensive}} _e1: _entities(representations: $__batch_reps_1){...on Product{reducedPrice}}}",
+            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{reducedPrice}} _e1: _entities(representations: $__batch_reps_1){...on Product{isExpensive}}}",
             "entityBatch": {
               "aliases": [
                 {
@@ -163,7 +163,8 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
                         },
                         {
                           "kind": "Field",
-                          "name": "price"
+                          "name": "_internal_qp_alias_0",
+                          "alias": "price"
                         },
                         {
                           "kind": "Field",
@@ -195,8 +196,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
                         },
                         {
                           "kind": "Field",
-                          "name": "_internal_qp_alias_0",
-                          "alias": "price"
+                          "name": "price"
                         },
                         {
                           "kind": "Field",

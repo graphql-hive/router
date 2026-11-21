@@ -34,12 +34,12 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
               __typename
               upc
               name
+              price(currency: "USD")
+              weight
+              _internal_qp_alias_0: price(currency: "EUR")
               category {
                 averagePrice(currency: "USD")
               }
-              weight
-              _internal_qp_alias_0: price(currency: "EUR")
-              price(currency: "USD")
             }
           }
         },
@@ -103,7 +103,7 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "{products{__typename upc name category{averagePrice(currency: \"USD\")} weight _internal_qp_alias_0: price(currency: \"EUR\") price(currency: \"USD\")}}"
+            "operation": "{products{__typename upc name price(currency: \"USD\") weight _internal_qp_alias_0: price(currency: \"EUR\") category{averagePrice(currency: \"USD\")}}}"
           },
           {
             "kind": "BatchFetch",
@@ -933,8 +933,8 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Test {
-                _internal_qp_alias_0: otherField(arg: 3)
                 otherField(arg: 2)
+                _internal_qp_alias_0: otherField(arg: 3)
               }
             }
           },
@@ -948,7 +948,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
               {
                 ... on Test {
                   __typename
-                  otherField
+                  otherField: _internal_qp_alias_0
                   id
                 }
               }
@@ -960,7 +960,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
               {
                 ... on Test {
                   __typename
-                  otherField: _internal_qp_alias_0
+                  otherField
                   id
                 }
               }
@@ -969,12 +969,12 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
           {
             _e0: _entities(representations: $__batch_reps_0) {
               ... on Test {
-                fieldWithRequiresAndArgs
+                anotherWithRequiresAndArgs
               }
             }
             _e1: _entities(representations: $__batch_reps_1) {
               ... on Test {
-                anotherWithRequiresAndArgs
+                fieldWithRequiresAndArgs
               }
             }
           }
@@ -1006,7 +1006,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "b",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{_internal_qp_alias_0: otherField(arg: 3) otherField(arg: 2)}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{otherField(arg: 2) _internal_qp_alias_0: otherField(arg: 3)}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -1029,7 +1029,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
             "kind": "BatchFetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Test{fieldWithRequiresAndArgs}} _e1: _entities(representations: $__batch_reps_1){...on Test{anotherWithRequiresAndArgs}}}",
+            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Test{anotherWithRequiresAndArgs}} _e1: _entities(representations: $__batch_reps_1){...on Test{fieldWithRequiresAndArgs}}}",
             "entityBatch": {
               "aliases": [
                 {
@@ -1053,7 +1053,8 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
                         },
                         {
                           "kind": "Field",
-                          "name": "otherField"
+                          "name": "_internal_qp_alias_0",
+                          "alias": "otherField"
                         },
                         {
                           "kind": "Field",
@@ -1084,8 +1085,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
                         },
                         {
                           "kind": "Field",
-                          "name": "_internal_qp_alias_0",
-                          "alias": "otherField"
+                          "name": "otherField"
                         },
                         {
                           "kind": "Field",
@@ -1151,8 +1151,8 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
             {
               ... on Test {
                 otherField(arg: 1)
-                _internal_qp_alias_1: otherField(arg: 3)
                 _internal_qp_alias_0: otherField(arg: 2)
+                _internal_qp_alias_1: otherField(arg: 3)
               }
             }
           },
@@ -1224,7 +1224,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
               "kind": "Fetch",
               "serviceName": "b",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{otherField(arg: 1) _internal_qp_alias_1: otherField(arg: 3) _internal_qp_alias_0: otherField(arg: 2)}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{otherField(arg: 1) _internal_qp_alias_0: otherField(arg: 2) _internal_qp_alias_1: otherField(arg: 3)}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -2308,8 +2308,8 @@ fn requires_with_argument_conflict_after_entity_hop() -> Result<(), Box<dyn Erro
                 orders {
                   __typename
                   id
-                  _internal_qp_alias_0: price(currency: "EUR")
                   price(currency: "USD")
+                  _internal_qp_alias_0: price(currency: "EUR")
                 }
               }
             }
@@ -2399,8 +2399,8 @@ fn requires_with_nested_argument_conflict() -> Result<(), Box<dyn Error>> {
                 averagePrice(currency: "USD")
               }
               category {
-                _internal_qp_alias_0: averagePrice(currency: "EUR")
                 averagePrice(currency: "USD")
+                _internal_qp_alias_0: averagePrice(currency: "EUR")
               }
             }
           }
