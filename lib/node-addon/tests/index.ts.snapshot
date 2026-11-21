@@ -285,7 +285,7 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
         "kind": "BatchFetch",
         "serviceName": "inventory",
         "operationKind": "query",
-        "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{...a}} _e1: _entities(representations: $__batch_reps_1){...on Product{...a}}}\\n\\nfragment a on Product {inStock shippingEstimate}\\n",
+        "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{inStock shippingEstimate}}}",
         "entityBatch": {
           "aliases": [
             {
@@ -351,37 +351,7 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                   {
                     "Field": "product"
                   }
-                ]
-              ],
-              "requires": [
-                {
-                  "kind": "InlineFragment",
-                  "typeCondition": "Product",
-                  "selections": [
-                    {
-                      "kind": "Field",
-                      "name": "__typename"
-                    },
-                    {
-                      "kind": "Field",
-                      "name": "upc"
-                    },
-                    {
-                      "kind": "Field",
-                      "name": "price"
-                    },
-                    {
-                      "kind": "Field",
-                      "name": "weight"
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "alias": "_e1",
-              "representationsVariableName": "__batch_reps_1",
-              "paths": [
+                ],
                 [
                   {
                     "Field": "topProducts"
@@ -400,15 +370,15 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                     },
                     {
                       "kind": "Field",
+                      "name": "upc"
+                    },
+                    {
+                      "kind": "Field",
                       "name": "price"
                     },
                     {
                       "kind": "Field",
                       "name": "weight"
-                    },
-                    {
-                      "kind": "Field",
-                      "name": "upc"
                     }
                   ]
                 }
@@ -992,7 +962,7 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
         "kind": "BatchFetch",
         "serviceName": "inventory",
         "operationKind": "query",
-        "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{...a}} _e1: _entities(representations: $__batch_reps_1){...on Product{...a}}}\\n\\nfragment a on Product {inStock shippingEstimate}\\n",
+        "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{inStock shippingEstimate}}}",
         "entityBatch": {
           "aliases": [
             {
@@ -1058,37 +1028,7 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
                   {
                     "Field": "product"
                   }
-                ]
-              ],
-              "requires": [
-                {
-                  "kind": "InlineFragment",
-                  "typeCondition": "Product",
-                  "selections": [
-                    {
-                      "kind": "Field",
-                      "name": "__typename"
-                    },
-                    {
-                      "kind": "Field",
-                      "name": "upc"
-                    },
-                    {
-                      "kind": "Field",
-                      "name": "price"
-                    },
-                    {
-                      "kind": "Field",
-                      "name": "weight"
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "alias": "_e1",
-              "representationsVariableName": "__batch_reps_1",
-              "paths": [
+                ],
                 [
                   {
                     "Field": "topProducts"
@@ -1107,15 +1047,15 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
                     },
                     {
                       "kind": "Field",
+                      "name": "upc"
+                    },
+                    {
+                      "kind": "Field",
                       "name": "price"
                     },
                     {
                       "kind": "Field",
                       "name": "weight"
-                    },
-                    {
-                      "kind": "Field",
-                      "name": "upc"
                     }
                   ]
                 }

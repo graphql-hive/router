@@ -251,26 +251,14 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
                 "topProducts.@.reviews.@.author.reviews.@.product"
                 "users.@.reviews.@.product.reviews.@.author.reviews.@.product"
                 "users.@.reviews.@.product"
-              ]
-              {
-                ... on Product {
-                  __typename
-                  upc
-                  price
-                  weight
-                }
-              }
-            }
-            _e1 {
-              paths: [
                 "topProducts.@"
               ]
               {
                 ... on Product {
                   __typename
+                  upc
                   price
                   weight
-                  upc
                 }
               }
             }
@@ -278,18 +266,10 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
           {
             _e0: _entities(representations: $__batch_reps_0) {
               ... on Product {
-                ...a
+                inStock
+                shippingEstimate
               }
             }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on Product {
-                ...a
-              }
-            }
-          }
-          fragment a on Product {
-            inStock
-            shippingEstimate
           }
         },
       },
