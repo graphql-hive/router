@@ -15,7 +15,7 @@ use crate::query_planner::graph::Graph;
 use crate::query_planner::planner::fetch::fetch_step_data::{
     FetchStepData, FetchStepFlags, FetchStepKind,
 };
-use crate::query_planner::planner::fetch::response_keys::{place_of, ResponseKeys};
+use crate::query_planner::planner::fetch::response_keys::ResponseKeys;
 use crate::query_planner::planner::fetch::selections::FetchStepSelections;
 use crate::query_planner::planner::fetch::state::{MultiTypeFetchStep, SingleTypeFetchStep};
 use crate::query_planner::planner::plan_nodes::FetchId;
@@ -247,7 +247,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             type_name: selection.type_name,
             selection_set: self
                 .response_keys
-                .input(&place_of(response_path), &selection.selection_set),
+                .input(response_path, &selection.selection_set),
         }
     }
 
@@ -269,9 +269,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             arguments: query_node.selection_arguments().cloned(),
             ..Default::default()
         };
-        let key = self
-            .response_keys
-            .wire_key(&place_of(response_path), &field);
+        let key = self.response_keys.wire_key(response_path, &field);
         (key != field.name).then_some(key)
     }
 }
@@ -363,14 +361,16 @@ impl<State> FetchGraph<State> {
             return edge.id();
         }
         let edge = self.graph.add_edge(parent_index, child_index, ());
-        if let (Some(entity_call), Some(index)) = (
-            self.entity_call_hash_of(child_index),
-            self.children_by_entity_call.as_mut(),
-        ) {
-            index
-                .entry((parent_index, entity_call))
-                .or_default()
-                .push(child_index);
+        // only while the graph is built, see `children_by_entity_call`
+        if self.children_by_entity_call.is_some() {
+            if let Some(entity_call) = self.entity_call_hash_of(child_index) {
+                if let Some(index) = self.children_by_entity_call.as_mut() {
+                    index
+                        .entry((parent_index, entity_call))
+                        .or_default()
+                        .push(child_index);
+                }
+            }
         }
         edge
     }
@@ -1676,10 +1676,11 @@ fn process_subgraph_reentry(
         reentry_move.name.to_string(),
         field_alias,
     ));
-    let mut child_response_path = response_path.push(Segment::Field(segment_field, 0, None));
-    for _ in 0..reentry_move.list_depth {
-        child_response_path = child_response_path.push(Segment::List);
-    }
+    let child_response_path = path_into_field(
+        response_path,
+        Segment::Field(segment_field, 0, None),
+        reentry_move.list_depth,
+    );
 
     let fetch_step_index = create_fetch_step_for_root_move(
         fetch_graph,
@@ -1971,21 +1972,20 @@ fn process_plain_field_edge(
         field_move.name.to_string(),
         field_alias,
     ));
-    let mut child_response_path = response_path.push(Segment::Field(
-        segment_field.clone(),
-        segment_args_hash,
-        segment_condition.clone(),
-    ));
-    let mut child_fetch_path = fetch_path.push(Segment::Field(
-        segment_field,
-        segment_args_hash,
-        segment_condition,
-    ));
-
-    for _ in 0..field_move.list_depth {
-        child_response_path = child_response_path.push(Segment::List);
-        child_fetch_path = child_fetch_path.push(Segment::List);
-    }
+    let child_response_path = path_into_field(
+        response_path,
+        Segment::Field(
+            segment_field.clone(),
+            segment_args_hash,
+            segment_condition.clone(),
+        ),
+        field_move.list_depth,
+    );
+    let child_fetch_path = path_into_field(
+        fetch_path,
+        Segment::Field(segment_field, segment_args_hash, segment_condition),
+        field_move.list_depth,
+    );
 
     process_children_for_fetch_steps(
         graph,
@@ -2205,7 +2205,7 @@ fn process_requires_field_edge(
     let key_input = fetch_graph.read_at(response_path, reentry.key);
     let key_output = fetch_graph
         .response_keys
-        .output(&place_of(response_path), &reentry.key.selection_set);
+        .output(response_path, &reentry.key.selection_set);
     let field_alias = fetch_graph.alias_at(
         response_path,
         query_node,
@@ -2396,18 +2396,16 @@ fn process_requires_field_edge(
         field_move.name.to_string(),
         field_alias,
     ));
-    let mut child_response_path = response_path.push(Segment::Field(
-        segment_field.clone(),
-        fetch_arguments_hash,
-        None,
-    ));
-    let mut child_fetch_path =
-        MergePath::default().push(Segment::Field(segment_field, fetch_arguments_hash, None));
-
-    for _ in 0..field_move.list_depth {
-        child_response_path = child_response_path.push(Segment::List);
-        child_fetch_path = child_fetch_path.push(Segment::List);
-    }
+    let child_response_path = path_into_field(
+        response_path,
+        Segment::Field(segment_field.clone(), fetch_arguments_hash, None),
+        field_move.list_depth,
+    );
+    let child_fetch_path = path_into_field(
+        &MergePath::default(),
+        Segment::Field(segment_field, fetch_arguments_hash, None),
+        field_move.list_depth,
+    );
 
     trace!("Processing requirements");
     let leaf_fetch_step_indexes = if requires.is_some() {
@@ -2536,7 +2534,7 @@ fn add_context_arguments(
         let selection = &argument.selections[requirement.selection];
         let output = fetch_graph
             .response_keys
-            .output(&place_of(&ancestor_path), &selection.selection_set);
+            .output(&ancestor_path, &selection.selection_set);
         let prefix = vec![FetchNodePathSegment::Parent; requirement.levels];
         let mut field_prefix = prefix.clone();
         field_prefix.push(FetchNodePathSegment::typename_equals_from_type(
@@ -2728,7 +2726,7 @@ fn add_requirements_fetch(
         }
         let output = fetch_graph
             .response_keys
-            .output(&place_of(response_path), &key.selection_set);
+            .output(response_path, &key.selection_set);
         fetch_graph.get_step_data_mut(reentry.from)?.add_output_at(
             response_path,
             key_to_reenter_at,
@@ -3137,6 +3135,20 @@ fn requirements_resolve_in_place(
         }
     }
     Ok(true)
+}
+
+/// `path`, then the field `field` and a list segment per level of lists it returns. One
+/// allocation, where pushing them one by one copies the path each time.
+fn path_into_field(path: &MergePath, field: Segment, list_depth: usize) -> MergePath {
+    MergePath {
+        inner: path
+            .inner
+            .iter()
+            .cloned()
+            .chain(std::iter::once(field))
+            .chain(std::iter::repeat_n(Segment::List, list_depth))
+            .collect(),
+    }
 }
 
 pub fn find_graph_roots<State>(graph: &FetchGraph<State>) -> Vec<NodeIndex> {

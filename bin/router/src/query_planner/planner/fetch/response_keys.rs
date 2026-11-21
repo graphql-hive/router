@@ -22,9 +22,24 @@ use crate::query_planner::ast::{
 
 type Signature = (String, Option<ArgumentsMap>);
 
-#[derive(Debug, Clone, Default)]
+/// A place, as its index in `ResponseKeys::places`.
+type PlaceId = u32;
+
+const ROOT: PlaceId = 0;
+
+#[derive(Debug, Clone)]
 pub struct ResponseKeys {
-    places: HashMap<Vec<String>, Place>,
+    /// Every place seen so far, the root first. A place knows its children by key, so finding
+    /// one is a lookup per field on the way, with nothing copied.
+    places: Vec<Place>,
+}
+
+impl Default for ResponseKeys {
+    fn default() -> Self {
+        Self {
+            places: vec![Place::default()],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -34,38 +49,55 @@ struct Place {
     occupants: HashMap<String, Vec<Signature>>,
     /// The keys picked for planner fields so far.
     picked: Vec<(Signature, String)>,
+    /// The places under each key.
+    children: HashMap<String, PlaceId>,
 }
 
 impl ResponseKeys {
     pub fn from_operation(selection_set: &SelectionSet) -> Self {
         let mut keys = Self::default();
-        keys.take_client_keys(&mut Vec::new(), selection_set);
+        keys.take_client_keys(ROOT, selection_set);
         keys
     }
 
-    /// The place, made on first use. Looked up by slice, so the key is copied only once.
-    fn place_mut(&mut self, place: &[String]) -> &mut Place {
-        if !self.places.contains_key(place) {
-            self.places.insert(place.to_vec(), Place::default());
+    /// The place under `key` at `place`, made on first use.
+    fn child(&mut self, place: PlaceId, key: &str) -> PlaceId {
+        if let Some(&child) = self.places[place as usize].children.get(key) {
+            return child;
         }
-        self.places.get_mut(place).expect("inserted above")
+        let child = self.places.len() as PlaceId;
+        self.places.push(Place::default());
+        self.places[place as usize]
+            .children
+            .insert(key.to_string(), child);
+        child
     }
 
-    fn take_client_keys(&mut self, place: &mut Vec<String>, selection_set: &SelectionSet) {
+    /// The place `path` points at: its response keys from the root, without lists, type
+    /// conditions or conditions.
+    fn place_of(&mut self, path: &MergePath) -> PlaceId {
+        path.inner
+            .iter()
+            .fold(ROOT, |place, segment| match segment {
+                Segment::Field(field, _, _) => self.child(place, field.response_key()),
+                _ => place,
+            })
+    }
+
+    fn take_client_keys(&mut self, place: PlaceId, selection_set: &SelectionSet) {
         for item in &selection_set.items {
             match item {
                 SelectionItem::Field(field) => {
-                    let key = field.selection_identifier().to_string();
-                    let occupants = &mut self.place_mut(place).occupants;
-                    match occupants.get_mut(&key) {
+                    let key = field.selection_identifier();
+                    let occupants = &mut self.places[place as usize].occupants;
+                    match occupants.get_mut(key) {
                         Some(signatures) => signatures.push(signature(field)),
                         None => {
-                            occupants.insert(key.clone(), vec![signature(field)]);
+                            occupants.insert(key.to_string(), vec![signature(field)]);
                         }
                     }
-                    place.push(key);
-                    self.take_client_keys(place, &field.selections);
-                    place.pop();
+                    let child = self.child(place, key);
+                    self.take_client_keys(child, &field.selections);
                 }
                 SelectionItem::InlineFragment(fragment) => {
                     self.take_client_keys(place, &fragment.selections)
@@ -75,14 +107,19 @@ impl ResponseKeys {
         }
     }
 
-    /// The key `field` goes under at `place`. Its own name, unless something else writes that
-    /// key there, then the first `_internal_qp_alias_N` nobody uses there.
-    pub fn wire_key(&mut self, place: &[String], field: &FieldSelection) -> String {
+    /// The key `field` goes under at the place `path` points at. Its own name, unless something
+    /// else writes that key there, then the first `_internal_qp_alias_N` nobody uses there.
+    pub fn wire_key(&mut self, path: &MergePath, field: &FieldSelection) -> String {
+        let place = self.place_of(path);
+        self.wire_key_at(place, field)
+    }
+
+    fn wire_key_at(&mut self, place: PlaceId, field: &FieldSelection) -> String {
         if field.name == "__typename" {
             return field.name.clone();
         }
 
-        let place = self.place_mut(place);
+        let place = &mut self.places[place as usize];
         // Compared in place, the signature is only built when it gets stored.
         if let Some((_, key)) = place.picked.iter().find(|((name, arguments), _)| {
             *name == field.name && arguments.as_ref() == field.arguments()
@@ -114,29 +151,31 @@ impl ResponseKeys {
         key
     }
 
-    /// `selection_set`, at `place`, the way a fetch writes it: `_internal_qp_alias_0: price`.
-    pub fn output(&mut self, place: &[String], selection_set: &SelectionSet) -> SelectionSet {
-        self.map(&mut place.to_vec(), selection_set, &|field, key| {
+    /// `selection_set`, at the place `path` points at, the way a fetch writes it:
+    /// `_internal_qp_alias_0: price`.
+    pub fn output(&mut self, path: &MergePath, selection_set: &SelectionSet) -> SelectionSet {
+        let place = self.place_of(path);
+        self.map(place, selection_set, &|field, key| {
             if key != field.name {
                 field.alias = Some(key);
             }
         })
     }
 
-    /// `selection_set`, at `place`, the way a representation reads it:
+    /// `selection_set`, at the place `path` points at, the way a representation reads it:
     /// `price: _internal_qp_alias_0`, the value under the key, put back under the field's name.
-    pub fn input(&mut self, place: &[String], selection_set: &SelectionSet) -> SelectionSet {
-        self.map(&mut place.to_vec(), selection_set, &|field, key| {
+    pub fn input(&mut self, path: &MergePath, selection_set: &SelectionSet) -> SelectionSet {
+        let place = self.place_of(path);
+        self.map(place, selection_set, &|field, key| {
             if key != field.name {
                 field.alias = Some(std::mem::replace(&mut field.name, key));
             }
         })
     }
 
-    /// `place` is a stack: a field's key goes on it while its selections are mapped.
     fn map<F: Fn(&mut FieldSelection, String)>(
         &mut self,
-        place: &mut Vec<String>,
+        place: PlaceId,
         selection_set: &SelectionSet,
         apply: &F,
     ) -> SelectionSet {
@@ -145,10 +184,9 @@ impl ResponseKeys {
             .iter()
             .map(|item| match item {
                 SelectionItem::Field(field) => {
-                    let key = self.wire_key(place, field);
-                    place.push(key);
-                    let selections = self.map(place, &field.selections, apply);
-                    let key = place.pop().expect("pushed above");
+                    let key = self.wire_key_at(place, field);
+                    let child = self.child(place, &key);
+                    let selections = self.map(child, &field.selections, apply);
                     let mut field = field.with_new_selections(selections);
                     apply(&mut field, key);
                     SelectionItem::Field(field)
@@ -183,17 +221,6 @@ pub fn read_as_written(selection_set: &mut SelectionSet) {
     }
 }
 
-/// The place `path` points at: its response keys.
-pub fn place_of(path: &MergePath) -> Vec<String> {
-    path.inner
-        .iter()
-        .filter_map(|segment| match segment {
-            Segment::Field(field, _, _) => Some(field.response_key().to_string()),
-            _ => None,
-        })
-        .collect()
-}
-
 fn signature(field: &FieldSelection) -> Signature {
     (field.name.clone(), field.arguments().cloned())
 }
@@ -202,7 +229,15 @@ fn signature(field: &FieldSelection) -> Signature {
 mod tests {
     use graphql_tools::parser::query::{Definition, OperationDefinition};
 
-    use crate::query_planner::{ast::selection_set::SelectionSet, utils::parsing::parse_operation};
+    use std::rc::Rc;
+
+    use crate::query_planner::{
+        ast::{
+            merge_path::{FieldPathSegment, MergePath, Segment},
+            selection_set::SelectionSet,
+        },
+        utils::parsing::parse_operation,
+    };
 
     use super::ResponseKeys;
 
@@ -217,10 +252,21 @@ mod tests {
         ResponseKeys::from_operation(&parse(client))
     }
 
+    /// The path through these response keys.
+    fn path(keys: &[&str]) -> MergePath {
+        MergePath::new(
+            keys.iter()
+                .map(|key| {
+                    Segment::Field(Rc::new(FieldPathSegment::named(key.to_string())), 0, None)
+                })
+                .collect(),
+        )
+    }
+
     #[test]
     fn same_value_keeps_the_name_another_one_gets_an_alias() {
         let mut keys = keys(r#"{ me { price(currency: "GBP") } }"#);
-        let me = ["me".to_string()];
+        let me = path(&["me"]);
 
         let gbp = keys.output(&me, &parse(r#"{ price(currency: "GBP") }"#));
         let eur = keys.output(&me, &parse(r#"{ price(currency: "EUR") }"#));
@@ -244,7 +290,7 @@ mod tests {
         let mut keys = keys(
             r#"{ things { _internal_qp_alias_0: id ... on A { price(currency: "GBP") } ... on B { price(currency: "USD") } } }"#,
         );
-        let things = ["things".to_string()];
+        let things = path(&["things"]);
 
         let gbp = keys.output(&things, &parse(r#"{ price(currency: "GBP") }"#));
         assert_eq!(
@@ -256,7 +302,7 @@ mod tests {
     #[test]
     fn a_read_turns_back_into_the_write() {
         let mut keys = keys(r#"{ me { price(currency: "GBP") } }"#);
-        let me = ["me".to_string()];
+        let me = path(&["me"]);
         let written = keys.output(&me, &parse(r#"{ ... on Cat { price(currency: "EUR") } }"#));
         let mut read = keys.input(&me, &parse(r#"{ ... on Cat { price(currency: "EUR") } }"#));
 
@@ -268,14 +314,14 @@ mod tests {
     #[test]
     fn nested_places_follow_the_key() {
         let mut keys = keys(r#"{ me { team(role: "user") { name } } }"#);
-        let me = ["me".to_string()];
+        let me = path(&["me"]);
 
         let admin = keys.output(&me, &parse(r#"{ team(role: "admin") { name } }"#));
         assert_eq!(
             admin.to_string(),
             r#"{_internal_qp_alias_0: team(role: "admin"){name}}"#
         );
-        let nested = ["me".to_string(), "_internal_qp_alias_0".to_string()];
+        let nested = path(&["me", "_internal_qp_alias_0"]);
         assert_eq!(
             keys.output(&nested, &parse("{ name }")).to_string(),
             "{name}"

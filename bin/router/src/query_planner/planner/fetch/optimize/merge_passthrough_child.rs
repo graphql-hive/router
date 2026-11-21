@@ -215,8 +215,10 @@ fn perform_passthrough_child_merge(
     );
 
     match type_name {
-        Some(type_name) => me.output.migrate_into(&type_name, &other.output, &path)?,
-        None => me.output.migrate_from_another(&other.output, &path)?,
+        Some(type_name) => me
+            .output
+            .migrate_all_into(&type_name, other.output.take(), &path)?,
+        None => me.output.migrate_from(other.output.take(), &path)?,
     }
     me.merge_context_metadata(other);
     let source_id = other.id;

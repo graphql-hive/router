@@ -172,7 +172,7 @@ pub(crate) fn perform_fetch_step_merge(
     }
     target
         .output
-        .migrate_from_another(&source.output, &source_fetch_path)?;
+        .migrate_from(source.output.take(), &source_fetch_path)?;
 
     if let Some(input_rewrites) = source.input_rewrites.take() {
         if !input_rewrites.is_empty() {

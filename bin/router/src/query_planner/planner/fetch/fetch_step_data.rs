@@ -282,21 +282,20 @@ impl FetchStepData<SingleTypeFetchStep> {
     /// The type the objects at `response_path` have in our output, so which selection set what
     /// goes there lands in. A step fetches one type, except an entity call that takes the
     /// objects of several types at one spot, like `search.@|[Book|Movie]`. There it's the type
-    /// `response_path` has at the end of our path.
-    fn output_type_at(
+    /// `response_path` has at the end of our path. `None` for the only type.
+    fn output_type_at<'a>(
         &self,
-        response_path: &MergePath,
-    ) -> Result<String, FetchStepSelectionsError> {
-        let mut types = self.output.iter().map(|(type_name, _)| type_name);
-        if let (Some(type_name), None) = (types.next(), types.next()) {
-            return Ok(type_name.clone());
+        response_path: &'a MergePath,
+    ) -> Result<Option<&'a str>, FetchStepSelectionsError> {
+        if !self.output.is_fetching_multiple_types() {
+            return Ok(None);
         }
         match response_path
             .inner
             .get(self.response_path.len().wrapping_sub(1))
         {
             Some(Segment::TypeCondition(type_names, _)) if type_names.len() == 1 => {
-                Ok(type_names.first().cloned().unwrap_or_default())
+                Ok(type_names.first().map(String::as_str))
             }
             _ => Err(FetchStepSelectionsError::UnexpectedMissingDefinition(
                 format!(
@@ -316,7 +315,7 @@ impl FetchStepData<SingleTypeFetchStep> {
     ) -> Result<(), FetchStepSelectionsError> {
         let type_name = self.output_type_at(response_path)?;
         self.output
-            .add_at_path(&type_name, fetch_path, selection_set)
+            .add_at_path(type_name, fetch_path, selection_set)
     }
 
     /// Adds `__typename` at `fetch_path` of our output, for the objects at `response_path`.
@@ -326,7 +325,7 @@ impl FetchStepData<SingleTypeFetchStep> {
         fetch_path: &MergePath,
     ) -> Result<(), FetchStepSelectionsError> {
         let type_name = self.output_type_at(response_path)?;
-        self.output.add_selection_typename(&type_name, fetch_path)
+        self.output.add_selection_typename(type_name, fetch_path)
     }
 
     pub fn into_multi_type(self) -> FetchStepData<MultiTypeFetchStep> {
