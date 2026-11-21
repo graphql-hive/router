@@ -1866,12 +1866,9 @@ fn requires_reenters_with_a_key_its_source_lacks_next_to_a_conditional_field(
                 id
               }
             } =>
-            ($a:Boolean!) {
+            {
               ... on Product {
                 sku
-                ... on Product @include(if: $a) {
-                  sku
-                }
               }
             }
           },
@@ -1891,25 +1888,46 @@ fn requires_reenters_with_a_key_its_source_lacks_next_to_a_conditional_field(
             }
           },
         },
-        Flatten(path: "product") {
-          Fetch(service: "shipping") {
-            {
-              ... on Product {
-                __typename
-                id
-                sku
-                weight
-              }
-            } =>
-            ($a:Boolean!) {
-              ... on Product {
-                ... on Product @include(if: $a) {
-                  carrier
+        BatchFetch(service: "shipping") {
+          {
+            _e0 {
+              paths: [
+                "product"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  weight
+                  id
+                  sku
                 }
+              }
+            }
+            _e1(if: $a) {
+              paths: [
+                "product"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  id
+                  sku
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Product {
                 shippingEstimate
               }
             }
-          },
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Product {
+                carrier
+              }
+            }
+          }
         },
       },
     },

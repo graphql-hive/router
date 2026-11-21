@@ -723,9 +723,17 @@ pub fn find_selection_set_by_path<'a>(
     root_selection_set: &'a SelectionSet,
     path: &MergePath,
 ) -> Option<&'a SelectionSet> {
+    find_selection_set_by_segments(root_selection_set, &path.inner)
+}
+
+/// `find_selection_set_by_path` with a part of a path.
+pub fn find_selection_set_by_segments<'a>(
+    root_selection_set: &'a SelectionSet,
+    path: &[Segment],
+) -> Option<&'a SelectionSet> {
     let mut current_selection_set = root_selection_set;
 
-    for path_element in path.inner.iter() {
+    for path_element in path.iter() {
         if matches!(path_element, Segment::List) {
             continue;
         }

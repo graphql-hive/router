@@ -251,24 +251,7 @@ fn interface_field_from_remote_graph_with_requires() -> Result<(), Box<dyn Error
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{users{__typename id name}}",
-            "inputRewrites": [
-              {
-                "ValueSetter": {
-                  "path": [
-                    {
-                      "TypenameEquals": [
-                        "NodeWithName"
-                      ]
-                    },
-                    {
-                      "Key": "__typename"
-                    }
-                  ],
-                  "setValueTo": "NodeWithName"
-                }
-              }
-            ]
+            "operation": "{users{__typename id name}}"
           },
           {
             "kind": "Flatten",
@@ -545,12 +528,12 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
             {
               ... on NodeWithName {
                 __typename
-                name
                 ... on User {
                   age
                   name
                   id
                 }
+                name
               }
             }
           },
@@ -599,7 +582,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
               "kind": "Fetch",
               "serviceName": "a",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{__typename name ...on User{age name id}}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{__typename ...on User{age name id} name}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -768,24 +751,7 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{users{__typename ...on User{__typename age name id} id name}}",
-            "inputRewrites": [
-              {
-                "ValueSetter": {
-                  "path": [
-                    {
-                      "TypenameEquals": [
-                        "NodeWithName"
-                      ]
-                    },
-                    {
-                      "Key": "__typename"
-                    }
-                  ],
-                  "setValueTo": "NodeWithName"
-                }
-              }
-            ]
+            "operation": "{users{__typename ...on User{__typename age name id} id name}}"
           },
           {
             "kind": "Flatten",

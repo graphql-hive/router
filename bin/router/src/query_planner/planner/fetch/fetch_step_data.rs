@@ -31,6 +31,9 @@ bitflags! {
         /// Part of this call's input is only fetched under an `@include`/`@skip`. Set when calls
         /// with different conditions get merged, as the merged `condition` no longer shows it.
         const CONDITIONAL_INPUT = 1 << 2;
+        /// Made to fetch what a `@requires` field needs, not the field itself. The steps
+        /// `drop_covered_requirement_steps` looks at.
+        const FETCHES_REQUIREMENTS = 1 << 3;
     }
 }
 
