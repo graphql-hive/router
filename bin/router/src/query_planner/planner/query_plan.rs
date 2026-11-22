@@ -115,7 +115,7 @@ pub fn build_query_plan_from_fetch_graph(
             depends_on.dedup();
             // inline for one or two ids, so the copy doesn't allocate
             let node =
-                PlanNode::from_fetch_step(step_data, supergraph, options, depends_on.clone());
+                PlanNode::from_fetch_step(step_data, supergraph, options, depends_on.clone())?;
             provides[step_index.index()] = match node {
                 Some(_) => smallvec![step_data.id],
                 None => depends_on,
@@ -198,7 +198,7 @@ pub fn build_query_plan_from_fetch_graph(
 
     // Then run full recursive optimization + batching rewrites.
     let mut root_node = optimize_root_node(root_node, supergraph, options)?;
-    finish_drafts(&mut root_node, supergraph);
+    finish_drafts(&mut root_node, supergraph)?;
 
     QueryPlan::new(Some(root_node))
 }

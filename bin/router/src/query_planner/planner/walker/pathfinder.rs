@@ -1114,7 +1114,9 @@ impl<'graph> PathSearch<'graph> {
         let indirect_target = direct_target.in_subgraphs(target_subgraph_ids.as_deref());
         for path in move_requirement.paths.iter() {
             let direct_paths = self.find_direct_paths(path, &direct_target)?;
-            // Skip looking for indirect paths if we already found direct paths to a leaf
+            // Skip looking for indirect paths if we already found direct paths to a leaf. Unlike
+            // the walker, even one that needs `@requires` itself: a requirement takes the cheapest
+            // way, it doesn't go through the plan choice that weighs waves.
             let found_direct_paths_to_leaf = !direct_paths.is_empty() && field.is_leaf();
             direct_path_results.push(direct_paths);
 
