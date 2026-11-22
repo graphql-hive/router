@@ -27,14 +27,25 @@ use crate::query_planner::{
         selection_set::{InlineFragmentSelection, SelectionSet},
         type_aware_selection::TypeAwareSelection,
     },
-    federation_spec::{CachedFederationRules, FederationRules},
+    federation_spec::{
+        demand_control::{CostDirective, ListSizeDirective},
+        directives::{
+            AuthenticatedDirective, JoinFieldDirective, JoinImplementsDirective, JoinTypeDirective,
+            PolicyDirective, RequiresScopesDirective,
+        },
+        CachedFederationRules, FederationRules,
+    },
     graph::node::{SubgraphTypeSpecialization, UnionMembersData},
     state::supergraph_state::{
         OperationKind, SubgraphName as ResolvedSubgraphName, SupergraphDefinition, SupergraphField,
-        SupergraphState, SupergraphStateError,
+        SupergraphObjectType, SupergraphState, SupergraphStateError, TypeNode,
     },
 };
 use error::GraphError;
+use graphql_tools::parser::query::{
+    Selection as QuerySelection, SelectionSet as QuerySelectionSet,
+    TypeCondition as QueryTypeCondition,
+};
 use petgraph::{
     dot::Dot,
     graph::{EdgeIndex, NodeIndex},
@@ -179,6 +190,9 @@ pub struct Graph<'graph> {
     /// What decides how each object type that could share a group is planned, field by field,
     /// see `interchangeable_for`.
     pub(crate) type_profiles: HashMap<&'graph str, TypeProfile<'graph>>,
+    /// What each field's `@requires` needs, by type and field: the fields, when it's only plain
+    /// ones like `"price currency"`, or `None`. Only fields with `@requires` are here.
+    pub(crate) required_fields: RequiredFields<'graph>,
 }
 
 impl<'graph> Graph<'graph> {
@@ -220,6 +234,7 @@ impl<'graph> Graph<'graph> {
         instance.upserted = HashMap::new();
         instance.index_edges();
         (instance.type_groups, instance.type_profiles) = interchangeable_types(supergraph_state);
+        instance.required_fields = required_fields(supergraph_state);
 
         for node in instance.graph.node_weights_mut() {
             if let Node::SubgraphType(subgraph_type) = node {
@@ -1719,58 +1734,31 @@ fn name_hash(name: &str) -> u64 {
 fn interchangeable_types(
     state: &SupergraphState,
 ) -> (HashMap<&str, u32>, HashMap<&str, TypeProfile<'_>>) {
-    let mut profiles = HashMap::new();
-    use std::fmt::Write;
-
-    let mut unions: HashMap<&str, Vec<String>> = HashMap::new();
+    // a type named in a field set, like `@provides(fields: "... on Book { title }")`, gets
+    // something the others don't
+    let Some(named_in_field_sets) = types_named_in_field_sets(state) else {
+        return Default::default();
+    };
+    let mut unions: HashMap<&str, Vec<(&str, &str)>> = HashMap::new();
     for (name, definition) in state.definitions.iter() {
         if let SupergraphDefinition::Union(union_type) = definition {
             for member in &union_type.union_members {
                 unions
                     .entry(member.member.as_str())
                     .or_default()
-                    .push(format!("{name}@{}", member.graph));
+                    .push((name.as_str(), member.graph.as_str()));
             }
         }
     }
-    // the selections of `@provides`, `@requires` and `@key`: a type named in one, like
-    // `@provides(fields: "... on Book { title }")`, gets something the others don't
-    let mut selections = String::new();
-    for definition in state.definitions.values() {
-        if let SupergraphDefinition::Object(object) = definition {
-            for join in &object.join_type {
-                if let Some(key) = &join.key {
-                    selections.push_str(key);
-                    selections.push(' ');
-                }
-            }
-        }
-        if let SupergraphDefinition::Interface(interface) = definition {
-            for join in &interface.join_type {
-                if let Some(key) = &join.key {
-                    selections.push_str(key);
-                    selections.push(' ');
-                }
-            }
-        }
-        for field in definition.fields().values() {
-            for join in &field.join_field {
-                for selection in [&join.provides, &join.requires].into_iter().flatten() {
-                    selections.push_str(selection);
-                    selections.push(' ');
-                }
-            }
-        }
+    for memberships in unions.values_mut() {
+        memberships.sort_unstable();
     }
-    let named_in_selections = |name: &str| {
-        selections.match_indices(name).any(|(at, _)| {
-            let before = selections[..at].chars().next_back();
-            let after = selections[at + name.len()..].chars().next();
-            !before.is_some_and(|c| c.is_alphanumeric() || c == '_')
-                && !after.is_some_and(|c| c.is_alphanumeric() || c == '_')
-        })
-    };
-    let mut by_signature: HashMap<String, Vec<&str>> = HashMap::new();
+    let mut profiles = HashMap::new();
+    // the planner compares these a lot, so each distinct one gets an id
+    let mut field_ids = FieldProfileIds::default();
+    let mut membership_ids: HashMap<Vec<&str>, u32> = HashMap::new();
+    // equal signatures hash the same, so only the ones in a bucket get compared
+    let mut buckets: HashMap<u64, Vec<(TypeSignature, Vec<&str>)>> = HashMap::new();
     for (name, definition) in state.definitions.iter() {
         let SupergraphDefinition::Object(object) = definition else {
             continue;
@@ -1784,144 +1772,44 @@ fn interchangeable_types(
                     if interface.join_type.iter().any(|join| join.is_interface_object || join.key.is_some())
             )
         });
-        if object.root_type.is_some() || behind_interface_object || named_in_selections(name) {
+        if object.root_type.is_some()
+            || behind_interface_object
+            || named_in_field_sets.contains(name.as_str())
+        {
             continue;
         }
-        let mut signature = String::new();
-        let sorted = |items: Vec<String>, signature: &mut String| {
-            let mut items = items;
-            items.sort();
-            for item in items {
-                let _ = write!(signature, "{item};");
-            }
-            signature.push('|');
-        };
-        sorted(
-            object
-                .join_type
-                .iter()
-                .map(|join| format!("{join:?}"))
-                .collect(),
-            &mut signature,
-        );
-        sorted(
-            object
-                .join_implements
-                .iter()
-                .map(|join| format!("{join:?}"))
-                .collect(),
-            &mut signature,
-        );
-        sorted(
-            unions.get(name.as_str()).cloned().unwrap_or_default(),
-            &mut signature,
-        );
-        sorted(
-            object.used_in_subgraphs.iter().cloned().collect(),
-            &mut signature,
-        );
-        let _ = write!(
-            signature,
-            "{:?}{:?}{:?}{:?}|",
-            object.requires_scopes, object.policy, object.authenticated, object.cost
-        );
-        let mut profile = TypeProfile {
-            key: None,
-            subgraphs: HashMap::new(),
-            fields: HashMap::new(),
-        };
-        let mut keys: Vec<String> = object
-            .join_type
-            .iter()
-            // a subgraph that can't resolve it is never gone into, it's only where objects
-            // come from, and they leave with the same key
-            .map(|join| format!("{:?}", join.key))
-            .collect();
-        keys.sort();
-        keys.dedup();
-        if keys.len() == 1 && object.join_type.iter().all(|join| join.key.is_some()) {
-            profile.key = keys.pop();
-        }
-        for join in &object.join_type {
-            let mut memberships: Vec<String> = object
-                .join_implements
-                .iter()
-                .filter(|implements| implements.graph_id == join.graph_id)
-                .map(|implements| implements.interface.clone())
-                .chain(
-                    unions
-                        .get(name.as_str())
-                        .into_iter()
-                        .flatten()
-                        .filter(|member| member.ends_with(&format!("@{}", join.graph_id)))
-                        .cloned(),
-                )
-                .collect();
-            memberships.sort();
-            profile
-                .subgraphs
-                .insert(join.graph_id.as_str(), memberships.join(","));
-        }
-        let mut fields: Vec<_> = object.fields.values().collect();
-        fields.sort_by(|a, b| a.name.cmp(&b.name));
-        for field in fields {
-            let field_start = signature.len();
-            let mut join_fields: Vec<String> = field
-                .join_field
-                .iter()
-                .map(|join| format!("{join:?}"))
-                .collect();
-            join_fields.sort();
-            let mut arguments: Vec<String> = field
-                .argument_types
-                .iter()
-                .map(|(name, type_node)| format!("{name}:{type_node:?}"))
-                .collect();
-            arguments.sort();
-            let _ = write!(
-                signature,
-                "{}:{:?}:{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?};",
-                field.name,
-                field.field_type,
-                field.inaccessible,
-                join_fields,
-                arguments,
-                field.requires_scopes,
-                field.policy,
-                field.authenticated,
-                field.cost,
-                field.list_size,
-                field.resolvable_in,
-            );
-            let mut field_signature = signature[field_start..].to_string();
-            // in every subgraph that has the type, so in the one the objects are in, and a path
-            // there beats any other: which subgraphs those are doesn't matter
-            if field.join_field.is_empty() {
-                let subgraphs = format!("{:?};", field.resolvable_in);
-                field_signature.truncate(field_signature.len() - subgraphs.len());
-            }
-            if !field_signature.contains(name.as_str()) {
-                profile.fields.insert(field.name.as_str(), field_signature);
-            }
-        }
-        if profile.key.is_some() {
+        let unions = unions.get(name.as_str()).map_or(&[][..], Vec::as_slice);
+        let signature = TypeSignature::of(object, unions);
+
+        if let Some(profile) = type_profile(
+            name,
+            object,
+            unions,
+            &signature,
+            &mut field_ids,
+            &mut membership_ids,
+        ) {
             profiles.insert(name.as_str(), profile);
         }
+
         // a type that names itself can't be swapped for another
-        if signature.contains(name.as_str()) {
+        if signature.fields.iter().any(|field| field.names_type(name)) {
             continue;
         }
-        by_signature
-            .entry(signature)
-            .or_default()
-            .push(name.as_str());
+        let bucket = buckets.entry(signature.bucket()).or_default();
+        match bucket.iter_mut().find(|(other, _)| *other == signature) {
+            Some((_, names)) => names.push(name.as_str()),
+            None => bucket.push((signature, vec![name.as_str()])),
+        }
     }
-    let mut groups = HashMap::new();
-    let mut signatures: Vec<_> = by_signature
+    let mut signatures: Vec<Vec<&str>> = buckets
         .into_values()
+        .flatten()
+        .map(|(_, names)| names)
         .filter(|names| names.len() > 1)
         .collect();
     signatures.sort();
+    let mut groups = HashMap::new();
     for (group, names) in signatures.into_iter().enumerate() {
         for name in names {
             groups.insert(name, group as u32);
@@ -1930,15 +1818,374 @@ fn interchangeable_types(
     (groups, profiles)
 }
 
+/// What `interchangeable_for` compares of `object`. `None` when it has no single key.
+fn type_profile<'a>(
+    name: &str,
+    object: &'a SupergraphObjectType,
+    unions: &[(&'a str, &'a str)],
+    signature: &TypeSignature<'a>,
+    field_ids: &mut FieldProfileIds<'a>,
+    membership_ids: &mut HashMap<Vec<&'a str>, u32>,
+) -> Option<TypeProfile<'a>> {
+    // a subgraph that can't resolve it is never gone into, it's only where objects come from,
+    // and they leave with the same key
+    let mut keys = object.join_type.iter().map(|join| join.key.as_deref());
+    let key = keys.next().flatten();
+    if key.is_none() || !keys.all(|other| other == key) {
+        return None;
+    }
+    let subgraphs = object
+        .join_type
+        .iter()
+        .map(|join| {
+            let mut memberships: Vec<&str> = object
+                .join_implements
+                .iter()
+                .filter(|implements| implements.graph_id == join.graph_id)
+                .map(|implements| implements.interface.as_str())
+                .chain(
+                    unions
+                        .iter()
+                        .filter(|(_, graph)| *graph == join.graph_id)
+                        .map(|(union, _)| *union),
+                )
+                .collect();
+            memberships.sort_unstable();
+            let next = membership_ids.len() as u32;
+            (
+                join.graph_id.as_str(),
+                *membership_ids.entry(memberships).or_insert(next),
+            )
+        })
+        .collect();
+    let fields = signature
+        .fields
+        .iter()
+        .filter(|field| !field.names_type(name))
+        .map(|field| {
+            let mut field = field.clone();
+            // in every subgraph that has the type, so in the one the objects are in, and a path
+            // there beats any other: which subgraphs those are doesn't matter
+            if field.join_fields.is_empty() {
+                field.resolvable_in = None;
+            }
+            (field.name, field_ids.id(field))
+        })
+        .collect();
+    Some(TypeProfile {
+        key,
+        subgraphs,
+        fields,
+    })
+}
+
+/// See `Graph::required_fields`.
+pub(crate) type RequiredFields<'graph> =
+    HashMap<&'graph str, HashMap<&'graph str, Option<Vec<String>>>>;
+
+fn required_fields(state: &SupergraphState) -> RequiredFields<'_> {
+    let mut required = RequiredFields::new();
+    // the same `@requires` on many types gets parsed once
+    let mut parsed: HashMap<&str, Option<Vec<String>>> = HashMap::new();
+    for (type_name, definition) in state.definitions.iter() {
+        for (field_name, field) in definition.fields() {
+            let mut all_requires = field
+                .join_field
+                .iter()
+                .filter_map(|join| join.requires.as_deref())
+                .peekable();
+            if all_requires.peek().is_none() {
+                continue;
+            }
+            let mut fields = Some(Vec::new());
+            for requires in all_requires {
+                let plain = parsed
+                    .entry(requires)
+                    .or_insert_with(|| plain_field_names(requires));
+                fields = match (fields, plain) {
+                    (Some(mut fields), Some(plain)) => {
+                        for name in plain.iter() {
+                            if !fields.contains(name) {
+                                fields.push(name.clone());
+                            }
+                        }
+                        Some(fields)
+                    }
+                    _ => None,
+                };
+            }
+            required
+                .entry(type_name.as_str())
+                .or_default()
+                .insert(field_name.as_str(), fields);
+        }
+    }
+    required
+}
+
+/// The field names in `fields`, when it's only fields without arguments or selections, like
+/// `"price currency"`.
+fn plain_field_names(fields: &str) -> Option<Vec<String>> {
+    FederationRules::parse_field_set(fields)?
+        .items
+        .into_iter()
+        .map(|selection| match selection {
+            QuerySelection::Field(field)
+                if field.alias.is_none()
+                    && field.arguments.is_empty()
+                    && field.directives.is_empty()
+                    && field.selection_set.items.is_empty() =>
+            {
+                Some(field.name)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The types the `@key`, `@provides`, `@requires` and `@fromContext` field sets name, in a
+/// `... on T`. `None` when one doesn't parse, as then there's no telling.
+fn types_named_in_field_sets(state: &SupergraphState) -> Option<HashSet<&str>> {
+    // most are the same few, like `"id"`, so each gets parsed once
+    let mut field_sets = HashSet::new();
+    for definition in state.definitions.values() {
+        let join_types = match definition {
+            SupergraphDefinition::Object(object) => object.join_type.as_slice(),
+            SupergraphDefinition::Interface(interface) => interface.join_type.as_slice(),
+            _ => &[],
+        };
+        field_sets.extend(join_types.iter().filter_map(|join| join.key.as_deref()));
+        for field in definition.fields().values() {
+            for join in &field.join_field {
+                field_sets.extend(
+                    [&join.provides, &join.requires]
+                        .into_iter()
+                        .flatten()
+                        .map(String::as_str),
+                );
+                for argument in &join.context_arguments {
+                    let selection = argument.selection.trim();
+                    field_sets.insert(
+                        selection
+                            .strip_prefix('{')
+                            .and_then(|inner| inner.strip_suffix('}'))
+                            .unwrap_or(selection),
+                    );
+                }
+            }
+        }
+    }
+    let mut named = HashSet::new();
+    for fields in field_sets {
+        collect_type_conditions(
+            &FederationRules::parse_field_set(fields)?,
+            &mut named,
+            state,
+        );
+    }
+    Some(named)
+}
+
+fn collect_type_conditions<'s>(
+    selection_set: &QuerySelectionSet<'_, String>,
+    named: &mut HashSet<&'s str>,
+    state: &'s SupergraphState,
+) {
+    for selection in &selection_set.items {
+        match selection {
+            QuerySelection::Field(field) => {
+                collect_type_conditions(&field.selection_set, named, state)
+            }
+            QuerySelection::InlineFragment(fragment) => {
+                if let Some(QueryTypeCondition::On(type_name)) = &fragment.type_condition {
+                    if let Some((name, _)) = state.definitions.get_key_value(type_name) {
+                        named.insert(name.as_str());
+                    }
+                }
+                collect_type_conditions(&fragment.selection_set, named, state)
+            }
+            QuerySelection::FragmentSpread(_) => {}
+        }
+    }
+}
+
+/// Everything about an object type the graph is built from, but its name, see
+/// `interchangeable_types`. Lists that come in no particular order are sorted.
+#[derive(PartialEq)]
+struct TypeSignature<'a> {
+    join_type: Vec<&'a JoinTypeDirective>,
+    join_implements: Vec<&'a JoinImplementsDirective>,
+    unions: Vec<(&'a str, &'a str)>,
+    subgraphs: Vec<&'a str>,
+    requires_scopes: &'a [RequiresScopesDirective],
+    policy: &'a [PolicyDirective],
+    authenticated: &'a [AuthenticatedDirective],
+    cost: Option<&'a CostDirective>,
+    /// By name.
+    fields: Vec<FieldProfile<'a>>,
+}
+
+impl<'a> TypeSignature<'a> {
+    fn of(object: &'a SupergraphObjectType, unions: &[(&'a str, &'a str)]) -> Self {
+        let mut join_type: Vec<_> = object.join_type.iter().collect();
+        join_type.sort_by(|a, b| {
+            (
+                &a.graph_id,
+                &a.key,
+                a.extension,
+                a.resolvable,
+                a.is_interface_object,
+            )
+                .cmp(&(
+                    &b.graph_id,
+                    &b.key,
+                    b.extension,
+                    b.resolvable,
+                    b.is_interface_object,
+                ))
+        });
+        let mut join_implements: Vec<_> = object.join_implements.iter().collect();
+        join_implements
+            .sort_by(|a, b| (&a.graph_id, &a.interface).cmp(&(&b.graph_id, &b.interface)));
+        let mut subgraphs: Vec<_> = object
+            .used_in_subgraphs
+            .iter()
+            .map(String::as_str)
+            .collect();
+        subgraphs.sort_unstable();
+        let mut fields: Vec<_> = object.fields.values().map(FieldProfile::of).collect();
+        fields.sort_by(|a, b| a.name.cmp(b.name));
+        TypeSignature {
+            join_type,
+            join_implements,
+            unions: unions.to_vec(),
+            subgraphs,
+            requires_scopes: &object.requires_scopes,
+            policy: &object.policy,
+            authenticated: &object.authenticated,
+            cost: object.cost.as_ref(),
+            fields,
+        }
+    }
+
+    /// A hash of the parts that hash. Equal signatures have equal ones.
+    fn bucket(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = rustc_hash::FxHasher::default();
+        for join in &self.join_type {
+            (&join.graph_id, &join.key).hash(&mut hasher);
+        }
+        self.subgraphs.hash(&mut hasher);
+        for field in &self.fields {
+            field.bucket().hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+}
+
+/// Everything about a field the graph is built from, see `interchangeable_types`.
+#[derive(Clone, PartialEq)]
+struct FieldProfile<'a> {
+    name: &'a str,
+    field_type: &'a TypeNode,
+    inaccessible: bool,
+    /// By subgraph. Two for one subgraph keep the schema's order, which can only make two
+    /// fields look different.
+    join_fields: Vec<&'a JoinFieldDirective>,
+    /// By name.
+    arguments: Vec<(&'a str, &'a TypeNode)>,
+    requires_scopes: &'a [RequiresScopesDirective],
+    policy: &'a [PolicyDirective],
+    authenticated: &'a [AuthenticatedDirective],
+    cost: Option<&'a CostDirective>,
+    list_size: Option<&'a ListSizeDirective>,
+    /// `None` when it doesn't matter, see `interchangeable_types`.
+    resolvable_in: Option<&'a [u16]>,
+}
+
+impl<'a> FieldProfile<'a> {
+    fn of(field: &'a SupergraphField) -> Self {
+        let mut join_fields: Vec<_> = field.join_field.iter().collect();
+        join_fields.sort_by(|a, b| a.graph_id.cmp(&b.graph_id));
+        let mut arguments: Vec<_> = field
+            .argument_types
+            .iter()
+            .map(|(name, type_node)| (name.as_str(), type_node))
+            .collect();
+        arguments.sort_by(|a, b| a.0.cmp(b.0));
+        FieldProfile {
+            name: &field.name,
+            field_type: &field.field_type,
+            inaccessible: field.inaccessible,
+            join_fields,
+            arguments,
+            requires_scopes: &field.requires_scopes,
+            policy: &field.policy,
+            authenticated: &field.authenticated,
+            cost: field.cost.as_ref(),
+            list_size: field.list_size.as_ref(),
+            resolvable_in: Some(&field.resolvable_in),
+        }
+    }
+
+    /// A hash of the parts that hash. Equal profiles have equal ones.
+    fn bucket(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = rustc_hash::FxHasher::default();
+        (self.name, self.field_type, self.resolvable_in).hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Whether it returns `type_name`, or takes or reads it somewhere.
+    fn names_type(&self, type_name: &str) -> bool {
+        self.field_type.inner_type() == type_name
+            || self
+                .arguments
+                .iter()
+                .any(|(_, argument)| argument.inner_type() == type_name)
+            || self.join_fields.iter().any(|join| {
+                join.type_in_graph
+                    .as_ref()
+                    .is_some_and(|type_node| type_node.inner_type() == type_name)
+                    || join
+                        .context_arguments
+                        .iter()
+                        .any(|argument| argument.type_in_graph.inner_type() == type_name)
+            })
+    }
+}
+
 /// What decides how the planner plans the fields of an object type, field by field, for types
 /// that aren't the same everywhere, see `Graph::interchangeable_for`.
 #[derive(Debug, Default)]
 pub(crate) struct TypeProfile<'graph> {
     /// Its key, when every subgraph that has it keys it with the same fields. A path between
     /// two subgraphs then never needs a third one.
-    key: Option<String>,
-    /// The subgraphs that have it, with the interfaces and unions it's in there.
-    subgraphs: HashMap<&'graph str, String>,
-    /// Each field that doesn't name the type, with its type, arguments and `@join__field`s.
-    fields: HashMap<&'graph str, String>,
+    key: Option<&'graph str>,
+    /// The subgraphs that have it, with the interfaces and unions it's in there: the same id
+    /// for the same ones.
+    subgraphs: HashMap<&'graph str, u32>,
+    /// Each field that doesn't name the type, with the id of its `FieldProfile`.
+    fields: HashMap<&'graph str, u32>,
+}
+
+/// Gives each distinct `FieldProfile` an id, see `TypeProfile::fields`.
+#[derive(Default)]
+struct FieldProfileIds<'a> {
+    /// Equal profiles hash the same, so only the ones in a bucket get compared.
+    buckets: HashMap<u64, Vec<(FieldProfile<'a>, u32)>>,
+    count: u32,
+}
+
+impl<'a> FieldProfileIds<'a> {
+    fn id(&mut self, profile: FieldProfile<'a>) -> u32 {
+        let bucket = self.buckets.entry(profile.bucket()).or_default();
+        if let Some((_, id)) = bucket.iter().find(|(other, _)| *other == profile) {
+            return *id;
+        }
+        let id = self.count;
+        self.count += 1;
+        bucket.push((profile, id));
+        id
+    }
 }
