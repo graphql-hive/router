@@ -1251,6 +1251,9 @@ fn hash_without_types(segments: &[Segment], hasher: &mut ahash::AHasher) {
     }
 }
 
+/// Goes into `batched_call_hash` only.
+const BATCHED_CALL: u8 = 2;
+
 /// Like `entity_call_hash`, for an entity call that takes the objects of several types at the
 /// end of `response_path`, see `joins_other_types`. Every type there gets the same hash.
 fn batched_call_hash(
@@ -1270,7 +1273,7 @@ fn batched_call_hash(
         type_condition.hash(&mut hasher);
     }
     // so it's never the hash of a plain call to the same spot
-    "batched".hash(&mut hasher);
+    BATCHED_CALL.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -3589,7 +3592,7 @@ fn abstract_typename(
 ) -> bool {
     let definition = supergraph.definitions.get(type_name);
     selection_set.items.iter().any(|item| match item {
-        SelectionItem::Field(field) if field.name == "__typename" => {
+        SelectionItem::Field(field) if field.is_typename() => {
             !matches!(definition, Some(SupergraphDefinition::Object(_)))
         }
         SelectionItem::Field(field) => {

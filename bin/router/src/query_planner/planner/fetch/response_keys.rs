@@ -118,7 +118,7 @@ impl ResponseKeys {
     }
 
     fn wire_key_at(&mut self, place: PlaceId, field: &FieldSelection) -> String {
-        if field.name == "__typename" {
+        if field.is_typename() {
             return field.name.clone();
         }
 

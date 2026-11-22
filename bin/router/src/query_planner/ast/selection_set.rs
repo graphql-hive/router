@@ -205,6 +205,12 @@ impl PartialEq for FieldSelection {
 }
 
 impl FieldSelection {
+    /// Whether it's `__typename`.
+    #[inline]
+    pub fn is_typename(&self) -> bool {
+        self.name == "__typename"
+    }
+
     pub fn with_new_selections(&self, selections: SelectionSet) -> Self {
         FieldSelection {
             name: self.name.clone(),
@@ -679,7 +685,7 @@ pub fn merge_selection_set_owned(
 fn merge_field_omit_from_response(target: &mut FieldSelection, source: &FieldSelection) {
     // A skipped `__typename` is only there for an empty object.
     // If the client explicitly requested `__typename`, keep the visible field.
-    if target.name == "__typename" {
+    if target.is_typename() {
         target.omit_from_response &= source.omit_from_response;
     }
 }

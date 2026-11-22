@@ -450,7 +450,7 @@ impl<'a> StepConverter<'a> {
         selection_set
             .iter_fields_and_fragments_of_same_type(type_name)
             .all(|field| {
-                field.name == "__typename"
+                field.is_typename()
                     || interface_fields
                         .iter()
                         .any(|interface_field| interface_field.name == field.name)
@@ -474,7 +474,7 @@ impl<'a> StepConverter<'a> {
         for item in &selection_set.items {
             match item {
                 SelectionItem::Field(field) => {
-                    if field.name == "__typename" {
+                    if field.is_typename() {
                         continue;
                     }
 

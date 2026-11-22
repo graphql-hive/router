@@ -100,7 +100,7 @@ impl<'a> Wanted<'a> {
             needed,
             representation,
             // `covers` counts `__typename` as there, the executor checks for it before copying
-            needed_keys: key_mask(needed, |field| field.name != "__typename"),
+            needed_keys: key_mask(needed, |field| !field.is_typename()),
             representation_keys: key_mask(representation, |_| true),
         }
     }
@@ -785,7 +785,7 @@ pub(super) fn covers(source: &SelectionSet, needed: &SelectionSet) -> bool {
         let SelectionItem::Field(needed_field) = item else {
             return false;
         };
-        if needed_field.name == "__typename" {
+        if needed_field.is_typename() {
             return true;
         }
         source.items.iter().any(|item| {
@@ -809,7 +809,7 @@ fn resolves_every_field(
     subgraph: u16,
 ) -> bool {
     needed.items.iter().all(|item| match item {
-        SelectionItem::Field(field) if field.name == "__typename" => true,
+        SelectionItem::Field(field) if field.is_typename() => true,
         SelectionItem::Field(field) => resolved_by(supergraph, type_name, &field.name, subgraph)
             .is_some_and(|definition| {
                 resolves_every_field(
@@ -851,7 +851,7 @@ fn resolved_by<'s>(
 /// its fields in those fragments. See `walk`.
 fn only_typename_besides_fragments(selections: &SelectionSet) -> bool {
     selections.items.iter().all(|item| match item {
-        SelectionItem::Field(field) => field.name == "__typename" && field.alias.is_none(),
+        SelectionItem::Field(field) => field.is_typename() && field.alias.is_none(),
         _ => true,
     })
 }

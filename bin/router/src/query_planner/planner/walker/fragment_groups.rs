@@ -384,19 +384,22 @@ impl<'a> Splitter<'a> {
                     .filter(|item| !self.per_type(&fragment.type_condition, item))
                     .collect();
                 if shared.is_empty()
-                    || !self.graph.interchangeable_for(
-                        &first.type_condition,
-                        &fragment.type_condition,
-                        self.with_requirements(
+                    || !self
+                        .with_requirements(
                             &first.type_condition,
                             shared.iter().filter_map(|item| match item {
                                 SelectionItem::Field(field) => Some(field.name.as_str()),
                                 _ => None,
                             }),
                         )
-                        .into_iter(),
-                        subgraphs.iter().copied(),
-                    )
+                        .is_some_and(|fields| {
+                            self.graph.interchangeable_for(
+                                &first.type_condition,
+                                &fragment.type_condition,
+                                fields.into_iter(),
+                                subgraphs.iter().copied(),
+                            )
+                        })
                 {
                     continue;
                 }
@@ -432,57 +435,50 @@ impl<'a> Splitter<'a> {
             .definitions
             .get(type_name)
             .and_then(|definition| definition.fields().get(&field.name))
-            .is_none_or(|field| {
-                field.join_field.iter().any(|join| {
-                    join.requires
-                        .as_deref()
-                        .is_some_and(|requires| !plain_fields(requires))
-                })
+            .is_none_or(|definition| {
+                definition
+                    .join_field
+                    .iter()
+                    .any(|join| join.requires.is_some())
+                    && matches!(self.required(type_name, &field.name), Some(None))
             })
+    }
+
+    /// What the `@requires` of `type_name.field_name` needs, see `Graph::required_fields`.
+    fn required(&self, type_name: &str, field_name: &str) -> Option<&'a Option<Vec<String>>> {
+        self.graph.required_fields.get(type_name)?.get(field_name)
     }
 
     /// `fields` of `type_name`, and the fields their `@requires` need, all the way down. The
     /// types plan a field with `@requires` the same way when they plan these the same way.
+    /// `None` when one of them needs more than plain fields.
     fn with_requirements<'f>(
         &self,
         type_name: &str,
         fields: impl Iterator<Item = &'f str>,
-    ) -> Vec<&'f str>
+    ) -> Option<Vec<&'f str>>
     where
         'a: 'f,
     {
         let mut all: Vec<&'f str> = fields.collect();
-        let Some(definition) = self.supergraph.definitions.get(type_name) else {
-            return all;
-        };
         let mut next = 0;
         while next < all.len() {
             let name = all[next];
             next += 1;
-            let Some(field) = definition.fields().get(name) else {
-                continue;
-            };
-            for join in &field.join_field {
-                for required in join
-                    .requires
-                    .iter()
-                    .flat_map(|requires| requires.split_whitespace())
-                {
-                    if !all.contains(&required) {
-                        all.push(required);
+            match self.required(type_name, name) {
+                None => {}
+                Some(None) => return None,
+                Some(Some(required)) => {
+                    for required in required {
+                        if !all.contains(&required.as_str()) {
+                            all.push(required);
+                        }
                     }
                 }
             }
         }
-        all
+        Some(all)
     }
-}
-
-/// Whether a `@requires` selection is only field names, like `"price currency"`.
-fn plain_fields(selection: &str) -> bool {
-    selection
-        .chars()
-        .all(|c| c.is_alphanumeric() || c == '_' || c.is_whitespace())
 }
 
 /// Whether two items select exactly the same, all the way down.

@@ -585,7 +585,7 @@ pub(crate) fn inner_selection_set(document: &Document) -> &SelectionSet {
 /// operation, so the order of fields in a subgraph query doesn't matter.
 fn typename_first(set: &mut SelectionSet) {
     let typename = set.items.iter().position(|item| {
-        matches!(item, SelectionItem::Field(field) if field.name == "__typename" && field.alias.is_none())
+        matches!(item, SelectionItem::Field(field) if field.is_typename() && field.alias.is_none())
     });
     if let Some(index) = typename {
         set.items[..=index].rotate_right(1);
