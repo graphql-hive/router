@@ -377,7 +377,10 @@ impl Coverage {
 }
 
 /// The indexes with the highest `rank`, in order.
-fn most_by<R: Ord>(indexes: impl Iterator<Item = usize>, rank: impl Fn(usize) -> R) -> Vec<usize> {
+fn most_by<R: Ord>(
+    indexes: impl Iterator<Item = usize>,
+    mut rank: impl FnMut(usize) -> R,
+) -> Vec<usize> {
     let mut best = None;
     let mut tied = Vec::new();
     for index in indexes {

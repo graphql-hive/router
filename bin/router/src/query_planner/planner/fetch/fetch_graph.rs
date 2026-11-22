@@ -97,7 +97,7 @@ pub struct FetchGraph<State> {
     pub(crate) batched: HashSet<NodeIndex>,
     /// Steps for a field with `@requires` that took the types planned with theirs, see
     /// `SelectionAttributes::also`. Finished like `batched` ones, so they line up with them.
-    pub(crate) requires_for_types: Vec<NodeIndex>,
+    pub(crate) requires_for_types: HashSet<NodeIndex>,
     /// The keys of the fields the planner adds itself. Only needed while the graph is built.
     pub(crate) response_keys: ResponseKeys,
     pub(crate) context_producers: HashMap<(MergePath, (EdgeIndex, usize)), Vec<NodeIndex>>,
@@ -146,7 +146,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             entity_sources: HashMap::new(),
             entity_moves: HashMap::new(),
             batched: HashSet::new(),
-            requires_for_types: Vec::new(),
+            requires_for_types: HashSet::new(),
             response_keys: ResponseKeys::default(),
             context_producers: HashMap::new(),
             context_variables: HashMap::new(),
@@ -169,7 +169,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             entity_sources: HashMap::new(),
             entity_moves: HashMap::new(),
             batched: HashSet::new(),
-            requires_for_types: Vec::new(),
+            requires_for_types: HashSet::new(),
             response_keys: ResponseKeys::default(),
             context_producers: HashMap::new(),
             context_variables: HashMap::new(),
@@ -297,15 +297,22 @@ impl FetchGraph<SingleTypeFetchStep> {
             // the key of a `@requires` call. Without the candidate it'd stop waiting for that, so
             // when nothing it still waits for returns all of its input, it waits for the
             // candidate's parents too.
-            for child in children {
+            for &child in &children {
                 if !self.input_is_ready(supergraph, child) {
                     for &parent in &parents {
                         self.connect(parent, child);
                     }
                 }
             }
-            // what came after it can start earlier now, the depths are worked out again
-            depths.fill(0);
+            // what came after it can start earlier now, so their depths get worked out again.
+            // A step's depth is only known when its parents' are, so below one that isn't
+            // there's nothing to clear.
+            let mut below = children;
+            while let Some(index) = below.pop() {
+                if std::mem::take(&mut depths[index.index()]) != 0 {
+                    below.extend(self.children_of(index).map(|edge| edge.target()));
+                }
+            }
         }
     }
 
@@ -2603,7 +2610,7 @@ fn process_requires_field_edge(
         for type_name in type_names {
             take_type(fetch_graph, field_fetch, type_name)?;
         }
-        fetch_graph.requires_for_types.push(field_fetch);
+        fetch_graph.requires_for_types.insert(field_fetch);
     }
     if let Some(holder_node) = reentry.holder {
         fetch_graph
@@ -3006,7 +3013,7 @@ fn add_requirements_fetch(
         &key_input.selection_set,
     )?;
     if planned_with(response_path, type_name).is_some() {
-        fetch_graph.requires_for_types.push(requirements_fetch);
+        fetch_graph.requires_for_types.insert(requirements_fetch);
     }
     fetch_graph.connect(reentry.from, requirements_fetch);
     for &step in &reentry.key_fetched_by {
