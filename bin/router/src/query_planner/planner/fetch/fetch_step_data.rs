@@ -327,9 +327,19 @@ impl FetchStepData<SingleTypeFetchStep> {
         match self.output_types_at(response_path)? {
             None => self.output.add_at_path(None, fetch_path, selection_set),
             Some(type_names) => {
-                for type_name in type_names {
-                    self.output
-                        .add_at_path(Some(type_name), fetch_path, selection_set.clone())?;
+                // the last type takes `selection_set` itself, the others a copy
+                let mut type_names = type_names.iter().peekable();
+                let mut selection_set = Some(selection_set);
+                while let Some(type_name) = type_names.next() {
+                    let selection_set = match type_names.peek() {
+                        Some(_) => selection_set.clone(),
+                        None => selection_set.take(),
+                    };
+                    self.output.add_at_path(
+                        Some(type_name),
+                        fetch_path,
+                        selection_set.unwrap_or_default(),
+                    )?;
                 }
                 Ok(())
             }
