@@ -509,7 +509,7 @@ impl<'graph> Candidate<'graph> {
         let cost = if uses_context {
             let built = QueryTree::from_path(graph, &path, mutation_field_position)?;
             let cost = Costs(graph).tree(&built.root);
-            walk.node(&built.root, 0, 0, None);
+            walk.node(&built.root, 0, 0, None)?;
             let _ = tree.set(built);
             cost
         } else {
@@ -543,7 +543,7 @@ impl<'graph> Candidate<'graph> {
     ) -> Result<(), GraphError> {
         let built = QueryTree::from_path(graph, path, mutation_field_position)?;
         let mut from_tree = FetchWalk::new(graph);
-        from_tree.node(&built.root, 0, 0, None);
+        from_tree.node(&built.root, 0, 0, None)?;
         let mut from_path = FetchWalk::new(graph);
         from_path.path(&path.get_segments(), mutation_field_position)?;
         assert_eq!(cost, Costs(graph).tree(&built.root), "path cost");
@@ -764,7 +764,7 @@ impl<'a> FetchWalk<'a> {
             };
             // the call waits for the calls that get what it needs
             let call_depth = self
-                .node(requirement, requirement_depth, requirement_depth, position)
+                .node(requirement, requirement_depth, requirement_depth, position)?
                 .map_or(depth, |deepest| depth.max(deepest + 1));
             if is_requires || !only_requires {
                 self.insert(FetchKey::entity_call(subgraph, call_depth, position));
@@ -788,40 +788,35 @@ impl<'a> FetchWalk<'a> {
         depth: u32,
         object_depth: u32,
         position: MutationFieldPosition,
-    ) -> Option<u32> {
+    ) -> Result<Option<u32>, GraphError> {
         if !node.resolved_context_requirements().is_empty() {
             self.crossings += 1;
         }
         let position = node.mutation_field_position.or(position);
-        let subgraph = self
-            .graph
-            .node(node.node_index)
-            .ok()
-            .and_then(|node| node.subgraph_index());
-        let entrypoint = node.edge_from_parent.is_some_and(|edge| {
-            matches!(self.graph.edge(edge), Ok(Edge::SubgraphEntrypoint { .. }))
-        });
+        let subgraph = self.graph.node(node.node_index)?.subgraph_index();
+        let entrypoint = match node.edge_from_parent {
+            Some(edge) => matches!(self.graph.edge(edge)?, Edge::SubgraphEntrypoint { .. }),
+            None => false,
+        };
         if entrypoint {
             self.insert(FetchKey::root(subgraph, position));
         }
-        let is_field = |node: &QueryTreeNode| {
-            node.edge_from_parent
-                .is_some_and(|edge| matches!(self.graph.edge(edge), Ok(Edge::FieldMove(_))))
-        };
-        let is_requires = is_field(node);
+        let is_requires = self.is_field(node)?;
         let requirement_depth = if is_requires { object_depth } else { depth };
         // An entity call that only brings in fields with a @requires has no fetch of its own, the
         // fetch graph asks for the object in the calls for those fields.
-        let only_requires = !node.children.is_empty()
-            && node
-                .children
-                .iter()
-                .all(|child| !child.requirements.is_empty() && is_field(child));
+        let mut only_requires = !node.children.is_empty();
+        for child in &node.children {
+            if !only_requires {
+                break;
+            }
+            only_requires = !child.requirements.is_empty() && self.is_field(child)?;
+        }
         // the call waits for the calls that get what it needs
         let mut deepest = None;
         let mut call_depth = depth;
         for requirement in &node.requirements {
-            let needs = self.node(requirement, requirement_depth, requirement_depth, position);
+            let needs = self.node(requirement, requirement_depth, requirement_depth, position)?;
             if let Some(needs) = needs {
                 call_depth = call_depth.max(needs + 1);
             }
@@ -832,7 +827,7 @@ impl<'a> FetchWalk<'a> {
             deepest = deepest.max(Some(call_depth));
         }
         for context in node.context_requirements() {
-            deepest = deepest.max(self.node(context, depth, object_depth, position));
+            deepest = deepest.max(self.node(context, depth, object_depth, position)?);
         }
         let child_depth = match node.requirements.is_empty() {
             true => depth,
@@ -842,9 +837,17 @@ impl<'a> FetchWalk<'a> {
         let entered = !node.requirements.is_empty() && !is_requires;
         let child_object_depth = if entered { call_depth } else { child_depth };
         for child in &node.children {
-            deepest = deepest.max(self.node(child, child_depth, child_object_depth, position));
+            deepest = deepest.max(self.node(child, child_depth, child_object_depth, position)?);
         }
-        deepest
+        Ok(deepest)
+    }
+
+    /// Whether `node` is reached by a field move.
+    fn is_field(&self, node: &QueryTreeNode) -> Result<bool, GraphError> {
+        match node.edge_from_parent {
+            Some(edge) => Ok(matches!(self.graph.edge(edge)?, Edge::FieldMove(_))),
+            None => Ok(false),
+        }
     }
 }
 

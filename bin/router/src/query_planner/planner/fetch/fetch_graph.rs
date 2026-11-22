@@ -2714,18 +2714,18 @@ fn process_requires_field_edge(
     // On a `@provides` path, some required fields only exist on that path. The subgraph can't
     // return them from `_entities`, so the fetch that went through the path gets them, and
     // whatever needs another fetch starts from there too.
-    let requirements_start_at_reentry = requires.is_none()
-        || head_node.is_using_provides()
-        || can_leave_from_holder(
-            graph,
-            fetch_graph,
-            supergraph,
-            override_context,
-            query_node,
-            field_move,
-            &reentry,
-            *is_interface_object,
-        );
+    let leave_from_holder = can_leave_from_holder(
+        graph,
+        fetch_graph,
+        supergraph,
+        override_context,
+        query_node,
+        field_move,
+        &reentry,
+        *is_interface_object,
+    )?;
+    let requirements_start_at_reentry =
+        requires.is_none() || head_node.is_using_provides() || leave_from_holder;
     let (requirements_fetch, requirements_fetch_path) = if requirements_start_at_reentry {
         (reentry.from, key_to_reenter_at)
     } else {
@@ -2939,17 +2939,17 @@ fn can_leave_from_holder(
     field_move: &FieldMove,
     reentry: &Reentry<'_>,
     is_interface_object: bool,
-) -> bool {
+) -> Result<bool, FetchGraphError> {
     let (Some(holder), Some(requirements)) = (reentry.holder, query_node.requirements.first())
     else {
-        return false;
+        return Ok(false);
     };
     if field_move.requirements.is_none()
         || !reentry.key_fetched_by.is_empty()
         || !field_move.context_arguments.is_empty()
         || is_interface_object
     {
-        return false;
+        return Ok(false);
     }
     leave_right_away(
         graph,
@@ -3171,25 +3171,29 @@ fn leave_right_away(
     override_context: &PlannerOverrideContext,
     requirements: &QueryTreeNode,
     holder: NodeIndex,
-) -> bool {
-    !requirements.children.is_empty()
-        && requirements.children.iter().all(|child| {
-            child.edge_from_parent.is_some_and(|edge_index| {
-                let edge_ref = graph.edge_reference(edge_index);
-                matches!(edge_ref.weight(), Edge::EntityMove(_))
-                    && satisfiable_from(
-                        graph,
-                        fetch_graph,
-                        supergraph,
-                        override_context,
-                        &edge_ref,
-                        holder,
-                    )
-                    // on purpose: this only checks whether a shortcut works, and if the check
-                    // fails the requirements just take the usual way, which reports real errors
-                    .unwrap_or(false)
-            })
-        })
+) -> Result<bool, FetchGraphError> {
+    if requirements.children.is_empty() {
+        return Ok(false);
+    }
+    for child in requirements.children.iter() {
+        let Some(edge_index) = child.edge_from_parent else {
+            return Ok(false);
+        };
+        let edge_ref = graph.edge_reference(edge_index);
+        if !matches!(edge_ref.weight(), Edge::EntityMove(_))
+            || !satisfiable_from(
+                graph,
+                fetch_graph,
+                supergraph,
+                override_context,
+                &edge_ref,
+                holder,
+            )?
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Whether the requirements of `edge_ref` resolve right where `from` is, without leaving its
