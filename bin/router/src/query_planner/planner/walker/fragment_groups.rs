@@ -129,30 +129,6 @@ impl Part<'_> {
     }
 }
 
-/// `item` with `selections` in place of its own.
-fn with_selections(item: &SelectionItem, selections: SelectionSet) -> SelectionItem {
-    match item {
-        SelectionItem::Field(field) => SelectionItem::Field(FieldSelection {
-            name: field.name.clone(),
-            alias: field.alias.clone(),
-            selections,
-            arguments: field.arguments.clone(),
-            skip_if: field.skip_if.clone(),
-            include_if: field.include_if.clone(),
-            omit_from_response: field.omit_from_response,
-        }),
-        SelectionItem::InlineFragment(fragment) => {
-            SelectionItem::InlineFragment(InlineFragmentSelection {
-                type_condition: fragment.type_condition.clone(),
-                selections,
-                skip_if: fragment.skip_if.clone(),
-                include_if: fragment.include_if.clone(),
-            })
-        }
-        SelectionItem::FragmentSpread(_) => item.clone(),
-    }
-}
-
 /// Fragments that go together: the first one's type, and the items all of them select.
 struct Cluster<'s> {
     members: Vec<usize>,
@@ -210,7 +186,7 @@ impl<'a> Splitter<'a> {
                         .selections
                         .items
                         .iter()
-                        .filter(|item| !cluster.shared.iter().any(|shared| same_item(shared, item)))
+                        .filter(|item| !cluster.shared.contains(item))
                         .cloned()
                         .collect();
                     if !rest.is_empty() {
@@ -251,8 +227,8 @@ impl<'a> Splitter<'a> {
             .zip(below)
             .map(|(part, below)| match (part, below) {
                 (Part::Kept(item), None) => item.clone(),
-                (Part::Kept(item), Some(selections)) => with_selections(item, selections),
-                (Part::Made(item), Some(selections)) => with_selections(&item, selections),
+                (Part::Kept(item), Some(selections)) => item.with_new_selections(selections),
+                (Part::Made(item), Some(selections)) => item.with_new_selections(selections),
                 (Part::Made(item), None) => item,
             })
             .collect();
@@ -379,7 +355,7 @@ impl<'a> Splitter<'a> {
                             .selections
                             .items
                             .iter()
-                            .any(|theirs| same_item(item, theirs))
+                            .any(|theirs| *item == theirs)
                     })
                     .filter(|item| !self.per_type(&fragment.type_condition, item))
                     .collect();
@@ -479,30 +455,4 @@ impl<'a> Splitter<'a> {
         }
         Some(all)
     }
-}
-
-/// Whether two items select exactly the same, all the way down.
-fn same_item(a: &SelectionItem, b: &SelectionItem) -> bool {
-    match (a, b) {
-        (SelectionItem::Field(a), SelectionItem::Field(b)) => {
-            a.name == b.name
-                && a.alias == b.alias
-                && a.arguments() == b.arguments()
-                && a.skip_if == b.skip_if
-                && a.include_if == b.include_if
-                && same_selections(&a.selections, &b.selections)
-        }
-        (SelectionItem::InlineFragment(a), SelectionItem::InlineFragment(b)) => {
-            a.type_condition == b.type_condition
-                && a.skip_if == b.skip_if
-                && a.include_if == b.include_if
-                && same_selections(&a.selections, &b.selections)
-        }
-        (SelectionItem::FragmentSpread(a), SelectionItem::FragmentSpread(b)) => a == b,
-        _ => false,
-    }
-}
-
-fn same_selections(a: &SelectionSet, b: &SelectionSet) -> bool {
-    a.items.len() == b.items.len() && a.items.iter().zip(&b.items).all(|(a, b)| same_item(a, b))
 }

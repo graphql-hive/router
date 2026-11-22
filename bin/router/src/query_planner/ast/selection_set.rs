@@ -524,75 +524,37 @@ pub fn merge_selection_set(
 
     let mut pending_items = Vec::with_capacity(source.items.len());
     for source_item in source.items.iter() {
-        let mut found = false;
-        for target_item in target.items.iter_mut() {
-            match (source_item, target_item) {
-                (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
-                    if source_field.selection_identifier()
-                        == target_field.selection_identifier()
-                        && (source_field.name != target_field.name
-                            || source_field.arguments() != target_field.arguments()) =>
-                {
-                    return Err(ResponseKeyConflict(
-                        source_field.selection_identifier().to_string(),
-                    ));
-                }
-                (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
-                    if source_field == target_field
-                        && field_condition_equal(
-                            &Option::<Condition>::from(source_field),
-                            target_field,
-                        ) =>
-                {
-                    found = true;
-                    merge_field_omit_from_response(target_field, source_field);
-                    merge_selection_set(
-                        &mut target_field.selections,
-                        &source_field.selections,
-                        as_first,
-                    )?;
-                    break;
-                }
-                (
-                    SelectionItem::InlineFragment(source_fragment),
-                    SelectionItem::InlineFragment(target_fragment),
-                ) if source_fragment.type_condition == target_fragment.type_condition
-                    && fragment_condition_equal(
-                        &Option::<Condition>::from(source_fragment),
-                        target_fragment,
-                    ) =>
-                {
-                    found = true;
-                    merge_selection_set(
-                        &mut target_fragment.selections,
-                        &source_fragment.selections,
-                        as_first,
-                    )?;
-                    break;
-                }
-                _ => {}
+        let Some(index) = merge_target(&target.items, source_item)? else {
+            pending_items.push(source_item.clone());
+            continue;
+        };
+        match (source_item, &mut target.items[index]) {
+            (SelectionItem::Field(source_field), SelectionItem::Field(target_field)) => {
+                merge_field_omit_from_response(target_field, source_field);
+                merge_selection_set(
+                    &mut target_field.selections,
+                    &source_field.selections,
+                    as_first,
+                )?;
             }
-        }
-
-        if !found {
-            pending_items.push(source_item.clone())
-        }
-    }
-
-    if !pending_items.is_empty() {
-        if as_first {
-            let mut new_items = pending_items;
-            new_items.append(&mut target.items);
-            target.items = new_items;
-        } else {
-            target.items.extend(pending_items);
+            (
+                SelectionItem::InlineFragment(source_fragment),
+                SelectionItem::InlineFragment(target_fragment),
+            ) => {
+                merge_selection_set(
+                    &mut target_fragment.selections,
+                    &source_fragment.selections,
+                    as_first,
+                )?;
+            }
+            _ => {}
         }
     }
-
+    add_unmerged(target, pending_items, as_first);
     Ok(())
 }
 
-/// `merge_selection_set`, taking `source`: what's new moves in instead of being copied.
+/// Like `merge_selection_set`, moving what `source` has instead of copying it.
 pub fn merge_selection_set_owned(
     target: &mut SelectionSet,
     source: SelectionSet,
@@ -604,81 +566,91 @@ pub fn merge_selection_set_owned(
 
     let mut pending_items = Vec::with_capacity(source.items.len());
     for source_item in source.items {
-        // where it goes in `target`, if something there takes it
-        let mut matching = None;
-        for (index, target_item) in target.items.iter().enumerate() {
-            match (&source_item, target_item) {
-                (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
-                    if source_field.selection_identifier()
-                        == target_field.selection_identifier()
-                        && (source_field.name != target_field.name
-                            || source_field.arguments() != target_field.arguments()) =>
-                {
-                    return Err(ResponseKeyConflict(
-                        source_field.selection_identifier().to_string(),
-                    ));
-                }
-                (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
-                    if source_field == target_field
-                        && field_condition_equal(
-                            &Option::<Condition>::from(source_field),
-                            target_field,
-                        ) =>
-                {
-                    matching = Some(index);
-                    break;
-                }
-                (
-                    SelectionItem::InlineFragment(source_fragment),
-                    SelectionItem::InlineFragment(target_fragment),
-                ) if source_fragment.type_condition == target_fragment.type_condition
-                    && fragment_condition_equal(
-                        &Option::<Condition>::from(source_fragment),
-                        target_fragment,
-                    ) =>
-                {
-                    matching = Some(index);
-                    break;
-                }
-                _ => {}
+        let Some(index) = merge_target(&target.items, &source_item)? else {
+            pending_items.push(source_item);
+            continue;
+        };
+        match (source_item, &mut target.items[index]) {
+            (SelectionItem::Field(mut source_field), SelectionItem::Field(target_field)) => {
+                merge_field_omit_from_response(target_field, &source_field);
+                merge_selection_set_owned(
+                    &mut target_field.selections,
+                    std::mem::take(&mut source_field.selections),
+                    as_first,
+                )?;
             }
-        }
-
-        match (matching, source_item) {
-            (Some(index), SelectionItem::Field(mut source_field)) => {
-                if let SelectionItem::Field(target_field) = &mut target.items[index] {
-                    merge_field_omit_from_response(target_field, &source_field);
-                    merge_selection_set_owned(
-                        &mut target_field.selections,
-                        std::mem::take(&mut source_field.selections),
-                        as_first,
-                    )?;
-                }
+            (
+                SelectionItem::InlineFragment(source_fragment),
+                SelectionItem::InlineFragment(target_fragment),
+            ) => {
+                merge_selection_set_owned(
+                    &mut target_fragment.selections,
+                    source_fragment.selections,
+                    as_first,
+                )?;
             }
-            (Some(index), SelectionItem::InlineFragment(source_fragment)) => {
-                if let SelectionItem::InlineFragment(target_fragment) = &mut target.items[index] {
-                    merge_selection_set_owned(
-                        &mut target_fragment.selections,
-                        source_fragment.selections,
-                        as_first,
-                    )?;
-                }
-            }
-            (_, source_item) => pending_items.push(source_item),
+            _ => {}
         }
     }
-
-    if !pending_items.is_empty() {
-        if as_first {
-            let mut new_items = pending_items;
-            new_items.append(&mut target.items);
-            target.items = new_items;
-        } else {
-            target.items.extend(pending_items);
-        }
-    }
-
+    add_unmerged(target, pending_items, as_first);
     Ok(())
+}
+
+/// The item of `target_items` that `source_item` merges into: the same field with the same
+/// condition, or a fragment on the same type with the same condition. An error when a field
+/// there has its response key but is another field.
+fn merge_target(
+    target_items: &[SelectionItem],
+    source_item: &SelectionItem,
+) -> Result<Option<usize>, ResponseKeyConflict> {
+    for (index, target_item) in target_items.iter().enumerate() {
+        match (source_item, target_item) {
+            (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
+                if source_field.selection_identifier() == target_field.selection_identifier()
+                    && (source_field.name != target_field.name
+                        || source_field.arguments() != target_field.arguments()) =>
+            {
+                return Err(ResponseKeyConflict(
+                    source_field.selection_identifier().to_string(),
+                ));
+            }
+            (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
+                if source_field == target_field
+                    && field_condition_equal(
+                        &Option::<Condition>::from(source_field),
+                        target_field,
+                    ) =>
+            {
+                return Ok(Some(index));
+            }
+            (
+                SelectionItem::InlineFragment(source_fragment),
+                SelectionItem::InlineFragment(target_fragment),
+            ) if source_fragment.type_condition == target_fragment.type_condition
+                && fragment_condition_equal(
+                    &Option::<Condition>::from(source_fragment),
+                    target_fragment,
+                ) =>
+            {
+                return Ok(Some(index));
+            }
+            _ => {}
+        }
+    }
+    Ok(None)
+}
+
+/// Puts the items nothing in `target` took before or after its own.
+fn add_unmerged(target: &mut SelectionSet, mut items: Vec<SelectionItem>, as_first: bool) {
+    if items.is_empty() {
+        return;
+    }
+    if as_first {
+        items.append(&mut target.items);
+        target.items = items;
+    } else {
+        target.items.extend(items);
+    }
 }
 
 #[inline]

@@ -4,7 +4,7 @@ use crate::query_planner::{
 };
 use graphql_tools::parser::query as query_ast;
 
-use super::selection_set::{FieldSelection, InlineFragmentSelection};
+use super::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
 use super::shrink::ShrinkMemory;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -117,6 +117,19 @@ impl SelectionItem {
                 fragment_selection.variable_usages()
             }
             SelectionItem::FragmentSpread(_fragment_spread) => BTreeSet::new(),
+        }
+    }
+
+    /// The same item with `selections` under it. A fragment spread has none.
+    pub fn with_new_selections(&self, selections: SelectionSet) -> Self {
+        match self {
+            SelectionItem::Field(field) => {
+                SelectionItem::Field(field.with_new_selections(selections))
+            }
+            SelectionItem::InlineFragment(fragment) => {
+                SelectionItem::InlineFragment(fragment.with_new_selections(selections))
+            }
+            SelectionItem::FragmentSpread(_) => self.clone(),
         }
     }
 

@@ -978,6 +978,41 @@ fn take_type(
     Ok(())
 }
 
+/// The types planned with `type_name` at the end of `response_path`, see
+/// `SelectionAttributes::also`: the type condition there, when it has several and `type_name`
+/// is one of them.
+fn planned_with<'a>(response_path: &'a MergePath, type_name: &str) -> Option<&'a BTreeSet<String>> {
+    match response_path.last() {
+        Some(Segment::TypeCondition(type_names, _))
+            if type_names.len() > 1 && type_names.contains(type_name) =>
+        {
+            Some(type_names)
+        }
+        _ => None,
+    }
+}
+
+/// Adds `selection_set` to what `step` reads of `type_name`, and of the types planned with it,
+/// see `planned_with`. The step takes those types too.
+fn add_input_for_types(
+    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    step: NodeIndex,
+    response_path: &MergePath,
+    type_name: &str,
+    selection_set: &SelectionSet,
+) -> Result<(), FetchGraphError> {
+    match planned_with(response_path, type_name) {
+        Some(type_names) => {
+            for type_name in type_names {
+                take_type(fetch_graph, step, type_name)?;
+                fetch_graph.add_input(step, type_name, selection_set)?;
+            }
+            Ok(())
+        }
+        None => fetch_graph.add_input(step, type_name, selection_set),
+    }
+}
+
 /// Hashes `segments` without the types of their type conditions.
 fn hash_without_types(segments: &[Segment], hasher: &mut ahash::AHasher) {
     use std::hash::Hash;
@@ -1243,48 +1278,30 @@ fn ensure_batched_fetch_step(
     };
     // the call's type, and the ones planned with it, see `SelectionAttributes::also`. They
     // read the same key.
-    let type_names: Vec<String> = match response_path.last() {
-        Some(Segment::TypeCondition(type_names, _)) => type_names.iter().cloned().collect(),
-        _ => vec![type_name.to_string()],
+    let type_names: Vec<&str> = match response_path.last() {
+        Some(Segment::TypeCondition(type_names, _)) => {
+            type_names.iter().map(String::as_str).collect()
+        }
+        _ => vec![type_name],
     };
-    for type_name in &type_names {
+    for type_name in type_names {
         let new_type = fetch_graph
             .get_step_data(step_index)?
             .input
             .selections_for_definition(type_name)
             .is_none();
         if new_type {
-            let step = fetch_graph.get_step_data_mut(step_index)?;
             trace!(
                 "fetch step [{}] takes the {} objects at {} too",
                 step_index.index(),
                 type_name,
                 response_path
             );
-            step.input.add_definition(type_name);
-            step.input.add_to(
-                type_name,
-                &SelectionSet {
-                    items: vec![SelectionItem::Field(FieldSelection::new_typename())],
-                },
-            )?;
-            step.output.add_definition(type_name);
-            if let Some((Segment::TypeCondition(step_types, type_condition), rest)) =
-                step.response_path.inner.split_last()
-            {
-                if !step_types.contains(type_name) {
-                    let mut step_types = BTreeSet::clone(step_types);
-                    step_types.insert(type_name.clone());
-                    step.response_path = MergePath::new(
-                        rest.iter()
-                            .cloned()
-                            .chain(std::iter::once(Segment::TypeCondition(
-                                Rc::new(step_types),
-                                type_condition.clone(),
-                            )))
-                            .collect(),
-                    );
-                }
+            take_type(fetch_graph, step_index, type_name)?;
+            let step = fetch_graph.get_step_data_mut(step_index)?;
+            let last = step.response_path.len().saturating_sub(1);
+            if let Some(path) = step.response_path.with_type_added_at(last, type_name) {
+                step.response_path = path;
             }
         }
         if let Some(key) = key {
@@ -1612,22 +1629,13 @@ fn process_entity_move_edge(
         requirement,
         fetch_step_index.index()
     );
-    // the types planned with it read the same, see `SelectionAttributes::also`
-    match response_path.last() {
-        Some(Segment::TypeCondition(type_names, _))
-            if type_names.len() > 1 && type_names.contains(*input_type_name) =>
-        {
-            for type_name in type_names.iter() {
-                take_type(fetch_graph, fetch_step_index, type_name)?;
-                fetch_graph.add_input(fetch_step_index, type_name, &requirement.selection_set)?;
-            }
-        }
-        _ => fetch_graph.add_input(
-            fetch_step_index,
-            input_type_name,
-            &requirement.selection_set,
-        )?,
-    }
+    add_input_for_types(
+        fetch_graph,
+        fetch_step_index,
+        response_path,
+        input_type_name,
+        &requirement.selection_set,
+    )?;
     let fetch_step = fetch_graph.get_step_data_mut(fetch_step_index)?;
 
     if is_interface && !narrowed {
@@ -2508,19 +2516,9 @@ fn process_requires_field_edge(
         Node::SubgraphType(t) => (t.name, &t.subgraph, &t.is_interface_object),
         _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
-    // the type, and the ones planned with it, see `SelectionAttributes::also`. They all go
-    // into the same entity calls, with the same key and requirements.
-    let type_names: Vec<&str> = match response_path.last() {
-        Some(Segment::TypeCondition(type_names, _))
-            if type_names.len() > 1 && type_names.contains(head_type_name) =>
-        {
-            type_names
-                .iter()
-                .map(|type_name| type_name.as_str())
-                .collect()
-        }
-        _ => vec![head_type_name],
-    };
+    // the type, and the ones planned with it, see `SelectionAttributes::also`, all go into
+    // the same entity calls, with the same key and requirements
+    let planned_types = planned_with(response_path, head_type_name);
 
     let reentry = decide_reentry(
         graph,
@@ -2592,8 +2590,8 @@ fn process_requires_field_edge(
             true,
         )
     };
-    if type_names.len() > 1 {
-        for type_name in &type_names {
+    if let Some(type_names) = planned_types {
+        for type_name in type_names {
             take_type(fetch_graph, field_fetch, type_name)?;
         }
         fetch_graph.requires_for_types.push(field_fetch);
@@ -2660,7 +2658,8 @@ fn process_requires_field_edge(
         add_input_for_types(
             fetch_graph,
             field_fetch,
-            &type_names,
+            response_path,
+            head_type_name,
             &requires_input.selection_set,
         )?;
     }
@@ -2672,7 +2671,8 @@ fn process_requires_field_edge(
     add_input_for_types(
         fetch_graph,
         field_fetch,
-        &type_names,
+        response_path,
+        head_type_name,
         &key_input.selection_set,
     )?;
 
@@ -2731,7 +2731,6 @@ fn process_requires_field_edge(
             head_node_index,
             head_subgraph_name,
             head_type_name,
-            &type_names,
             response_path,
             &key_to_reenter_at,
             conditions,
@@ -2964,23 +2963,6 @@ fn can_leave_from_holder(
     })
 }
 
-/// Adds `selection_set` to what `step` takes, for each of `type_names`.
-fn add_input_for_types(
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
-    step: NodeIndex,
-    type_names: &[&str],
-    selection_set: &SelectionSet,
-) -> Result<(), FetchGraphError> {
-    for type_name in type_names {
-        take_type(fetch_graph, step, type_name)?;
-        fetch_graph
-            .get_step_data_mut(step)?
-            .input
-            .add_to(type_name, selection_set)?;
-    }
-    Ok(())
-}
-
 /// A new entity call back into the field's subgraph that the requirements leave from. Passes
 /// along the keys they need to reach their subgraphs when the response has them already, or the
 /// subgraph the objects came from can fetch them too.
@@ -2996,7 +2978,6 @@ fn add_requirements_fetch(
     head_node_index: NodeIndex,
     subgraph_name: &SubgraphName,
     type_name: &str,
-    type_names: &[&str],
     response_path: &MergePath,
     key_to_reenter_at: &MergePath,
     conditions: Conditions<'_>,
@@ -3022,10 +3003,11 @@ fn add_requirements_fetch(
     add_input_for_types(
         fetch_graph,
         requirements_fetch,
-        type_names,
+        response_path,
+        type_name,
         &key_input.selection_set,
     )?;
-    if type_names.len() > 1 {
+    if planned_with(response_path, type_name).is_some() {
         fetch_graph.requires_for_types.push(requirements_fetch);
     }
     fetch_graph.connect(reentry.from, requirements_fetch);
@@ -3092,7 +3074,8 @@ fn add_requirements_fetch(
         add_input_for_types(
             fetch_graph,
             requirements_fetch,
-            type_names,
+            response_path,
+            type_name,
             &input.selection_set,
         )?;
         if !fetch_it {

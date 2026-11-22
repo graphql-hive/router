@@ -76,9 +76,7 @@ fn merge_source_condition_into_non_entity_target(
     for (_, selection_set) in input.iter_selections_mut() {
         read_as_written(selection_set);
     }
-    source
-        .output
-        .migrate_from_another(&input, &MergePath::default())?;
+    source.output.migrate(input, &MergePath::default(), None)?;
 
     // Check if the condition is already enforced by the path
     let condition_redundant = matches!(
@@ -172,7 +170,7 @@ pub(crate) fn perform_fetch_step_merge(
     }
     target
         .output
-        .migrate_from(source.output.take(), &source_fetch_path)?;
+        .migrate(source.output.take(), &source_fetch_path, None)?;
 
     if let Some(input_rewrites) = source.input_rewrites.take() {
         if !input_rewrites.is_empty() {
@@ -185,7 +183,7 @@ pub(crate) fn perform_fetch_step_merge(
     if force_merge_inputs {
         target
             .input
-            .migrate_from_another(&source.input, &MergePath::default())?;
+            .migrate(source.input.clone(), &MergePath::default(), None)?;
     } else if target.input.selecting_same_types(&source.input) {
         // It's safe to not check if a condition was turned into an inline fragment,
         // because if a condition is present and "me" is a non-entity fetch step,
@@ -193,7 +191,7 @@ pub(crate) fn perform_fetch_step_merge(
         if target.response_path == source.response_path {
             target
                 .input
-                .migrate_from_another(&source.input, &MergePath::default())?;
+                .migrate(source.input.clone(), &MergePath::default(), None)?;
         } else if !source.response_path.starts_with(&target.response_path) {
             return Err(FetchGraphError::MismatchedResponsePath);
         }
@@ -702,7 +700,7 @@ mod tests {
             single.add(&parse(query)).unwrap();
             result.declare_known_type(type_name);
             result
-                .migrate_from_another(&single.into_multi_type(), &MergePath::default())
+                .migrate(single.into_multi_type(), &MergePath::default(), None)
                 .unwrap();
         }
         result
