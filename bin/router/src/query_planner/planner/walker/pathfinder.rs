@@ -108,7 +108,7 @@ type CheckedRequirement = Option<SatisfiedMove>;
 /// indirect paths from the same paths, so each of them would check the same moves again. Only
 /// the first step of a search with nothing excluded yet goes here, the rest depends on the search.
 #[derive(Default)]
-pub struct MoveRequirements<'graph> {
+pub struct SearchCache<'graph> {
     /// By the path's last segment, root and the edge. The segment is kept, so its address isn't
     /// reused by another path while it's a key.
     checked: RefCell<HashMap<(usize, NodeIndex, EdgeIndex), Vec<CheckedMove<'graph>>>>,
@@ -120,8 +120,6 @@ pub struct MoveRequirements<'graph> {
     /// `OperationPath::narrowed_to`, so that's in the key too. So the steps it found go on from
     /// the next path too, without searching again.
     searches: RefCell<SearchesByStart<'graph>>,
-    /// The fragments planned for more types than their own, see `fragment_groups`.
-    pub(crate) groups: Option<&'graph super::fragment_groups::FragmentGroups>,
 }
 
 type SearchesByStart<'graph> = HashMap<
@@ -147,12 +145,12 @@ struct CheckedMove<'graph> {
     requirement: CheckedRequirement,
 }
 
-impl<'graph> MoveRequirements<'graph> {
+impl<'graph> SearchCache<'graph> {
     /// What a search for the field `target` from `path` found from the same node before, see
     /// `searches`, or else `search`. Only for a search that starts with nothing excluded, which
-    /// `find_indirect_paths` checks. Not with `@fromContext` fields in the graph: they read their
-    /// value from an ancestor, so a search depends on the whole path.
-    fn indirect_paths(
+    /// `Walk::find_indirect_paths` checks. Not with `@fromContext` fields in the graph: they read
+    /// their value from an ancestor, so a search depends on the whole path.
+    pub(super) fn indirect_paths(
         &self,
         graph: &'graph Graph<'graph>,
         path: &OperationPath<'graph>,
@@ -335,7 +333,7 @@ impl<'op> From<&'op NavigationTarget<'op, '_>> for NavigationTargetKey<'op> {
     }
 }
 
-struct PathSearch<'graph> {
+pub(super) struct PathSearch<'graph> {
     graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
@@ -346,7 +344,7 @@ struct PathSearch<'graph> {
 }
 
 impl<'graph> PathSearch<'graph> {
-    fn new(
+    pub(super) fn new(
         graph: &'graph Graph<'graph>,
         supergraph: &'graph SupergraphState,
         override_context: &'graph PlannerOverrideContext,
@@ -359,35 +357,6 @@ impl<'graph> PathSearch<'graph> {
             cancellation_token,
             active_edge_checks: ActiveEdgeChecks::default(),
         }
-    }
-}
-
-#[instrument(level = "trace", skip_all, fields(
-  path = path.pretty_print(graph),
-  current_cost = path.cost
-))]
-#[allow(clippy::too_many_arguments)]
-pub fn find_indirect_paths<'graph>(
-    graph: &'graph Graph<'graph>,
-    supergraph: &'graph SupergraphState,
-    override_context: &'graph PlannerOverrideContext,
-    path: &OperationPath<'graph>,
-    target: &NavigationTarget<'graph, '_>,
-    excluded: &ExcludedFromLookup<'graph>,
-    cancellation_token: &'graph CancellationToken,
-    moves: Option<&MoveRequirements<'graph>>,
-) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
-    let search = || {
-        PathSearch::new(graph, supergraph, override_context, cancellation_token)
-            .find_indirect_paths(path, target, excluded, moves)
-    };
-    match moves {
-        // with nothing excluded a search depends only on where it starts, so what it found
-        // from the same node before is reused, see `MoveRequirements::indirect_paths`
-        Some(moves) if excluded.graph_ids.is_empty() && excluded.requirement.is_empty() => {
-            moves.indirect_paths(graph, path, target, search)
-        }
-        _ => search(),
     }
 }
 
@@ -409,12 +378,12 @@ impl<'graph> PathSearch<'graph> {
                 Some(SupergraphDefinition::Union(union)) if union.types.iter().any(|name| name == current_type_name))
     }
 
-    fn find_indirect_paths(
+    pub(super) fn find_indirect_paths(
         &mut self,
         path: &OperationPath<'graph>,
         target: &NavigationTarget<'_, '_>,
         excluded: &ExcludedFromLookup<'graph>,
-        moves: Option<&MoveRequirements<'graph>>,
+        moves: Option<&SearchCache<'graph>>,
     ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
         let graph = self.graph;
         let cancellation_token = self.cancellation_token;

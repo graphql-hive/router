@@ -3,7 +3,7 @@ use std::collections::{btree_map::Entry, BTreeMap};
 
 use petgraph::graph::EdgeIndex;
 
-use crate::query_planner::graph::Graph;
+use crate::query_planner::graph::{edge::NON_FIELD_MOVE_COST, Graph};
 
 use super::{error::WalkOperationError, path::OperationPath};
 
@@ -14,9 +14,10 @@ pub struct BestPathTracker<'graph> {
     subgraph_to_best_paths: BTreeMap<&'graph str, (Vec<OperationPath<'graph>>, u64)>,
 }
 
-/// How much more than a leaf's cheapest path a path can cost and still be a candidate: the
-/// search can take a pricier path when the plan makes its trips anyway.
-const LEAF_PATH_WINDOW: u64 = 2000;
+/// How much more than a leaf's cheapest path a path can cost and still be a candidate, two moves
+/// that aren't field moves: the search can take a pricier path when the plan makes its trips
+/// anyway.
+const LEAF_PATH_WINDOW: u64 = 2 * NON_FIELD_MOVE_COST;
 
 /// The paths to a leaf the search chooses from: the cheapest, and the best one to each other
 /// subgraph within `LEAF_PATH_WINDOW` of it.
