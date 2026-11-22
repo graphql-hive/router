@@ -61,12 +61,7 @@ pub fn find_best_combination(
         return Err(QueryPlanError::EmptyPlan);
     }
 
-    let base = BasePlan::merge(graph, leaves.singles, cancellation_token)?;
-    let groups = leaves
-        .groups
-        .into_iter()
-        .map(|paths| Candidate::alternatives(graph, paths))
-        .collect::<Result<Vec<_>, _>>()?;
+    let (base, groups) = leaves.prepare(graph, cancellation_token)?;
 
     // the fetches each leaf could use, and how many of the leaves still to pick could use each
     let usable: Vec<Vec<FetchKey>> = groups
@@ -406,6 +401,21 @@ struct Leaves<'graph> {
 }
 
 impl<'graph> Leaves<'graph> {
+    /// The plan the leaves with one way make, and the ways for each other leaf to choose from.
+    fn prepare(
+        self,
+        graph: &Graph<'_>,
+        cancellation_token: &CancellationToken,
+    ) -> Result<(BasePlan, Vec<Alternatives<'graph>>), QueryPlanError> {
+        let base = BasePlan::merge(graph, self.singles, cancellation_token)?;
+        let groups = self
+            .groups
+            .into_iter()
+            .map(|paths| Candidate::alternatives(graph, paths))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((base, groups))
+    }
+
     fn of(operation: ResolvedOperation<'graph>) -> Self {
         let is_mutation = matches!(operation.operation_kind, OperationKind::Mutation);
         let mut singles = Vec::new();
@@ -508,25 +518,9 @@ impl<'graph> Candidate<'graph> {
             walk.path(&segments, mutation_field_position)?;
             FIELD_COST + Costs(graph).of_segments(&segments)?
         };
-        // what's worked out from the path has to match what its tree gives
         #[cfg(test)]
         if !uses_context {
-            let built = QueryTree::from_path(graph, &path, mutation_field_position)?;
-            let mut from_tree = FetchWalk::new(graph);
-            from_tree.node(&built.root, 0, 0, None);
-            let mut from_path = FetchWalk::new(graph);
-            from_path.path(&path.get_segments(), mutation_field_position)?;
-            assert_eq!(cost, Costs(graph).tree(&built.root), "path cost");
-            let sorted = |mut fetches: Vec<FetchKey>| {
-                fetches.sort_unstable();
-                fetches
-            };
-            assert_eq!(
-                sorted(from_path.fetches),
-                sorted(from_tree.fetches),
-                "path fetches"
-            );
-            assert_eq!(from_path.crossings, from_tree.crossings, "path crossings");
+            Self::check_against_tree(graph, &path, mutation_field_position, cost)?;
         }
         Ok(Self {
             path,
@@ -537,6 +531,33 @@ impl<'graph> Candidate<'graph> {
             crossings: walk.crossings,
             tree,
         })
+    }
+
+    /// What `new` works out from a path has to match what the path's tree gives.
+    #[cfg(test)]
+    fn check_against_tree(
+        graph: &Graph<'_>,
+        path: &OperationPath<'graph>,
+        mutation_field_position: MutationFieldPosition,
+        cost: u64,
+    ) -> Result<(), GraphError> {
+        let built = QueryTree::from_path(graph, path, mutation_field_position)?;
+        let mut from_tree = FetchWalk::new(graph);
+        from_tree.node(&built.root, 0, 0, None);
+        let mut from_path = FetchWalk::new(graph);
+        from_path.path(&path.get_segments(), mutation_field_position)?;
+        assert_eq!(cost, Costs(graph).tree(&built.root), "path cost");
+        let sorted = |mut fetches: Vec<FetchKey>| {
+            fetches.sort_unstable();
+            fetches
+        };
+        assert_eq!(
+            sorted(from_path.fetches),
+            sorted(from_tree.fetches),
+            "path fetches"
+        );
+        assert_eq!(from_path.crossings, from_tree.crossings, "path crossings");
+        Ok(())
     }
 
     /// Cheapest first, so good plans show up sooner.
@@ -662,10 +683,11 @@ impl Fetches {
         }
     }
 
-    /// The waves and fetches adding `candidate` adds to the plan.
-    // ponytail: depth stands in for the batching the fetch graph does, it's only exact when
-    // calls at the same depth don't depend on each other.
-    /// A path's fetches are all at its mutation field's position.
+    /// The waves and fetches adding `candidate` adds to the plan. A path's fetches are all at
+    /// its mutation field's position.
+    ///
+    /// Depth stands in for the batching the fetch graph does, so it's only exact when calls at
+    /// the same depth don't depend on each other.
     fn added_by(&self, candidate: &Candidate<'_>) -> (u32, u64) {
         let fetches = candidate.crossings
             + candidate

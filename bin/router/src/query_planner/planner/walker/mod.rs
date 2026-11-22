@@ -32,7 +32,7 @@ use error::WalkOperationError;
 use excluded::ExcludedFromLookup;
 use path::OperationPath;
 use path::SelectionAttributes;
-use pathfinder::{find_direct_paths, find_indirect_paths, MoveRequirements};
+use pathfinder::{find_direct_paths, PathSearch, SearchCache};
 use tracing::{instrument, span, trace, Level};
 use utils::get_entrypoints;
 
@@ -47,16 +47,6 @@ pub type BestPathsPerLeaf<'graph> = Vec<Vec<OperationPath<'graph>>>;
 // TODO: Consider to use VecDeque(fixed_size) if we can predict it?
 // TODO: Consider to drop this IR layer and just go with QTP directly.
 
-/// What stays the same for a whole walk of an operation.
-struct OperationWalk<'graph> {
-    graph: &'graph Graph<'graph>,
-    supergraph: &'graph SupergraphState,
-    override_context: &'graph PlannerOverrideContext,
-    cancellation_token: &'graph CancellationToken,
-    /// Shared by the fields of the walk, see `MoveRequirements`.
-    moves: MoveRequirements<'graph>,
-}
-
 /// A selection to plan, the paths to it, and for a fragment, the other types it's planned for,
 /// see `grouped_items`.
 type WorkItem<'graph, 'op> = (
@@ -65,6 +55,43 @@ type WorkItem<'graph, 'op> = (
     Option<Rc<SelectionAttributes>>,
 );
 type ResolutionStack<'graph, 'op> = Vec<WorkItem<'graph, 'op>>;
+
+/// What every step of a walk reads: the graph and what goes with it, the searches it caches, and
+/// the fragments planned for more types than their own, see `fragment_groups`.
+struct Walk<'graph> {
+    graph: &'graph Graph<'graph>,
+    supergraph: &'graph SupergraphState,
+    override_context: &'graph PlannerOverrideContext,
+    cancellation_token: &'graph CancellationToken,
+    cache: SearchCache<'graph>,
+    groups: Option<&'graph fragment_groups::FragmentGroups>,
+}
+
+impl<'graph> Walk<'graph> {
+    fn find_indirect_paths(
+        &self,
+        path: &OperationPath<'graph>,
+        target: &NavigationTarget<'graph, '_>,
+        excluded: &ExcludedFromLookup<'graph>,
+    ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
+        let search = || {
+            PathSearch::new(
+                self.graph,
+                self.supergraph,
+                self.override_context,
+                self.cancellation_token,
+            )
+            .find_indirect_paths(path, target, excluded, Some(&self.cache))
+        };
+        // with nothing excluded a search depends only on where it starts, so what it found from
+        // the same node before is reused, see `SearchCache::indirect_paths`
+        if excluded.graph_ids.is_empty() && excluded.requirement.is_empty() {
+            self.cache.indirect_paths(self.graph, path, target, search)
+        } else {
+            search()
+        }
+    }
+}
 
 pub fn walk_operation<'graph, 'op: 'graph>(
     graph: &'graph Graph<'graph>,
@@ -111,15 +138,15 @@ pub fn walk_operation_with_groups<'graph, 'op: 'graph>(
 
     let mut paths_grouped_by_root_field: Vec<BestPathsPerLeaf> =
         Vec::with_capacity(operation.selection_set.items.len());
-    let mut moves = MoveRequirements::default();
-    moves.groups = groups;
-    let walk = OperationWalk {
+    let walk = Walk {
         graph,
         supergraph,
         override_context,
         cancellation_token,
-        moves,
+        cache: SearchCache::default(),
+        groups,
     };
+    let walk = &walk;
 
     // It's critical to iterate over root fiels and preserve their original order
     for selection_item in selection_set.items.iter() {
@@ -132,7 +159,7 @@ pub fn walk_operation_with_groups<'graph, 'op: 'graph>(
         while let Some((selection_item, paths, also)) = stack_to_resolve.pop_front() {
             cancellation_token.bail_if_cancelled()?;
             let (next_stack_to_resolve, new_paths_per_leaf) =
-                walk.process_selection(selection_item, also, &paths, &[])?;
+                process_selection(walk, selection_item, also, &paths, &[])?;
 
             paths_per_leaf.extend(new_paths_per_leaf);
             for item in next_stack_to_resolve.into_iter().rev() {
@@ -149,96 +176,94 @@ pub fn walk_operation_with_groups<'graph, 'op: 'graph>(
     })
 }
 
-impl<'graph> OperationWalk<'graph> {
-    fn process_selection<'op: 'graph>(
-        &self,
-        selection_item: &'op SelectionItem,
-        also: Option<Rc<SelectionAttributes>>,
-        paths: &[OperationPath<'graph>],
-        fields_to_resolve_locally: &[String],
-    ) -> Result<
-        (
-            ResolutionStack<'graph, 'op>,
-            Vec<Vec<OperationPath<'graph>>>,
-        ),
-        WalkOperationError,
-    > {
-        let mut stack_to_resolve: ResolutionStack = vec![];
-        let mut paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
+fn process_selection<'graph, 'op: 'graph>(
+    walk: &Walk<'graph>,
+    selection_item: &'op SelectionItem,
+    also: Option<Rc<SelectionAttributes>>,
+    paths: &[OperationPath<'graph>],
+    fields_to_resolve_locally: &[String],
+) -> Result<
+    (
+        ResolutionStack<'graph, 'op>,
+        Vec<Vec<OperationPath<'graph>>>,
+    ),
+    WalkOperationError,
+> {
+    let mut stack_to_resolve: ResolutionStack = vec![];
+    let mut paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
 
-        match selection_item {
-            SelectionItem::InlineFragment(fragment) => {
-                let (next_selection_items, new_paths_per_leaf) =
-                    self.process_inline_fragment(fragment, also, paths, fields_to_resolve_locally)?;
-                paths_per_leaf.extend(new_paths_per_leaf);
-                stack_to_resolve.extend(next_selection_items);
-            }
-            SelectionItem::Field(field) => {
-                // Only fragments look at `fields_to_resolve_locally`, fields can always jump.
-                let (next_selection_items, new_paths_per_leaf) =
-                    self.process_field(field, paths)?;
-                paths_per_leaf.extend(new_paths_per_leaf);
-                stack_to_resolve.extend(next_selection_items);
-            }
-            SelectionItem::FragmentSpread(_) => {
-                // No processing needed for FragmentSpread
-            }
-        }
-
-        Ok((stack_to_resolve, paths_per_leaf))
-    }
-
-    #[instrument(level = "trace", skip_all)]
-    fn process_selection_set<'op: 'graph>(
-        &self,
-        selection_set: &'op SelectionSet,
-        paths: &[OperationPath<'graph>],
-        fields_to_resolve_locally: &[String],
-    ) -> Result<
-        (
-            ResolutionStack<'graph, 'op>,
-            Vec<Vec<OperationPath<'graph>>>,
-        ),
-        WalkOperationError,
-    > {
-        let mut stack_to_resolve: ResolutionStack = vec![];
-        let mut paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
-
-        for item in selection_set.items.iter() {
-            let also = self.moves.groups.and_then(|groups| groups.of(item));
-            let (next_stack_to_resolve, new_paths_per_leaf) =
-                self.process_selection(item, also, paths, fields_to_resolve_locally)?;
+    match selection_item {
+        SelectionItem::InlineFragment(fragment) => {
+            let (next_selection_items, new_paths_per_leaf) =
+                process_inline_fragment(walk, fragment, also, paths, fields_to_resolve_locally)?;
             paths_per_leaf.extend(new_paths_per_leaf);
-            stack_to_resolve.extend(next_stack_to_resolve);
+            stack_to_resolve.extend(next_selection_items);
         }
-
-        Ok((stack_to_resolve, paths_per_leaf))
+        SelectionItem::Field(field) => {
+            // Only fragments look at `fields_to_resolve_locally`, fields can always jump.
+            let (next_selection_items, new_paths_per_leaf) = process_field(walk, field, paths)?;
+            paths_per_leaf.extend(new_paths_per_leaf);
+            stack_to_resolve.extend(next_selection_items);
+        }
+        SelectionItem::FragmentSpread(_) => {
+            // No processing needed for FragmentSpread
+        }
     }
 
-    #[instrument(level = "trace", skip_all, fields(
+    Ok((stack_to_resolve, paths_per_leaf))
+}
+
+#[instrument(level = "trace", skip_all)]
+fn process_selection_set<'graph, 'op: 'graph>(
+    walk: &Walk<'graph>,
+    selection_set: &'op SelectionSet,
+    paths: &[OperationPath<'graph>],
+    fields_to_resolve_locally: &[String],
+) -> Result<
+    (
+        ResolutionStack<'graph, 'op>,
+        Vec<Vec<OperationPath<'graph>>>,
+    ),
+    WalkOperationError,
+> {
+    let mut stack_to_resolve: ResolutionStack = vec![];
+    let mut paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
+
+    for item in selection_set.items.iter() {
+        let also = walk.groups.and_then(|groups| groups.of(item));
+        let (next_stack_to_resolve, new_paths_per_leaf) =
+            process_selection(walk, item, also, paths, fields_to_resolve_locally)?;
+        paths_per_leaf.extend(new_paths_per_leaf);
+        stack_to_resolve.extend(next_stack_to_resolve);
+    }
+
+    Ok((stack_to_resolve, paths_per_leaf))
+}
+
+#[instrument(level = "trace", skip_all, fields(
   type_condition = fragment.type_condition,
 ))]
-    fn process_inline_fragment<'op: 'graph>(
-        &self,
-        fragment: &'op InlineFragmentSelection,
-        also: Option<Rc<SelectionAttributes>>,
-        paths: &[OperationPath<'graph>],
-        fields_to_resolve_locally: &[String],
-    ) -> Result<
-        (
-            ResolutionStack<'graph, 'op>,
-            Vec<Vec<OperationPath<'graph>>>,
-        ),
-        WalkOperationError,
-    > {
-        let Self {
-            graph,
-            supergraph,
-            override_context,
-            cancellation_token,
-            ref moves,
-        } = *self;
-        trace!(
+fn process_inline_fragment<'graph, 'op: 'graph>(
+    walk: &Walk<'graph>,
+    fragment: &'op InlineFragmentSelection,
+    also: Option<Rc<SelectionAttributes>>,
+    paths: &[OperationPath<'graph>],
+    fields_to_resolve_locally: &[String],
+) -> Result<
+    (
+        ResolutionStack<'graph, 'op>,
+        Vec<Vec<OperationPath<'graph>>>,
+    ),
+    WalkOperationError,
+> {
+    let Walk {
+        graph,
+        supergraph,
+        override_context,
+        cancellation_token,
+        ..
+    } = walk;
+    trace!(
         "Processing inline fragment '{}' on type '{}' (skip: {:?}, include: {:?}) through {} possible paths",
         fragment.selections,
         fragment.type_condition,
@@ -247,116 +272,49 @@ impl<'graph> OperationWalk<'graph> {
         paths.len()
     );
 
-        cancellation_token.bail_if_cancelled()?;
+    cancellation_token.bail_if_cancelled()?;
 
-        // if the current type is an object type we ignore an abstract move
-        // but if it's a union, we need to find an abstract move to the target type
-        let tail_index = graph.get_edge_tail(
-            &paths
-                .first()
-                .unwrap()
-                .last_segment
-                .as_ref()
-                .unwrap()
-                .edge_index,
-        )?;
+    // if the current type is an object type we ignore an abstract move
+    // but if it's a union, we need to find an abstract move to the target type
+    let tail_index = graph.get_edge_tail(
+        &paths
+            .first()
+            .unwrap()
+            .last_segment
+            .as_ref()
+            .unwrap()
+            .edge_index,
+    )?;
 
-        // a fragment on the tail's own type always applies, so there's no `... on X` to look for
-        //  - interfaces - `... on Interface` - we look for the interface's fields.
-        //  - object types - `... on Object` - we look for the object's fields.
-        //  - union types - `... on Union` on a field that returns the union. The tail is one of the
-        //    union's member nodes, named after the union, and the path stays on that member.
-        // without a condition we go straight to the fragment's selections, with one the fragment is
-        // kept through a selfie edge, every one of these nodes has one
-        let tail = graph.node(tail_index)?;
-        let tail_type_name = match tail {
-            Node::SubgraphType(t) => &t.name,
-            _ => panic!("Expected a subgraph type when resolving fragments"),
-        };
+    // a fragment on the tail's own type always applies, so there's no `... on X` to look for
+    //  - interfaces - `... on Interface` - we look for the interface's fields.
+    //  - object types - `... on Object` - we look for the object's fields.
+    //  - union types - `... on Union` on a field that returns the union. The tail is one of the
+    //    union's member nodes, named after the union, and the path stays on that member.
+    // without a condition we go straight to the fragment's selections, with one the fragment is
+    // kept through a selfie edge, every one of these nodes has one
+    let tail = graph.node(tail_index)?;
+    let tail_type_name = match tail {
+        Node::SubgraphType(t) => &t.name,
+        _ => panic!("Expected a subgraph type when resolving fragments"),
+    };
 
-        if tail_type_name == &fragment.type_condition {
-            // It's the same type and no conditions are applied, we can skip the fragment processing
-            // and go directly to its selections.
-            if fragment.include_if.is_none() && fragment.skip_if.is_none() {
-                return self.process_selection_set(
-                    &fragment.selections,
-                    paths,
-                    fields_to_resolve_locally,
-                );
-            }
-
-            // Looks like the fragment has conditions, we need to process them differently.
-            // We aim to preserve the inline fragment due to conditions, instead of eliminating it,
-            // and jumping straight to its selections.
-            let condition: Option<Condition> = fragment.into();
-
-            let mut next_paths: Vec<OperationPath<'graph>> = Vec::with_capacity(paths.len());
-            for path in paths {
-                let path_span = span!(
-                    Level::TRACE,
-                    "explore_path",
-                    path = path.pretty_print(graph)
-                );
-                let _enter = path_span.enter();
-
-                // Only the first path's tail was checked above, so check this one's. A path at the
-                // type keeps the fragment through a selfie edge. One at an interface object that got
-                // to the type with `🔎 Type` has no selfie edge, its tail is still the interface
-                // object, so it takes that type condition again, with the fragment's condition on it.
-                let path_tail_is_the_type = matches!(
-                    graph.node(path.tail())?,
-                    Node::SubgraphType(t) if t.name == fragment.type_condition
-                );
-                let direct_path = if path_tail_is_the_type {
-                    Some(find_self_referencing_direct_path(
-                        graph,
-                        supergraph,
-                        override_context,
-                        path,
-                        &fragment.type_condition,
-                        condition.as_ref().expect("Condition should be present"),
-                        cancellation_token,
-                    )?)
-                } else {
-                    find_direct_path(
-                        graph,
-                        supergraph,
-                        override_context,
-                        path,
-                        &NavigationTarget::ConcreteType(
-                            &fragment.type_condition,
-                            condition.clone(),
-                            None,
-                        ),
-                        cancellation_token,
-                    )?
-                };
-
-                if let Some(direct_path) = direct_path {
-                    trace!("advanced: {}", path.pretty_print(graph));
-                    next_paths.push(direct_path);
-                }
-            }
-
-            if next_paths.is_empty() {
-                return Err(WalkOperationError::NoPathsFound(
-                    fragment.type_condition.to_string(),
-                ));
-            }
-
-            // Now process the selections under the fragment using the advanced paths
-            return self.process_selection_set(
+    if tail_type_name == &fragment.type_condition {
+        // It's the same type and no conditions are applied, we can skip the fragment processing
+        // and go directly to its selections.
+        if fragment.include_if.is_none() && fragment.skip_if.is_none() {
+            return process_selection_set(
+                walk,
                 &fragment.selections,
-                &next_paths,
+                paths,
                 fields_to_resolve_locally,
             );
         }
 
-        trace!(
-            "Trying to advance to: ... on {}, through {} possible paths",
-            fragment.type_condition,
-            paths.len()
-        );
+        // Looks like the fragment has conditions, we need to process them differently.
+        // We aim to preserve the inline fragment due to conditions, instead of eliminating it,
+        // and jumping straight to its selections.
+        let condition: Option<Condition> = fragment.into();
 
         let mut next_paths: Vec<OperationPath<'graph>> = Vec::with_capacity(paths.len());
         for path in paths {
@@ -367,105 +325,173 @@ impl<'graph> OperationWalk<'graph> {
             );
             let _enter = path_span.enter();
 
-            let direct_path = find_direct_path(
-                graph,
-                supergraph,
-                override_context,
-                path,
-                &NavigationTarget::ConcreteType(
+            // Only the first path's tail was checked above, so check this one's. A path at the
+            // type keeps the fragment through a selfie edge. One at an interface object that got
+            // to the type with `🔎 Type` has no selfie edge, its tail is still the interface
+            // object, so it takes that type condition again, with the fragment's condition on it.
+            let path_tail_is_the_type = matches!(
+                graph.node(path.tail())?,
+                Node::SubgraphType(t) if t.name == fragment.type_condition
+            );
+            let direct_path = if path_tail_is_the_type {
+                Some(find_self_referencing_direct_path(
+                    graph,
+                    supergraph,
+                    override_context,
+                    path,
                     &fragment.type_condition,
-                    fragment.into(),
-                    also.clone(),
-                ),
-                cancellation_token,
-            )?;
-
-            let found_direct_path = direct_path.is_some();
-            trace!("Direct path found: {}", found_direct_path);
-            if let Some(direct_path) = direct_path {
-                trace!("advanced: {}", path.pretty_print(graph));
-                next_paths.push(direct_path);
-            }
-
-            if fields_to_resolve_locally.is_empty() {
-                let indirect_paths = find_indirect_paths(
+                    condition.as_ref().expect("Condition should be present"),
+                    cancellation_token,
+                )?)
+            } else {
+                find_direct_path(
                     graph,
                     supergraph,
                     override_context,
                     path,
                     &NavigationTarget::ConcreteType(
                         &fragment.type_condition,
-                        fragment.into(),
-                        also.clone(),
+                        condition.clone(),
+                        None,
                     ),
-                    &ExcludedFromLookup::new(),
                     cancellation_token,
-                    Some(moves),
-                )?;
+                )?
+            };
 
-                let found_indirect_paths = !indirect_paths.is_empty();
-                if found_indirect_paths {
-                    trace!("advanced: {}", path.pretty_print(graph));
-                    // One best path per subgraph. Keep them all: the fields under the fragment
-                    // may only exist in one of them (the first is not always the right one).
-                    next_paths.extend(indirect_paths);
-                }
-
-                if !found_indirect_paths && !found_direct_path {
-                    // Looks like a union member or an interface implementation is not resolvable.
-                    // The fact the fragment for that object type passed GraphQL validations,
-                    // means that it's a child of the abstract type,
-                    // and it was probably eliminated from the Graph because of intersection.
-                    trace!(
-                        "Object type '{}' is not resolvable by '{}', resolve only the __typename",
-                        fragment.type_condition,
-                        tail_type_name
-                    );
-                }
+            if let Some(direct_path) = direct_path {
+                trace!("advanced: {}", path.pretty_print(graph));
+                next_paths.push(direct_path);
             }
         }
 
         if next_paths.is_empty() {
-            let mut tracker = BestPathTracker::new(graph);
-
-            for path in paths {
-                let path_span = span!(
-                    Level::TRACE,
-                    "explore_path",
-                    path = path.pretty_print(graph)
-                );
-                let _enter = path_span.enter();
-                let direct_paths = find_direct_paths(
-                    graph,
-                    supergraph,
-                    override_context,
-                    path,
-                    &NavigationTarget::field(&FieldSelection::new_typename(), None),
-                    cancellation_token,
-                )?;
-
-                trace!("Direct paths found: {}", direct_paths.len());
-
-                if !direct_paths.is_empty() {
-                    for p in direct_paths {
-                        tracker.add(&p)?;
-                    }
-                } else {
-                    return Err(WalkOperationError::NoPathsFound("__typename".to_string()));
-                }
-            }
-
-            let next_paths = tracker.get_best_paths();
-
-            if next_paths.is_empty() {
-                return Err(WalkOperationError::NoPathsFound("__typename".to_string()));
-            }
-
-            return Ok((vec![], vec![find_leaf_paths(next_paths)]));
+            return Err(WalkOperationError::NoPathsFound(
+                fragment.type_condition.to_string(),
+            ));
         }
 
-        self.process_selection_set(&fragment.selections, &next_paths, fields_to_resolve_locally)
+        // Now process the selections under the fragment using the advanced paths
+        return process_selection_set(
+            walk,
+            &fragment.selections,
+            &next_paths,
+            fields_to_resolve_locally,
+        );
     }
+
+    trace!(
+        "Trying to advance to: ... on {}, through {} possible paths",
+        fragment.type_condition,
+        paths.len()
+    );
+
+    let mut next_paths: Vec<OperationPath<'graph>> = Vec::with_capacity(paths.len());
+    for path in paths {
+        let path_span = span!(
+            Level::TRACE,
+            "explore_path",
+            path = path.pretty_print(graph)
+        );
+        let _enter = path_span.enter();
+
+        let direct_path = find_direct_path(
+            graph,
+            supergraph,
+            override_context,
+            path,
+            &NavigationTarget::ConcreteType(
+                &fragment.type_condition,
+                fragment.into(),
+                also.clone(),
+            ),
+            cancellation_token,
+        )?;
+
+        let found_direct_path = direct_path.is_some();
+        trace!("Direct path found: {}", found_direct_path);
+        if let Some(direct_path) = direct_path {
+            trace!("advanced: {}", path.pretty_print(graph));
+            next_paths.push(direct_path);
+        }
+
+        if fields_to_resolve_locally.is_empty() {
+            let indirect_paths = walk.find_indirect_paths(
+                path,
+                &NavigationTarget::ConcreteType(
+                    &fragment.type_condition,
+                    fragment.into(),
+                    also.clone(),
+                ),
+                &ExcludedFromLookup::new(),
+            )?;
+
+            let found_indirect_paths = !indirect_paths.is_empty();
+            if found_indirect_paths {
+                trace!("advanced: {}", path.pretty_print(graph));
+                // One best path per subgraph. Keep them all: the fields under the fragment
+                // may only exist in one of them (the first is not always the right one).
+                next_paths.extend(indirect_paths);
+            }
+
+            if !found_indirect_paths && !found_direct_path {
+                // Looks like a union member or an interface implementation is not resolvable.
+                // The fact the fragment for that object type passed GraphQL validations,
+                // means that it's a child of the abstract type,
+                // and it was probably eliminated from the Graph because of intersection.
+                trace!(
+                    "Object type '{}' is not resolvable by '{}', resolve only the __typename",
+                    fragment.type_condition,
+                    tail_type_name
+                );
+            }
+        }
+    }
+
+    if next_paths.is_empty() {
+        let mut tracker = BestPathTracker::new(graph);
+
+        for path in paths {
+            let path_span = span!(
+                Level::TRACE,
+                "explore_path",
+                path = path.pretty_print(graph)
+            );
+            let _enter = path_span.enter();
+            let direct_paths = find_direct_paths(
+                graph,
+                supergraph,
+                override_context,
+                path,
+                &NavigationTarget::field(&FieldSelection::new_typename(), None),
+                cancellation_token,
+            )?;
+
+            trace!("Direct paths found: {}", direct_paths.len());
+
+            if !direct_paths.is_empty() {
+                for p in direct_paths {
+                    tracker.add(&p)?;
+                }
+            } else {
+                return Err(WalkOperationError::NoPathsFound("__typename".to_string()));
+            }
+        }
+
+        let next_paths = tracker.get_best_paths();
+
+        if next_paths.is_empty() {
+            return Err(WalkOperationError::NoPathsFound("__typename".to_string()));
+        }
+
+        return Ok((vec![], vec![find_leaf_paths(next_paths)]));
+    }
+
+    process_selection_set(
+        walk,
+        &fragment.selections,
+        &next_paths,
+        fields_to_resolve_locally,
+    )
 }
 
 /// The same union may have different members in different subgraphs.
@@ -565,186 +591,174 @@ fn narrow_partial_union_paths<'graph>(paths: &mut Vec<OperationPath<'graph>>) {
     });
 }
 
-impl<'graph> OperationWalk<'graph> {
-    #[instrument(level = "trace", skip_all, fields(
+#[instrument(level = "trace", skip_all, fields(
   field_name = &field.name,
   leaf = field.is_leaf()
 ))]
-    fn process_field<'op: 'graph>(
-        &self,
-        field: &'op FieldSelection,
-        paths: &[OperationPath<'graph>],
-    ) -> Result<
-        (
-            ResolutionStack<'graph, 'op>,
-            Vec<Vec<OperationPath<'graph>>>,
-        ),
-        WalkOperationError,
-    > {
-        let Self {
+fn process_field<'graph, 'op: 'graph>(
+    walk: &Walk<'graph>,
+    field: &'op FieldSelection,
+    paths: &[OperationPath<'graph>],
+) -> Result<
+    (
+        ResolutionStack<'graph, 'op>,
+        Vec<Vec<OperationPath<'graph>>>,
+    ),
+    WalkOperationError,
+> {
+    let Walk {
+        graph,
+        supergraph,
+        override_context,
+        cancellation_token,
+        ..
+    } = walk;
+    let mut next_stack_to_resolve: ResolutionStack = vec![];
+    let mut paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
+    let mut tracker = BestPathTracker::new(graph);
+
+    trace!(
+        "Trying to advance to: {} through {} possible paths",
+        field,
+        paths.len()
+    );
+
+    cancellation_token.bail_if_cancelled()?;
+
+    let mut target_subgraph_ids_cache = None;
+    // built once, so every path into the field shares its alias and arguments
+    let direct_target = NavigationTarget::field(field, None);
+
+    for path in paths {
+        let path_span = span!(
+            Level::TRACE,
+            "explore_path",
+            path = path.pretty_print(graph)
+        );
+        let _enter = path_span.enter();
+
+        let mut advanced = false;
+
+        let excluded = ExcludedFromLookup::new();
+        let direct_paths = find_direct_paths(
             graph,
             supergraph,
             override_context,
+            path,
+            &direct_target,
             cancellation_token,
-            ref moves,
-        } = *self;
-        let mut next_stack_to_resolve: ResolutionStack = vec![];
-        let mut paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
-        let mut tracker = BestPathTracker::new(graph);
+        )?;
+        trace!("Direct paths found: {}", direct_paths.len());
 
-        trace!(
-            "Trying to advance to: {} through {} possible paths",
-            field,
-            paths.len()
-        );
+        // A leaf reached without leaving the subgraph can't be beaten by going elsewhere, unless
+        // it needs `@requires`: that's another fetch and wave, and a subgraph that has the field
+        // without requirements may be one hop away.
+        let found_direct_paths_to_leaf = field.is_leaf()
+            && direct_paths.iter().any(|direct_path| {
+                direct_path
+                    .last_segment
+                    .as_ref()
+                    .is_none_or(|segment| segment.requirement_tree.is_none())
+            });
 
-        cancellation_token.bail_if_cancelled()?;
-
-        let mut target_subgraph_ids_cache = None;
-        // built once, so every path into the field shares its alias and arguments
-        let direct_target = NavigationTarget::field(field, None);
-
-        for path in paths {
-            let path_span = span!(
-                Level::TRACE,
-                "explore_path",
-                path = path.pretty_print(graph)
-            );
-            let _enter = path_span.enter();
-
-            let mut advanced = false;
-
-            let excluded = ExcludedFromLookup::new();
-            let direct_paths = find_direct_paths(
-                graph,
-                supergraph,
-                override_context,
-                path,
-                &direct_target,
-                cancellation_token,
-            )?;
-            trace!("Direct paths found: {}", direct_paths.len());
-
-            // A leaf reached without leaving the subgraph can't be beaten by going elsewhere, unless
-            // it needs `@requires`: that's another fetch and wave, and a subgraph that has the field
-            // without requirements may be one hop away.
-            let found_direct_paths_to_leaf = field.is_leaf()
-                && direct_paths.iter().any(|direct_path| {
-                    direct_path
-                        .last_segment
-                        .as_ref()
-                        .is_none_or(|segment| segment.requirement_tree.is_none())
-                });
-
-            if !direct_paths.is_empty() {
-                advanced = true;
-                for direct_path in &direct_paths {
-                    tracker.add(direct_path)?;
-                }
+        if !direct_paths.is_empty() {
+            advanced = true;
+            for direct_path in &direct_paths {
+                tracker.add(direct_path)?;
             }
+        }
 
-            if !found_direct_paths_to_leaf {
-                let has_indirect_candidates = graph.entity_moves_from(path.tail()).next().is_some();
+        if !found_direct_paths_to_leaf {
+            let has_indirect_candidates = graph.entity_moves_from(path.tail()).next().is_some();
 
-                if has_indirect_candidates {
-                    if target_subgraph_ids_cache.is_none() {
-                        target_subgraph_ids_cache =
-                            Some(field_target_subgraph_ids(supergraph, field, paths, graph)?);
+            if has_indirect_candidates {
+                if target_subgraph_ids_cache.is_none() {
+                    target_subgraph_ids_cache =
+                        Some(field_target_subgraph_ids(supergraph, field, paths, graph)?);
+                }
+                let target_subgraph_ids = target_subgraph_ids_cache
+                    .as_ref()
+                    .and_then(|ids| ids.as_deref());
+
+                let target = direct_target.in_subgraphs(target_subgraph_ids);
+                let indirect_paths = walk.find_indirect_paths(path, &target, &excluded)?;
+                trace!("Indirect paths found: {}", indirect_paths.len());
+
+                if !indirect_paths.is_empty() {
+                    advanced = true;
+                    for indirect_path in indirect_paths {
+                        tracker.add(&indirect_path)?;
                     }
-                    let target_subgraph_ids = target_subgraph_ids_cache
-                        .as_ref()
-                        .and_then(|ids| ids.as_deref());
-
-                    let target = direct_target.in_subgraphs(target_subgraph_ids);
-                    let indirect_paths = find_indirect_paths(
-                        graph,
-                        supergraph,
-                        override_context,
-                        path,
-                        &target,
-                        &excluded,
-                        cancellation_token,
-                        Some(moves),
-                    )?;
-                    trace!("Indirect paths found: {}", indirect_paths.len());
-
-                    if !indirect_paths.is_empty() {
-                        advanced = true;
-                        for indirect_path in indirect_paths {
-                            tracker.add(&indirect_path)?;
-                        }
-                    }
-                } else {
-                    trace!(
+                }
+            } else {
+                trace!(
                     "Skipping indirect lookup for '{}' at tail {} because there are no entity/interface-object outgoing edges",
                     field.name,
                     path.tail().index()
                 );
-                }
             }
-
-            trace!(
-                "{}: {}",
-                if advanced {
-                    "advanced"
-                } else {
-                    "failed to advance"
-                },
-                path.pretty_print(graph)
-            );
         }
 
-        let mut next_paths = tracker.get_best_paths();
-        narrow_partial_union_paths(&mut next_paths);
-        if next_paths.is_empty() {
-            return Err(WalkOperationError::NoPathsFound(field.name.to_string()));
-        }
+        trace!(
+            "{}: {}",
+            if advanced {
+                "advanced"
+            } else {
+                "failed to advance"
+            },
+            path.pretty_print(graph)
+        );
+    }
 
-        let mut fields_to_resolve_locally: Vec<String> = Vec::new();
-        if !field.is_leaf() {
-            let field_move_paths: Vec<_> = next_paths
-                .iter()
-                .filter(|path| {
-                    path.last_segment.as_ref().is_some_and(|seg| {
-                        matches!(graph.edge(seg.edge_index).unwrap(), Edge::FieldMove(_))
-                    })
+    let mut next_paths = tracker.get_best_paths();
+    narrow_partial_union_paths(&mut next_paths);
+    if next_paths.is_empty() {
+        return Err(WalkOperationError::NoPathsFound(field.name.to_string()));
+    }
+
+    let mut fields_to_resolve_locally: Vec<String> = Vec::new();
+    if !field.is_leaf() {
+        let field_move_paths: Vec<_> = next_paths
+            .iter()
+            .filter(|path| {
+                path.last_segment.as_ref().is_some_and(|seg| {
+                    matches!(graph.edge(seg.edge_index).unwrap(), Edge::FieldMove(_))
                 })
-                .collect();
+            })
+            .collect();
 
-            if !field_move_paths.is_empty() {
-                let edge_index = field_move_paths[0]
-                    .last_segment
-                    .as_ref()
-                    .unwrap()
-                    .edge_index;
+        if !field_move_paths.is_empty() {
+            let edge_index = field_move_paths[0]
+                .last_segment
+                .as_ref()
+                .unwrap()
+                .edge_index;
 
-                let head_index = graph.get_edge_head(&edge_index)?;
-                let tail_index = graph.get_edge_tail(&edge_index)?;
+            let head_index = graph.get_edge_head(&edge_index)?;
+            let tail_index = graph.get_edge_tail(&edge_index)?;
 
-                let head = graph.node(head_index)?;
-                let tail = graph.node(tail_index)?;
+            let head = graph.node(head_index)?;
+            let tail = graph.node(tail_index)?;
 
-                let parent_type_name = head.name_str();
-                let parent_def = supergraph
-                    .definitions
-                    .get(parent_type_name)
-                    .ok_or_else(|| {
-                        WalkOperationError::TypeNotFound(parent_type_name.to_string())
-                    })?;
+            let parent_type_name = head.name_str();
+            let parent_def = supergraph
+                .definitions
+                .get(parent_type_name)
+                .ok_or_else(|| WalkOperationError::TypeNotFound(parent_type_name.to_string()))?;
 
-                let field_def = parent_def.fields().get(&field.name).ok_or_else(|| {
-                    WalkOperationError::FieldNotFound(
-                        field.name.to_string(),
-                        parent_type_name.to_string(),
-                    )
-                })?;
+            let field_def = parent_def.fields().get(&field.name).ok_or_else(|| {
+                WalkOperationError::FieldNotFound(
+                    field.name.to_string(),
+                    parent_type_name.to_string(),
+                )
+            })?;
 
-                let output_type = supergraph
-                    .definitions
-                    .get(tail.name_str())
-                    .ok_or_else(|| WalkOperationError::TypeNotFound(tail.name_str().to_string()))?;
+            let output_type = supergraph
+                .definitions
+                .get(tail.name_str())
+                .ok_or_else(|| WalkOperationError::TypeNotFound(tail.name_str().to_string()))?;
 
-                if output_type.is_interface_type()
+            if output_type.is_interface_type()
                 && field_def.resolvable_in.len() > 1
                 // if there's one fragment, the query planner can decide which subgraph to use, based on the fragment's type condition
                 && field
@@ -754,84 +768,84 @@ impl<'graph> OperationWalk<'graph> {
                     .filter(|item| matches!(item, SelectionItem::InlineFragment(_)))
                     .count()
                     > 1
-                {
-                    fields_to_resolve_locally = output_type
-                        .fields()
-                        .keys()
-                        .map(|name| name.to_string())
-                        .collect();
-                }
+            {
+                fields_to_resolve_locally = output_type
+                    .fields()
+                    .keys()
+                    .map(|name| name.to_string())
+                    .collect();
             }
         }
+    }
 
-        if !fields_to_resolve_locally.is_empty() {
-            let path_span = span!(
+    if !fields_to_resolve_locally.is_empty() {
+        let path_span = span!(
             Level::TRACE,
             "Shareable interface detected. Validating that sub-selections can be resolved from a single path."
         );
-            let _enter = path_span.enter();
-            let mut valid_paths_for_children: Vec<OperationPath<'graph>> =
-                Vec::with_capacity(next_paths.len());
-            for candidate_path in &next_paths {
-                let mut all_children_resolvable = true;
-                // We don't need the results of the sub-walk here, only whether it was successful
-                for child_selection in &field.selections.items {
-                    let finding = self.process_selection(
-                        child_selection,
-                        None,
-                        std::slice::from_ref(candidate_path),
-                        &fields_to_resolve_locally,
-                    );
+        let _enter = path_span.enter();
+        let mut valid_paths_for_children: Vec<OperationPath<'graph>> =
+            Vec::with_capacity(next_paths.len());
+        for candidate_path in &next_paths {
+            let mut all_children_resolvable = true;
+            // We don't need the results of the sub-walk here, only whether it was successful
+            for child_selection in &field.selections.items {
+                let finding = process_selection(
+                    walk,
+                    child_selection,
+                    None,
+                    std::slice::from_ref(candidate_path),
+                    &fields_to_resolve_locally,
+                );
 
-                    match finding {
-                        Ok((child_stack, child_leaves)) => {
-                            if child_leaves.is_empty() && child_stack.is_empty() {
-                                all_children_resolvable = false;
-                                trace!(
-                                    "Path {} failed to resolve child '{}' locally.",
-                                    candidate_path.pretty_print(graph),
-                                    child_selection
-                                );
-                                break; // This candidate_path is invalid.
-                            }
-                        }
-                        Err(_) => {
+                match finding {
+                    Ok((child_stack, child_leaves)) => {
+                        if child_leaves.is_empty() && child_stack.is_empty() {
                             all_children_resolvable = false;
+                            trace!(
+                                "Path {} failed to resolve child '{}' locally.",
+                                candidate_path.pretty_print(graph),
+                                child_selection
+                            );
                             break; // This candidate_path is invalid.
                         }
                     }
-                }
-
-                if all_children_resolvable {
-                    trace!(
-                        "Path {} can resolve all children locally and is valid.",
-                        candidate_path.pretty_print(graph)
-                    );
-                    valid_paths_for_children.push(candidate_path.clone());
+                    Err(_) => {
+                        all_children_resolvable = false;
+                        break; // This candidate_path is invalid.
+                    }
                 }
             }
-            next_paths = valid_paths_for_children;
-            if !field.is_leaf() && next_paths.is_empty() {
-                // If no single path could satisfy all children, we have no valid way forward.
-                return Err(WalkOperationError::NoPathsFound(field.name.to_string()));
+
+            if all_children_resolvable {
+                trace!(
+                    "Path {} can resolve all children locally and is valid.",
+                    candidate_path.pretty_print(graph)
+                );
+                valid_paths_for_children.push(candidate_path.clone());
             }
         }
-
-        if field.is_leaf() {
-            paths_per_leaf.push(find_leaf_paths(next_paths));
-        } else {
-            trace!("Found {} paths", next_paths.len());
-            let next_paths = Rc::new(next_paths);
-            for next_selection_items in field.selections.items.iter() {
-                let also = moves
-                    .groups
-                    .and_then(|groups| groups.of(next_selection_items));
-                next_stack_to_resolve.push((next_selection_items, Rc::clone(&next_paths), also));
-            }
+        next_paths = valid_paths_for_children;
+        if !field.is_leaf() && next_paths.is_empty() {
+            // If no single path could satisfy all children, we have no valid way forward.
+            return Err(WalkOperationError::NoPathsFound(field.name.to_string()));
         }
-
-        Ok((next_stack_to_resolve, paths_per_leaf))
     }
+
+    if field.is_leaf() {
+        paths_per_leaf.push(find_leaf_paths(next_paths));
+    } else {
+        trace!("Found {} paths", next_paths.len());
+        let next_paths = Rc::new(next_paths);
+        for next_selection_items in field.selections.items.iter() {
+            let also = walk
+                .groups
+                .and_then(|groups| groups.of(next_selection_items));
+            next_stack_to_resolve.push((next_selection_items, Rc::clone(&next_paths), also));
+        }
+    }
+
+    Ok((next_stack_to_resolve, paths_per_leaf))
 }
 
 /// The subgraphs that can resolve `field` on the types the paths end at, as sorted indices

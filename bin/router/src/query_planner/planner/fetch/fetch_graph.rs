@@ -1037,34 +1037,43 @@ fn same_but_last_types(left: &MergePath, right: &MergePath) -> bool {
     }
 }
 
-// TODO: simplfy args
-#[allow(clippy::too_many_arguments)]
+/// An entity call to find or make a step for: to `subgraph_name` under `parent`, for the objects
+/// of `input_type_name` at `response_path`, read with `key`.
+#[derive(Clone, Copy)]
+struct EntityCall<'a> {
+    parent: NodeIndex,
+    subgraph_name: &'a SubgraphName,
+    input_type_name: &'a str,
+    output_type_name: &'a str,
+    response_path: &'a MergePath,
+    key: &'a TypeAwareSelection<'a>,
+    conditions: Conditions<'a>,
+    /// Made while planning what a field with `@requires` needs.
+    created_from_requires: bool,
+}
+
+/// A step for `call`: one made for the same call when there is one, or a new one. `batchable`
+/// calls go to one step with the calls for other types at the same spot, see
+/// `ensure_batched_fetch_step`.
 fn ensure_fetch_step_for_subgraph(
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
-    parent_fetch_step_index: NodeIndex,
-    subgraph_name: &SubgraphName,
-    input_type_name: &str,
-    output_type_name: &str,
-    response_path: &MergePath,
-    key: Option<&TypeAwareSelection<'_>>,
-    conditions: Conditions<'_>,
-    created_from_requires: bool,
+    call: EntityCall<'_>,
     batchable: bool,
 ) -> Result<NodeIndex, FetchGraphError> {
-    let condition = conditions.current;
-    let batched = batchable && joins_other_types(response_path, input_type_name, output_type_name);
-    if batched {
-        return ensure_batched_fetch_step(
-            fetch_graph,
-            parent_fetch_step_index,
-            subgraph_name,
-            input_type_name,
-            response_path,
-            key,
-            conditions,
-            created_from_requires,
-        );
+    let EntityCall {
+        parent: parent_fetch_step_index,
+        subgraph_name,
+        input_type_name,
+        output_type_name,
+        response_path,
+        key,
+        conditions,
+        created_from_requires,
+    } = call;
+    if batchable && joins_other_types(response_path, input_type_name, output_type_name) {
+        return ensure_batched_fetch_step(fetch_graph, call);
     }
+    let condition = conditions.current;
     let matching_child_index = fetch_graph
         .same_entity_calls(
             parent_fetch_step_index,
@@ -1077,9 +1086,9 @@ fn ensure_fetch_step_for_subgraph(
             fetch_graph.get_step_data(child_index).is_ok_and(|step| {
                 step.matches_entity_call(subgraph_name, input_type_name, response_path, condition)
                     // the requested key fields have to be part of the input
-                    && key.is_none_or(|key| step.input.contains(key.type_name, &key.selection_set))
-                    // a step made for requirements is only reused for requirements, and
-                    // the other way around: the optimizations keep the two apart too
+                    && step.input.contains(key.type_name, &key.selection_set)
+                    // a step made for requirements is only reused for requirements, and the
+                    // other way around: the optimizations keep the two apart too
                     && step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES)
                         == created_from_requires
             })
@@ -1090,7 +1099,7 @@ fn ensure_fetch_step_for_subgraph(
             trace!(
                 "found existing fetch step [{}] for entity move key({}) in children of {}",
                 idx.index(),
-                key.map(|r| r.to_string()).unwrap_or_default(),
+                key,
                 parent_fetch_step_index.index(),
             );
             let step = fetch_graph
@@ -1116,16 +1125,14 @@ fn ensure_fetch_step_for_subgraph(
             if created_from_requires {
                 step.flags |= FetchStepFlags::FETCHES_REQUIREMENTS;
             }
-            if let Some(selection) = key {
-                step.input.add(&selection.selection_set)?
-            }
+            step.input.add(&key.selection_set)?;
 
             trace!(
                 "created a new fetch step [{}] subgraph({}) type({}) key({}) in children of {}",
                 step_index.index(),
                 subgraph_name,
                 input_type_name,
-                key.map(|r| r.to_string()).unwrap_or_default(),
+                key,
                 parent_fetch_step_index.index(),
             );
 
@@ -1138,17 +1145,20 @@ fn ensure_fetch_step_for_subgraph(
 /// see `joins_other_types`. One that has the type already, when it was made for the same key,
 /// or another key that doesn't clash with it. Otherwise one at that spot that doesn't have the
 /// type yet, which takes it on. Or a new one.
-#[allow(clippy::too_many_arguments)]
 fn ensure_batched_fetch_step(
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
-    parent_fetch_step_index: NodeIndex,
-    subgraph_name: &SubgraphName,
-    type_name: &str,
-    response_path: &MergePath,
-    key: Option<&TypeAwareSelection<'_>>,
-    conditions: Conditions<'_>,
-    created_from_requires: bool,
+    call: EntityCall<'_>,
 ) -> Result<NodeIndex, FetchGraphError> {
+    let EntityCall {
+        parent: parent_fetch_step_index,
+        subgraph_name,
+        input_type_name: type_name,
+        response_path,
+        key,
+        conditions,
+        created_from_requires,
+        ..
+    } = call;
     let condition = conditions.current;
     let mut with_type_and_key = None;
     let mut with_type = None;
@@ -1169,14 +1179,11 @@ fn ensure_batched_fetch_step(
         }
         match step.input.selections_for_definition(type_name) {
             Some(input) => {
-                let has_key = key.is_none_or(|key| input.contains(&key.selection_set));
-                if has_key {
+                if input.contains(&key.selection_set) {
                     with_type_and_key = Some(child_index);
                     break;
                 }
-                if with_type.is_none()
-                    && key.is_none_or(|key| !response_keys_conflict(input, &key.selection_set))
-                {
+                if with_type.is_none() && !response_keys_conflict(input, &key.selection_set) {
                     with_type = Some(child_index);
                 }
             }
@@ -1235,9 +1242,7 @@ fn ensure_batched_fetch_step(
                 step.response_path = path;
             }
         }
-        if let Some(key) = key {
-            fetch_graph.add_input(step_index, type_name, &key.selection_set)?;
-        }
+        fetch_graph.add_input(step_index, type_name, &key.selection_set)?;
     }
     Ok(step_index)
 }
@@ -1527,14 +1532,16 @@ fn process_entity_move_edge(
 
     let fetch_step_index = ensure_fetch_step_for_subgraph(
         fetch_graph,
-        parent_fetch_step_index,
-        subgraph_name,
-        input_type_name,
-        output_type_name,
-        response_path,
-        Some(&requirement),
-        conditions,
-        created_from_requires,
+        EntityCall {
+            parent: parent_fetch_step_index,
+            subgraph_name,
+            input_type_name,
+            output_type_name,
+            response_path,
+            key: &requirement,
+            conditions,
+            created_from_requires,
+        },
         !is_interface && !head_type.is_interface_object,
     )?;
     fetch_graph
@@ -1674,14 +1681,16 @@ fn process_interface_object_type_move_edge(
 
     let step_for_children_index = ensure_fetch_step_for_subgraph(
         fetch_graph,
-        parent_fetch_step_index,
-        subgraph_name,
-        object_type_name,
-        interface_type_name,
-        response_path,
-        Some(&requirement),
-        conditions,
-        created_from_requires,
+        EntityCall {
+            parent: parent_fetch_step_index,
+            subgraph_name,
+            input_type_name: object_type_name,
+            output_type_name: interface_type_name,
+            response_path,
+            key: &requirement,
+            conditions,
+            created_from_requires,
+        },
         false,
     )?;
 
@@ -2861,28 +2870,17 @@ fn can_leave_from_holder(
         || !reentry.key_fetched_by.is_empty()
         || !field_move.context_arguments.is_empty()
         || is_interface_object
-        || requirements.children.is_empty()
     {
         return false;
     }
-    requirements.children.iter().all(|child| {
-        let Some(edge_index) = child.edge_from_parent else {
-            return false;
-        };
-        let edge_ref = graph.edge_reference(edge_index);
-        matches!(edge_ref.weight(), Edge::EntityMove(_))
-            && satisfiable_from(
-                graph,
-                fetch_graph,
-                supergraph,
-                override_context,
-                &edge_ref,
-                holder,
-            )
-            // on purpose: this only checks whether a shortcut works, and if the check fails the
-            // requirements just take the usual way, which reports real errors
-            .unwrap_or(false)
-    })
+    leave_right_away(
+        graph,
+        fetch_graph,
+        supergraph,
+        override_context,
+        requirements,
+        holder,
+    )
 }
 
 /// A new entity call back into the field's subgraph that the requirements leave from. Passes
@@ -3084,6 +3082,36 @@ fn find_satisfiable_key<'a>(
     }
 
     Ok(None)
+}
+
+/// Whether every requirement in `requirements` leaves right away, with an entity move the
+/// subgraph of `holder` can make, see `process_requires_field_edge`.
+fn leave_right_away(
+    graph: &Graph<'_>,
+    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    supergraph: &SupergraphState,
+    override_context: &PlannerOverrideContext,
+    requirements: &QueryTreeNode,
+    holder: NodeIndex,
+) -> bool {
+    !requirements.children.is_empty()
+        && requirements.children.iter().all(|child| {
+            child.edge_from_parent.is_some_and(|edge_index| {
+                let edge_ref = graph.edge_reference(edge_index);
+                matches!(edge_ref.weight(), Edge::EntityMove(_))
+                    && satisfiable_from(
+                        graph,
+                        fetch_graph,
+                        supergraph,
+                        override_context,
+                        &edge_ref,
+                        holder,
+                    )
+                    // on purpose: this only checks whether a shortcut works, and if the check
+                    // fails the requirements just take the usual way, which reports real errors
+                    .unwrap_or(false)
+            })
+        })
 }
 
 /// Whether the requirements of `edge_ref` resolve right where `from` is, without leaving its
