@@ -241,6 +241,21 @@ impl FetchGraph<MultiTypeFetchStep> {
     }
 }
 
+/// Whether `type_names` are every type the objects at `position` of `path` can be.
+fn covers_possible_types(
+    supergraph: &SupergraphState,
+    root_type: &str,
+    path: &MergePath,
+    position: usize,
+    type_names: &BTreeSet<String>,
+) -> bool {
+    possible_types_at(supergraph, root_type, path, position).is_some_and(|possible_types| {
+        possible_types
+            .iter()
+            .all(|type_name| type_names.contains(type_name))
+    })
+}
+
 impl FetchGraph<MultiTypeFetchStep> {
     /// Finishes the entity calls that took the objects at several spots or of several types while
     /// the graph was built, see `Batch` in the builder, like batching them here would: a type
@@ -268,20 +283,15 @@ impl FetchGraph<MultiTypeFetchStep> {
                     step.output.remove_definition(type_name);
                     step.input.remove_definition(type_name);
                 }
-                if let Some((Segment::TypeCondition(type_names, condition), rest)) =
-                    step.response_path.inner.split_last()
+                if let Some(Segment::TypeCondition(type_names, condition)) =
+                    step.response_path.last()
                 {
                     let mut type_names = BTreeSet::clone(type_names);
                     type_names.retain(|type_name| !empty.contains(type_name));
-                    step.response_path = MergePath::new(
-                        rest.iter()
-                            .cloned()
-                            .chain(std::iter::once(Segment::TypeCondition(
-                                Rc::new(type_names),
-                                condition.clone(),
-                            )))
-                            .collect(),
-                    );
+                    let segment = Segment::TypeCondition(Rc::new(type_names), condition.clone());
+                    step.response_path = step
+                        .response_path
+                        .with_segment_at(step.response_path.len() - 1, segment);
                 }
             }
             // the type condition at the end goes when its types are every type there. Others
@@ -295,12 +305,13 @@ impl FetchGraph<MultiTypeFetchStep> {
                     .filter(|segment| !matches!(segment, Segment::TypeCondition(..)))
                     .count();
                 if type_names.len() > 1
-                    && possible_types_at(supergraph, root_type, &step.response_path, position)
-                        .is_some_and(|possible_types| {
-                            possible_types
-                                .iter()
-                                .all(|type_name| type_names.contains(type_name))
-                        })
+                    && covers_possible_types(
+                        supergraph,
+                        root_type,
+                        &step.response_path,
+                        position,
+                        type_names,
+                    )
                 {
                     step.response_path = MergePath::new(rest.to_vec());
                 }
@@ -347,12 +358,9 @@ impl FetchGraph<MultiTypeFetchStep> {
                 match segment {
                     Segment::TypeCondition(type_names, None)
                         if type_names.len() > 1
-                            && possible_types_at(supergraph, root_type, &original, position)
-                                .is_some_and(|possible_types| {
-                                    possible_types
-                                        .iter()
-                                        .all(|type_name| type_names.contains(type_name))
-                                }) => {}
+                            && covers_possible_types(
+                                supergraph, root_type, &original, position, type_names,
+                            ) => {}
                     Segment::TypeCondition(..) => kept.push(segment.clone()),
                     segment => {
                         position += 1;

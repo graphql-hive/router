@@ -23,24 +23,15 @@ pub struct SelectionAttributes {
     pub also: Option<Rc<[String]>>,
 }
 
-/// Equal attributes. Paths into a field share one `Rc`, so it's mostly the same allocation, and
-/// comparing the arguments is only needed when it isn't.
-pub fn same_attributes(
-    a: &Option<Rc<SelectionAttributes>>,
-    b: &Option<Rc<SelectionAttributes>>,
-) -> bool {
-    match (a, b) {
-        (Some(a), Some(b)) => Rc::ptr_eq(a, b) || a == b,
-        (None, None) => true,
-        _ => false,
-    }
-}
-
 impl PartialEq for SelectionAttributes {
     fn eq(&self, other: &Self) -> bool {
         self.alias == other.alias && self.arguments == other.arguments && self.also == other.also
     }
 }
+
+// So comparing two `Rc`s of it checks whether they're the same allocation first. Paths into a
+// field share one, so that's usually all it takes.
+impl Eq for SelectionAttributes {}
 
 #[derive(Debug, Clone)]
 pub struct ContextRequirement {
