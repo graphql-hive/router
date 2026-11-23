@@ -19,4 +19,4 @@ traffic_shaping:
 
 A smaller value saves memory under load, a bigger one helps subgraphs that send very large responses. HTTP/2 connections don't use it.
 
-`traffic_shaping.experimental_http1_pool` (or `ROUTER_TRAFFIC_SHAPING_EXPERIMENTAL_HTTP1_POOL`) sends requests to plain `http://` subgraphs through the router's own HTTP/1 connection pool. It opens a new connection only when every connection of the pool is busy, so far fewer sockets stay open under load. It follows `http_client_mode`: one pool for all workers with `shared`, one per worker with `per_worker`. `https://` subgraphs, `allow_only_http2` and HTTP subscriptions keep using the regular client. Off by default.
+`traffic_shaping.experimental_http1_pool` sends requests to plain `http://` subgraphs through the router's own HTTP/1 connection pool. It opens a new connection only when every connection of the pool is busy, so far fewer sockets stay open under load. It follows `http_client_mode`: one pool for all workers with `shared`, one per worker with `per_worker`. `https://` subgraphs, `allow_only_http2` and HTTP subscriptions keep using the regular client. Off by default.

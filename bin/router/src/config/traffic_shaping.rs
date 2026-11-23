@@ -48,8 +48,6 @@ pub struct TrafficShapingConfig {
     ///
     /// `max_connections_per_host` still caps the requests in flight. `https://` subgraphs,
     /// `allow_only_http2` and HTTP subscriptions keep hyper's client and `http_client_mode`.
-    ///
-    /// Can also be set using the `ROUTER_TRAFFIC_SHAPING_EXPERIMENTAL_HTTP1_POOL` environment variable.
     #[serde(default)]
     pub experimental_http1_pool: bool,
 
