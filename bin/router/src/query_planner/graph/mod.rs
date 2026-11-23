@@ -802,6 +802,28 @@ impl<'graph> Graph<'graph> {
                     join_type.is_interface_object;
             }
 
+            // The fields each subgraph has, sorted once per type. Asking every field's
+            // @join__field list about every subgraph adds up on a type in hundreds of them.
+            // A field without @join__field is in every subgraph that has the type.
+            let mut everywhere = Vec::new();
+            let mut fields_in: HashMap<&str, Vec<_>> = HashMap::new();
+            for (index, (field_name, field_definition)) in definition.fields().iter().enumerate() {
+                if field_definition.join_field.is_empty() {
+                    everywhere.push((field_name, field_definition, None));
+                    continue;
+                }
+                for join_field in &field_definition.join_field {
+                    let Some(graph_id) = join_field.graph_id.as_deref() else {
+                        continue;
+                    };
+                    let fields = fields_in.entry(graph_id).or_default();
+                    // only the first @join__field for a subgraph counts
+                    if fields.last().is_none_or(|&(last, _)| last != index) {
+                        fields.push((index, (field_name, field_definition, Some(join_field))));
+                    }
+                }
+            }
+
             for (graph_id, is_interface_object) in subgraphs {
                 let graph_name = build_context.resolve_graph_id(state, graph_id)?.0.clone();
                 let has_resolvable_typename = matches!(
@@ -851,29 +873,11 @@ impl<'graph> Graph<'graph> {
                 )?;
                 self.push_edge(head, head, Edge::Selfie(def_name.clone()));
 
-                for (field_name, field_definition) in definition.fields().iter() {
-                    let (is_available, maybe_join_field) = if field_definition.join_field.is_empty()
-                    {
-                        // The type lives in this subgraph, so a field without @join__field does too.
-                        (true, None)
-                    } else {
-                        FederationRules::check_field_subgraph_availability(
-                            field_definition,
-                            graph_id,
-                            definition,
-                        )
-                    };
-
+                let specific = fields_in.get(graph_id).into_iter().flatten();
+                for &(field_name, field_definition, maybe_join_field) in
+                    everywhere.iter().chain(specific.map(|(_, field)| field))
+                {
                     let target_type = field_definition.field_type.inner_type();
-
-                    if !is_available {
-                        // The field is not available in the current subgraph
-                        trace!(
-                              "[ ] Field '{}.{}/{}' is not available in the subgraph, skipping edge creation (type: {})",
-                              def_name, field_name, graph_id, target_type
-                          );
-                        continue;
-                    }
 
                     // A field is considered "overridden" if its resolution is handled by a different subgraph.
                     // This prevents the current subgraph from creating a resolvable edge for a field it no longer owns.
