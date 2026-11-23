@@ -533,11 +533,16 @@ impl<'graph> Graph<'graph> {
         build_context: &mut GraphBuildContext<'graph>,
         cached_rules: &mut CachedFederationRules<'graph>,
     ) -> Result<(), GraphError> {
-        for (def_name, definition) in state
-            .definitions
-            .iter()
-            .filter(|(_, definition)| Self::can_have_entity_moves(definition))
-        {
+        // A mutation or subscription field runs where its root type is, and only once.
+        // A @key on those root types can't be used to jump between subgraphs,
+        // it would run the field again in another subgraph through `_entities`.
+        let is_mutation_or_subscription = |name: &str| {
+            state.mutation_type.as_deref() == Some(name)
+                || state.subscription_type.as_deref() == Some(name)
+        };
+        for (def_name, definition) in state.definitions.iter().filter(|(name, definition)| {
+            Self::can_have_entity_moves(definition) && !is_mutation_or_subscription(name)
+        }) {
             let is_interface = definition.is_interface_type();
             let join_types = definition.join_types();
 

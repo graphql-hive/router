@@ -44,9 +44,11 @@ const FIELD_COST: u64 = 1;
 
 pub fn find_best_combination(
     graph: &Graph<'_>,
-    operation: ResolvedOperation,
+    mut operation: ResolvedOperation,
     cancellation_token: &CancellationToken,
 ) -> Result<QueryTree, QueryPlanError> {
+    pick_entrypoints(graph, &mut operation, cancellation_token)?;
+
     if operation.root_field_groups.is_empty()
         || operation
             .root_field_groups
@@ -119,6 +121,136 @@ pub fn find_best_combination(
     }
 
     plan.ok_or(QueryPlanError::EmptyPlan)
+}
+
+/// Picks the subgraph for every mutation or subscription field that more than one subgraph can
+/// run (`ResolvedOperation::entrypoint_choices`), and puts its paths in `root_field_groups`.
+///
+/// Every root field is planned on its own, once per subgraph it can run in, and scored like any
+/// plan: waves, then fetches, then cost. The fields can't be picked one by one though. Back to
+/// back mutation fields that run in the same subgraph share a request, so `createOrder` in b
+/// followed by `cancelOrder` in b is one fetch and one wave, and in b then a it's two of each.
+/// So the whole list is picked at once, the cheapest way through it wins.
+fn pick_entrypoints(
+    graph: &Graph<'_>,
+    operation: &mut ResolvedOperation,
+    cancellation_token: &CancellationToken,
+) -> Result<(), QueryPlanError> {
+    if operation.entrypoint_choices.is_empty() {
+        return Ok(());
+    }
+    let choices = std::mem::take(&mut operation.entrypoint_choices);
+
+    // every option of every root field, a field without a choice has one
+    let mut options: Vec<Vec<FieldPlan>> = Vec::with_capacity(operation.root_field_groups.len());
+    let mut next_choice = choices.iter().peekable();
+    for (index, group) in operation.root_field_groups.iter().enumerate() {
+        let field_choices = match next_choice.next_if(|(choice_index, _)| *choice_index == index) {
+            Some((_, field_choices)) => field_choices.as_slice(),
+            None => std::slice::from_ref(group),
+        };
+        let mut field_options = Vec::with_capacity(field_choices.len());
+        for choice in field_choices {
+            let tree = find_best_combination(
+                graph,
+                ResolvedOperation {
+                    operation_kind: operation.operation_kind.clone(),
+                    root_field_groups: vec![choice.clone()],
+                    entrypoint_choices: Vec::new(),
+                },
+                cancellation_token,
+            )?;
+            field_options.push(FieldPlan::of(graph, &tree)?);
+        }
+        options.push(field_options);
+    }
+
+    // the cheapest way to each option of the field so far, and the option of the field before
+    let mut totals: Vec<(u32, u64, u64)> = options[0].iter().map(FieldPlan::score).collect();
+    let mut previous: Vec<Vec<usize>> = Vec::with_capacity(options.len());
+    for pair in options.windows(2) {
+        let (before, field) = (&pair[0], &pair[1]);
+        let mut field_totals = Vec::with_capacity(field.len());
+        let mut field_previous = Vec::with_capacity(field.len());
+        for option in field {
+            let (picked, total) = before
+                .iter()
+                .zip(&totals)
+                .map(|(before, total)| {
+                    // in the request of the field before, no fetch or wave of its own
+                    let shared = u32::from(
+                        !before.ends_request
+                            && option.subgraph.is_some()
+                            && before.subgraph == option.subgraph,
+                    );
+                    (
+                        total.0 + option.waves - shared,
+                        total.1 + option.fetches - u64::from(shared),
+                        total.2 + option.cost,
+                    )
+                })
+                .enumerate()
+                .min_by_key(|(_, total)| *total)
+                .expect("every field has an option");
+            field_totals.push(total);
+            field_previous.push(picked);
+        }
+        totals = field_totals;
+        previous.push(field_previous);
+    }
+
+    // walk back from the cheapest option of the last field
+    let mut picked = totals
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, total)| **total)
+        .map(|(option, _)| option)
+        .expect("every field has an option");
+    let mut picks = vec![picked; options.len()];
+    for (field, field_previous) in previous.iter().enumerate().rev() {
+        picked = field_previous[picked];
+        picks[field] = picked;
+    }
+
+    for (index, mut field_choices) in choices {
+        operation.root_field_groups[index] = field_choices.swap_remove(picks[index]);
+    }
+    Ok(())
+}
+
+/// What planning one root field on its own costs, see `pick_entrypoints`.
+struct FieldPlan {
+    waves: u32,
+    fetches: u64,
+    cost: u64,
+    /// Where its root fetch goes.
+    subgraph: Option<u16>,
+    /// Whether it needs more than its root fetch. The next field then waits for all of it, in
+    /// a request of its own, see `turn_mutations_into_sequence`.
+    ends_request: bool,
+}
+
+impl FieldPlan {
+    fn of(graph: &Graph<'_>, tree: &QueryTree) -> Result<Self, GraphError> {
+        let mut walk = FetchWalk::new(graph);
+        walk.node(&tree.root, 0, 0, None)?;
+        let fetches = walk.fetches.len() as u64 + walk.crossings;
+        Ok(Self {
+            waves: walk.fetches.iter().map(FetchKey::wave).max().unwrap_or(0),
+            fetches,
+            cost: Costs(graph).tree(&tree.root),
+            subgraph: walk
+                .fetches
+                .iter()
+                .find(|key| !key.entity_call)
+                .and_then(|key| key.subgraph),
+            ends_request: fetches > 1,
+        })
+    }
+
+    fn score(&self) -> (u32, u64, u64) {
+        (self.waves, self.fetches, self.cost)
+    }
 }
 
 fn add(
