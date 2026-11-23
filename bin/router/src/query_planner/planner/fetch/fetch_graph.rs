@@ -98,13 +98,6 @@ pub struct FetchGraph<State> {
     /// Steps for a field with `@requires` that took the types planned with theirs, see
     /// `SelectionAttributes::also`. Finished like `batched` ones, so they line up with them.
     pub(crate) requires_for_types: Vec<NodeIndex>,
-    /// What planning a node's children did, to do again for another type, see `Replay`. Only
-    /// kept while the graph is built.
-    replays: HashMap<u64, Vec<Rc<Replay>>>,
-    /// The writes into steps that were there before, while children are planned, see `Replay`.
-    recordings: Vec<Recording>,
-    /// `exact_shape` of the query tree nodes seen so far, by address.
-    exact_shapes: HashMap<usize, (u64, bool)>,
     /// The keys of the fields the planner adds itself. Only needed while the graph is built.
     pub(crate) response_keys: ResponseKeys,
     pub(crate) context_producers: HashMap<(MergePath, (EdgeIndex, usize)), Vec<NodeIndex>>,
@@ -154,9 +147,6 @@ impl FetchGraph<SingleTypeFetchStep> {
             entity_moves: HashMap::new(),
             batched: HashSet::new(),
             requires_for_types: Vec::new(),
-            replays: HashMap::new(),
-            recordings: Vec::new(),
-            exact_shapes: HashMap::new(),
             response_keys: ResponseKeys::default(),
             context_producers: HashMap::new(),
             context_variables: HashMap::new(),
@@ -180,9 +170,6 @@ impl FetchGraph<SingleTypeFetchStep> {
             entity_moves: HashMap::new(),
             batched: HashSet::new(),
             requires_for_types: Vec::new(),
-            replays: HashMap::new(),
-            recordings: Vec::new(),
-            exact_shapes: HashMap::new(),
             response_keys: ResponseKeys::default(),
             context_producers: HashMap::new(),
             context_variables: HashMap::new(),
@@ -380,25 +367,6 @@ impl FetchGraph<SingleTypeFetchStep> {
         depths[index.index()]
     }
 
-    /// Keeps `write` for every recording that started after `step` was made, see `Replay`.
-    fn record(&mut self, step: NodeIndex, write: impl Fn() -> Write) {
-        for recording in self.recordings.iter_mut() {
-            if step.index() < recording.first_new {
-                recording.writes.push(write());
-            }
-        }
-    }
-
-    /// Something changed `step` that a replay can't do again, see `Replay`. The recordings it
-    /// was there before can't be replayed.
-    fn touch(&mut self, step: NodeIndex) {
-        for recording in self.recordings.iter_mut() {
-            if step.index() < recording.first_new {
-                recording.broken = true;
-            }
-        }
-    }
-
     /// Adds `selection_set` at `fetch_path` of the output of `step`, for the objects at
     /// `response_path`.
     fn add_output(
@@ -408,14 +376,6 @@ impl FetchGraph<SingleTypeFetchStep> {
         fetch_path: &MergePath,
         selection_set: SelectionSet,
     ) -> Result<(), FetchGraphError> {
-        if !self.recordings.is_empty() {
-            self.record(step, || Write::Output {
-                step,
-                response_path: response_path.clone(),
-                fetch_path: fetch_path.clone(),
-                selection_set: selection_set.clone(),
-            });
-        }
         self.get_step_data_mut(step)?
             .add_output_at(response_path, fetch_path, selection_set)?;
         Ok(())
@@ -429,13 +389,6 @@ impl FetchGraph<SingleTypeFetchStep> {
         response_path: &MergePath,
         fetch_path: &MergePath,
     ) -> Result<(), FetchGraphError> {
-        if !self.recordings.is_empty() {
-            self.record(step, || Write::Typename {
-                step,
-                response_path: response_path.clone(),
-                fetch_path: fetch_path.clone(),
-            });
-        }
         self.get_step_data_mut(step)?
             .add_output_typename_at(response_path, fetch_path)?;
         Ok(())
@@ -448,13 +401,6 @@ impl FetchGraph<SingleTypeFetchStep> {
         type_name: &str,
         selection_set: &SelectionSet,
     ) -> Result<(), FetchGraphError> {
-        if !self.recordings.is_empty() {
-            self.record(step, || Write::Input {
-                step,
-                type_name: type_name.to_string(),
-                selection_set: selection_set.clone(),
-            });
-        }
         self.get_step_data_mut(step)?
             .input
             .add_to(type_name, selection_set)?;
@@ -937,7 +883,7 @@ fn create_fetch_step_for_root_move(
 
 /// The entity call a step makes, the part a step gets reused on: its subgraph, input type,
 /// response path and condition. Without the types of the type conditions on the path: a step
-/// can take more of those later, see `Replay`, and it's still found. The steps found still get
+/// can take more of those later, see `take_type`, and it's still found. The steps found still get
 /// their path compared.
 fn entity_call_hash(
     subgraph_name: &SubgraphName,
@@ -955,259 +901,6 @@ fn entity_call_hash(
     hasher.finish()
 }
 
-/// Planning a node's children again for another type, at the same spot. Type expansion makes
-/// `product { ... on Book { reviews { ... } } ... on Movie { reviews { ... } } }`, and below
-/// `reviews` it's the same moves for every type, the same subgraphs and fields. Planned for
-/// `Book`, it made steps at `product|[Book].reviews.@...` and wrote into steps that were there
-/// before, like the one `product` comes from. For `Movie`, the steps it made take `Movie` at that
-/// type condition too, `product|[Book|Movie].reviews.@`, and the writes into the steps that were
-/// there are done again, for `Movie`. The same steps and the same fields as planning it again
-/// and batching the steps after.
-///
-/// Only when the step the children are planned in is an entity call that takes both types at
-/// the end of its path, see `joins_other_types`, so what's written into it lands with the right
-/// type. A replay that wouldn't come out the same, see `Replay::apply`, plans the children again.
-#[derive(Debug, Clone)]
-struct Replay {
-    /// Where the children were planned.
-    response_path: MergePath,
-    /// The type condition the types differ at.
-    slot: usize,
-    /// The steps made while planning them, by index.
-    made: std::ops::Range<usize>,
-    /// The writes into steps that were there before.
-    writes: Vec<Write>,
-    /// What planning them returned.
-    leaves: Vec<NodeIndex>,
-}
-
-/// A write into a step, kept by a recording, see `Replay`.
-#[derive(Debug, Clone)]
-enum Write {
-    Output {
-        step: NodeIndex,
-        response_path: MergePath,
-        fetch_path: MergePath,
-        selection_set: SelectionSet,
-    },
-    Typename {
-        step: NodeIndex,
-        response_path: MergePath,
-        fetch_path: MergePath,
-    },
-    Input {
-        step: NodeIndex,
-        type_name: String,
-        selection_set: SelectionSet,
-    },
-}
-
-/// The writes into steps made before `first_new`, while children are planned, see `Replay`.
-#[derive(Debug, Clone)]
-struct Recording {
-    first_new: usize,
-    writes: Vec<Write>,
-    /// A step that was there got changed in a way a replay can't repeat.
-    broken: bool,
-}
-
-/// `path`, with `type_name` at the type condition at `slot`.
-fn with_type_at(path: &MergePath, slot: usize, type_name: &str) -> MergePath {
-    MergePath::new(
-        path.inner
-            .iter()
-            .enumerate()
-            .map(|(position, segment)| match segment {
-                Segment::TypeCondition(_, condition) if position == slot => Segment::TypeCondition(
-                    Rc::new(BTreeSet::from([type_name.to_string()])),
-                    condition.clone(),
-                ),
-                segment => segment.clone(),
-            })
-            .collect(),
-    )
-}
-
-impl Replay {
-    /// Does it again for `type_name`. `None`, having changed nothing, when it wouldn't come out
-    /// like planning the children again: a step made then isn't at that type condition, or a
-    /// write goes into a step below it that doesn't take `type_name`.
-    fn apply(
-        &self,
-        fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
-        type_name: &str,
-    ) -> Result<Option<Vec<NodeIndex>>, FetchGraphError> {
-        let slot = self.slot;
-        let at_slot = |path: &MergePath| match path.inner.get(slot) {
-            Some(Segment::TypeCondition(type_names, _)) => Some(type_names.clone()),
-            _ => None,
-        };
-        for index in self.made.clone() {
-            let step = fetch_graph.get_step_data(NodeIndex::new(index))?;
-            if at_slot(&step.response_path).is_none() {
-                return Ok(None);
-            }
-        }
-        for write in &self.writes {
-            let step = match write {
-                Write::Output { step, .. } | Write::Typename { step, .. } => *step,
-                // what an entity call reads doesn't depend on where it is
-                Write::Input { .. } => continue,
-            };
-            let path = &fetch_graph.get_step_data(step)?.response_path;
-            if path.len() > slot
-                && !at_slot(path).is_some_and(|type_names| type_names.contains(type_name))
-            {
-                return Ok(None);
-            }
-        }
-
-        for index in self.made.clone() {
-            let step = fetch_graph.get_step_data_mut(NodeIndex::new(index))?;
-            if let Some(Segment::TypeCondition(type_names, condition)) =
-                step.response_path.inner.get(slot)
-            {
-                if !type_names.contains(type_name) {
-                    let mut type_names = BTreeSet::clone(type_names);
-                    type_names.insert(type_name.to_string());
-                    let segment = Segment::TypeCondition(Rc::new(type_names), condition.clone());
-                    step.response_path = MergePath::new(
-                        step.response_path
-                            .inner
-                            .iter()
-                            .enumerate()
-                            .map(|(position, old)| {
-                                if position == slot {
-                                    segment.clone()
-                                } else {
-                                    old.clone()
-                                }
-                            })
-                            .collect(),
-                    );
-                }
-            }
-        }
-        for write in &self.writes {
-            match write {
-                Write::Output {
-                    step,
-                    response_path,
-                    fetch_path,
-                    selection_set,
-                } => {
-                    let fetch_path =
-                        fetch_path_for(fetch_graph, *step, fetch_path, slot, type_name)?;
-                    fetch_graph.add_output(
-                        *step,
-                        &with_type_at(response_path, slot, type_name),
-                        &fetch_path,
-                        selection_set.clone(),
-                    )?;
-                }
-                Write::Typename {
-                    step,
-                    response_path,
-                    fetch_path,
-                } => {
-                    let fetch_path =
-                        fetch_path_for(fetch_graph, *step, fetch_path, slot, type_name)?;
-                    fetch_graph.add_output_typename(
-                        *step,
-                        &with_type_at(response_path, slot, type_name),
-                        &fetch_path,
-                    )?;
-                }
-                Write::Input {
-                    step,
-                    type_name: input_type,
-                    selection_set,
-                } => fetch_graph.add_input(*step, input_type, selection_set)?,
-            }
-        }
-        Ok(Some(self.leaves.clone()))
-    }
-}
-
-/// `fetch_path` of a write into `step`, for `type_name` at the type condition at `slot` of the
-/// response path. In a step above that type condition it's on the fetch path too.
-fn fetch_path_for(
-    fetch_graph: &FetchGraph<SingleTypeFetchStep>,
-    step: NodeIndex,
-    fetch_path: &MergePath,
-    slot: usize,
-    type_name: &str,
-) -> Result<MergePath, FetchGraphError> {
-    let depth = fetch_graph.get_step_data(step)?.response_path.len();
-    Ok(if depth <= slot {
-        with_type_at(fetch_path, slot - depth, type_name)
-    } else {
-        fetch_path.clone()
-    })
-}
-
-/// A hash of what's planned below `node`, exactly: the edges, aliases, arguments and conditions,
-/// and the requirements, see `Replay`. And whether there's an entity call or a requirement below
-/// it: only planning those costs more than recording what it writes.
-fn exact_shape(
-    graph: &Graph<'_>,
-    shapes: &mut HashMap<usize, (u64, bool)>,
-    node: &QueryTreeNode,
-) -> (u64, bool) {
-    use std::hash::{Hash, Hasher};
-
-    let address = node as *const QueryTreeNode as usize;
-    if let Some(&shape) = shapes.get(&address) {
-        return shape;
-    }
-    let mut hasher = ahash::AHasher::default();
-    node.edge_from_parent.hash(&mut hasher);
-    node.selection_alias().hash(&mut hasher);
-    node.selection_arguments()
-        .map(|arguments| arguments.hash_u64())
-        .hash(&mut hasher);
-    node.condition.hash(&mut hasher);
-    node.context.is_some().hash(&mut hasher);
-    node.mutation_field_position.hash(&mut hasher);
-    let mut heavy = !node.requirements.is_empty()
-        || node.edge_from_parent.is_some_and(|edge| {
-            !matches!(
-                graph.edge(edge),
-                Ok(Edge::FieldMove(_) | Edge::AbstractMove(_) | Edge::Selfie(_))
-            )
-        });
-    for (tag, nodes) in [(0u8, &node.requirements), (1, &node.children)] {
-        (tag, nodes.len()).hash(&mut hasher);
-        for child in nodes {
-            let (shape, child_heavy) = exact_shape(graph, shapes, child);
-            shape.hash(&mut hasher);
-            heavy |= child_heavy;
-        }
-    }
-    let shape = (hasher.finish(), heavy);
-    shapes.insert(address, shape);
-    shape
-}
-
-/// `exact_shape` of the children of `node`, together.
-fn children_shape(
-    graph: &Graph<'_>,
-    shapes: &mut HashMap<usize, (u64, bool)>,
-    node: &QueryTreeNode,
-) -> (u64, bool) {
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = ahash::AHasher::default();
-    let mut heavy = false;
-    node.children.len().hash(&mut hasher);
-    for child in node.children.iter() {
-        let (shape, child_heavy) = exact_shape(graph, shapes, child);
-        shape.hash(&mut hasher);
-        heavy |= child_heavy;
-    }
-    (hasher.finish(), heavy)
-}
-
 /// Makes `step` take the objects of `type_name` too, when it doesn't yet, see
 /// `SelectionAttributes::also`: an input and an output for it.
 fn take_type(
@@ -1219,7 +912,6 @@ fn take_type(
     if step.input.selections_for_definition(type_name).is_some() {
         return Ok(());
     }
-    fetch_graph.touch(step_index);
     let step = fetch_graph.get_step_data_mut(step_index)?;
     step.input.add_definition(type_name);
     step.input.add_to(
@@ -1493,7 +1185,6 @@ fn ensure_batched_fetch_step(
             .selections_for_definition(type_name)
             .is_none();
         if new_type {
-            fetch_graph.touch(step_index);
             let step = fetch_graph.get_step_data_mut(step_index)?;
             trace!(
                 "fetch step [{}] takes the {} objects at {} too",
@@ -1623,126 +1314,24 @@ fn process_children_for_fetch_steps(
         return Ok(vec![parent_fetch_step_index]);
     }
 
-    // the same children planned for another type at this spot, see `Replay`
-    let replayable = replay_slot(graph, fetch_graph, parent_fetch_step_index, response_path)?;
-    // plain fields cost about as much to record as to plan again
-    let shape = replayable
-        .as_ref()
-        .map(|_| children_shape(graph, &mut fetch_graph.exact_shapes, query_node))
-        .filter(|(_, heavy)| *heavy);
-    let replayable = replayable.filter(|_| shape.is_some());
-    let replay_key = replayable.as_ref().map(|(slot, _)| {
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = ahash::AHasher::default();
-        parent_fetch_step_index.hash(&mut hasher);
-        requiring_fetch_step_index.hash(&mut hasher);
-        fetch_path.hash(&mut hasher);
-        conditions.from_root.hash(&mut hasher);
-        conditions.current.hash(&mut hasher);
-        created_from_requires.hash(&mut hasher);
-        // the response path is the parent's with the fetch path on it, but for the types at
-        // `slot`. It's compared when one is found.
-        slot.hash(&mut hasher);
-        shape.hash(&mut hasher);
-        hasher.finish()
-    });
-    if let (Some((slot, type_name)), Some(key)) = (&replayable, replay_key) {
-        let found = fetch_graph.replays.get(&key).and_then(|replays| {
-            replays
-                .iter()
-                .find(|replay| {
-                    replay.slot == *slot
-                        && replay.response_path.len() == response_path.len()
-                        && replay
-                            .response_path
-                            .inner
-                            .iter()
-                            .zip(response_path.inner.iter())
-                            .enumerate()
-                            .all(|(position, (theirs, ours))| position == *slot || theirs == ours)
-                        && replay.response_path.inner[*slot] != response_path.inner[*slot]
-                })
-                .cloned()
-        });
-        if let Some(replay) = found {
-            if let Some(leaves) = replay.apply(fetch_graph, type_name)? {
-                return Ok(leaves);
-            }
-        }
-        fetch_graph.recordings.push(Recording {
-            first_new: fetch_graph.graph.node_bound(),
-            writes: Vec::new(),
-            broken: false,
-        });
+    let mut leaf_fetch_step_indexes: Vec<NodeIndex> = vec![];
+    for sub_step in query_node.children.iter() {
+        leaf_fetch_step_indexes.extend(process_query_node(
+            graph,
+            fetch_graph,
+            supergraph,
+            override_context,
+            sub_step,
+            Some(parent_fetch_step_index),
+            response_path,
+            fetch_path,
+            requiring_fetch_step_index,
+            conditions,
+            created_from_requires,
+        )?);
     }
 
-    let mut planned = || -> Result<Vec<NodeIndex>, FetchGraphError> {
-        let mut leaf_fetch_step_indexes: Vec<NodeIndex> = vec![];
-        for sub_step in query_node.children.iter() {
-            leaf_fetch_step_indexes.extend(process_query_node(
-                graph,
-                fetch_graph,
-                supergraph,
-                override_context,
-                sub_step,
-                Some(parent_fetch_step_index),
-                response_path,
-                fetch_path,
-                requiring_fetch_step_index,
-                conditions,
-                created_from_requires,
-            )?);
-        }
-        Ok(leaf_fetch_step_indexes)
-    };
-    let leaves = planned();
-
-    if let (Some((slot, _)), Some(key)) = (replayable, replay_key) {
-        let recording = fetch_graph
-            .recordings
-            .pop()
-            .expect("pushed above, and every recording pushed after it was popped");
-        if let (Ok(leaves), false) = (&leaves, recording.broken) {
-            fetch_graph
-                .replays
-                .entry(key)
-                .or_default()
-                .push(Rc::new(Replay {
-                    response_path: response_path.clone(),
-                    slot,
-                    made: recording.first_new..fetch_graph.graph.node_bound(),
-                    writes: recording.writes,
-                    leaves: leaves.clone(),
-                }));
-        }
-    }
-    leaves
-}
-
-/// Where children planned in `parent` at `response_path` can be replayed for another type, see
-/// `Replay`: the type condition `parent` ends with, when it's an entity call that takes several
-/// types there, and the type `response_path` has there.
-fn replay_slot(
-    graph: &Graph<'_>,
-    fetch_graph: &FetchGraph<SingleTypeFetchStep>,
-    parent: NodeIndex,
-    response_path: &MergePath,
-) -> Result<Option<(usize, String)>, FetchGraphError> {
-    if graph.has_context_arguments() || !fetch_graph.batched.contains(&parent) {
-        return Ok(None);
-    }
-    let parent_path = &fetch_graph.get_step_data(parent)?.response_path;
-    let Some(slot) = parent_path.len().checked_sub(1) else {
-        return Ok(None);
-    };
-    Ok(match response_path.inner.get(slot) {
-        Some(Segment::TypeCondition(type_names, _)) if type_names.len() == 1 => type_names
-            .first()
-            .cloned()
-            .map(|type_name| (slot, type_name)),
-        _ => None,
-    })
+    Ok(leaf_fetch_step_indexes)
 }
 
 // TODO: simplfy args
@@ -1961,9 +1550,6 @@ fn process_entity_move_edge(
             &requirement.selection_set,
         )?,
     }
-    if is_interface && !narrowed {
-        fetch_graph.touch(fetch_step_index);
-    }
     let fetch_step = fetch_graph.get_step_data_mut(fetch_step_index)?;
 
     if is_interface && !narrowed {
@@ -2090,8 +1676,6 @@ fn process_interface_object_type_move_edge(
         created_from_requires,
         false,
     )?;
-    // it gets rewrites and keys, see `Replay`
-    fetch_graph.touch(step_for_children_index);
 
     trace!(
         "adding input requirement '{}' to fetch step [{}]",
@@ -2930,8 +2514,6 @@ fn process_requires_field_edge(
             true,
         )
     };
-    // a step that was there gets the field and its input, see `Replay`
-    fetch_graph.touch(field_fetch);
     if type_names.len() > 1 {
         for type_name in &type_names {
             take_type(fetch_graph, field_fetch, type_name)?;
