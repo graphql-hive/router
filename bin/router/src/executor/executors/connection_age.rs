@@ -248,7 +248,11 @@ mod tests {
             ..Default::default()
         };
         let pool_idle_timeout = traffic_shaping.all.pool_idle_timeout;
-        let read_buffer = traffic_shaping.all.http1_max_read_buffer_size.to_bytes() as usize;
+        let read_buffer = traffic_shaping
+            .all
+            .http1_max_read_buffer_size
+            .as_ref()
+            .map(|size| size.to_bytes() as usize);
         HttpClientProvider::new(
             &traffic_shaping,
             None,

@@ -132,13 +132,13 @@ impl SupergraphTrafficShapingConfig {
     /// Returns the most bytes an HTTP/1.1 connection to a subgraph buffers while reading a response.
     ///
     /// A per-subgraph value takes precedence over `traffic_shaping.all.http1_max_read_buffer_size`.
-    pub fn http1_max_read_buffer_size(&self, subgraph_name: &str) -> usize {
-        let size = self
-            .subgraphs
+    /// `None` when neither is set.
+    pub fn http1_max_read_buffer_size(&self, subgraph_name: &str) -> Option<usize> {
+        self.subgraphs
             .get(subgraph_name)
             .and_then(|config| config.http1_max_read_buffer_size.as_ref())
-            .unwrap_or(&self.all.http1_max_read_buffer_size);
-        size.to_bytes() as usize
+            .or(self.all.http1_max_read_buffer_size.as_ref())
+            .map(|size| size.to_bytes() as usize)
     }
 
     /// Returns the resolved compression config for a subgraph.
@@ -670,41 +670,27 @@ pub struct TrafficShapingExecutorGlobalConfig {
     /// The most memory an HTTP/1.1 connection to a subgraph uses to read a response.
     ///
     /// The read buffer grows with big responses and stays that big while the connection is busy,
-    /// so with hundreds of busy connections this adds up. A response bigger than this isn't
+    /// so with hundreds of busy connections this adds up. A response body bigger than this isn't
     /// rejected, it just arrives in more chunks, which costs a bit more CPU. A smaller value saves
     /// memory under load, a bigger one helps subgraphs that send very large responses. Response
-    /// headers have to fit in it. HTTP/2 connections don't use it.
+    /// headers have to fit in it, so a subgraph that sends huge headers (lots of cookies, say)
+    /// fails with a value that's too small. HTTP/2 connections don't use it.
     ///
     /// Per-subgraph values under `traffic_shaping.subgraphs.<name>.http1_max_read_buffer_size` take precedence.
     ///
-    /// Defaults to `64KiB`. Has to be at least `8KiB`.
+    /// Not set by default: the regular client then grows the buffer up to about 400KiB, and
+    /// `experimental_http1_pool` caps it at 64KiB. Has to be at least `8KiB`.
     #[serde(
-        default = "default_http1_max_read_buffer_size",
-        deserialize_with = "deserialize_read_buffer_size"
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_read_buffer_size"
     )]
-    #[schemars(with = "String")]
-    pub http1_max_read_buffer_size: Size,
-}
-
-fn default_http1_max_read_buffer_size() -> Size {
-    // At 16KiB a 100KB or 3MB response took 15-20% more CPU, at 64KiB it's within a few
-    // percent of no limit, while hyper's own default of about 400KiB held a lot more memory.
-    "64KiB".parse().expect(
-        "Default value for 'traffic_shaping.all.http1_max_read_buffer_size' should be a valid human-readable size",
-    )
+    #[schemars(with = "Option<String>")]
+    pub http1_max_read_buffer_size: Option<Size>,
 }
 
 /// hyper won't go below this, and panics if asked to
 const MIN_READ_BUFFER_SIZE: u64 = 8 * 1024;
-
-fn deserialize_read_buffer_size<'de, D>(deserializer: D) -> Result<Size, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let size = Size::deserialize(deserializer)?;
-    check_read_buffer_size(&size).map_err(de::Error::custom)?;
-    Ok(size)
-}
 
 fn deserialize_optional_read_buffer_size<'de, D>(deserializer: D) -> Result<Option<Size>, D::Error>
 where
@@ -762,7 +748,7 @@ impl Default for TrafficShapingExecutorGlobalConfig {
             compression: Default::default(),
             max_aliases_per_request: None,
             automatic_persisted_queries: false,
-            http1_max_read_buffer_size: default_http1_max_read_buffer_size(),
+            http1_max_read_buffer_size: None,
         }
     }
 }
@@ -1706,14 +1692,24 @@ mod tests {
         )
         .expect("human readable sizes should deserialize");
         let resolved = SupergraphTrafficShapingConfig::from(&config);
-        assert_eq!(resolved.http1_max_read_buffer_size("accounts"), 128 * 1024);
-        assert_eq!(resolved.http1_max_read_buffer_size("big"), 1024 * 1024);
-        assert_eq!(resolved.http1_max_read_buffer_size("smallest"), 8 * 1024);
+        assert_eq!(
+            resolved.http1_max_read_buffer_size("accounts"),
+            Some(128 * 1024)
+        );
+        assert_eq!(
+            resolved.http1_max_read_buffer_size("big"),
+            Some(1024 * 1024)
+        );
+        assert_eq!(
+            resolved.http1_max_read_buffer_size("smallest"),
+            Some(8 * 1024)
+        );
 
         let config: TrafficShapingConfig =
             serde_json::from_str("{}").expect("empty config should deserialize");
         let resolved = SupergraphTrafficShapingConfig::from(&config);
-        assert_eq!(resolved.http1_max_read_buffer_size("accounts"), 64 * 1024);
+        // unset: the regular client keeps hyper's limit, so big response headers still fit
+        assert_eq!(resolved.http1_max_read_buffer_size("accounts"), None);
     }
 
     #[test]

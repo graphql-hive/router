@@ -235,8 +235,8 @@ pub struct HttpClientProvider {
 /// Follows [`HttpClientMode`], like the clients.
 #[allow(clippy::large_enum_variant)]
 enum H1Pools {
-    Shared(H1Pool),
-    PerWorker(H1PoolConfig, ThreadLocal<H1Pool>),
+    Shared(Arc<H1Pool>),
+    PerWorker(H1PoolConfig, ThreadLocal<Arc<H1Pool>>),
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -261,7 +261,7 @@ impl HttpClientProvider {
         tls_config: Option<&ClientTLSConfig>,
         pool_idle_timeout: Duration,
         http2_only: bool,
-        http1_max_read_buffer_size: usize,
+        http1_max_read_buffer_size: Option<usize>,
     ) -> Result<Self, SubgraphExecutorError> {
         let all = &traffic_shaping.all;
         let mut builder = Client::builder(TokioExecutor::new());
@@ -269,8 +269,10 @@ impl HttpClientProvider {
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(pool_idle_timeout)
             .pool_max_idle_per_host(max_idle_per_host(traffic_shaping.max_connections_per_host))
-            .http1_max_buf_size(http1_max_read_buffer_size)
             .http2_only(http2_only);
+        if let Some(size) = http1_max_read_buffer_size {
+            builder.http1_max_buf_size(size);
+        }
         if let Some(interval) = all.http2_keep_alive_interval {
             // HTTP/2 pings need their own timer
             builder
@@ -308,7 +310,7 @@ impl HttpClientProvider {
     }
 
     /// The pool for the current thread, when the pool is on.
-    fn pool(&self) -> Option<&H1Pool> {
+    fn pool(&self) -> Option<&Arc<H1Pool>> {
         match self.pools.as_ref()? {
             H1Pools::Shared(pool) => Some(pool),
             H1Pools::PerWorker(config, pools) => Some(pools.get_or(|| H1Pool::new(*config))),

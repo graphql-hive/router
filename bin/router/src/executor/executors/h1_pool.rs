@@ -15,18 +15,20 @@
 //! handoff to a connection task and back for every request, and nothing to wake on the side.
 //! The catch is that nobody polls an idle connection, so one the subgraph closed is only noticed
 //! at the next checkout, which drops it and takes another (or sends again, see `request`).
+//! Idle connections past `pool_idle_timeout` are closed by a timer task, which runs only while
+//! the pool has idle connections.
 //!
 //! Every connection also keeps its read buffer for good, and hyper grows it up to ~400KB while
 //! reading big responses. It's capped by `traffic_shaping.all.http1_max_read_buffer_size`
-//! (64KiB by default) like hyper's client, which takes a few more reads for a big response but
-//! costs almost nothing.
+//! (64KiB when not set), which takes a few more reads for a big response but costs almost
+//! nothing.
 
 use std::{
     future::{poll_fn, Future},
     pin::{pin, Pin},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, Weak,
     },
     task::{Context, Poll, Wake, Waker},
     time::{Duration, Instant},
@@ -41,8 +43,9 @@ use hyper::{
     body::Incoming,
     client::conn::http1::{self, Connection, SendRequest},
 };
-use hyper_util::rt::TokioIo;
+use hyper_util::{client::legacy::connect::HttpConnector, rt::TokioIo};
 use tokio::net::TcpStream;
+use tower_service::Service;
 
 use crate::executor::executors::error::SubgraphExecutorError;
 
@@ -52,8 +55,13 @@ type Sender = SendRequest<Full<Bytes>>;
 #[derive(Clone, Copy)]
 pub struct H1PoolConfig {
     pub idle_timeout: Duration,
-    pub max_read_buffer_size: usize,
+    /// `None` for [`DEFAULT_MAX_READ_BUFFER_SIZE`]
+    pub max_read_buffer_size: Option<usize>,
 }
+
+/// At 16KiB a 100KB or 3MB response took 15-20% more CPU, at 64KiB it's within a few percent
+/// of no limit, while hyper's own default of about 400KiB held a lot more memory.
+const DEFAULT_MAX_READ_BUFFER_SIZE: usize = 64 * 1024;
 /// hyper's side of the socket. Boxed once per connection so it can move in and out of the pool.
 type Conn = Pin<Box<Connection<TokioIo<TcpStream>, Full<Bytes>>>>;
 
@@ -115,6 +123,11 @@ impl Wakers {
 
 pub struct H1Pool {
     config: H1PoolConfig,
+    /// hyper's connector, so pooled connections get the same IPv4/IPv6 fallback as the regular
+    /// client: when the first address doesn't answer, the other family gets tried after 300ms.
+    connector: HttpConnector,
+    /// Whether the task that closes expired idle connections runs, see [`H1Pool::sweep`]
+    sweeping: AtomicBool,
     /// Idle connections per origin, the most recently used last. A per-worker pool only takes
     /// the lock from its own thread, the lock is there for the shared one and because request
     /// futures have to be `Send`.
@@ -123,7 +136,7 @@ pub struct H1Pool {
 
 /// A connection that is serving one request.
 pub struct Lease<'a> {
-    pool: &'a H1Pool,
+    pool: &'a Arc<H1Pool>,
     key: Authority,
     sender: Sender,
     /// `None` once the connection is done (closed by the subgraph, or failed)
@@ -152,21 +165,55 @@ impl Lease<'_> {
             wakers: self.wakers,
             since: Instant::now(),
         });
+        // checked under the lock, so a sweep that just found the pool empty and stopped
+        // can't miss this connection
+        if !self.pool.sweeping.swap(true, Ordering::AcqRel) {
+            tokio::spawn(H1Pool::sweep(Arc::downgrade(self.pool)));
+        }
     }
 }
 
 impl H1Pool {
-    pub fn new(config: H1PoolConfig) -> Self {
-        Self {
+    pub fn new(config: H1PoolConfig) -> Arc<Self> {
+        let mut connector = HttpConnector::new();
+        connector.set_nodelay(true);
+        Arc::new(Self {
             config,
+            connector,
+            sweeping: AtomicBool::new(false),
             idle: Mutex::new(AHashMap::new()),
+        })
+    }
+
+    /// Closes idle connections once they're past the idle timeout, so a pool that goes quiet
+    /// doesn't keep its sockets. Stops when no idle connection is left, `release` starts it
+    /// again, and when the pool is dropped.
+    async fn sweep(pool: Weak<Self>) {
+        loop {
+            let next = {
+                let Some(pool) = pool.upgrade() else { return };
+                let mut idle = pool.idle.lock().unwrap();
+                idle.retain(|_, list| {
+                    evict_expired(list, pool.config.idle_timeout);
+                    !list.is_empty()
+                });
+                // the oldest connection of each origin comes first
+                match idle.values().map(|list| list[0].since).min() {
+                    Some(oldest) => oldest + pool.config.idle_timeout,
+                    None => {
+                        pool.sweeping.store(false, Ordering::Release);
+                        return;
+                    }
+                }
+            };
+            tokio::time::sleep_until(next.into()).await;
         }
     }
 
     /// Sends `req` and returns the response head. Read its body with [`Lease::drive`], the
     /// connection only makes progress while the lease's holder polls it.
     pub async fn request(
-        &self,
+        self: &Arc<Self>,
         mut req: Request<Full<Bytes>>,
     ) -> Result<(Response<Incoming>, Lease<'_>), SubgraphExecutorError> {
         let uri = req.uri();
@@ -237,7 +284,7 @@ impl H1Pool {
                 return Ok((sender, conn, wakers, true));
             }
         }
-        let (sender, conn) = connect(key, self.config.max_read_buffer_size).await?;
+        let (sender, conn) = self.connect(key).await?;
         Ok((sender, Some(conn), Wakers::new(), false))
     }
 
@@ -246,6 +293,29 @@ impl H1Pool {
         let list = idle.get_mut(key)?;
         evict_expired(list, self.config.idle_timeout);
         list.pop()
+    }
+
+    async fn connect(&self, key: &Authority) -> Result<(Sender, Conn), SubgraphExecutorError> {
+        let uri = Uri::builder()
+            .scheme("http")
+            .authority(key.clone())
+            .path_and_query("/")
+            .build()?;
+        let io = self
+            .connector
+            .clone()
+            .call(uri)
+            .await
+            .map_err(|err| SubgraphExecutorError::ConnectFailure(std::io::Error::other(err)))?;
+        let (sender, connection) = http1::Builder::new()
+            .max_buf_size(
+                self.config
+                    .max_read_buffer_size
+                    .unwrap_or(DEFAULT_MAX_READ_BUFFER_SIZE),
+            )
+            .handshake(io)
+            .await?;
+        Ok((sender, Box::pin(connection)))
     }
 }
 
@@ -298,28 +368,63 @@ async fn drive<F: Future>(conn: &mut Option<Conn>, wakers: &Wakers, fut: F) -> F
     .await
 }
 
-// ponytail: expired connections are only dropped when the pool touches the origin again,
-// so a pool that goes quiet keeps its idle sockets. Add a timer if that shows up.
 fn evict_expired(list: &mut Vec<Idle>, idle_timeout: Duration) {
     let now = Instant::now();
     let expired = list.partition_point(|idle| now - idle.since >= idle_timeout);
     list.drain(..expired);
 }
 
-async fn connect(
-    key: &Authority,
-    max_read_buffer_size: usize,
-) -> Result<(Sender, Conn), SubgraphExecutorError> {
-    // `[::1]` comes with brackets, the resolver wants them gone
-    let host = key.host().trim_start_matches('[').trim_end_matches(']');
-    let tcp = TcpStream::connect((host, key.port_u16().unwrap_or(80)))
-        .await
-        .map_err(SubgraphExecutorError::ConnectFailure)?;
-    tcp.set_nodelay(true)
-        .map_err(SubgraphExecutorError::ConnectFailure)?;
-    let (sender, connection) = http1::Builder::new()
-        .max_buf_size(max_read_buffer_size)
-        .handshake(TokioIo::new(tcp))
-        .await?;
-    Ok((sender, Box::pin(connection)))
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use http_body_util::BodyExt;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
+    use super::*;
+
+    // A pool that goes quiet still closes its idle sockets once they pass the idle timeout.
+    #[tokio::test]
+    async fn idle_connection_closes_after_the_timeout_without_another_request() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        // answers one request, then tells how long it took the router to close the socket
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await.unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok")
+                .await
+                .unwrap();
+            let replied = Instant::now();
+            while socket.read(&mut buf).await.unwrap() != 0 {}
+            replied.elapsed()
+        });
+
+        let pool = H1Pool::new(H1PoolConfig {
+            idle_timeout: Duration::from_millis(200),
+            max_read_buffer_size: None,
+        });
+        let req = Request::get(format!("http://{addr}/graphql"))
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        let (res, mut lease) = pool.request(req).await.unwrap();
+        let body = lease.drive(res.into_body().collect()).await.unwrap();
+        assert_eq!(body.to_bytes(), "ok");
+        lease.release();
+
+        let open_for = tokio::time::timeout(Duration::from_secs(5), server)
+            .await
+            .expect("the idle connection should be closed by the timer")
+            .unwrap();
+        assert!(
+            open_for >= Duration::from_millis(200),
+            "closed too early: {open_for:?}"
+        );
+        assert!(pool.idle.lock().unwrap().is_empty());
+    }
 }

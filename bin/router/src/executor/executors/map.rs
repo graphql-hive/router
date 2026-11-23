@@ -228,7 +228,8 @@ impl SubgraphExecutorMap {
                 .traffic_shaping
                 .all
                 .http1_max_read_buffer_size
-                .to_bytes() as usize,
+                .as_ref()
+                .map(|size| size.to_bytes() as usize),
         )?;
 
         let max_connections_per_host = config.traffic_shaping.max_connections_per_host;
@@ -1029,7 +1030,8 @@ impl SubgraphExecutorMap {
                     .traffic_shaping
                     .all
                     .http1_max_read_buffer_size
-                    .to_bytes() as usize
+                    .as_ref()
+                    .map(|size| size.to_bytes() as usize)
         {
             let tls_config = get_merged_tls_config(
                 self.config.traffic_shaping.all.tls.as_ref(),
