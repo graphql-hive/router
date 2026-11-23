@@ -5,7 +5,7 @@ use std::{
 
 use crate::query_planner::state::supergraph_state::SubgraphName;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnionMembersData<'graph> {
     /// Represents the type owning the field
     pub type_name: &'graph str,
@@ -15,6 +15,16 @@ pub struct UnionMembersData<'graph> {
     pub object_type_name: &'graph str,
     /// Represents all union members reachable for the same field in this subgraph.
     pub possible_members: Arc<Vec<&'graph str>>,
+}
+
+// `possible_members` follows from the other fields, so the hash skips it. Equal values
+// still hash the same.
+impl std::hash::Hash for UnionMembersData<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.type_name.hash(state);
+        self.field_name.hash(state);
+        self.object_type_name.hash(state);
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
