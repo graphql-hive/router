@@ -3123,7 +3123,7 @@ fn context_in_requires_selection_is_unsupported() {
     )
     .unwrap_err();
 
-    insta::assert_snapshot!(error, @"@fromContext on a field selected by @requires or another @fromContext selection is not supported");
+    insta::assert_snapshot!(error, @"failed to build fetch graph: @fromContext on a field selected by @requires or another @fromContext selection is not supported");
 }
 
 #[test]
@@ -3143,7 +3143,7 @@ fn context_is_unsatisfiable_without_an_ancestor_or_a_resolvable_selection() {
         .unwrap_err();
 
         insta::allow_duplicates! {
-            insta::assert_snapshot!(error, @"No paths found for selection item: amount");
+            insta::assert_snapshot!(error, @"walker failed to locate path: No paths found for selection item: amount");
         }
     }
 }
@@ -3179,7 +3179,7 @@ fn context_requires_a_locally_resolvable_entity_key() {
         .unwrap_err();
 
         insta::allow_duplicates! {
-            insta::assert_snapshot!(error, @"No paths found for selection item: amount");
+            insta::assert_snapshot!(error, @"walker failed to locate path: No paths found for selection item: amount");
         }
     }
 }

@@ -6,9 +6,7 @@ use graphql_tools::parser::schema;
 use petgraph::graph::NodeIndex;
 use plan_nodes::{Planning, QueryPlan};
 use query_plan::build_query_plan_from_fetch_graph;
-use walker::{
-    error::WalkOperationError, fragment_groups::group_fragments, walk_operation_with_groups,
-};
+use walker::{error::WalkOperationError, fragment_groups::group_fragments, walk_operation};
 
 use crate::query_planner::{
     ast::operation::{OperationDefinition, VariableDefinition},
@@ -153,7 +151,7 @@ impl Planner {
             Some((operation, groups)) => (operation, Some(groups)),
             None => (normalized_operation, None),
         };
-        let best_paths_per_leaf = walk_operation_with_groups(
+        let best_paths_per_leaf = walk_operation(
             &self.graph,
             &self.supergraph,
             &override_context,

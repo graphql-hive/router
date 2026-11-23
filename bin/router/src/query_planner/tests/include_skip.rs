@@ -535,12 +535,12 @@ fn include_union_fragment_at_root_fetch_test() -> Result<(), Box<dyn Error>> {
         query ($bool:Boolean) {
           review {
             __typename
-            ... on UserReview {
+            ... on AnonymousReview {
               product @include(if: $bool) {
                 ...a
               }
             }
-            ... on AnonymousReview {
+            ... on UserReview {
               product @include(if: $bool) {
                 ...a
               }

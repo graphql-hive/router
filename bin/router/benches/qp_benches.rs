@@ -3,13 +3,8 @@ use graphql_tools::parser::query::Document;
 use hive_router::query_planner::ast::minification::minify_operation;
 use hive_router::query_planner::ast::normalization::normalize_operation;
 use hive_router::query_planner::ast::operation::OperationDefinition;
-use hive_router::query_planner::graph::Graph;
 use hive_router::query_planner::graph::PlannerOverrideContext;
-use hive_router::query_planner::planner::best::find_best_combination;
-use hive_router::query_planner::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
-use hive_router::query_planner::planner::query_plan::build_query_plan_from_fetch_graph;
-use hive_router::query_planner::planner::walker::walk_operation;
-use hive_router::query_planner::planner::QueryPlannerOptions;
+use hive_router::query_planner::planner::{Planner, QueryPlannerOptions};
 use hive_router::query_planner::state::supergraph_state::SupergraphState;
 use hive_router::query_planner::utils::cancellation::CancellationToken;
 use hive_router::query_planner::utils::parsing::{parse_operation, parse_schema};
@@ -42,47 +37,21 @@ fn get_executable_operation(
 fn bench_query_plan(
     c: &mut Criterion,
     name: &str,
-    graph: &Graph,
-    supergraph_state: &SupergraphState,
+    planner: &Planner,
     operation: &OperationDefinition,
 ) {
-    let override_context = PlannerOverrideContext::default();
     let cancellation_token = CancellationToken::new();
 
+    // the router's own way to plan, fragment groups included
     let mut benchmark = |b: &mut Bencher<'_, WallTime>| {
         b.iter(|| {
-            let bb_graph = black_box(graph);
-            let bb_operation = black_box(operation);
-            let bb_supergraph_state = black_box(supergraph_state);
-            let bb_override_context = black_box(&override_context);
-
-            let best_paths_per_leaf = walk_operation(
-                bb_graph,
-                bb_supergraph_state,
-                bb_override_context,
-                bb_operation,
-                &cancellation_token,
-            )
-            .expect("walk_operation failed during benchmark");
-            let query_tree =
-                find_best_combination(bb_graph, best_paths_per_leaf, &cancellation_token).unwrap();
-            let fetch_graph = build_fetch_graph_from_query_tree(
-                bb_graph,
-                bb_supergraph_state,
-                bb_override_context,
-                query_tree,
-                bb_operation,
-                &planner_options(),
-                &cancellation_token,
-            )
-            .unwrap();
-            let query_plan = build_query_plan_from_fetch_graph(
-                fetch_graph,
-                bb_supergraph_state,
-                &planner_options(),
-                &cancellation_token,
-            )
-            .unwrap();
+            let query_plan = black_box(planner)
+                .plan_from_normalized_operation(
+                    black_box(operation),
+                    PlannerOverrideContext::default(),
+                    &cancellation_token,
+                )
+                .unwrap();
             black_box(query_plan);
         })
     };
@@ -104,15 +73,13 @@ fn bench_query_plan(
 fn query_plan_pipeline(c: &mut Criterion) {
     let supergraph_sdl = std::fs::read_to_string("../../bench/supergraph.graphql")
         .expect("Unable to read input file");
-    let parsed_schema = parse_schema(&supergraph_sdl);
-    let supergraph_state = SupergraphState::new(&parsed_schema);
-    let graph =
-        Graph::graph_from_supergraph_state(&supergraph_state).expect("failed to create graph");
+    let planner = Planner::new_from_supergraph(&parse_schema(&supergraph_sdl), planner_options())
+        .expect("failed to create planner");
+    let supergraph_state = &*planner.supergraph;
 
     let parsed_document = get_operation("../../bench/operation.graphql");
-    let operation =
-        get_executable_operation(&parsed_document, &supergraph_state, Some("TestQuery"));
-    bench_query_plan(c, "query_plan", &graph, &supergraph_state, &operation);
+    let operation = get_executable_operation(&parsed_document, supergraph_state, Some("TestQuery"));
+    bench_query_plan(c, "query_plan", &planner, &operation);
 
     bench_fixture_plans(
         c,
@@ -160,7 +127,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
         b.iter(|| {
             let op = get_executable_operation(
                 black_box(&parsed_document),
-                black_box(&supergraph_state),
+                black_box(supergraph_state),
                 black_box(Some("TestQuery")),
             );
             black_box(op);
@@ -171,7 +138,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
         b.iter_batched(
             || operation.clone(),
             |cloned_operation| {
-                let bb_supergraph_state = black_box(&supergraph_state);
+                let bb_supergraph_state = black_box(supergraph_state);
                 let bb_operation = black_box(cloned_operation);
                 let op = minify_operation(bb_operation, bb_supergraph_state).unwrap();
                 black_box(op);
@@ -182,7 +149,6 @@ fn query_plan_pipeline(c: &mut Criterion) {
 }
 
 fn cache_preparation(c: &mut Criterion) {
-    use hive_router::query_planner::planner::Planner;
     let mut group = c.benchmark_group("cache_preparation");
     for (name, schema_path, operation_path) in [
         (
@@ -226,48 +192,12 @@ fn provides_planning(c: &mut Criterion) {
         &std::fs::read_to_string("./fixture/tests/provides-union-member.supergraph.graphql")
             .unwrap(),
     );
-    let supergraph_state = SupergraphState::new(&schema);
-    let graph = Graph::graph_from_supergraph_state(&supergraph_state).unwrap();
+    let planner = Planner::new_from_supergraph(&schema, planner_options()).unwrap();
     let document = parse_operation(
         "{ user { orders { label item { ... on Book { isbn stock } ... on Movie { title } } } } }",
     );
-    let operation = get_executable_operation(&document, &supergraph_state, None);
-    let override_context = PlannerOverrideContext::default();
-    let cancellation_token = CancellationToken::new();
-
-    c.bench_function("query_plan_provides_union", |b| {
-        b.iter(|| {
-            let best_paths_per_leaf = walk_operation(
-                black_box(&graph),
-                &supergraph_state,
-                &override_context,
-                black_box(&operation),
-                &cancellation_token,
-            )
-            .unwrap();
-            let query_tree =
-                find_best_combination(&graph, best_paths_per_leaf, &cancellation_token).unwrap();
-            let fetch_graph = build_fetch_graph_from_query_tree(
-                &graph,
-                &supergraph_state,
-                &override_context,
-                query_tree,
-                &operation,
-                &planner_options(),
-                &cancellation_token,
-            )
-            .unwrap();
-            black_box(
-                build_query_plan_from_fetch_graph(
-                    fetch_graph,
-                    &supergraph_state,
-                    &planner_options(),
-                    &cancellation_token,
-                )
-                .unwrap(),
-            );
-        })
-    });
+    let operation = get_executable_operation(&document, &planner.supergraph, None);
+    bench_query_plan(c, "query_plan_provides_union", &planner, &operation);
 }
 
 /// Plans one operation per fixture, each bench named after the fixture
@@ -275,21 +205,17 @@ fn bench_fixture_plans(c: &mut Criterion, fixtures: &[(&str, &str, &str, Option<
     for &(benchmark_name, schema_path, operation_path, operation_name) in fixtures {
         let supergraph_sdl =
             std::fs::read_to_string(schema_path).expect("Unable to read supergraph fixture");
-        let parsed_schema = parse_schema(&supergraph_sdl);
-        let fixture_supergraph = SupergraphState::new(&parsed_schema);
-        let fixture_graph = Graph::graph_from_supergraph_state(&fixture_supergraph)
-            .expect("failed to create graph");
+        let fixture_planner =
+            Planner::new_from_supergraph(&parse_schema(&supergraph_sdl), planner_options())
+                .expect("failed to create planner");
         let fixture_document = get_operation(operation_path);
-        let fixture_operation =
-            get_executable_operation(&fixture_document, &fixture_supergraph, operation_name);
-
-        bench_query_plan(
-            c,
-            benchmark_name,
-            &fixture_graph,
-            &fixture_supergraph,
-            &fixture_operation,
+        let fixture_operation = get_executable_operation(
+            &fixture_document,
+            &fixture_planner.supergraph,
+            operation_name,
         );
+
+        bench_query_plan(c, benchmark_name, &fixture_planner, &fixture_operation);
     }
 }
 

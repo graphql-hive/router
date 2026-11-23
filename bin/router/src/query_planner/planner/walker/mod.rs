@@ -93,27 +93,9 @@ impl<'graph> Walk<'graph> {
     }
 }
 
-pub fn walk_operation<'graph, 'op: 'graph>(
-    graph: &'graph Graph<'graph>,
-    supergraph: &'graph SupergraphState,
-    override_context: &'graph PlannerOverrideContext,
-    operation: &'op OperationDefinition,
-    cancellation_token: &'graph CancellationToken,
-) -> Result<ResolvedOperation<'graph>, WalkOperationError> {
-    walk_operation_with_groups(
-        graph,
-        supergraph,
-        override_context,
-        operation,
-        cancellation_token,
-        None,
-    )
-}
-
-/// `walk_operation`, with fragments planned for more types than their own, see
-/// `fragment_groups`.
+/// `groups` are the fragments planned for more types than their own, see `fragment_groups`.
 #[instrument(level = "trace", skip_all)]
-pub fn walk_operation_with_groups<'graph, 'op: 'graph>(
+pub fn walk_operation<'graph, 'op: 'graph>(
     graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,

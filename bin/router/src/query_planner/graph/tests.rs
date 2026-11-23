@@ -67,6 +67,7 @@ mod context_tests {
                 &override_context,
                 query.executable_operation(),
                 &cancellation,
+                None,
             )
             .unwrap();
             let path = &paths.root_field_groups[0][0][0];
