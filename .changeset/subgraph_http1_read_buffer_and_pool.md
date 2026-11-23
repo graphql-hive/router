@@ -4,7 +4,7 @@ hive-router: patch
 
 # Smaller read buffers and an experimental HTTP/1 pool for subgraphs
 
-The read buffer of an HTTP/1.1 connection to a subgraph grows to about 400 KB on big responses and stays that big while the connection is busy, so hundreds of busy connections hold a lot of memory. You can now cap it with `traffic_shaping.all.http1_max_read_buffer_size`, and per subgraph with `traffic_shaping.subgraphs.<name>.http1_max_read_buffer_size`. Bigger responses then arrive in more chunks, and the router still reads them into one buffer. Subgraph response headers have to fit in it. It has to be at least `8KiB`, and it's not set by default:
+The read buffer of an HTTP/1.1 connection to a subgraph grows to about 400 KB on big responses and stays that big while the connection is busy, so hundreds of busy connections hold a lot of memory. You can now cap it with `traffic_shaping.all.http1_max_read_buffer_size`, and per subgraph with `traffic_shaping.subgraphs.<name>.http1_max_read_buffer_size`. Bigger responses then arrive in more chunks, and the router still reads them into one buffer. Subgraph response headers have to fit in it. It has to be at least `8KiB`, and defaults to `408KiB`, the limit that applied before:
 
 ```yaml
 traffic_shaping:

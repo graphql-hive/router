@@ -54,8 +54,7 @@ type Sender = SendRequest<Full<Bytes>>;
 #[derive(Clone, Copy)]
 pub struct H1PoolConfig {
     pub idle_timeout: Duration,
-    /// `None` keeps hyper's limit, like the regular client
-    pub max_read_buffer_size: Option<usize>,
+    pub max_read_buffer_size: usize,
 }
 /// hyper's side of the socket. Boxed once per connection so it can move in and out of the pool.
 type Conn = Pin<Box<Connection<TokioIo<TcpStream>, Full<Bytes>>>>;
@@ -302,11 +301,10 @@ impl H1Pool {
             .call(uri)
             .await
             .map_err(|err| SubgraphExecutorError::ConnectFailure(std::io::Error::other(err)))?;
-        let mut builder = http1::Builder::new();
-        if let Some(size) = self.config.max_read_buffer_size {
-            builder.max_buf_size(size);
-        }
-        let (sender, connection) = builder.handshake(io).await?;
+        let (sender, connection) = http1::Builder::new()
+            .max_buf_size(self.config.max_read_buffer_size)
+            .handshake(io)
+            .await?;
         Ok((sender, Box::pin(connection)))
     }
 }
@@ -399,7 +397,7 @@ mod tests {
 
         let pool = H1Pool::new(H1PoolConfig {
             idle_timeout: Duration::from_millis(200),
-            max_read_buffer_size: None,
+            max_read_buffer_size: 64 * 1024,
         });
         let req = Request::get(format!("http://{addr}/graphql"))
             .body(Full::new(Bytes::new()))
