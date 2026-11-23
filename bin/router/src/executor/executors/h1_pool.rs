@@ -19,9 +19,8 @@
 //! the pool has idle connections.
 //!
 //! Every connection also keeps its read buffer for good, and hyper grows it up to ~400KB while
-//! reading big responses. It's capped by `traffic_shaping.all.http1_max_read_buffer_size`
-//! (64KiB when not set), which takes a few more reads for a big response but costs almost
-//! nothing.
+//! reading big responses. `traffic_shaping.all.http1_max_read_buffer_size` caps it, like it
+//! does for hyper's client.
 
 use std::{
     future::{poll_fn, Future},
@@ -55,13 +54,9 @@ type Sender = SendRequest<Full<Bytes>>;
 #[derive(Clone, Copy)]
 pub struct H1PoolConfig {
     pub idle_timeout: Duration,
-    /// `None` for [`DEFAULT_MAX_READ_BUFFER_SIZE`]
+    /// `None` keeps hyper's limit, like the regular client
     pub max_read_buffer_size: Option<usize>,
 }
-
-/// At 16KiB a 100KB or 3MB response took 15-20% more CPU, at 64KiB it's within a few percent
-/// of no limit, while hyper's own default of about 400KiB held a lot more memory.
-const DEFAULT_MAX_READ_BUFFER_SIZE: usize = 64 * 1024;
 /// hyper's side of the socket. Boxed once per connection so it can move in and out of the pool.
 type Conn = Pin<Box<Connection<TokioIo<TcpStream>, Full<Bytes>>>>;
 
@@ -307,14 +302,11 @@ impl H1Pool {
             .call(uri)
             .await
             .map_err(|err| SubgraphExecutorError::ConnectFailure(std::io::Error::other(err)))?;
-        let (sender, connection) = http1::Builder::new()
-            .max_buf_size(
-                self.config
-                    .max_read_buffer_size
-                    .unwrap_or(DEFAULT_MAX_READ_BUFFER_SIZE),
-            )
-            .handshake(io)
-            .await?;
+        let mut builder = http1::Builder::new();
+        if let Some(size) = self.config.max_read_buffer_size {
+            builder.max_buf_size(size);
+        }
+        let (sender, connection) = builder.handshake(io).await?;
         Ok((sender, Box::pin(connection)))
     }
 }

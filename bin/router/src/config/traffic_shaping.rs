@@ -678,8 +678,8 @@ pub struct TrafficShapingExecutorGlobalConfig {
     ///
     /// Per-subgraph values under `traffic_shaping.subgraphs.<name>.http1_max_read_buffer_size` take precedence.
     ///
-    /// Not set by default: the regular client then grows the buffer up to about 400KiB, and
-    /// `experimental_http1_pool` caps it at 64KiB. Has to be at least `8KiB`.
+    /// Not set by default, so the buffer grows up to about 400KiB. `64KiB` saves most of that
+    /// memory and costs a few percent CPU on big responses. Has to be at least `8KiB`.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
