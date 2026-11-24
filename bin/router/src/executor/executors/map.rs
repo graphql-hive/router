@@ -24,10 +24,6 @@ use dashmap::DashMap;
 use futures::{stream::BoxStream, FutureExt};
 use hive_console_sdk::circuit_breaker::{CircuitBreakerBuilder, CircuitBreakerError};
 use http::{StatusCode, Uri};
-use hyper_util::{
-    client::legacy::Client,
-    rt::{TokioExecutor, TokioTimer},
-};
 use recloser::AsyncRecloser;
 use tokio::sync::Semaphore;
 use tracing::{debug, error};
@@ -41,7 +37,7 @@ use crate::executor::{
         error::SubgraphExecutorError,
         http::{HTTPSubgraphExecutor, HttpClientProvider, SubgraphHttpResponse},
         http_callback::{CallbackSubscriptionsMap, HttpCallbackSubgraphExecutor},
-        tls::{build_https_client_config, build_https_connector, get_merged_tls_config},
+        tls::{build_https_client_config, get_merged_tls_config},
         websocket::WsSubgraphExecutor,
         websocket_pool::{WebSocketConnectionId, WebSocketPool, WebSocketTarget},
     },
@@ -111,6 +107,30 @@ struct SubgraphCircuitBreaker {
     error_status_codes: Arc<Vec<StatusCodeMatcher>>,
 }
 type CircuitBreakersBySubgraph = DashMap<SubgraphName, SubgraphCircuitBreaker>;
+
+/// Runs `fut` through the circuit breaker, leaving out slot timeouts: they never reached the
+/// subgraph. recloser records a skipped error as a success but a dropped future as nothing, so
+/// on a slot timeout we park the inner future, drop the breaker's, and return the outer `Err`.
+async fn call_unless_slot_timeout<T>(
+    recloser: &AsyncRecloser,
+    fut: impl std::future::Future<Output = Result<T, SubgraphExecutorError>>,
+) -> Result<Result<T, recloser::Error<SubgraphExecutorError>>, SubgraphExecutorError> {
+    let (slot_timeout_tx, slot_timeout_rx) = tokio::sync::oneshot::channel();
+    let fut = async move {
+        match fut.await {
+            Err(err @ SubgraphExecutorError::RequestSlotTimeout) => {
+                let _ = slot_timeout_tx.send(err);
+                std::future::pending().await
+            }
+            other => other,
+        }
+    };
+    tokio::select! {
+        biased;
+        res = recloser.call(fut) => Ok(res),
+        Ok(slot_timeout) = slot_timeout_rx => Err(slot_timeout),
+    }
+}
 
 lazy_static::lazy_static! {
     /// Default HTTP statuses tracked as failures by the circuit breaker when
@@ -189,25 +209,19 @@ pub struct SubgraphExecutorMap {
     /// endpoint, and inbound connection fingerprint.
     websocket_pool: Arc<WebSocketPool>,
 }
+
 impl SubgraphExecutorMap {
     fn new(
         config: Arc<SubgraphExecutorConfig>,
         global_timeout: DurationOrProgram,
         telemetry_context: Arc<TelemetryContext>,
     ) -> Result<Self, SubgraphExecutorError> {
-        let mut client_builder = Client::builder(TokioExecutor::new());
-        client_builder
-            .pool_timer(TokioTimer::new())
-            .pool_idle_timeout(config.traffic_shaping.all.pool_idle_timeout)
-            .pool_max_idle_per_host(config.traffic_shaping.max_connections_per_host);
-        if config.traffic_shaping.all.allow_only_http2 {
-            client_builder.http2_only(true);
-        }
         let client = HttpClientProvider::new(
-            config.traffic_shaping.http_client_mode,
-            client_builder,
-            build_https_connector(config.traffic_shaping.all.tls.as_ref())?,
-        );
+            &config.traffic_shaping,
+            config.traffic_shaping.all.tls.as_ref(),
+            config.traffic_shaping.all.pool_idle_timeout,
+            config.traffic_shaping.all.allow_only_http2,
+        )?;
 
         let max_connections_per_host = config.traffic_shaping.max_connections_per_host;
 
@@ -499,36 +513,34 @@ impl SubgraphExecutorMap {
                         });
                         let circuit_breaker_metrics =
                             &self.telemetry_context.metrics.circuit_breaker;
-                        recloser
-                            .call(exec_fut)
-                            .map(|exec_res| match exec_res {
-                                Err(recloser::Error::Inner(e)) => {
-                                    // The call was permitted by the breaker but the
-                                    // inner future returned an error. The breaker
-                                    // counts it as a failure regardless of whether
-                                    // we surface the original response or not.
-                                    circuit_breaker_metrics.record_failure(subgraph_name);
-                                    match e {
-                                        // If it's an error we wrapped above, unwrap it and return the original successful response instead of treating it as a failure for the caller
-                                        // This allows the circuit breaker to track 5xx responses without impacting the actual response returned to the client,
-                                        // which is important for use cases where clients want to handle 5xx responses differently but still want the circuit breaker to be aware of them.
-                                        SubgraphExecutorError::InternalServerError(succ_ress) => {
-                                            Ok(*succ_ress)
-                                        }
-                                        other_err => Err(other_err),
+                        match call_unless_slot_timeout(&recloser, exec_fut).await {
+                            Err(slot_timeout) => Err(slot_timeout),
+                            Ok(Err(recloser::Error::Inner(e))) => {
+                                // The call was permitted by the breaker but the
+                                // inner future returned an error. The breaker
+                                // counts it as a failure regardless of whether
+                                // we surface the original response or not.
+                                circuit_breaker_metrics.record_failure(subgraph_name);
+                                match e {
+                                    // If it's an error we wrapped above, unwrap it and return the original successful response instead of treating it as a failure for the caller
+                                    // This allows the circuit breaker to track 5xx responses without impacting the actual response returned to the client,
+                                    // which is important for use cases where clients want to handle 5xx responses differently but still want the circuit breaker to be aware of them.
+                                    SubgraphExecutorError::InternalServerError(succ_ress) => {
+                                        Ok(*succ_ress)
                                     }
+                                    other_err => Err(other_err),
                                 }
-                                Err(recloser::Error::Rejected) => {
-                                    error!(target: targets::EXECUTOR, subgraph = subgraph_name, executor = executor.executor_name(), "circuit breaker rejected");
-                                    circuit_breaker_metrics.record_short_circuit(subgraph_name);
-                                    Err(SubgraphExecutorError::CircuitBreakerRejected)
-                                }
-                                Ok(res) => {
-                                    circuit_breaker_metrics.record_success(subgraph_name);
-                                    Ok(res)
-                                }
-                            })
-                            .await
+                            }
+                            Ok(Err(recloser::Error::Rejected)) => {
+                                error!(target: targets::EXECUTOR, subgraph = subgraph_name, executor = executor.executor_name(), "circuit breaker rejected");
+                                circuit_breaker_metrics.record_short_circuit(subgraph_name);
+                                Err(SubgraphExecutorError::CircuitBreakerRejected)
+                            }
+                            Ok(Ok(res)) => {
+                                circuit_breaker_metrics.record_success(subgraph_name);
+                                Ok(res)
+                            }
+                        }
                     }
                     None => exec_fut.await,
                 };
@@ -1009,19 +1021,12 @@ impl SubgraphExecutorMap {
                 self.config.traffic_shaping.all.tls.as_ref(),
                 subgraph_config.tls.as_ref(),
             );
-            let mut client_builder = Client::builder(TokioExecutor::new());
-            client_builder
-                .pool_timer(TokioTimer::new())
-                .pool_idle_timeout(pool_idle_timeout)
-                .pool_max_idle_per_host(self.max_connections_per_host);
-            if subgraph_allow_only_http2 {
-                client_builder.http2_only(true);
-            }
             config.client = Arc::new(HttpClientProvider::new(
-                self.config.traffic_shaping.http_client_mode,
-                client_builder,
-                build_https_connector(tls_config.as_ref())?,
-            ));
+                &self.config.traffic_shaping,
+                tls_config.as_ref(),
+                pool_idle_timeout,
+                subgraph_allow_only_http2,
+            )?);
         }
 
         // Apply other subgraph-specific overrides
@@ -1197,5 +1202,91 @@ pub fn compile_duration_or_expression(
             let hints = ProgramHints::from_program(&program);
             Ok(ValueOrProgram::Program(Box::new(program), hints))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use hive_console_sdk::circuit_breaker::CircuitBreakerBuilder;
+    use recloser::AsyncRecloser;
+
+    use super::call_unless_slot_timeout;
+    use crate::executor::executors::error::SubgraphExecutorError;
+
+    #[derive(Debug, PartialEq)]
+    enum Outcome {
+        Ok,
+        Failed,
+        SlotTimeout,
+        Rejected,
+    }
+
+    fn breaker(error_threshold: f32, volume: usize, half_open: usize) -> AsyncRecloser {
+        CircuitBreakerBuilder::default()
+            .error_threshold(error_threshold)
+            .volume_threshold(volume)
+            .half_open_attempts(half_open)
+            .reset_timeout(Duration::from_millis(50))
+            .build_async()
+            .unwrap()
+    }
+
+    async fn call(breaker: &AsyncRecloser, result: Result<(), SubgraphExecutorError>) -> Outcome {
+        match call_unless_slot_timeout(breaker, async { result }).await {
+            Ok(Ok(())) => Outcome::Ok,
+            Ok(Err(recloser::Error::Inner(_))) => Outcome::Failed,
+            Ok(Err(recloser::Error::Rejected)) => Outcome::Rejected,
+            Err(_) => Outcome::SlotTimeout,
+        }
+    }
+
+    // any error that came back from the subgraph side
+    fn upstream_error() -> Result<(), SubgraphExecutorError> {
+        Err(SubgraphExecutorError::TimeoutExpressionResolution(
+            "upstream".into(),
+        ))
+    }
+
+    fn slot_timeout() -> Result<(), SubgraphExecutorError> {
+        Err(SubgraphExecutorError::RequestSlotTimeout)
+    }
+
+    #[tokio::test]
+    async fn slot_timeouts_dont_affect_the_failure_rate() {
+        // Slot timeouts alone must not open the breaker. They must not count as successes
+        // either: alternating successes with real failures would keep the rate below 75%.
+        let b = breaker(0.75, 4, 1);
+        for _ in 0..6 {
+            assert_eq!(call(&b, slot_timeout()).await, Outcome::SlotTimeout);
+        }
+        for _ in 0..4 {
+            assert_eq!(call(&b, upstream_error()).await, Outcome::Failed);
+            assert_eq!(call(&b, slot_timeout()).await, Outcome::SlotTimeout);
+        }
+        assert_eq!(call(&b, upstream_error()).await, Outcome::Failed);
+        assert_eq!(call(&b, Ok(())).await, Outcome::Rejected);
+    }
+
+    #[tokio::test]
+    async fn slot_timeouts_dont_count_as_half_open_probes() {
+        // a closed sample of 5, a half-open sample of 1
+        let b = breaker(0.5, 5, 1);
+        for _ in 0..8 {
+            call(&b, upstream_error()).await;
+        }
+        assert_eq!(call(&b, Ok(())).await, Outcome::Rejected);
+
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        // half-open now, so two failed probes open it again. If these slot timeouts counted
+        // as successful probes, the breaker would close instead, and two failures wouldn't
+        // fill its closed sample of 5.
+        for _ in 0..3 {
+            assert_eq!(call(&b, slot_timeout()).await, Outcome::SlotTimeout);
+        }
+        call(&b, upstream_error()).await;
+        call(&b, upstream_error()).await;
+        assert_eq!(call(&b, Ok(())).await, Outcome::Rejected);
     }
 }
