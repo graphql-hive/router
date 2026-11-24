@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bench history</title>
+<!-- CI copies this page to the bench-history branch, next to data.json -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root { --bg: #fff; --fg: #1a1a1a; --muted: #666; --card: #f6f6f6; --line: #2563eb; --up: #c2410c; --down: #15803d; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111; --fg: #eee; --muted: #999; --card: #1c1c1c; --line: #60a5fa; --up: #fb923c; --down: #4ade80; }
+  }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+  h1 { font-size: 18px; margin: 0 16px 0 0; }
+  select, input { font: inherit; padding: 4px 8px; background: var(--card); color: var(--fg); border: 1px solid var(--muted); border-radius: 4px; }
+  input { flex: 1; min-width: 160px; }
+  #info { color: var(--muted); }
+  #charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); gap: 12px; }
+  .card { background: var(--card); border-radius: 6px; padding: 10px; }
+  .card h2 { font-size: 13px; font-weight: 600; margin: 0 0 6px; word-break: break-all; }
+  .chart { position: relative; height: 180px; }
+  .delta { font-weight: normal; margin-left: 6px; }
+  .up { color: var(--up); } .down { color: var(--down); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Bench history</h1>
+  <select id="suite"></select>
+  <select id="last">
+    <option value="30">last 30 runs</option>
+    <option value="100" selected>last 100 runs</option>
+    <option value="0">all runs</option>
+  </select>
+  <input id="filter" placeholder="filter benches…">
+  <span id="info"></span>
+</header>
+<div id="charts"></div>
+<script>
+const REPO = 'https://github.com/graphql-hive/router';
+
+// ids ending in /rps are requests per second (higher is better), the rest are ns (lower is better)
+const isRps = id => id.endsWith('/rps');
+const fmtRps = v => Math.round(v).toLocaleString() + ' req/s';
+
+// pick a unit that keeps the axis readable
+function fmt(ns) {
+  if (ns >= 1e9) return (ns / 1e9).toFixed(2) + ' s';
+  if (ns >= 1e6) return (ns / 1e6).toFixed(2) + ' ms';
+  if (ns >= 1e3) return (ns / 1e3).toFixed(2) + ' µs';
+  return ns.toFixed(1) + ' ns';
+}
+
+let runs = [];
+let charts = [];
+
+function render() {
+  charts.forEach(c => c.destroy());
+  charts = [];
+  const suite = document.getElementById('suite').value;
+  const last = +document.getElementById('last').value;
+  const filter = document.getElementById('filter').value.toLowerCase();
+  const shown = last ? runs.slice(-last) : runs;
+
+  const ids = [...new Set(shown.flatMap(r => Object.keys(r.benches)))]
+    .filter(id => id.startsWith(suite + '/') && id.toLowerCase().includes(filter))
+    .sort();
+
+  const root = document.getElementById('charts');
+  root.innerHTML = '';
+  document.getElementById('info').textContent = `${ids.length} benches, ${shown.length} runs`;
+
+  const style = getComputedStyle(document.documentElement);
+  const color = name => style.getPropertyValue(name).trim();
+
+  for (const id of ids) {
+    const points = shown.map(r => r.benches[id] ?? null);
+    const known = points.filter(v => v != null);
+    const rps = isRps(id);
+    const show = rps ? fmtRps : fmt;
+    const card = document.createElement('div');
+    card.className = 'card';
+    const title = document.createElement('h2');
+    title.textContent = id.slice(suite.length + 1);
+    // change of the latest run against the one before it
+    if (known.length >= 2) {
+      const [prev, cur] = known.slice(-2);
+      const pct = (cur - prev) / prev * 100;
+      const delta = document.createElement('span');
+      // red means worse: slower time, or fewer requests per second
+      delta.className = 'delta ' + ((pct > 0) !== rps ? 'up' : 'down');
+      delta.textContent = `${show(cur)} (${pct > 0 ? '+' : ''}${pct.toFixed(1)}%)`;
+      title.append(delta);
+    }
+    const canvas = document.createElement('canvas');
+    const box = document.createElement('div');
+    box.className = 'chart';
+    box.append(canvas);
+    card.append(title, box);
+    root.append(card);
+
+    charts.push(new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: shown.map(r => r.sha.slice(0, 8)),
+        datasets: [{ data: points, borderColor: color('--line'), pointRadius: 2, borderWidth: 1.5, spanGaps: true }],
+      },
+      options: {
+        animation: false,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: items => { const r = shown[items[0].dataIndex]; return `${r.sha.slice(0, 8)} · ${r.date.slice(0, 10)}`; },
+              label: item => show(item.parsed.y),
+              afterLabel: item => shown[item.dataIndex].msg,
+            },
+          },
+        },
+        scales: {
+          x: { ticks: { color: color('--muted'), maxTicksLimit: 8 }, grid: { display: false } },
+          y: { ticks: { color: color('--muted'), callback: show }, grid: { color: color('--muted') + '33' } },
+        },
+        // click a point to open its commit
+        onClick: (_, els) => { if (els.length) window.open(`${REPO}/commit/${shown[els[0].index].sha}`); },
+      },
+    }));
+  }
+}
+
+fetch('data.json')
+  .then(r => r.json())
+  .then(data => {
+    runs = data;
+    const suites = [...new Set(runs.flatMap(r => Object.keys(r.benches).map(id => id.split('/')[0])))].sort();
+    const select = document.getElementById('suite');
+    select.innerHTML = suites.map(s => `<option>${s}</option>`).join('');
+    const saved = new URLSearchParams(location.hash.slice(1)).get('suite');
+    if (suites.includes(saved)) select.value = saved;
+    for (const el of ['suite', 'last', 'filter']) document.getElementById(el).addEventListener('input', () => {
+      location.hash = 'suite=' + encodeURIComponent(select.value);
+      render();
+    });
+    render();
+  })
+  .catch(err => { document.getElementById('info').textContent = 'could not load data.json: ' + err; });
+</script>
+</body>
+</html>
