@@ -56,18 +56,18 @@ pub(crate) struct MergeIdentity<'a> {
     selection_attributes: &'a Option<Rc<SelectionAttributes>>,
 }
 
-impl PartialEq for MergeIdentity<'_> {
-    fn eq(&self, other: &Self) -> bool {
-        self.node_index == other.node_index
-            && self.edge_from_parent == other.edge_from_parent
-            && self.mutation_field_position == other.mutation_field_position
-            && self.condition == other.condition
-            && self.context_coordinate == other.context_coordinate
-            && same_attributes(self.selection_attributes, other.selection_attributes)
-    }
-}
-
 impl<'a> MergeIdentity<'a> {
+    /// Whether `node` merges into one with this, cheapest checks first: most children differ in
+    /// the graph node already.
+    pub(crate) fn matches(&self, node: &QueryTreeNode) -> bool {
+        self.node_index == node.node_index
+            && self.edge_from_parent == node.edge_from_parent
+            && self.mutation_field_position == node.mutation_field_position
+            && self.condition == node.condition.as_ref()
+            && self.context_coordinate == node.context_coordinate()
+            && same_attributes(self.selection_attributes, &node.selection_attributes)
+    }
+
     /// The node `QueryTreeNode::from_path_segment_sequences` makes of `segment`, with `position`
     /// already only on the first one. Context requirements never get a coordinate there.
     pub(crate) fn of_segment(
@@ -89,7 +89,7 @@ impl<'a> MergeIdentity<'a> {
 /// Nodes are equal when they merge into one, see `MergeIdentity`.
 impl PartialEq for QueryTreeNode {
     fn eq(&self, other: &Self) -> bool {
-        self.merge_identity() == other.merge_identity()
+        self.merge_identity().matches(other)
     }
 }
 

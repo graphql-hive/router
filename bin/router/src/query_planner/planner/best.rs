@@ -893,7 +893,7 @@ fn find_path_child(
     let identity = MergeIdentity::of_segment(segment, tail_node_index, position);
     node.children
         .iter()
-        .position(|child| child.merge_identity() == identity)
+        .position(|child| identity.matches(child))
 }
 
 /// Merges a path into `root` without building its `QueryTree` first. Not for `@fromContext`.
