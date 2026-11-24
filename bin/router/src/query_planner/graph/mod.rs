@@ -37,7 +37,7 @@ use crate::query_planner::{
 use error::GraphError;
 use petgraph::{
     dot::Dot,
-    graph::{EdgeIndex, Edges, NodeIndex},
+    graph::{EdgeIndex, NodeIndex},
     visit::EdgeRef,
     Directed, Direction, Graph as Petgraph,
 };
@@ -284,11 +284,9 @@ impl<'graph> Graph<'graph> {
     }
 
     pub(crate) fn edge_reference(&self, index: EdgeIndex) -> EdgeReference<'_> {
-        // a slice underneath, so `nth` doesn't go through the edges before it
-        self.graph
-            .edge_references()
-            .nth(index.index())
-            .expect("an indexed edge exists")
+        // `edge_references().nth(..)` goes through every edge before it, petgraph's iterator
+        // has no shortcut for `nth`
+        EdgeReference::new(index, &self.graph.raw_edges()[index.index()])
     }
 
     pub fn node(&self, node_index: NodeIndex) -> Result<&Node<'_>, GraphError> {
@@ -705,12 +703,16 @@ impl<'graph> Graph<'graph> {
         }
     }
 
-    pub fn edges_to(&self, node_index: NodeIndex) -> Edges<'_, Edge<'graph>, Directed> {
-        self.graph.edges_directed(node_index, Direction::Incoming)
+    pub fn edges_to(&self, node_index: NodeIndex) -> impl Iterator<Item = EdgeReference<'_>> {
+        self.graph
+            .edges_directed(node_index, Direction::Incoming)
+            .map(EdgeReference::from)
     }
 
-    pub fn edges_from(&self, node_index: NodeIndex) -> Edges<'_, Edge<'graph>, Directed> {
-        self.graph.edges_directed(node_index, Direction::Outgoing)
+    pub fn edges_from(&self, node_index: NodeIndex) -> impl Iterator<Item = EdgeReference<'_>> {
+        self.graph
+            .edges_directed(node_index, Direction::Outgoing)
+            .map(EdgeReference::from)
     }
 
     #[instrument(level = "trace", skip(self, state, build_context))]

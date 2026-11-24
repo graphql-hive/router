@@ -1,5 +1,3 @@
-use petgraph::visit::EdgeRef;
-
 use crate::query_planner::{
     graph::{edge::EdgeReference, Graph},
     state::supergraph_state::OperationKind,

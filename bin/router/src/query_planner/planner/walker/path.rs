@@ -1,10 +1,7 @@
 use std::rc::Rc;
 use std::{cmp, fmt::Debug};
 
-use petgraph::{
-    graph::{EdgeIndex, NodeIndex},
-    visit::EdgeRef,
-};
+use petgraph::graph::{EdgeIndex, NodeIndex};
 
 use crate::query_planner::ast::merge_path::Condition;
 use crate::query_planner::graph::node::UnionMembersData;

@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use petgraph::graph::EdgeReference as GraphEdgeReference;
+use petgraph::graph::{EdgeIndex, EdgeReference as GraphEdgeReference, NodeIndex};
 
 use crate::query_planner::{
     ast::type_aware_selection::TypeAwareSelection,
@@ -196,7 +196,54 @@ pub enum Edge<'graph> {
     InterfaceObjectTypeMove(InterfaceObjectTypeMove<'graph>),
 }
 
-pub type EdgeReference<'a> = GraphEdgeReference<'a, Edge<'a>>;
+/// An edge with its ends, like petgraph's own, which only its iterators make. This one can be
+/// made from an edge's index without going through the edges before it.
+#[derive(Debug, Clone, Copy)]
+pub struct EdgeReference<'a> {
+    index: EdgeIndex,
+    source: NodeIndex,
+    target: NodeIndex,
+    weight: &'a Edge<'a>,
+}
+
+impl<'a> EdgeReference<'a> {
+    pub(crate) fn new(index: EdgeIndex, edge: &'a petgraph::graph::Edge<Edge<'a>>) -> Self {
+        Self {
+            index,
+            source: edge.source(),
+            target: edge.target(),
+            weight: &edge.weight,
+        }
+    }
+
+    pub fn id(&self) -> EdgeIndex {
+        self.index
+    }
+
+    pub fn source(&self) -> NodeIndex {
+        self.source
+    }
+
+    pub fn target(&self) -> NodeIndex {
+        self.target
+    }
+
+    pub fn weight(&self) -> &'a Edge<'a> {
+        self.weight
+    }
+}
+
+impl<'a> From<GraphEdgeReference<'a, Edge<'a>>> for EdgeReference<'a> {
+    fn from(edge: GraphEdgeReference<'a, Edge<'a>>) -> Self {
+        use petgraph::visit::EdgeRef;
+        Self {
+            index: edge.id(),
+            source: edge.source(),
+            target: edge.target(),
+            weight: edge.weight(),
+        }
+    }
+}
 
 impl<'graph> Edge<'graph> {
     pub fn create_entity_move(

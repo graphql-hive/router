@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use petgraph::graph::{EdgeIndex, NodeIndex};
-use petgraph::visit::{EdgeRef, NodeRef};
+use petgraph::visit::NodeRef;
 use tracing::{instrument, trace};
 
 use crate::query_planner::ast::merge_path::Condition;
