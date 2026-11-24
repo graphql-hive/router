@@ -226,6 +226,10 @@ done = function(summary, latency, requests)
   io.write("VALIDATION_STATUS_FAILURES=" .. total_status_failures .. "\n")
   io.write("VALIDATION_GRAPHQL_ERRORS=" .. total_graphql_error_responses .. "\n")
   io.write("VALIDATION_RESPONSE_STRUCTURE_FAILURES=" .. total_response_structure_failures .. "\n")
+  -- wrk keeps latency in microseconds
+  io.write("LATENCY_P50_US=" .. latency:percentile(50.0) .. "\n")
+  io.write("LATENCY_P90_US=" .. latency:percentile(90.0) .. "\n")
+  io.write("LATENCY_P99_US=" .. latency:percentile(99.0) .. "\n")
 
   if status_failure_sample ~= nil then
     io.write("VALIDATION_STATUS_FAILURE_SAMPLE=" .. status_failure_sample .. "\n")
