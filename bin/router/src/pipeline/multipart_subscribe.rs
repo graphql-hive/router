@@ -3,7 +3,7 @@
 use const_str::concat;
 
 use futures_util::{Stream, StreamExt};
-use ntex::util::{Bytes, BytesMut};
+use ntex::util::Bytes;
 use std::time::Duration;
 use tokio_util::bytes::BufMut;
 
@@ -15,35 +15,9 @@ macro_rules! make_content_type {
         concat!("multipart/mixed;boundary=\"", $boundary, "\"")
     };
 }
-macro_rules! make_delimiters {
-    ($boundary:expr) => {
-        (
-            // opens the stream
-            concat!("--", $boundary),
-            // closes a part. it is written together with the part, not before the next one, because
-            // clients hand a part on only once they see the delimiter that closes it
-            concat!("\r\n--", $boundary),
-        )
-    };
-}
 
 // the line break ends the delimiter before the part
 const PART_HEADERS: &str = "\r\nContent-Type: application/json\r\n\r\n";
-
-// follows the delimiter that closed the last part
-const CLOSE_DELIMITER_SUFFIX: &str = "--";
-
-/// One part with its headers and the delimiter that closes it, in a single chunk.
-fn make_part(body: &[&[u8]], part_delimiter: &str) -> Bytes {
-    let body_len: usize = body.iter().map(|b| b.len()).sum();
-    let mut part = BytesMut::with_capacity(PART_HEADERS.len() + body_len + part_delimiter.len());
-    part.put_slice(PART_HEADERS.as_bytes());
-    for chunk in body {
-        part.put_slice(chunk);
-    }
-    part.put_slice(part_delimiter.as_bytes());
-    part.freeze()
-}
 
 const INCREMENTAL_DELIVERY_BOUNDARY: &str = "-";
 
@@ -60,10 +34,13 @@ pub const INCREMENTAL_DELIVERY_CONTENT_TYPE: &str =
 pub fn create_incremental_delivery_stream(
     input: impl Stream<Item = Vec<u8>> + Send + Unpin + 'static,
 ) -> impl Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Unpin {
+    const OPEN_DELIMITER: &str = concat!("--", INCREMENTAL_DELIVERY_BOUNDARY);
+    // closes a part. written right after the part, not before the next one, because
+    // clients hand a part on only once they see the delimiter that closes it
+    const PART_DELIMITER: &str = concat!("\r\n--", INCREMENTAL_DELIVERY_BOUNDARY);
     let mut input = input;
-    let (open_delimiter, part_delimiter) = make_delimiters!(INCREMENTAL_DELIVERY_BOUNDARY);
     async_stream::stream! {
-        yield Ok(Bytes::from(open_delimiter));
+        yield Ok(Bytes::from(OPEN_DELIMITER));
         loop {
             match input.next().await {
                 Some(resp) => {
@@ -72,7 +49,7 @@ pub fn create_incremental_delivery_stream(
                             // separate chunks so resp isnt copied, the delimiter still goes out right after the part
                             yield Ok(Bytes::from(PART_HEADERS));
                             yield Ok(Bytes::from(resp));
-                            yield Ok(Bytes::from(part_delimiter));
+                            yield Ok(Bytes::from(PART_DELIMITER));
                         }
                         Err(e) => {
                             yield Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e));
@@ -81,7 +58,8 @@ pub fn create_incremental_delivery_stream(
                     }
                 }
                 None => {
-                    yield Ok(Bytes::from(CLOSE_DELIMITER_SUFFIX));
+                    // turns the last part delimiter into the close delimiter
+                    yield Ok(Bytes::from("--"));
                     break;
                 },
             }
@@ -106,10 +84,13 @@ pub fn create_apollo_multipart_http_stream(
     input: impl Stream<Item = Vec<u8>> + Send + Unpin + 'static,
     heartbeat_interval: Duration,
 ) -> impl Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Unpin {
+    const OPEN_DELIMITER: &str = concat!("--", APOLLO_MULTIPART_HTTP_BOUNDARY);
+    // see create_incremental_delivery_stream
+    const PART_DELIMITER: &str = concat!("\r\n--", APOLLO_MULTIPART_HTTP_BOUNDARY);
+    const HEARTBEAT: &str = concat!(PART_HEADERS, "{}", PART_DELIMITER);
     let mut input = input;
-    let (open_delimiter, part_delimiter) = make_delimiters!(APOLLO_MULTIPART_HTTP_BOUNDARY);
     async_stream::stream! {
-        yield Ok(Bytes::from(open_delimiter));
+        yield Ok(Bytes::from(OPEN_DELIMITER));
         loop {
             tokio::select! {
                 item = input.next() => {
@@ -119,7 +100,15 @@ pub fn create_apollo_multipart_http_stream(
                                 Ok(_) => {
                                     // Wrap the GraphQL response in a payload field
                                     // As per the spec.
-                                    yield Ok(make_part(&[br#"{"payload":"#, &resp, b"}"], part_delimiter));
+                                    let mut part = ntex::util::BytesMut::with_capacity(
+                                        PART_HEADERS.len() + resp.len() + 13 + PART_DELIMITER.len(),
+                                    );
+                                    part.put_slice(PART_HEADERS.as_bytes());
+                                    part.put_slice(br#"{"payload":"#);
+                                    part.put_slice(&resp);
+                                    part.put_slice(b"}");
+                                    part.put_slice(PART_DELIMITER.as_bytes());
+                                    yield Ok(part.freeze());
                                 }
                                 Err(e) => {
                                     // TODO: use transport level errors as per spec
@@ -129,13 +118,13 @@ pub fn create_apollo_multipart_http_stream(
                             }
                         }
                         None => {
-                            yield Ok(Bytes::from(CLOSE_DELIMITER_SUFFIX));
+                            yield Ok(Bytes::from("--"));
                             break;
                         },
                     }
                 }
                 _ = tokio::time::sleep(heartbeat_interval) => {
-                    yield Ok(make_part(&[b"{}"], part_delimiter));
+                    yield Ok(Bytes::from(HEARTBEAT));
                 }
             }
         }
