@@ -230,3 +230,4 @@ tracing-tree = { workspace = true }
 subgraphs = { path = "../../bench/subgraphs" }
 graphql-differential = { path = "../differential" }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
+tokio = { workspace = true, features = ["test-util"] }
