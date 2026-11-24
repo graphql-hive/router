@@ -45,6 +45,8 @@ impl PartialEq for ArgumentsMap {
     }
 }
 
+impl Eq for ArgumentsMap {}
+
 impl From<(String, Value)> for ArgumentsMap {
     fn from((key, value): (String, Value)) -> Self {
         let mut arguments_map = BTreeMap::new();

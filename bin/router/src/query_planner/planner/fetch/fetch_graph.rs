@@ -63,7 +63,7 @@ pub(crate) struct ContextVariableKey {
 /// the key it's written under, its arguments, and every condition it's under. Whether the client
 /// asked for it or another `@requires` did doesn't matter: the step that resolves it is the same
 /// kind of step, and the value lands under the same key.
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct PlannedRequires {
     edge: EdgeIndex,
     response_path: MergePath,
@@ -72,9 +72,6 @@ pub(crate) struct PlannedRequires {
     conditions: Vec<Condition>,
     current_condition: Option<Condition>,
 }
-
-// argument values come from the operation, they have no NaN to break equality
-impl Eq for PlannedRequires {}
 
 #[derive(Debug, Clone)]
 pub struct FetchGraph<State> {
@@ -2910,6 +2907,39 @@ pub fn build_fetch_graph_from_query_tree(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn planned_requires_with_other_arguments_is_another_entry() {
+        use crate::query_planner::ast::value::Value;
+        use std::collections::HashMap;
+        use std::hash::{BuildHasherDefault, Hasher};
+
+        // every key gets the same hash, so only equality can tell them apart
+        #[derive(Default)]
+        struct SameHash;
+        impl Hasher for SameHash {
+            fn finish(&self) -> u64 {
+                0
+            }
+            fn write(&mut self, _: &[u8]) {}
+        }
+
+        let planned = |limit: i64| super::PlannedRequires {
+            edge: petgraph::graph::EdgeIndex::new(0),
+            response_path: super::MergePath::default(),
+            response_key: None,
+            arguments: Some(super::ArgumentsMap::from((
+                "limit".to_string(),
+                Value::Int(limit),
+            ))),
+            conditions: Vec::new(),
+            current_condition: None,
+        };
+        let mut steps: HashMap<_, _, BuildHasherDefault<SameHash>> = HashMap::default();
+        steps.insert(planned(1), 1);
+        assert_eq!(steps.get(&planned(1)), Some(&1));
+        assert_eq!(steps.get(&planned(2)), None);
+    }
+
     use super::*;
 
     /// A step added after a removal still gets an id no other step has.
