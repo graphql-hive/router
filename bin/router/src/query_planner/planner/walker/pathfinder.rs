@@ -90,9 +90,16 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
     }
 }
 
-/// What a move out of a path needs, as `can_satisfy_edge` and the tree of its paths, or `None`
-/// when it can't be made.
-type CheckedRequirement<'graph> = Option<(Option<Rc<QueryTreeNode>>, Vec<Rc<ContextRequirement>>)>;
+/// What a move out of a path needs, when it can be made: the tree of the paths to its
+/// requirements (`None` when it has none) and its context requirements.
+#[derive(Clone)]
+struct SatisfiedMove {
+    requirement_tree: Option<Rc<QueryTreeNode>>,
+    context_requirements: Vec<Rc<ContextRequirement>>,
+}
+
+/// `None` when the move can't be made.
+type CheckedRequirement = Option<SatisfiedMove>;
 
 /// The requirements of the moves out of a path, worked out once per walk. Sibling fields look for
 /// indirect paths from the same paths, so each of them would check the same moves again. Only
@@ -107,7 +114,7 @@ pub struct MoveRequirements<'graph> {
 struct CheckedMove<'graph> {
     _segment: Option<Rc<PathSegment>>,
     union_context: Option<UnionContext<'graph>>,
-    requirement: CheckedRequirement<'graph>,
+    requirement: CheckedRequirement,
 }
 
 impl<'graph> MoveRequirements<'graph> {
@@ -115,8 +122,8 @@ impl<'graph> MoveRequirements<'graph> {
         &self,
         path: &OperationPath<'graph>,
         edge: EdgeIndex,
-        check: impl FnOnce() -> Result<CheckedRequirement<'graph>, WalkOperationError>,
-    ) -> Result<CheckedRequirement<'graph>, WalkOperationError> {
+        check: impl FnOnce() -> Result<CheckedRequirement, WalkOperationError>,
+    ) -> Result<CheckedRequirement, WalkOperationError> {
         let segment = path.last_segment.as_ref();
         let key = (
             segment.map_or(0, |segment| Rc::as_ptr(segment) as usize),
@@ -408,14 +415,16 @@ impl<'graph> PathSearch<'graph> {
                     requirement: visited_key_fields.clone(),
                 };
 
-                let mut check = || -> Result<CheckedRequirement<'graph>, WalkOperationError> {
+                let mut check = || -> Result<CheckedRequirement, WalkOperationError> {
                     let Some(paths) =
                         self.can_satisfy_edge(&edge_ref, &path, &new_excluded, false)?
                     else {
                         return Ok(None);
                     };
-                    let tree = QueryTreeNode::from_paths(graph, &paths.paths, None)?;
-                    Ok(Some((tree, paths.context_requirements)))
+                    Ok(Some(SatisfiedMove {
+                        requirement_tree: QueryTreeNode::from_paths(graph, &paths.paths, None)?,
+                        context_requirements: paths.context_requirements,
+                    }))
                 };
                 let can_be_satisfied = match first_step_moves {
                     Some(moves) => moves.get_or_check(&path, edge_ref.id(), check)?,
@@ -427,14 +436,22 @@ impl<'graph> PathSearch<'graph> {
                         trace!("Requirements not satisfied, continue look up...");
                         continue;
                     }
-                    Some((tree, context_requirements)) => {
+                    Some(SatisfiedMove {
+                        requirement_tree,
+                        context_requirements,
+                    }) => {
                         trace!(
                             "Advancing path to {}",
                             graph.pretty_print_edge(edge_ref.id(), false)
                         );
 
-                        let next_resolution_path =
-                            path.advance(graph, &edge_ref, tree, context_requirements, target);
+                        let next_resolution_path = path.advance(
+                            graph,
+                            &edge_ref,
+                            requirement_tree,
+                            context_requirements,
+                            target,
+                        );
 
                         let direct_paths = self.find_direct_paths(&next_resolution_path, target)?;
 
