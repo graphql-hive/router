@@ -87,6 +87,7 @@ pub fn find_best_combination(
     }
 
     let base_keys = base.fetches.keys.clone();
+    let mut coverage = Coverage::new(&groups, &base_keys);
     let mut plan = base.tree.clone();
     let mut fetches = base.fetches;
     let mut picks = Vec::with_capacity(groups.len());
@@ -101,8 +102,15 @@ pub fn find_best_combination(
             plan.as_ref(),
             &fetches,
             &users,
-            &groups[position + 1..],
+            &coverage,
+            &groups,
+            position,
         )?;
+        for key in &alternatives[pick].fetches {
+            if !fetches.keys.contains(key) {
+                coverage.made(key);
+            }
+        }
         fetches.add(&alternatives[pick]);
         add(graph, &mut plan, &alternatives[pick])?;
         picks.push(pick);
@@ -203,13 +211,16 @@ fn drop_fetches(
 /// new fetches more of the leaves still to pick could use too, so they don't each open their own.
 /// Then the one that adds the least to the tree, and the first one, they're cheapest on their own
 /// first. Each tie-break is only worked out for the candidates still tied.
+#[allow(clippy::too_many_arguments)]
 fn cheapest_to_add(
     graph: &Graph<'_>,
     alternatives: &Alternatives<'_>,
     plan: Option<&QueryTree>,
     fetches: &Fetches,
     users: &HashMap<FetchKey, u32>,
-    remaining: &[Alternatives<'_>],
+    coverage: &Coverage,
+    groups: &[Alternatives<'_>],
+    position: usize,
 ) -> Result<usize, GraphError> {
     let tied = most_by(0..alternatives.len(), |index| {
         let (waves, added) = fetches.added_by(&alternatives[index]);
@@ -233,22 +244,35 @@ fn cheapest_to_add(
     // fetches the plan makes with it. Two root fetches every leaf could use tie above, but the one
     // that has a field itself, like one with `@provides`, saves the other leaves a hop.
     let tied = most_by(tied.into_iter(), |index| {
-        let added: Vec<&FetchKey> = alternatives[index]
+        let added: Vec<FetchKey> = alternatives[index]
             .fetches
             .iter()
             .filter(|key| !fetches.keys.contains(*key))
+            .copied()
             .collect();
-        remaining
-            .iter()
-            .filter(|leaf| {
-                leaf.iter().any(|candidate| {
-                    candidate
-                        .fetches
-                        .iter()
-                        .all(|key| fetches.keys.contains(key) || added.contains(&key))
+        let served = coverage.served_by(groups, position, &added, &fetches.keys);
+        // the leaves the plan covers already count for every candidate, so they're left out,
+        // the rest has to match going through every leaf still to pick
+        #[cfg(test)]
+        {
+            let covered = coverage.covered[position + 1..]
+                .iter()
+                .filter(|covered| **covered)
+                .count();
+            let every_leaf = groups[position + 1..]
+                .iter()
+                .filter(|leaf| {
+                    leaf.iter().any(|candidate| {
+                        candidate
+                            .fetches
+                            .iter()
+                            .all(|key| fetches.keys.contains(key) || added.contains(key))
+                    })
                 })
-            })
-            .count()
+                .count();
+            assert_eq!(served + covered, every_leaf, "leaves served");
+        }
+        served
     });
     if let [index] = tied[..] {
         return Ok(index);
@@ -266,6 +290,95 @@ fn cheapest_to_add(
     }
     let (_, index) = cheapest.expect("a leaf has a way to get it");
     Ok(index)
+}
+
+/// Which candidates of the leaves the plan's fetches cover so far, kept up to date as picks add
+/// fetches, so a tie-break doesn't go through every leaf still to pick for every tied candidate.
+struct Coverage {
+    /// The candidates, as (leaf, candidate), that need each fetch the plan doesn't make yet.
+    needed_by: HashMap<FetchKey, Vec<(u32, u32)>>,
+    /// Per leaf, per candidate, how many of its fetches the plan doesn't make yet.
+    missing: Vec<Vec<u32>>,
+    /// The leaves with a candidate the plan makes every fetch of.
+    covered: Vec<bool>,
+}
+
+impl Coverage {
+    fn new(groups: &[Alternatives<'_>], plan: &HashSet<FetchKey>) -> Self {
+        let mut needed_by: HashMap<FetchKey, Vec<(u32, u32)>> = HashMap::new();
+        let mut missing = Vec::with_capacity(groups.len());
+        let mut covered = Vec::with_capacity(groups.len());
+        for (leaf, alternatives) in groups.iter().enumerate() {
+            let counts: Vec<u32> = alternatives
+                .iter()
+                .enumerate()
+                .map(|(index, candidate)| {
+                    let mut count = 0;
+                    for key in candidate.fetches.iter().filter(|key| !plan.contains(*key)) {
+                        count += 1;
+                        needed_by
+                            .entry(*key)
+                            .or_default()
+                            .push((leaf as u32, index as u32));
+                    }
+                    count
+                })
+                .collect();
+            covered.push(counts.contains(&0));
+            missing.push(counts);
+        }
+        Self {
+            needed_by,
+            missing,
+            covered,
+        }
+    }
+
+    /// The plan makes `key` now.
+    fn made(&mut self, key: &FetchKey) {
+        for (leaf, index) in self.needed_by.remove(key).into_iter().flatten() {
+            let missing = &mut self.missing[leaf as usize][index as usize];
+            *missing -= 1;
+            if *missing == 0 {
+                self.covered[leaf as usize] = true;
+            }
+        }
+    }
+
+    /// How many leaves after `position`, not covered yet, need nothing but the plan's fetches and
+    /// `added` for one of their candidates. Such a candidate needs one of `added`, so that's where
+    /// to look.
+    fn served_by(
+        &self,
+        groups: &[Alternatives<'_>],
+        position: usize,
+        added: &[FetchKey],
+        plan: &HashSet<FetchKey>,
+    ) -> usize {
+        let mut served: Vec<u32> = Vec::new();
+        for key in added {
+            for &(leaf, index) in self.needed_by.get(key).into_iter().flatten() {
+                let leaf_index = leaf as usize;
+                if leaf_index <= position
+                    || self.covered[leaf_index]
+                    || self.missing[leaf_index][index as usize] as usize > added.len()
+                {
+                    continue;
+                }
+                let candidate = &groups[leaf_index][index as usize];
+                if candidate
+                    .fetches
+                    .iter()
+                    .all(|key| plan.contains(key) || added.contains(key))
+                {
+                    served.push(leaf);
+                }
+            }
+        }
+        served.sort_unstable();
+        served.dedup();
+        served.len()
+    }
 }
 
 /// The indexes with the highest `rank`, in order.
