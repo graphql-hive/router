@@ -69,7 +69,10 @@ pub fn create_incremental_delivery_stream(
                 Some(resp) => {
                     match std::str::from_utf8(&resp) {
                         Ok(_) => {
-                            yield Ok(make_part(&[&resp], part_delimiter));
+                            // separate chunks so resp isnt copied, the delimiter still goes out right after the part
+                            yield Ok(Bytes::from(PART_HEADERS));
+                            yield Ok(Bytes::from(resp));
+                            yield Ok(Bytes::from(part_delimiter));
                         }
                         Err(e) => {
                             yield Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e));
