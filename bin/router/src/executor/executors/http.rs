@@ -495,6 +495,17 @@ async fn next_chunk(body: &mut hyper::body::Incoming) -> Result<Option<Bytes>, h
     Ok(None)
 }
 
+/// Awaits `fut`, giving up at `deadline` if there is one.
+async fn until<F: std::future::Future>(
+    deadline: Option<tokio::time::Instant>,
+    fut: F,
+) -> Result<F::Output, tokio::time::error::Elapsed> {
+    match deadline {
+        Some(deadline) => tokio::time::timeout_at(deadline, fut).await,
+        None => Ok(fut.await),
+    }
+}
+
 async fn send_request<'a>(
     opts: SendRequestOpts<'a>,
 ) -> Result<FetchedSubgraphResponse<'a>, SubgraphExecutorError> {
@@ -552,13 +563,9 @@ async fn send_request<'a>(
         //       should be part of the fingerprint or not.
         telemetry_context.inject_context_into_http_headers(req.headers_mut());
 
-        let res_fut = http_client.request(req);
-
-        let res = if let Some(timeout_duration) = timeout {
-            tokio::time::timeout(timeout_duration, res_fut).await?
-        } else {
-            res_fut.await
-        }?;
+        // one deadline for the headers and the body, so a subgraph can't stall mid-body forever
+        let deadline = timeout.map(|timeout| tokio::time::Instant::now() + timeout);
+        let res = until(deadline, http_client.request(req)).await??;
 
         http_request_span.record_response(&res);
         http_request_capture.set_status_code(res.status().as_u16());
@@ -573,7 +580,7 @@ async fn send_request<'a>(
 
         let (parts, body) = res.into_parts();
 
-        let body = match read_body(body).await {
+        let body = match until(deadline, read_body(body)).await? {
             Ok(body) => body,
             Err(err) => {
                 return Err(SubgraphExecutorError::ResponseBodyReadFailure(

@@ -236,4 +236,66 @@ mod timeout_per_subgraph_e2e_tests {
             assert_eq!(json_body, expected_json);
         }
     }
+
+    /// A subgraph that sends its headers and part of the body, then stops sending.
+    fn start_stalling_subgraph() -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = stream.unwrap();
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 8192];
+                    let _ = stream.read(&mut buf);
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 100\r\n\r\n{\"data\":",
+                    );
+                    let _ = stream.flush();
+                    // keep the connection open without sending the rest
+                    std::thread::sleep(Duration::from_secs(30));
+                });
+            }
+        });
+        format!("http://{addr}/accounts")
+    }
+
+    #[ntex::test]
+    async fn should_time_out_when_subgraph_stalls_mid_body() {
+        let url = start_stalling_subgraph();
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                error_masking:
+                  all:
+                    enabled: false
+                traffic_shaping:
+                    all:
+                        request_timeout: 300ms
+                override_subgraph_urls:
+                    subgraphs:
+                        accounts:
+                            url: "{url}"
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let started = std::time::Instant::now();
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+        let body = res.json_body_string_pretty().await;
+
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "took {:?}",
+            started.elapsed()
+        );
+        assert!(body.contains("SUBGRAPH_REQUEST_TIMEOUT"), "{body}");
+    }
 }
