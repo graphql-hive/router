@@ -244,6 +244,7 @@ fn test_http_server_request_span() {
                 attributes::USER_AGENT_ORIGINAL,
                 attributes::HTTP_RESPONSE_STATUS_CODE,
                 attributes::HTTP_RESPONSE_BODY_SIZE,
+                attributes::HIVE_DEFER_END_REASON,
                 attributes::HTTP_ROUTE,
                 attributes::CLIENT_ADDRESS,
                 attributes::CLIENT_PORT,

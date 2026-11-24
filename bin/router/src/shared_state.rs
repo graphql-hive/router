@@ -103,6 +103,7 @@ pub type SharedRouterResponseGuard =
 pub enum SharedRouterResponse {
     Single(SharedRouterSingleResponse),
     Stream(SharedRouterStreamResponse),
+    Parts(SharedRouterPartsResponse),
 }
 
 impl SharedRouterResponse {
@@ -110,6 +111,9 @@ impl SharedRouterResponse {
         match self {
             SharedRouterResponse::Single(resp) => resp.error_count,
             SharedRouterResponse::Stream(resp) => resp.error_count,
+            SharedRouterResponse::Parts(resp) => {
+                resp.error_count.load(std::sync::atomic::Ordering::Relaxed)
+            }
         }
     }
     pub fn into_response(
@@ -121,15 +125,152 @@ impl SharedRouterResponse {
         match self {
             // dropping the guard here would be a leak for streams, but singles
             // are not long-lived clients so releasing the slot right away is correct
-            SharedRouterResponse::Single(single) => Ok(single.into()),
+            SharedRouterResponse::Single(single) => match response_mode {
+                // a client that only takes streams, like `@defer(if: false)` from a client
+                // that only accepts `multipart/mixed`, gets the response as the only part
+                ResponseMode::StreamOnly(stream_content_type) => Ok(parts_response(
+                    single.status,
+                    &single.headers,
+                    Some(stream_content_type.defer_content_type(false)),
+                    futures::stream::once(futures::future::ready(single.body.to_vec())),
+                    stream_content_type,
+                )),
+                _ => Ok(single.into()),
+            },
             SharedRouterResponse::Stream(stream) => {
                 let stream_content_type = response_mode
                     .stream_content_type()
                     .ok_or(ClientPipelineError::SubscriptionsTransportNotSupported)?;
                 Ok(stream.into_response(stream_content_type, metrics, long_lived_client_guard))
             }
+            SharedRouterResponse::Parts(parts) => {
+                let stream_content_type = response_mode
+                    .stream_content_type()
+                    .ok_or(ClientPipelineError::DeferTransportNotSupported)?;
+                Ok(parts.into_response(stream_content_type))
+            }
         }
     }
+}
+
+/// An incremental (`@defer`) response. The primary part is ready, the rest are still coming:
+/// deferred fetches run as the stream is read. The content type is in `headers`.
+/// `@defer` requests aren't deduplicated, so the stream is only ever taken once.
+#[derive(Clone)]
+pub struct SharedRouterPartsResponse {
+    /// The status of the response head, the primary part's, like a regular response's.
+    pub status: StatusCode,
+    pub primary: Bytes,
+    pub rest: Arc<std::sync::Mutex<Option<futures::stream::BoxStream<'static, Vec<u8>>>>>,
+    pub headers: Arc<HeaderMap>,
+    /// The errors of the parts that went out so far, all of them once the stream ends.
+    pub error_count: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl SharedRouterPartsResponse {
+    /// Runs `report` with the error count of every part once the last part went out, or with
+    /// what went out when the client goes away first.
+    pub fn on_end(
+        self,
+        report: impl FnOnce(usize) -> futures::future::BoxFuture<'static, ()> + Send + 'static,
+    ) -> Self {
+        /// Spawns the report when the stream is dropped before its end.
+        struct Guard<F: FnOnce(usize) -> futures::future::BoxFuture<'static, ()>> {
+            report: Option<F>,
+            error_count: Arc<std::sync::atomic::AtomicUsize>,
+        }
+        impl<F: FnOnce(usize) -> futures::future::BoxFuture<'static, ()>> Drop for Guard<F> {
+            fn drop(&mut self) {
+                if let Some(report) = self.report.take() {
+                    let error_count = self.error_count.load(std::sync::atomic::Ordering::Relaxed);
+                    ntex::rt::spawn(report(error_count));
+                }
+            }
+        }
+
+        let mut rest = self.take_rest();
+        let mut guard = Guard {
+            report: Some(report),
+            error_count: self.error_count.clone(),
+        };
+        let stream = async_stream::stream! {
+            use futures::StreamExt;
+            while let Some(part) = rest.next().await {
+                yield part;
+            }
+            // run here, the body is polled in the request's scope
+            if let Some(report) = guard.report.take() {
+                report(guard.error_count.load(std::sync::atomic::Ordering::Relaxed)).await;
+            }
+        };
+        *self.rest_slot() = Some(Box::pin(stream));
+        self
+    }
+
+    /// Where the parts after the primary one wait to be taken. A poisoned lock still holds the
+    /// stream, nothing else touches it while the lock is held.
+    fn rest_slot(
+        &self,
+    ) -> std::sync::MutexGuard<'_, Option<futures::stream::BoxStream<'static, Vec<u8>>>> {
+        self.rest
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The parts after the primary one. They're taken once, `@defer` responses aren't
+    /// deduplicated, so a second reader is a bug and gets none.
+    pub fn take_rest(&self) -> futures::stream::BoxStream<'static, Vec<u8>> {
+        self.rest_slot().take().unwrap_or_else(|| {
+            tracing::error!(
+                target: crate::telemetry::logging::targets::GRAPHQL_EXECUTION,
+                "the deferred parts of a response were already taken"
+            );
+            Box::pin(futures::stream::empty())
+        })
+    }
+
+    pub fn into_response(self, stream_content_type: &StreamContentType) -> web::HttpResponse {
+        use futures::StreamExt;
+        let rest = self.take_rest();
+        let parts =
+            futures::stream::once(futures::future::ready(self.primary.to_vec())).chain(rest);
+        parts_response(self.status, &self.headers, None, parts, stream_content_type)
+    }
+}
+
+/// A response that sends `parts` as they come, as SSE events or multipart parts. `content_type`
+/// replaces the one in `headers`.
+fn parts_response(
+    status: StatusCode,
+    headers: &HeaderMap,
+    content_type: Option<&'static str>,
+    parts: impl Stream<Item = Vec<u8>> + Send + Unpin + 'static,
+    stream_content_type: &StreamContentType,
+) -> web::HttpResponse {
+    let body: std::pin::Pin<
+        Box<dyn Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Send>,
+    > = match stream_content_type {
+        StreamContentType::SSE => Box::pin(sse::create_stream(parts, sse::HEARTBEAT_INTERVAL)),
+        _ => Box::pin(multipart_subscribe::create_incremental_delivery_stream(
+            parts,
+        )),
+    };
+
+    let mut response = web::HttpResponse::Ok();
+    response.status(status);
+    for (header_name, header_value) in headers.iter() {
+        if is_never_join_header(header_name) {
+            response.header(header_name, header_value);
+        } else {
+            response.set_header(header_name, header_value);
+        }
+    }
+    if let Some(content_type) = content_type {
+        response.set_header(ntex::http::header::CONTENT_TYPE, content_type);
+    }
+    // tells proxies like nginx not to hold the parts back
+    response.set_header("x-accel-buffering", "no");
+    response.streaming(body)
 }
 
 #[derive(Clone)]
@@ -193,7 +334,7 @@ impl SharedRouterStreamResponse {
         let mut receiver = self.receiver.unwrap_or_else(|| self.body.subscribe());
 
         let transport = match stream_content_type {
-            StreamContentType::IncrementalDelivery | StreamContentType::ApolloMultipartHTTP => {
+            StreamContentType::IncrementalDelivery(_) | StreamContentType::ApolloMultipartHTTP => {
                 SubscriptionTransport::HttpMultipart
             }
             StreamContentType::SSE => SubscriptionTransport::HttpSse,
@@ -237,7 +378,7 @@ impl SharedRouterStreamResponse {
         });
 
         let content_type_header = match stream_content_type {
-            StreamContentType::IncrementalDelivery => {
+            StreamContentType::IncrementalDelivery(_) => {
                 http::HeaderValue::from_static(INCREMENTAL_DELIVERY_CONTENT_TYPE)
             }
             StreamContentType::SSE => http::HeaderValue::from_static("text/event-stream"),
@@ -249,17 +390,14 @@ impl SharedRouterStreamResponse {
         let body: std::pin::Pin<
             Box<dyn Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Send>,
         > = match stream_content_type {
-            StreamContentType::IncrementalDelivery => Box::pin(
+            StreamContentType::IncrementalDelivery(_) => Box::pin(
                 multipart_subscribe::create_incremental_delivery_stream(stream),
             ),
-            StreamContentType::SSE => Box::pin(sse::create_stream(
-                stream,
-                std::time::Duration::from_secs(10),
-            )),
+            StreamContentType::SSE => Box::pin(sse::create_stream(stream, sse::HEARTBEAT_INTERVAL)),
             StreamContentType::ApolloMultipartHTTP => {
                 Box::pin(multipart_subscribe::create_apollo_multipart_http_stream(
                     stream,
-                    std::time::Duration::from_secs(10),
+                    sse::HEARTBEAT_INTERVAL,
                 ))
             }
         };

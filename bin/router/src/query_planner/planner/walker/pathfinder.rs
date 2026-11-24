@@ -1,3 +1,4 @@
+use crate::query_planner::ast::defer::DeferId;
 use ahash::HashMap;
 use rustc_hash::FxHashSet;
 use std::cell::RefCell;
@@ -161,7 +162,18 @@ pub enum NavigationTarget<'op> {
         /// The field's alias and arguments, for every path advanced to it
         attributes: Rc<SelectionAttributes>,
     },
-    ConcreteType(&'op str, Option<Condition>),
+    /// A type, through a fragment with these `@skip`/`@include` and this `@defer`.
+    ConcreteType(&'op str, Option<Condition>, Option<DeferId>),
+}
+
+impl<'op> From<&'op InlineFragmentSelection> for NavigationTarget<'op> {
+    fn from(fragment: &'op InlineFragmentSelection) -> Self {
+        NavigationTarget::ConcreteType(
+            &fragment.type_condition,
+            fragment.into(),
+            fragment.defer_id(),
+        )
+    }
 }
 
 impl<'op> NavigationTarget<'op> {
@@ -186,8 +198,8 @@ impl<'op> NavigationTarget<'op> {
                 target_subgraph_ids,
                 attributes: Rc::clone(attributes),
             },
-            NavigationTarget::ConcreteType(type_name, condition) => {
-                NavigationTarget::ConcreteType(type_name, condition.clone())
+            NavigationTarget::ConcreteType(type_name, condition, defer) => {
+                NavigationTarget::ConcreteType(type_name, condition.clone(), *defer)
             }
         }
     }
@@ -203,7 +215,7 @@ impl<'op> From<&'op NavigationTarget<'op>> for NavigationTargetKey<'op> {
     fn from(target: &'op NavigationTarget<'op>) -> Self {
         match target {
             NavigationTarget::Field { field, .. } => NavigationTargetKey::Field(&field.name),
-            NavigationTarget::ConcreteType(type_name, _) => {
+            NavigationTarget::ConcreteType(type_name, ..) => {
                 NavigationTargetKey::ConcreteType(type_name)
             }
         }
@@ -302,7 +314,7 @@ impl<'graph> PathSearch<'graph> {
             RequirementCycleChecker::new(self.supergraph, tail_node.name_str());
 
         // Respect the path's current union scope when targeting a concrete type.
-        if let NavigationTarget::ConcreteType(type_name, _) = target {
+        if let NavigationTarget::ConcreteType(type_name, ..) = target {
             if !path.can_resolve_union_member(type_name) {
                 return Ok(Vec::new());
             }
@@ -553,33 +565,66 @@ pub fn find_self_referencing_direct_path<'graph>(
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
-    type_name: &'graph str,
-    condition: &Condition,
+    fragment: &InlineFragmentSelection,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<OperationPath<'graph>, WalkOperationError> {
-    let path_tail_index = path.tail();
-    let mut path_search = PathSearch::new(graph, supergraph, override_context, cancellation_token);
+    let type_name = fragment.type_condition.as_str();
+    let found = first_direct_path_over(
+        PathSearch::new(graph, supergraph, override_context, cancellation_token),
+        path,
+        &NavigationTarget::from(fragment),
+        |edge| matches!(edge.weight(), Edge::Selfie(t) if t == type_name),
+    )?;
+    trace!("Finished finding direct path, found {}", found.is_some());
+    found.ok_or_else(|| WalkOperationError::NoPathsFound(type_name.to_string()))
+}
 
-    for edge_ref in graph
-        .edges_from(path_tail_index)
-        .filter(move |e| match e.weight() {
-            Edge::Selfie(t) => t == type_name,
-            _ => false,
-        })
-    {
-        if let Some(new_path) = path_search.try_advance_direct_path(
-            path,
-            &edge_ref,
-            &NavigationTarget::ConcreteType(type_name, Some(condition.clone())),
-        )? {
-            trace!("Finished finding direct path, found one",);
-            return Ok(new_path);
+/// The first direct path to `target` over an edge from the path's tail that `takes` accepts.
+fn first_direct_path_over<'graph>(
+    mut path_search: PathSearch<'graph>,
+    path: &OperationPath<'graph>,
+    target: &NavigationTarget<'_>,
+    takes: impl Fn(&EdgeReference<'graph>) -> bool,
+) -> Result<Option<OperationPath<'graph>>, WalkOperationError> {
+    let graph = path_search.graph;
+    for edge_ref in graph.edges_from(path.tail()).filter(takes) {
+        if let Some(new_path) = path_search.try_advance_direct_path(path, &edge_ref, target)? {
+            return Ok(Some(new_path));
         }
     }
+    Ok(None)
+}
 
-    trace!("Finished finding direct path, found none",);
-
-    Err(WalkOperationError::NoPathsFound(type_name.to_string()))
+/// For a path that just entered a deferred fragment, the same path moved back into its
+/// subgraph through one of the type's own keys. A field that resolves there then gets an entity
+/// call of its own, in the deferred part, instead of riding along in the parent's fetch, where a
+/// slow resolver would hold up the parent's part. `None` when the path didn't just enter a
+/// deferred fragment, already moved into a new call to get there, or the type has no usable key.
+pub fn find_deferred_self_key_path<'graph>(
+    graph: &'graph Graph<'graph>,
+    supergraph: &'graph SupergraphState,
+    override_context: &'graph PlannerOverrideContext,
+    path: &OperationPath<'graph>,
+    cancellation_token: &'graph CancellationToken,
+) -> Result<Option<OperationPath<'graph>>, WalkOperationError> {
+    let Some(segment) = path.last_segment.as_ref() else {
+        return Ok(None);
+    };
+    if segment.defer.is_none()
+        || matches!(
+            graph.edge(segment.edge_index)?,
+            Edge::EntityMove { .. } | Edge::InterfaceObjectTypeMove { .. }
+        )
+    {
+        return Ok(None);
+    }
+    let tail = path.tail();
+    first_direct_path_over(
+        PathSearch::new(graph, supergraph, override_context, cancellation_token),
+        path,
+        &NavigationTarget::ConcreteType(graph.node(tail)?.name_str(), None, None),
+        |edge| edge.target() == tail && matches!(edge.weight(), Edge::EntityMove { .. }),
+    )
 }
 
 #[instrument(level = "trace", skip_all, fields(
@@ -627,7 +672,7 @@ where
     let path_tail_index = path.tail();
 
     match target {
-        NavigationTarget::ConcreteType(type_name, _)
+        NavigationTarget::ConcreteType(type_name, ..)
             if !path.can_resolve_union_member(type_name) =>
         {
             Box::new(std::iter::empty())
@@ -635,7 +680,7 @@ where
         NavigationTarget::Field { field, .. } => {
             Box::new(graph.field_edges_from(path_tail_index, &field.name))
         }
-        NavigationTarget::ConcreteType(type_name, _condition) => Box::new(
+        NavigationTarget::ConcreteType(type_name, ..) => Box::new(
             graph
                 .edges_from(path_tail_index)
                 .filter(move |e| match e.weight() {
@@ -1107,7 +1152,7 @@ impl<'graph> PathSearch<'graph> {
                     path,
                     // @skip/@include can't be used in @requires and @provides,
                     // that's why we pass no condition
-                    &NavigationTarget::ConcreteType(type_name, None),
+                    &NavigationTarget::ConcreteType(type_name, None, None),
                 )?);
             }
         }
@@ -1120,7 +1165,7 @@ impl<'graph> PathSearch<'graph> {
                 path_from_rc,
                 // @skip/@include can't be used in @requires and @provides,
                 // that's why we pass no condition
-                &NavigationTarget::ConcreteType(type_name, None),
+                &NavigationTarget::ConcreteType(type_name, None, None),
                 excluded,
                 None,
             )?);

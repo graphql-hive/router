@@ -28,6 +28,11 @@ pub struct GeneratorConfig {
     pub inline_fragment_probability: f64,
     pub directive_probability: f64,
     pub variable_directive_probability: f64,
+    /// How likely an inline fragment gets `@defer`. 0 by default, then the generator draws
+    /// nothing extra, so a seed gives the same operation it always did.
+    pub defer_probability: f64,
+    /// At most this many `@defer`s per operation, the router's `limits.max_defers`.
+    pub max_defers: usize,
 }
 
 impl Default for GeneratorConfig {
@@ -45,6 +50,8 @@ impl Default for GeneratorConfig {
             inline_fragment_probability: 0.45,
             directive_probability: 0.45,
             variable_directive_probability: 0.65,
+            defer_probability: 0.0,
+            max_defers: 4,
         }
     }
 }
@@ -54,6 +61,11 @@ pub struct QueryCase {
     pub document: String,
     pub operation_name: String,
     pub variables_json: String,
+    /// `document` without its `@defer`s, and `variables_json` without their variables. The same
+    /// as those when there's no `@defer`. Merging the parts of `document`'s response gives
+    /// the response to this one.
+    pub plain_document: String,
+    pub plain_variables_json: String,
     pub features: FeatureCoverage,
 }
 
@@ -71,6 +83,7 @@ pub struct FeatureCoverage {
     pub directive_variables: usize,
     pub abstract_type_conditions: usize,
     pub concrete_type_conditions: usize,
+    pub defers: usize,
     pub max_depth: usize,
 }
 
@@ -81,6 +94,8 @@ pub struct QueryGenerator<'a> {
     fragments: Vec<FragmentDefinition>,
     variable_defs: BTreeMap<String, VariableDef>,
     variables: BTreeMap<String, bool>,
+    /// The `@defer(if:)` variables, nullable `Boolean`s. `None` isn't sent, so it's `true`.
+    defer_variables: BTreeMap<String, Option<bool>>,
     counters: Counters,
     features: FeatureCoverage,
 }
@@ -93,6 +108,7 @@ struct Counters {
     fragment_spreads: usize,
     inline_fragments: usize,
     directives: usize,
+    defers: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -118,6 +134,7 @@ impl<'a> QueryGenerator<'a> {
             fragments: Vec::new(),
             variable_defs: BTreeMap::new(),
             variables: BTreeMap::new(),
+            defer_variables: BTreeMap::new(),
             counters: Counters::default(),
             features: FeatureCoverage::default(),
         }
@@ -132,9 +149,30 @@ impl<'a> QueryGenerator<'a> {
             .to_string();
         let selections = self.selection_set_for_type(&root, 0, SelectionContext::Root);
 
-        let variables_json = self.render_variables_json();
+        let document = self.render(&operation_name, selections.clone(), true);
+        let variables_json = self.render_variables_json(true);
+        let plain_document = self.render(&operation_name, selections, false);
+        let plain_variables_json = self.render_variables_json(false);
 
-        let mut defs = Vec::new();
+        QueryCase {
+            document,
+            operation_name,
+            variables_json,
+            plain_document,
+            plain_variables_json,
+            features: self.features,
+        }
+    }
+
+    /// The operation and its fragments, without `@defer` and its variables when `defer` is off.
+    fn render(&self, operation_name: &str, mut selections: Vec<Selection>, defer: bool) -> String {
+        let mut fragments = self.fragments.clone();
+        if !defer {
+            strip_defer(&mut selections);
+            for fragment in &mut fragments {
+                strip_defer(&mut fragment.selection_set.items);
+            }
+        }
 
         let mut query_vars = Vec::new();
         for def in self.variable_defs.values() {
@@ -145,11 +183,21 @@ impl<'a> QueryGenerator<'a> {
                 default_value: def.default_value.map(QueryValue::Boolean),
             });
         }
+        if defer {
+            for name in self.defer_variables.keys() {
+                query_vars.push(VariableDefinition {
+                    position: Pos::default(),
+                    name: name.clone(),
+                    var_type: q::Type::NamedType("Boolean".to_string()),
+                    default_value: None,
+                });
+            }
+        }
 
-        defs.push(q::Definition::Operation(OperationDefinition::Query(
+        let mut defs = vec![q::Definition::Operation(OperationDefinition::Query(
             q::Query {
                 position: Pos::default(),
-                name: Some(operation_name.clone()),
+                name: Some(operation_name.to_string()),
                 variable_definitions: query_vars,
                 directives: Vec::new(),
                 selection_set: SelectionSet {
@@ -157,22 +205,10 @@ impl<'a> QueryGenerator<'a> {
                     items: selections,
                 },
             },
-        )));
+        ))];
+        defs.extend(fragments.into_iter().map(q::Definition::Fragment));
 
-        for frag in self.fragments.into_iter() {
-            defs.push(q::Definition::Fragment(frag));
-        }
-
-        let doc = QueryDocument { definitions: defs };
-        let style = Style::default();
-        let document_str = doc.format(&style);
-
-        QueryCase {
-            document: document_str,
-            operation_name,
-            variables_json,
-            features: self.features,
-        }
+        QueryDocument { definitions: defs }.format(&Style::default())
     }
 
     fn selection_set_for_type(
@@ -505,10 +541,12 @@ impl<'a> QueryGenerator<'a> {
         let selection_set =
             self.selection_set_for_type(&scoped_type, depth + 1, SelectionContext::InlineFragment);
 
+        let mut directives = self.maybe_directives();
+        directives.extend(self.maybe_defer());
         Some(InlineFragment {
             position: Pos::default(),
             type_condition: type_condition.map(q::TypeCondition::On),
-            directives: self.maybe_directives(),
+            directives,
             selection_set: SelectionSet {
                 span: (Pos::default(), Pos::default()),
                 items: selection_set,
@@ -612,6 +650,47 @@ impl<'a> QueryGenerator<'a> {
         }
     }
 
+    /// `@defer`, maybe with `if` (a variable, sent or not, or a literal) and a label.
+    fn maybe_defer(&mut self) -> Option<QueryDirective> {
+        // no draw at all when it's off, so the other choices stay the same
+        if self.config.defer_probability <= 0.0
+            || self.counters.defers >= self.config.max_defers
+            || !self.rng.random_bool(self.config.defer_probability)
+        {
+            return None;
+        }
+        self.counters.defers += 1;
+        self.features.defers += 1;
+
+        let mut arguments = Vec::new();
+        match self.rng.random_range(0..4) {
+            0 | 1 => {
+                let name = format!("d{}", self.counters.defers);
+                let value = match self.rng.random_range(0..3) {
+                    0 => None,
+                    n => Some(n == 1),
+                };
+                self.defer_variables.insert(name.clone(), value);
+                arguments.push(("if".to_string(), QueryValue::Variable(name)));
+            }
+            2 => arguments.push((
+                "if".to_string(),
+                QueryValue::Boolean(self.rng.random_bool(0.5)),
+            )),
+            _ => {}
+        }
+        if self.rng.random_bool(0.3) {
+            let label = format!("l{}", self.counters.defers);
+            arguments.push(("label".to_string(), QueryValue::String(label)));
+        }
+
+        Some(QueryDirective {
+            position: Pos::default(),
+            name: "defer".to_string(),
+            arguments,
+        })
+    }
+
     fn bool_variable(&mut self, value: bool) -> String {
         self.counters.variable += 1;
         let name = format!("v{}", self.counters.variable);
@@ -642,14 +721,230 @@ impl<'a> QueryGenerator<'a> {
         false
     }
 
-    fn render_variables_json(&self) -> String {
+    fn render_variables_json(&self, defer: bool) -> String {
+        let defer_values = self
+            .defer_variables
+            .iter()
+            .filter(|_| defer)
+            .filter_map(|(key, value)| value.map(|value| (key, value)));
         let body = self
             .variables
             .iter()
+            .map(|(key, value)| (key, *value))
+            .chain(defer_values)
             .map(|(key, value)| format!("\"{}\": {}", key, value))
             .collect::<Vec<_>>()
             .join(", ");
 
         format!("{{{}}}", body)
+    }
+}
+
+/// Takes `@defer` off every inline fragment and fragment spread.
+fn strip_defer(items: &mut [Selection]) {
+    for item in items {
+        match item {
+            Selection::Field(field) => strip_defer(&mut field.selection_set.items),
+            Selection::InlineFragment(fragment) => {
+                fragment
+                    .directives
+                    .retain(|directive| directive.name != "defer");
+                strip_defer(&mut fragment.selection_set.items);
+            }
+            Selection::FragmentSpread(spread) => {
+                spread
+                    .directives
+                    .retain(|directive| directive.name != "defer");
+            }
+        }
+    }
+}
+
+/// Puts an incremental (`@defer`) response back together the way a client would, from its parts
+/// in the `incrementalSpec=v0.2` format: `pending` says where a part goes, `incremental` brings
+/// its data. Gives `{"data": .., "errors": [..]}`, `errors` left out when there are none.
+///
+/// A response that breaks the format is an `Err` saying how: a wrong `hasNext`, an id that's
+/// pending twice, data for an id that isn't pending or already completed, a path that isn't in
+/// the response, or an id that never completes.
+pub fn merge_incremental(parts: &[serde_json::Value]) -> Result<serde_json::Value, String> {
+    use serde_json::Value;
+    use std::collections::{BTreeSet, HashMap};
+
+    let list = |value: &Value, key: &str| value.get(key).and_then(Value::as_array).cloned();
+    let id_of = |value: &Value, what: &str| {
+        value["id"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| format!("{what} without an id: {value}"))
+    };
+    let mut response = serde_json::json!({});
+    let mut errors = Vec::new();
+    let mut pending: HashMap<String, Vec<Value>> = HashMap::new();
+    let mut completed = BTreeSet::new();
+
+    for (index, part) in parts.iter().enumerate() {
+        if parts.len() > 1 && part.get("hasNext") != Some(&Value::Bool(index + 1 < parts.len())) {
+            return Err(format!("part {index} has the wrong hasNext: {part}"));
+        }
+        // a response that never got to run, like one that failed validation, has no `data`
+        if index == 0 {
+            if let Some(data) = part.get("data") {
+                response["data"] = data.clone();
+            }
+        }
+        errors.extend(list(part, "errors").unwrap_or_default());
+        for entry in list(part, "pending").unwrap_or_default() {
+            let id = id_of(&entry, "pending")?;
+            let path = list(&entry, "path").ok_or_else(|| format!("pending {id} has no path"))?;
+            if pending.insert(id.clone(), path).is_some() {
+                return Err(format!("pending id {id} repeats"));
+            }
+        }
+        for item in list(part, "incremental").unwrap_or_default() {
+            let id = id_of(&item, "incremental")?;
+            if completed.contains(&id) {
+                return Err(format!("incremental {id} after it completed"));
+            }
+            let mut path = pending
+                .get(&id)
+                .cloned()
+                .ok_or_else(|| format!("incremental {id} isn't pending"))?;
+            path.extend(list(&item, "subPath").unwrap_or_default());
+            if let Some(data) = item.get("data") {
+                let target = value_at(&mut response["data"], &path)
+                    .ok_or_else(|| format!("no {path:?} in the response for {id}"))?;
+                deep_merge(target, data);
+            }
+            errors.extend(list(&item, "errors").unwrap_or_default());
+        }
+        for item in list(part, "completed").unwrap_or_default() {
+            let id = id_of(&item, "completed")?;
+            if !pending.contains_key(&id) {
+                return Err(format!("completed {id} isn't pending"));
+            }
+            if !completed.insert(id.clone()) {
+                return Err(format!("{id} completed twice"));
+            }
+            errors.extend(list(&item, "errors").unwrap_or_default());
+        }
+    }
+    let mut never_completed: Vec<_> = pending
+        .keys()
+        .filter(|id| !completed.contains(*id))
+        .collect();
+    if !never_completed.is_empty() {
+        never_completed.sort();
+        return Err(format!("pending but never completed: {never_completed:?}"));
+    }
+    if !errors.is_empty() {
+        response["errors"] = Value::Array(errors);
+    }
+    Ok(response)
+}
+
+fn value_at<'v>(
+    value: &'v mut serde_json::Value,
+    path: &[serde_json::Value],
+) -> Option<&'v mut serde_json::Value> {
+    let Some((first, rest)) = path.split_first() else {
+        return Some(value);
+    };
+    let next = match first {
+        serde_json::Value::String(key) => value.get_mut(key.as_str())?,
+        serde_json::Value::Number(index) => value.get_mut(index.as_u64()? as usize)?,
+        _ => return None,
+    };
+    value_at(next, rest)
+}
+
+fn deep_merge(target: &mut serde_json::Value, new: &serde_json::Value) {
+    use serde_json::Value;
+    match (target, new) {
+        (Value::Object(target), Value::Object(new)) => {
+            for (key, value) in new {
+                match target.get_mut(key) {
+                    Some(existing) => deep_merge(existing, value),
+                    None => {
+                        target.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+        }
+        (Value::Array(target), Value::Array(new)) if target.len() == new.len() => {
+            for (existing, value) in target.iter_mut().zip(new) {
+                deep_merge(existing, value);
+            }
+        }
+        (target, new) => *target = new.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{merge_incremental, GeneratorConfig, QueryGenerator};
+    use graphql_tools::parser::schema::parse_schema;
+    use serde_json::json;
+
+    #[test]
+    fn merges_parts_where_pending_says() {
+        let parts = [
+            json!({"data": {"me": {"id": "1", "reviews": [{"id": "1", "author": {"id": "1"}}]}}, "pending": [{"id": "0", "path": ["me"]}], "hasNext": true}),
+            json!({"pending": [{"id": "1", "path": ["me", "reviews", 0]}], "incremental": [{"id": "0", "data": {"name": "Uri"}}], "completed": [{"id": "0"}], "hasNext": true}),
+            json!({"incremental": [{"id": "1", "subPath": ["author"], "data": {"name": "Uri"}}], "completed": [{"id": "1", "errors": [{"message": "x"}]}], "hasNext": false}),
+        ];
+        assert_eq!(
+            merge_incremental(&parts),
+            Ok(json!({
+                "data": {"me": {"id": "1", "name": "Uri", "reviews": [{"id": "1", "author": {"id": "1", "name": "Uri"}}]}},
+                "errors": [{"message": "x"}],
+            }))
+        );
+    }
+
+    #[test]
+    fn a_broken_response_is_an_error() {
+        let first = json!({"data": {"me": {"id": "1"}}, "pending": [{"id": "0", "path": ["me"]}], "hasNext": true});
+        let cases = [
+            // never completes
+            vec![
+                first.clone(),
+                json!({"incremental": [{"id": "0", "data": {"name": "Uri"}}], "hasNext": false}),
+            ],
+            // isn't pending
+            vec![
+                first.clone(),
+                json!({"incremental": [{"id": "1", "data": {}}], "completed": [{"id": "0"}], "hasNext": false}),
+            ],
+            // a path that isn't there
+            vec![
+                first.clone(),
+                json!({"incremental": [{"id": "0", "subPath": ["nope"], "data": {}}], "completed": [{"id": "0"}], "hasNext": false}),
+            ],
+            // the last part says there's more
+            vec![first, json!({"completed": [{"id": "0"}], "hasNext": true})],
+        ];
+        for parts in cases {
+            assert!(merge_incremental(&parts).is_err(), "{parts:?}");
+        }
+    }
+
+    #[test]
+    fn plain_document_has_no_defer() {
+        let schema = parse_schema::<String>("type Query { a: A } type A { b: String c: A }")
+            .unwrap()
+            .into_static();
+        let config = GeneratorConfig {
+            defer_probability: 1.0,
+            inline_fragment_probability: 1.0,
+            ..Default::default()
+        };
+        let case = (0..20)
+            .map(|seed| QueryGenerator::new(&schema, seed, config.clone()).generate())
+            .find(|case| case.features.defers > 0)
+            .expect("a case with @defer");
+        assert!(case.document.contains("@defer"));
+        assert!(!case.plain_document.contains("@defer"));
+        assert!(!case.plain_document.contains("$d"));
     }
 }

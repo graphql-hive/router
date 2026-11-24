@@ -1,3 +1,4 @@
+use crate::query_planner::ast::defer::DeferId;
 use crate::query_planner::planner::plan_nodes::FetchId;
 use std::{collections::BTreeSet, fmt::Display};
 
@@ -49,6 +50,9 @@ pub struct FetchStepData<State> {
     /// `condition`, it relies on the `orders` step for `$a`, but it's gated by both. Merged with
     /// a step of another branch, only the conditions both have stay.
     pub gated_by: Vec<Condition>,
+    /// The deferred part the step fetches for, `None` for the primary part. Steps of different
+    /// parts never merge.
+    pub defer: Option<DeferId>,
     pub variable_usages: Option<BTreeSet<String>>,
     pub variable_definitions: Option<Vec<VariableDefinition>>,
     pub mutation_field_position: MutationFieldPosition,
@@ -221,18 +225,21 @@ impl FetchStepData<MultiTypeFetchStep> {
 }
 
 impl FetchStepData<SingleTypeFetchStep> {
-    /// Whether an entity call to this subgraph, type, path and condition could reuse this step.
+    /// Whether an entity call to this subgraph, type, path and condition, for this deferred
+    /// part, could reuse this step.
     pub fn matches_entity_call(
         &self,
         subgraph_name: &SubgraphName,
         input_type_name: &str,
         response_path: &MergePath,
         condition: Option<&Condition>,
+        defer: Option<DeferId>,
     ) -> bool {
         self.service_name == *subgraph_name
             && self.input.definition_name() == input_type_name
             && self.response_path == *response_path
             && self.condition.as_ref() == condition
+            && self.defer == defer
     }
 
     pub fn into_multi_type(self) -> FetchStepData<MultiTypeFetchStep> {
@@ -247,6 +254,7 @@ impl FetchStepData<SingleTypeFetchStep> {
             flags: self.flags,
             condition: self.condition,
             gated_by: self.gated_by,
+            defer: self.defer,
             variable_usages: self.variable_usages,
             variable_definitions: self.variable_definitions,
             mutation_field_position: self.mutation_field_position,

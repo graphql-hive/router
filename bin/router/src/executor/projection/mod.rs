@@ -1,3 +1,4 @@
+pub mod defer;
 pub mod error;
 pub mod plan;
 pub mod request;

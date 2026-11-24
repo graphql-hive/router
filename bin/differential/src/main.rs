@@ -1,28 +1,51 @@
-use graphql_differential::{GeneratorConfig, QueryGenerator};
+use graphql_differential::{merge_incremental, GeneratorConfig, QueryGenerator};
 use graphql_tools::parser::schema::parse_schema;
 use reqwest::Client;
 use serde_json::Value as JsonValue;
 use std::time::Duration;
 
+/// Sends the query. With `defer`, it asks for an incremental response and merges its parts.
 async fn execute_query(
     client: &Client,
     url: &str,
     query: &str,
     variables: &str,
-) -> Result<JsonValue, reqwest::Error> {
+    defer: bool,
+) -> Result<(JsonValue, usize), String> {
     let body = serde_json::json!({
         "query": query,
         "variables": serde_json::from_str::<JsonValue>(variables).unwrap_or(serde_json::json!({}))
     });
 
-    let res = client
-        .post(url)
-        .header("Content-Type", "application/json")
+    let mut request = client.post(url).header("Content-Type", "application/json");
+    if defer {
+        request = request.header("Accept", "multipart/mixed, application/json;q=0.9");
+    }
+    let res = request
         .json(&body)
         .send()
-        .await?;
-
-    res.json::<JsonValue>().await
+        .await
+        .map_err(|e| e.to_string())?;
+    if !defer {
+        return res
+            .json::<JsonValue>()
+            .await
+            .map(|response| (response, 1))
+            .map_err(|e| e.to_string());
+    }
+    // every part is a JSON object on a line of its own, between the multipart boundaries.
+    // a part that doesn't parse fails the request, a dropped one would look like a data mismatch
+    let text = res.text().await.map_err(|e| e.to_string())?;
+    let parts = text
+        .lines()
+        .filter(|line| line.starts_with('{'))
+        .map(|line| {
+            serde_json::from_str(line).map_err(|e| format!("part doesn't parse ({e}): {line}"))
+        })
+        .collect::<Result<Vec<JsonValue>, _>>()?;
+    let merged =
+        merge_incremental(&parts).map_err(|e| format!("broken incremental response: {e}"))?;
+    Ok((merged, parts.len()))
 }
 
 #[tokio::main]
@@ -65,11 +88,22 @@ async fn main() {
         .unwrap();
 
     let mut differences = 0;
+    // with `@defer`: cases that had one, and the ones that came back in more than one part
+    let mut deferred_cases = 0;
+    let mut in_parts = 0;
     let mut num_queries = 100;
 
     if let Ok(val) = std::env::var("GRAPHQL_DIFF_QUERIES") {
         num_queries = val.parse().unwrap_or(10);
     }
+
+    // `@defer` on the candidate: it gets queries with `@defer` and their parts are merged, the
+    // baseline gets the same queries without. The candidate needs `defer.enabled`.
+    let defer = std::env::var("GRAPHQL_DIFF_DEFER").is_ok_and(|val| val == "1");
+    let config = GeneratorConfig {
+        defer_probability: if defer { 0.6 } else { 0.0 },
+        ..GeneratorConfig::default()
+    };
 
     println!("Running {} differential queries against:", num_queries);
     println!("  baseline: {}", baseline_endpoint);
@@ -78,24 +112,33 @@ async fn main() {
 
     for i in 0..num_queries {
         let seed = i as u64 + 42;
-        let case = QueryGenerator::new(&schema, seed, GeneratorConfig::default()).generate();
+        let case = QueryGenerator::new(&schema, seed, config.clone()).generate();
 
         println!("Query #{}:", i + 1);
 
         let res1_future = execute_query(
             &client,
             baseline_endpoint,
-            &case.document,
-            &case.variables_json,
+            &case.plain_document,
+            &case.plain_variables_json,
+            false,
         );
         let res2_future = execute_query(
             &client,
             candidate_endpoint,
             &case.document,
             &case.variables_json,
+            defer,
         );
 
         let (res1, res2) = tokio::join!(res1_future, res2_future);
+        if case.features.defers > 0 {
+            deferred_cases += 1;
+        }
+        if res2.as_ref().is_ok_and(|(_, parts)| *parts > 1) {
+            in_parts += 1;
+        }
+        let (res1, res2) = (res1.map(|(res, _)| res), res2.map(|(res, _)| res));
 
         match (res1, res2) {
             (Ok(res1), Ok(res2)) => {
@@ -121,6 +164,18 @@ async fn main() {
                     std::fs::create_dir_all(&dir).expect("to create a directory");
                     std::fs::write(format!("{}/query.graphql", dir), case.document.clone())
                         .expect("to create query.graphql");
+                    if defer {
+                        std::fs::write(
+                            format!("{}/plain-query.graphql", dir),
+                            case.plain_document.clone(),
+                        )
+                        .expect("to create plain-query.graphql");
+                        std::fs::write(
+                            format!("{}/plain-variables.json", dir),
+                            case.plain_variables_json.clone(),
+                        )
+                        .expect("to create plain-variables.json");
+                    }
                     std::fs::write(
                         format!("{}/variables.json", dir),
                         case.variables_json.clone(),
@@ -159,6 +214,12 @@ async fn main() {
         println!("--------------------------------------------------");
     }
 
+    if defer {
+        println!(
+            "{} of {} queries had @defer, {} came back in parts",
+            deferred_cases, num_queries, in_parts
+        );
+    }
     if differences == 0 {
         println!("🎉 All queries returned matching results!");
     } else {

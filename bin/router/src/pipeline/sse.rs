@@ -7,6 +7,9 @@ use tokio_util::bytes::BufMut;
 
 pub const SSE_HEADER: &str = "text/event-stream";
 
+/// How often an idle SSE or multipart stream sends a heartbeat.
+pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
+
 pub fn create_stream(
     input: impl Stream<Item = Vec<u8>> + Send + Unpin + 'static,
     heartbeat_interval: Duration,

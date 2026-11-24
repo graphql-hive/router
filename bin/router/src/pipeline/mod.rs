@@ -1,7 +1,10 @@
+use crate::executor::execution::plan::DeferExecution;
+use crate::executor::projection::defer::IncrementalFormat;
 use crate::http_utils::body::read_body_stream;
 use crate::pipeline::request_decompression::negotiate_request_encoding;
 use crate::query_planner::{
-    state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
+    ast::defer::variable_bool, state::supergraph_state::OperationKind,
+    utils::cancellation::CancellationToken,
 };
 use crate::telemetry::{
     logging::{summary, targets},
@@ -66,7 +69,7 @@ use crate::{
         error::{ClientPipelineError, InternalPipelineError, PipelineError},
         execution::{execute_plan, PlannedRequest},
         execution_request::{GetQueryStr, OperationPreparation, OperationPreparationResult},
-        header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
+        header::{RequestAccepts, ResponseMode, StreamContentType, TEXT_HTML_MIME},
         introspection_policy::handle_introspection_policy,
         long_lived_client_limit::try_reserve_long_lived_client,
         normalize::{normalize_request_with_cache, FilterOutputExt, GraphQLNormalizationPayload},
@@ -80,8 +83,9 @@ use crate::{
     },
     schema_state::{SchemaState, SelectedSupergraph},
     shared_state::{
-        RouterRequestDedupeHeaderPolicy, RouterSharedState, SharedRouterResponse,
-        SharedRouterResponseGuard, SharedRouterSingleResponse, SharedRouterStreamResponse,
+        RouterRequestDedupeHeaderPolicy, RouterSharedState, SharedRouterPartsResponse,
+        SharedRouterResponse, SharedRouterResponseGuard, SharedRouterSingleResponse,
+        SharedRouterStreamResponse,
     },
 };
 
@@ -183,7 +187,12 @@ pub async fn graphql_request_handler(
 
         let content_encoding = match negotiate_request_encoding(
             req.headers(),
-            &shared_state.router_config.traffic_shaping.router.compression.request,
+            &shared_state
+                .router_config
+                .traffic_shaping
+                .router
+                .compression
+                .request,
         ) {
             Ok(content_encoding) => content_encoding,
             Err(err) => {
@@ -225,12 +234,7 @@ pub async fn graphql_request_handler(
         let client_name = client.name.as_deref();
         let client_version = client.version.as_deref();
 
-        summary::record(|s| {
-            s.set_client_info(
-                client_name,
-                client_version,
-            )
-        });
+        summary::record(|s| s.set_client_info(client_name, client_version));
 
         let mut plugin_req_state = None;
 
@@ -249,7 +253,8 @@ pub async fn graphql_request_handler(
         let Some(supergraph) = schema_state.select_supergraph(req).await? else {
             return Err(InternalPipelineError::NoSupergraphAvailable {
                 response_headers: vec![(RETRY_AFTER, HeaderValue::from_static("10"))],
-            }.into());
+            }
+            .into());
         };
         operation_span.record_supergraph_name(&supergraph.snapshot.name);
         operation_span.record_hive_target(supergraph.snapshot.options.hive_target.as_deref());
@@ -460,21 +465,27 @@ pub async fn graphql_request_handler(
             .router
             .dedupe
             .enabled;
-        let websocket_reuse_enabled = supergraph.snapshot.options
+        let websocket_reuse_enabled = supergraph
+            .snapshot
+            .options
             .traffic_shaping
             .any_websocket_connection_reuse_enabled();
 
         // establish a connection fingerprint only if dedupe or multiplexing is enabled
-        let connection_fingerprint = (request_dedupe_enabled || websocket_reuse_enabled)
-            .then(|| connection_fingerprint(
-                req.method(),
-                req.path(),
-                &request_headers,
-                &shared_state.in_flight_requests_header_policy,
-                supergraph.snapshot.cache_id,
-            ));
+        let connection_fingerprint =
+            (request_dedupe_enabled || websocket_reuse_enabled).then(|| {
+                connection_fingerprint(
+                    req.method(),
+                    req.path(),
+                    &request_headers,
+                    &shared_state.in_flight_requests_header_policy,
+                    supergraph.snapshot.cache_id,
+                )
+            });
 
+        // no dedupe for `@defer`, clients with different `Accept` headers want different bytes
         let fingerprint = if request_dedupe_enabled
+            && normalize_payload.defer_plans.is_none()
             && matches!(
                 normalize_payload.operation_for_plan.operation_kind,
                 // same deduplication applies for queries and subscriptions
@@ -523,6 +534,15 @@ pub async fn graphql_request_handler(
                 guard,
                 response_header_sink.clone(),
                 connection_fingerprint,
+                // the deferred parts stop where the request timeout does
+                Some(
+                    started_at
+                        + shared_state
+                            .router_config
+                            .traffic_shaping
+                            .router
+                            .request_timeout,
+                ),
             )
         };
 
@@ -552,24 +572,32 @@ pub async fn graphql_request_handler(
             exec(None).await?
         };
 
-        if let Some(hive_usage_agent) = &supergraph.runtime.hive_usage_agent {
-            usage_reporting::collect_usage_report(
-                supergraph.snapshot.supergraph_schema.clone(),
-                started_at.elapsed(),
-                client_name,
-                client_version,
-                normalize_payload.operation_for_plan.name.as_deref(),
-                normalize_payload.operation_for_plan.operation_kind.as_ref(),
-                &parser_payload.minified_document,
-                hive_usage_agent,
-                shared_response.error_count(),
-                Some(usage_reporting::request_details_from_ntex_request(req)),
-                prepared_operation.resolved_document_id.as_deref(),
-                usage_variables,
-            )
-            .await;
-        }
+        // usage, the log line and the summary, right away or after the last `@defer` part
+        let usage = supergraph.runtime.hive_usage_agent.is_some().then(|| {
+            usage_reporting::CompletionUsage {
+                runtime: supergraph.runtime.clone(),
+                schema: supergraph.snapshot.supergraph_schema.clone(),
+                started_at,
+                client_name: client_name.map(str::to_string),
+                client_version: client_version.map(str::to_string),
+                operation_name: normalize_payload.operation_for_plan.name.clone(),
+                operation_kind: normalize_payload.operation_for_plan.operation_kind.clone(),
+                document: parser_payload.minified_document.clone(),
+                request_details: Some(usage_reporting::request_details_from_ntex_request(req)),
+                persisted_document_id: prepared_operation
+                    .resolved_document_id
+                    .as_deref()
+                    .map(str::to_string),
+                variables: usage_variables,
+            }
+        });
+        let shared_response = usage_reporting::report_on_completion(usage, shared_response).await;
 
+        // the status as of the response's head. For `@defer` that's the primary part's, the HTTP
+        // metrics then wait for the last part and take every part's errors
+        if let SharedRouterResponse::Parts(parts) = &shared_response {
+            request_extensions::write_deferred_response_error_count(req, parts.error_count.clone());
+        }
         write_graphql_response_metric_status(
             req,
             if shared_response.error_count() > 0 {
@@ -578,12 +606,6 @@ pub async fn graphql_request_handler(
                 GraphQLResponseStatus::Ok
             },
         );
-
-        debug!(target: targets::GRAPHQL_EXECUTION, error_count = shared_response.error_count(), "graphql request completed");
-
-        summary::record(|s| {
-            s.set_error_count(shared_response.error_count() as u32);
-        });
 
         shared_response.into_response(
             response_mode,
@@ -616,6 +638,8 @@ pub async fn execute_planned_request<'exec>(
     guard: Option<SharedRouterResponseGuard>,
     response_header_sink: ResponseHeaderSink,
     connection_fingerprint: Option<ConnectionFingerprint>,
+    // when the request times out, for the deferred parts that go out after the handler is done
+    deadline: Option<Instant>,
 ) -> Result<SharedRouterResponse, PipelineError> {
     let jwt_request_details = match &shared_state.jwt_auth_runtime {
         Some(jwt_auth_runtime) => match jwt_auth_runtime
@@ -640,6 +664,19 @@ pub async fn execute_planned_request<'exec>(
         normalize_payload,
         shared_state.validation_options,
     )?;
+
+    // decided before anything runs, so a client that can't take the parts costs no subgraph calls
+    // the format goes with the plans it's for
+    let defer = match &normalize_payload.defer_plans {
+        Some(plans) if plans.has_active(&variable_payload.variables_map) => {
+            let format = response_mode
+                .stream_content_type()
+                .and_then(StreamContentType::defer_format)
+                .ok_or(ClientPipelineError::DeferTransportNotSupported)?;
+            Some((format, deadline))
+        }
+        _ => None,
+    };
 
     let client_request_details = MutableClientRequestDetails {
         method,
@@ -671,6 +708,7 @@ pub async fn execute_planned_request<'exec>(
         request_context,
         response_header_sink.clone(),
         connection_fingerprint,
+        defer,
     )
     .await?
     {
@@ -744,28 +782,81 @@ pub async fn execute_planned_request<'exec>(
                 receiver: Some(receiver),
             }))
         }
-        QueryPlanExecutionResult::Single(result) => {
-            let single_content_type = response_mode.
-                single_content_type().
-                // TODO: streaming single responses
-                ok_or(ClientPipelineError::UnsupportedContentType)?.
-                clone();
-
-            // drop the `guard` as soon as the response is ready
-
-            let headers = materialize_shared_response_headers(
-                single_content_type.as_ref(),
-                &response_header_sink,
-            );
-
-            Ok(SharedRouterResponse::Single(SharedRouterSingleResponse {
-                body: crate::utils::vec_into_ntex_bytes(result.body),
+        QueryPlanExecutionResult::Parts(mut result) => {
+            // run until the primary part is out, response headers come from its fetches
+            let primary = result.body.next().await.unwrap_or_default();
+            // set by the time the primary part is out
+            let status = http::StatusCode::from_u16(
+                result.status.load(std::sync::atomic::Ordering::Relaxed),
+            )
+            .unwrap_or(http::StatusCode::OK);
+            if result
+                .plugin_response
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                return Ok(single_response(
+                    PlanExecutionOutput {
+                        body: primary,
+                        error_count: result
+                            .error_count
+                            .load(std::sync::atomic::Ordering::Relaxed),
+                        status_code: status,
+                    },
+                    response_mode,
+                    &response_header_sink,
+                ));
+            }
+            // a defer transport, `defer` above checked it
+            let content_type = response_mode
+                .stream_content_type()
+                .map(|stream| stream.defer_content_type(true))
+                .unwrap_or_default();
+            let headers = materialize_shared_response_headers(content_type, &response_header_sink);
+            Ok(SharedRouterResponse::Parts(SharedRouterPartsResponse {
+                status,
+                primary: crate::utils::vec_into_ntex_bytes(primary),
+                rest: Arc::new(std::sync::Mutex::new(Some(result.body))),
                 headers,
-                status: result.status_code,
                 error_count: result.error_count,
             }))
         }
+        // drop the `guard` as soon as the response is ready
+        QueryPlanExecutionResult::Single(result) => {
+            // that protocol is for subscriptions, fail here so the request isn't reported as a success
+            if matches!(
+                response_mode,
+                ResponseMode::StreamOnly(StreamContentType::ApolloMultipartHTTP)
+            ) {
+                return Err(ClientPipelineError::UnsupportedContentType.into());
+            }
+            Ok(single_response(
+                result,
+                response_mode,
+                &response_header_sink,
+            ))
+        }
     }
+}
+
+/// A whole response at once. A client that only takes streams gets it as one part, see
+/// `into_response`.
+fn single_response(
+    result: PlanExecutionOutput,
+    response_mode: &ResponseMode,
+    response_header_sink: &ResponseHeaderSink,
+) -> SharedRouterResponse {
+    let single_content_type = response_mode
+        .single_content_type()
+        .cloned()
+        .unwrap_or_default();
+    let headers =
+        materialize_shared_response_headers(single_content_type.as_ref(), response_header_sink);
+    SharedRouterResponse::Single(SharedRouterSingleResponse {
+        body: crate::utils::vec_into_ntex_bytes(result.body),
+        headers,
+        status: result.status_code,
+        error_count: result.error_count,
+    })
 }
 
 fn materialize_shared_response_headers(
@@ -794,7 +885,7 @@ pub async fn execute_pipeline<'exec>(
     mut client_request_details: MutableClientRequestDetails<'exec>,
     graphql_params: &GraphQLParams,
     normalize_payload: &Arc<GraphQLNormalizationPayload>,
-    variable_payload: CoerceVariablesPayload,
+    mut variable_payload: CoerceVariablesPayload,
     supergraph: &SelectedSupergraph,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
@@ -803,6 +894,7 @@ pub async fn execute_pipeline<'exec>(
     request_context: &SharedRequestContext,
     response_header_sink: ResponseHeaderSink,
     connection_fingerprint: Option<ConnectionFingerprint>,
+    defer: Option<(IncrementalFormat, Option<Instant>)>,
 ) -> Result<QueryPlanExecutionResult, PipelineError> {
     if normalize_payload.operation_for_introspection.is_some() {
         handle_introspection_policy(&shared_state.introspection_policy, &client_request_details)?;
@@ -955,8 +1047,30 @@ pub async fn execute_pipeline<'exec>(
             return Ok(QueryPlanExecutionResult::Single(response));
         }
     };
+    let defer_layout = prepared_query_plan.defer.clone();
     let query_plan_payload = prepared_query_plan.plan;
+    // the plans as authorization and the plugins' filters left them, with their fields nulled
+    let defer =
+        defer
+            .zip(normalize_payload.defer_plans.clone())
+            .map(|((format, deadline), plans)| DeferExecution {
+                plans,
+                format,
+                query_plan: query_plan_payload.clone(),
+                layout: defer_layout.unwrap_or_default(),
+                deadline,
+            });
 
+    // the plan covers every `@defer(if:)` value, the router's own variables pick the copies
+    if let Some(layout) = &prepared_query_plan.defer {
+        let values = &mut variable_payload.variables_map;
+        for (router, client) in &layout.if_variables {
+            let value = variable_bool(values, client).unwrap_or(true);
+            values
+                .get_or_insert_with(Default::default)
+                .insert(router.clone(), sonic_rs::Value::from(value));
+        }
+    }
     let variable_payload = Arc::new(variable_payload);
 
     let demand_control_execution_context = match (
@@ -987,6 +1101,7 @@ pub async fn execute_pipeline<'exec>(
         demand_control_execution_context,
         plugin_req_state,
         connection_fingerprint,
+        defer,
     };
 
     execute_plan(

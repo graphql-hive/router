@@ -1,4 +1,5 @@
 //! https://opentelemetry.io/docs/specs/semconv/http/http-metrics
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ntex::http::body::{BodySize, MessageBody};
@@ -32,9 +33,11 @@ impl HttpServerInstruments {
     }
 }
 
-pub struct HttpServerRequestState<'a> {
-    instruments: &'a HttpServerInstruments,
-    _active_request_guard: HttpServerActiveRequestGuard<'a>,
+/// Owns what it needs, so a response whose body is still going out (`@defer`) can finish it
+/// after the handler returned.
+pub struct HttpServerRequestState {
+    instruments: Arc<HttpServerInstruments>,
+    _active_request_guard: HttpServerActiveRequestGuard,
     method: &'static str,
     scheme: &'static str,
     route: &'static str,
@@ -42,14 +45,14 @@ pub struct HttpServerRequestState<'a> {
     started_at: Instant,
 }
 
-pub struct HttpServerActiveRequestGuard<'a> {
-    instruments: &'a HttpServerInstruments,
+pub struct HttpServerActiveRequestGuard {
+    instruments: Arc<HttpServerInstruments>,
     method: &'static str,
     scheme: &'static str,
 }
 
 pub struct HttpServerMetrics {
-    instruments: HttpServerInstruments,
+    instruments: Arc<HttpServerInstruments>,
 }
 
 impl HttpServerMetrics {
@@ -109,21 +112,18 @@ impl HttpServerMetrics {
         });
 
         Self {
-            instruments: HttpServerInstruments {
+            instruments: Arc::new(HttpServerInstruments {
                 request_duration,
                 request_overhead_duration,
                 request_external_wait_duration,
                 active_requests,
                 request_body_size,
                 response_body_size,
-            },
+            }),
         }
     }
 
-    pub fn capture_request<'a>(
-        &'a self,
-        request: &HttpRequest,
-    ) -> Capture<HttpServerRequestState<'a>> {
+    pub fn capture_request(&self, request: &HttpRequest) -> Capture<HttpServerRequestState> {
         if !self.instruments.is_enabled() {
             return Capture::disabled();
         }
@@ -137,7 +137,7 @@ impl HttpServerMetrics {
             .unwrap_or_default();
 
         Capture::enabled(HttpServerRequestState {
-            instruments: &self.instruments,
+            instruments: self.instruments.clone(),
             _active_request_guard: self.active_request_started(method, scheme),
             method,
             scheme,
@@ -151,20 +151,43 @@ impl HttpServerMetrics {
         &self,
         method: &'static str,
         scheme: &'static str,
-    ) -> HttpServerActiveRequestGuard<'_> {
+    ) -> HttpServerActiveRequestGuard {
         if let Some(counter) = &self.instruments.active_requests {
             counter.add(1, &active_request_attributes(method, scheme));
         }
 
         HttpServerActiveRequestGuard {
-            instruments: &self.instruments,
+            instruments: self.instruments.clone(),
             method,
             scheme,
         }
     }
 }
 
-impl Capture<HttpServerRequestState<'_>> {
+/// What the metrics read of a response: its status and its body's size.
+#[derive(Clone, Copy)]
+pub struct ResponseFacts {
+    pub status_code: u16,
+    /// [`BodySize::Stream`] for a body that's still going out when the response head is.
+    pub body: BodySize,
+    /// The body's size, when it's known up front.
+    pub body_size: Option<u64>,
+}
+
+impl ResponseFacts {
+    pub fn of(response: &HttpResponse) -> Self {
+        Self {
+            status_code: response.status().as_u16(),
+            body: response.body().size(),
+            body_size: response.body().as_ref().and_then(|body| match body.size() {
+                BodySize::Sized(size) => Some(size),
+                _ => None,
+            }),
+        }
+    }
+}
+
+impl Capture<HttpServerRequestState> {
     pub fn needs_external_wait(&self) -> bool {
         self.get().is_some_and(|state| {
             state.instruments.request_overhead_duration.is_some()
@@ -175,7 +198,7 @@ impl Capture<HttpServerRequestState<'_>> {
     #[allow(clippy::too_many_arguments)]
     pub fn finish(
         self,
-        response: &HttpResponse,
+        response: ResponseFacts,
         body_size: Option<u64>,
         graphql_operation_name: Option<&str>,
         graphql_operation_type: Option<&str>,
@@ -192,7 +215,7 @@ impl Capture<HttpServerRequestState<'_>> {
             KeyValue::new(labels::HTTP_REQUEST_METHOD, state.method),
             KeyValue::new(
                 labels::HTTP_RESPONSE_STATUS_CODE,
-                i64::from(response.status().as_u16()),
+                i64::from(response.status_code),
             ),
             KeyValue::new(labels::HTTP_ROUTE, state.route),
             KeyValue::new(labels::NETWORK_PROTOCOL_NAME, "http"),
@@ -217,7 +240,7 @@ impl Capture<HttpServerRequestState<'_>> {
             ));
         }
 
-        let status_code = response.status().as_u16();
+        let status_code = response.status_code;
         if status_code >= 400 {
             attributes.push(KeyValue::new(labels::ERROR_TYPE, status_code as i64));
         }
@@ -239,7 +262,7 @@ impl Capture<HttpServerRequestState<'_>> {
         // Overhead is only meaningful for responses fully produced before returning to the
         // client. A streamed body (subscriptions, incremental delivery) keeps waiting on
         // subgraphs after this point, so `elapsed` would only cover its head.
-        let is_streamed = matches!(response.body().size(), BodySize::Stream);
+        let is_streamed = matches!(response.body, BodySize::Stream);
         let overhead_enabled = state.instruments.request_overhead_duration.is_some()
             || state.instruments.request_external_wait_duration.is_some();
         if !is_streamed && overhead_enabled {
@@ -296,10 +319,7 @@ impl Capture<HttpServerRequestState<'_>> {
         }
 
         if let Some(histogram) = &state.instruments.response_body_size {
-            if let Some(body_size) = response.body().as_ref().and_then(|body| match body.size() {
-                BodySize::Sized(size) => Some(size),
-                _ => None,
-            }) {
+            if let Some(body_size) = response.body_size {
                 #[cfg(debug_assertions)]
                 debug_assert_attrs(names::HTTP_SERVER_RESPONSE_BODY_SIZE, &attributes);
                 histogram.record(body_size, &attributes);
@@ -308,7 +328,7 @@ impl Capture<HttpServerRequestState<'_>> {
     }
 }
 
-impl Drop for HttpServerActiveRequestGuard<'_> {
+impl Drop for HttpServerActiveRequestGuard {
     fn drop(&mut self) {
         if let Some(counter) = &self.instruments.active_requests {
             counter.add(-1, &active_request_attributes(self.method, self.scheme));

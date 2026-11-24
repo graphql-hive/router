@@ -36,6 +36,7 @@ rustls = { workspace = true }
 hive-router = { path = "../bin/router", features = ["testing"] }
 subgraphs = { path = "../bench/subgraphs" }
 graphql-tools = { path = "../lib/graphql-tools" }
+graphql-differential = { path = "../bin/differential" }
 
 mockito = { workspace = true }
 tempfile = "3.23.0"

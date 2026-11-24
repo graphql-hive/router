@@ -154,6 +154,7 @@ fn transform_inline_fragment(
         selections: new_selections,
         skip_if: fragment.skip_if.take(),
         include_if: fragment.include_if.take(),
+        defer: None,
     }))
 }
 
@@ -206,6 +207,7 @@ fn transform_field(
                         selections: new_selections,
                         skip_if: fragment.skip_if.take(),
                         include_if: fragment.include_if.take(),
+                        defer: None,
                     }));
                 }
                 SelectionItem::FragmentSpread(spread) => {

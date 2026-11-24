@@ -1839,3 +1839,111 @@ async fn test_otlp_request_dedupe_joined_total_absent_when_dedupe_disabled() {
         names::REQUEST_DEDUPE_JOINED_TOTAL
     );
 }
+
+/// A deferred response is recorded once its last part is out: its duration covers the slow
+/// deferred call, and an error that only a deferred part has makes it an error.
+#[ntex::test]
+async fn test_otlp_http_metrics_wait_for_the_last_deferred_part() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_metrics_endpoint();
+
+    // the deferred `inStock` comes from a slow inventory that fails
+    let subgraphs = TestSubgraphs::builder()
+        .with_on_request(|req| {
+            (req.path == "/inventory").then(|| {
+                crate::testkit::ResponseLike::new(
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    Some("boom".to_string()),
+                    None,
+                )
+            })
+        })
+        .with_path_delay("/inventory", Duration::from_millis(400))
+        .build()
+        .start()
+        .await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          defer:
+            enabled: true
+
+          telemetry:
+            metrics:
+              exporters:
+                - kind: otlp
+                  endpoint: {}
+                  protocol: http
+                  interval: 30ms
+                  max_export_timeout: 2s
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    let response = router
+        .send_graphql_request(
+            "{ topProducts(first: 1) { upc ... @defer { inStock } } }",
+            None,
+            crate::some_header_map! { http::header::ACCEPT => "multipart/mixed" },
+        )
+        .await;
+    assert_eq!(response.status(), 200);
+    // the primary part has no errors, only the deferred one does
+    let body = response.string_body().await;
+    assert!(body.contains(r#""hasNext":true"#), "{body}");
+    assert!(body.contains("inventory"), "{body}");
+
+    wait_for_metrics_export().await;
+    let metrics = otlp_collector.metrics_view().await;
+
+    let status = |status: values::GraphQLResponseStatus| {
+        [
+            (labels::HTTP_ROUTE, "/graphql"),
+            (labels::GRAPHQL_RESPONSE_STATUS, status.as_str()),
+        ]
+    };
+    let (count, duration) = metrics.latest_histogram_count_sum(
+        names::HTTP_SERVER_REQUEST_DURATION,
+        &status(values::GraphQLResponseStatus::Error),
+    );
+    assert_eq!(
+        count, 1,
+        "the deferred part's error should make it an error"
+    );
+    assert!(
+        duration >= 0.4,
+        "the duration should cover the slow deferred call, got {duration}s"
+    );
+    assert!(
+        !metrics.has_histogram(
+            names::HTTP_SERVER_REQUEST_DURATION,
+            &status(values::GraphQLResponseStatus::Ok),
+        ),
+        "recorded as ok with the response head"
+    );
+    let (count, size) = metrics.latest_histogram_count_sum(
+        names::HTTP_SERVER_RESPONSE_BODY_SIZE,
+        &status(values::GraphQLResponseStatus::Error),
+    );
+    assert_eq!(count, 1);
+    assert_eq!(
+        size,
+        body.len() as f64,
+        "the body size should count every part"
+    );
+}

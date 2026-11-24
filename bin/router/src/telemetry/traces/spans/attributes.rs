@@ -39,6 +39,7 @@ pub const COST_RESULT: &str = "cost.result";
 
 /// Hive-specific attributes
 pub const HIVE_KIND: &str = "hive.kind";
+pub const HIVE_DEFER_END_REASON: &str = "hive.defer.end_reason";
 pub const HIVE_GRAPHQL_ERROR_COUNT: &str = "hive.graphql.error.count";
 pub const HIVE_GRAPHQL_ERROR_CODES: &str = "hive.graphql.error.codes";
 pub const HIVE_CLIENT_NAME: &str = "hive.client.name";

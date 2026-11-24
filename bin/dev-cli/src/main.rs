@@ -123,7 +123,7 @@ fn main() {
             let parsed_document = parse_operation(&document_text);
             let document = normalize_operation(&supergraph, &parsed_document, None).unwrap();
             let operation = document.executable_operation();
-            let consumer_schema = ConsumerSchema::new_from_supergraph(&parsed_schema);
+            let consumer_schema = ConsumerSchema::new_from_supergraph(&parsed_schema, false);
             let schema_metadata = consumer_schema.schema_metadata();
 
             let (_, projection) = ProjectionPlan::from_operation(operation, &schema_metadata);
@@ -139,7 +139,7 @@ fn main() {
 fn process_consumer_schema(path: &str) {
     let supergraph_sdl = std::fs::read_to_string(path).expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
-    let consumer_schema = ConsumerSchema::new_from_supergraph(&parsed_schema);
+    let consumer_schema = ConsumerSchema::new_from_supergraph(&parsed_schema, false);
 
     println!("{}", consumer_schema.document);
 }

@@ -9,7 +9,6 @@ use std::{borrow::Cow, collections::VecDeque, rc::Rc};
 
 use crate::query_planner::{
     ast::{
-        merge_path::Condition,
         operation::OperationDefinition,
         selection_item::SelectionItem,
         selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
@@ -21,7 +20,10 @@ use crate::query_planner::{
     },
     planner::walker::{
         path::UnionContext,
-        pathfinder::{find_direct_path, find_self_referencing_direct_path, NavigationTarget},
+        pathfinder::{
+            find_deferred_self_key_path, find_direct_path, find_self_referencing_direct_path,
+            NavigationTarget,
+        },
     },
     state::supergraph_state::{OperationKind, SupergraphState},
     utils::cancellation::CancellationToken,
@@ -102,7 +104,7 @@ pub fn walk_operation<'graph, 'op: 'graph>(
         while let Some((selection_item, paths)) = stack_to_resolve.pop_front() {
             cancellation_token.bail_if_cancelled()?;
             let (next_stack_to_resolve, new_paths_per_leaf) =
-                walk.process_selection(selection_item, &paths, &[])?;
+                walk.process_selection(selection_item, &paths, None, &[])?;
 
             paths_per_leaf.extend(new_paths_per_leaf);
             for item in next_stack_to_resolve.into_iter().rev() {
@@ -124,6 +126,7 @@ impl<'graph> OperationWalk<'graph> {
         &self,
         selection_item: &'op SelectionItem,
         paths: &[OperationPath<'graph>],
+        self_key_paths: Option<&[Option<OperationPath<'graph>>]>,
         fields_to_resolve_locally: &[String],
     ) -> Result<
         (
@@ -145,7 +148,7 @@ impl<'graph> OperationWalk<'graph> {
             SelectionItem::Field(field) => {
                 // Only fragments look at `fields_to_resolve_locally`, fields can always jump.
                 let (next_selection_items, new_paths_per_leaf) =
-                    self.process_field(field, paths)?;
+                    self.process_field(field, paths, self_key_paths)?;
                 paths_per_leaf.extend(new_paths_per_leaf);
                 stack_to_resolve.extend(next_selection_items);
             }
@@ -173,9 +176,38 @@ impl<'graph> OperationWalk<'graph> {
         let mut stack_to_resolve: ResolutionStack = vec![];
         let mut paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
 
+        // right inside a deferred fragment, a field of this subgraph goes through the type's own
+        // key, so it gets an entity call of its own. That move is the same for every field here.
+        let self_key_paths = paths
+            .iter()
+            .any(|path| {
+                path.last_segment
+                    .as_ref()
+                    .is_some_and(|segment| segment.defer.is_some())
+            })
+            .then(|| {
+                paths
+                    .iter()
+                    .map(|path| {
+                        find_deferred_self_key_path(
+                            self.graph,
+                            self.supergraph,
+                            self.override_context,
+                            path,
+                            self.cancellation_token,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
+
         for item in selection_set.items.iter() {
-            let (next_stack_to_resolve, new_paths_per_leaf) =
-                self.process_selection(item, paths, fields_to_resolve_locally)?;
+            let (next_stack_to_resolve, new_paths_per_leaf) = self.process_selection(
+                item,
+                paths,
+                self_key_paths.as_deref(),
+                fields_to_resolve_locally,
+            )?;
             paths_per_leaf.extend(new_paths_per_leaf);
             stack_to_resolve.extend(next_stack_to_resolve);
         }
@@ -244,7 +276,10 @@ impl<'graph> OperationWalk<'graph> {
         if tail_type_name == &fragment.type_condition {
             // It's the same type and no conditions are applied, we can skip the fragment processing
             // and go directly to its selections.
-            if fragment.include_if.is_none() && fragment.skip_if.is_none() {
+            if fragment.include_if.is_none()
+                && fragment.skip_if.is_none()
+                && fragment.defer.is_none()
+            {
                 return self.process_selection_set(
                     &fragment.selections,
                     paths,
@@ -252,10 +287,9 @@ impl<'graph> OperationWalk<'graph> {
                 );
             }
 
-            // Looks like the fragment has conditions, we need to process them differently.
-            // We aim to preserve the inline fragment due to conditions, instead of eliminating it,
+            // Looks like the fragment has conditions or a `@defer`, we need to process them
+            // differently. We aim to preserve the inline fragment, instead of eliminating it,
             // and jumping straight to its selections.
-            let condition: Option<Condition> = fragment.into();
 
             let mut next_paths: Vec<OperationPath<'graph>> = Vec::with_capacity(paths.len());
             for path in paths {
@@ -280,8 +314,7 @@ impl<'graph> OperationWalk<'graph> {
                         supergraph,
                         override_context,
                         path,
-                        &fragment.type_condition,
-                        condition.as_ref().expect("Condition should be present"),
+                        fragment,
                         cancellation_token,
                     )?)
                 } else {
@@ -290,10 +323,7 @@ impl<'graph> OperationWalk<'graph> {
                         supergraph,
                         override_context,
                         path,
-                        &NavigationTarget::ConcreteType(
-                            &fragment.type_condition,
-                            condition.clone(),
-                        ),
+                        &NavigationTarget::from(fragment),
                         cancellation_token,
                     )?
                 };
@@ -338,7 +368,7 @@ impl<'graph> OperationWalk<'graph> {
                 supergraph,
                 override_context,
                 path,
-                &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
+                &NavigationTarget::from(fragment),
                 cancellation_token,
             )?;
 
@@ -355,7 +385,7 @@ impl<'graph> OperationWalk<'graph> {
                     supergraph,
                     override_context,
                     path,
-                    &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
+                    &NavigationTarget::from(fragment),
                     &ExcludedFromLookup::new(),
                     cancellation_token,
                     Some(moves),
@@ -532,6 +562,8 @@ impl<'graph> OperationWalk<'graph> {
         &self,
         field: &'op FieldSelection,
         paths: &[OperationPath<'graph>],
+        // per path, see `process_selection_set`
+        self_key_paths: Option<&[Option<OperationPath<'graph>>]>,
     ) -> Result<
         (
             ResolutionStack<'graph, 'op>,
@@ -562,7 +594,7 @@ impl<'graph> OperationWalk<'graph> {
         // built once, so every path into the field shares its alias and arguments
         let direct_target = NavigationTarget::field(field, None);
 
-        for path in paths {
+        for (index, path) in paths.iter().enumerate() {
             let path_span = span!(
                 Level::TRACE,
                 "explore_path",
@@ -573,11 +605,12 @@ impl<'graph> OperationWalk<'graph> {
             let mut advanced = false;
 
             let excluded = ExcludedFromLookup::new();
+            let self_key_path = self_key_paths.and_then(|paths| paths[index].as_ref());
             let direct_paths = find_direct_paths(
                 graph,
                 supergraph,
                 override_context,
-                path,
+                self_key_path.unwrap_or(path),
                 &direct_target,
                 cancellation_token,
             )?;
@@ -736,6 +769,7 @@ impl<'graph> OperationWalk<'graph> {
                     let finding = self.process_selection(
                         child_selection,
                         std::slice::from_ref(candidate_path),
+                        None,
                         &fields_to_resolve_locally,
                     );
 

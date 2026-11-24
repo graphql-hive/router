@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::executor::hooks::on_graphql_params::GraphQLParams;
 use crate::executor::hooks::on_supergraph_load::SupergraphSnapshot;
 use crate::executor::introspection::partition::partition_operation;
+use crate::executor::projection::defer::DeferPlans;
 use crate::executor::projection::plan::ProjectionPlan;
 use crate::query_planner::ast::normalization::arguments_to_variables::{
     arguments_to_variables, ExtractedVariable,
@@ -40,6 +41,8 @@ pub struct GraphQLNormalizationPayload {
     pub root_type_name: String,
     pub operation_kind: OperationKind,
     pub projection_plan: Arc<ProjectionPlan>,
+    /// The `@defer` groups, `None` when the operation has no `@defer`.
+    pub defer_plans: Option<Arc<DeferPlans>>,
     pub operation_identity: OperationIdentity,
     /// Values of the variables that hard-coded arguments were turned into.
     /// See `query_planner.arguments_to_variables` in the config.
@@ -69,6 +72,7 @@ impl GraphQLNormalizationPayload {
         &self,
         new_operation: OperationDefinition,
         new_projection_plan: Arc<ProjectionPlan>,
+        new_defer_plans: Option<Arc<DeferPlans>>,
     ) -> Arc<GraphQLNormalizationPayload> {
         let hashes = hash_normalized_operation(
             &new_operation,
@@ -86,6 +90,7 @@ impl GraphQLNormalizationPayload {
             root_type_name: self.root_type_name.clone(),
             operation_kind: self.operation_kind.clone(),
             projection_plan: new_projection_plan,
+            defer_plans: new_defer_plans,
             operation_identity: self.operation_identity.clone(),
             extracted_variables: self.extracted_variables.clone(),
         })
@@ -110,7 +115,14 @@ impl<'exec> FilterOutputExt<'exec> for OperationFilterOutput<'exec> {
         let trie = Trie::from_paths(&self.rejected_paths);
         let new_op = rebuild_nulled_operation(&payload.operation_for_plan, &trie);
         let new_projection = payload.projection_plan.rewrite(&trie);
-        (payload.with_operation(new_op, new_projection), self.errors)
+        let new_defer = payload
+            .defer_plans
+            .as_ref()
+            .map(|plans| plans.rewrite(&trie));
+        (
+            payload.with_operation(new_op, new_projection, new_defer),
+            self.errors,
+        )
     }
 }
 
@@ -194,6 +206,7 @@ pub async fn normalize_request_with_cache(
                     ProjectionPlan::from_operation(&operation, &supergraph.metadata);
                 let root_type_name = root_type_name.to_string();
                 let projection_plan = Arc::new(projection_plan);
+                let defer_plans = DeferPlans::build(&operation, &supergraph.metadata).map(Arc::new);
                 let mut partitioned_operation = partition_operation(operation);
                 let extracted_variables = if supergraph.options.query_planner.arguments_to_variables
                 {
@@ -223,6 +236,7 @@ pub async fn normalize_request_with_cache(
                     root_type_name,
                     operation_kind,
                     projection_plan,
+                    defer_plans,
                     operation_for_plan,
                     operation_for_plan_hash: hashes.operation_for_plan_hash,
                     operation_for_introspection,

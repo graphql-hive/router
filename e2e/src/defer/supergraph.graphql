@@ -1,0 +1,324 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION)
+  @link(url: "https://specs.apollo.dev/inaccessible/v0.2", for: SECURITY)
+  @link(url: "https://specs.apollo.dev/authenticated/v0.1", for: SECURITY)
+{
+  query: Query
+  mutation: Mutation
+}
+
+directive @authenticated on FIELD_DEFINITION | OBJECT | INTERFACE | SCALAR | ENUM
+
+directive @inaccessible on FIELD_DEFINITION | OBJECT | INTERFACE | UNION | ARGUMENT_DEFINITION | SCALAR | ENUM | ENUM_VALUE | INPUT_OBJECT | INPUT_FIELD_DEFINITION
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(graph: join__Graph, requires: join__FieldSet, provides: join__FieldSet, type: String, external: Boolean, override: String, usedOverridden: Boolean) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(graph: join__Graph!, interface: String!) repeatable on OBJECT | INTERFACE
+
+directive @join__type(graph: join__Graph!, key: join__FieldSet, extension: Boolean! = false, resolvable: Boolean! = true, isInterfaceObject: Boolean! = false) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(graph: join__Graph!, member: String!) repeatable on UNION
+
+directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+
+interface Badge
+  @join__type(graph: PRODUCTS)
+{
+  label: String
+}
+
+type Banner
+  @join__type(graph: PRODUCTS)
+{
+  title: String
+  badge: Badge!
+}
+
+type BundleItem
+  @join__type(graph: PRODUCTS)
+{
+  quantity: Int!
+  product: Product!
+}
+
+type Catalog
+  @join__type(graph: PRODUCTS)
+{
+  shelf: Shelf
+}
+
+type Category
+  @join__type(graph: PRODUCTS)
+{
+  id: ID!
+  banner: Banner
+  badge: Badge!
+}
+
+type Collection implements Node
+  @join__implements(graph: PRODUCTS, interface: "Node")
+  @join__type(graph: PRODUCTS)
+{
+  id: ID!
+  name: String!
+  hero: Hero!
+}
+
+type Content
+  @join__type(graph: PRODUCTS)
+{
+  id: ID!
+  media: Media!
+}
+
+type Dimensions
+  @join__type(graph: INVENTORY)
+{
+  height: Float!
+}
+
+interface Hero
+  @join__type(graph: PRODUCTS)
+{
+  id: ID!
+}
+
+type Image
+  @join__type(graph: PRODUCTS)
+{
+  file: ImageFile!
+}
+
+type ImageFile
+  @join__type(graph: PRODUCTS)
+{
+  url: String!
+  meta: ImageMeta!
+}
+
+type ImageHero implements Hero
+  @join__implements(graph: PRODUCTS, interface: "Hero")
+  @join__type(graph: PRODUCTS)
+{
+  id: ID!
+  content: Content!
+}
+
+type ImageMeta
+  @join__type(graph: PRODUCTS)
+{
+  url: String!
+}
+
+scalar join__FieldSet
+
+enum join__Graph {
+  ACCOUNTS @join__graph(name: "accounts", url: "http://0.0.0.0:4200/accounts")
+  INVENTORY @join__graph(name: "inventory", url: "http://0.0.0.0:4200/inventory")
+  PRODUCTS @join__graph(name: "products", url: "http://0.0.0.0:4200/products")
+  REVIEWS @join__graph(name: "reviews", url: "http://0.0.0.0:4200/reviews")
+}
+
+scalar link__Import
+
+enum link__Purpose {
+  """
+  `SECURITY` features provide metadata necessary to securely resolve fields.
+  """
+  SECURITY
+
+  """
+  `EXECUTION` features provide metadata necessary for operation execution.
+  """
+  EXECUTION
+}
+
+union Media
+  @join__type(graph: PRODUCTS)
+  @join__unionMember(graph: PRODUCTS, member: "Image")
+  @join__unionMember(graph: PRODUCTS, member: "Video")
+  @join__unionMember(graph: PRODUCTS, member: "Text")
+ = Image | Video | Text
+
+type Mutation
+  @join__type(graph: PRODUCTS)
+{
+  createProduct(name: String!): Product!
+}
+
+type NewBadge implements Badge
+  @join__implements(graph: PRODUCTS, interface: "Badge")
+  @join__type(graph: PRODUCTS)
+{
+  label: String
+}
+
+interface Node
+  @join__type(graph: PRODUCTS)
+{
+  id: ID!
+}
+
+type Product implements Node
+  @join__implements(graph: PRODUCTS, interface: "Node")
+  @join__type(graph: ACCOUNTS, key: "id", resolvable: false)
+  @join__type(graph: INVENTORY, key: "id")
+  @join__type(graph: PRODUCTS, key: "id")
+  @join__type(graph: REVIEWS, key: "id")
+{
+  id: ID!
+  price: Float! @join__field(graph: INVENTORY)
+  inStock: Boolean @join__field(graph: INVENTORY)
+  dimensions: Dimensions! @join__field(graph: INVENTORY)
+  variants(first: Int): VariantConnection! @join__field(graph: INVENTORY)
+  name: String @join__field(graph: PRODUCTS)
+  brand: String @join__field(graph: PRODUCTS)
+  color: String @join__field(graph: PRODUCTS)
+  description: String @join__field(graph: PRODUCTS)
+  sku: String! @join__field(graph: PRODUCTS)
+  cost: Float! @join__field(graph: PRODUCTS) @authenticated
+  createdBy: User @join__field(graph: PRODUCTS)
+  relatedProducts: [Product] @join__field(graph: PRODUCTS)
+  bundle: [BundleItem!]! @join__field(graph: PRODUCTS)
+  reviews(first: Int!): [Review!]! @join__field(graph: REVIEWS)
+}
+
+type Query
+  @join__type(graph: ACCOUNTS)
+  @join__type(graph: INVENTORY)
+  @join__type(graph: PRODUCTS)
+  @join__type(graph: REVIEWS)
+{
+  me: User @join__field(graph: ACCOUNTS)
+  user(id: ID!): User @join__field(graph: ACCOUNTS)
+  users: [User!]! @join__field(graph: ACCOUNTS)
+  warehouse(id: ID!): Warehouse @join__field(graph: INVENTORY)
+  product(id: ID!): Product @join__field(graph: PRODUCTS)
+  products: [Product!]! @join__field(graph: PRODUCTS)
+  node(id: ID!): Node @join__field(graph: PRODUCTS)
+  category: Category @join__field(graph: PRODUCTS)
+  categories: [Category!] @join__field(graph: PRODUCTS)
+  catalog: Catalog @join__field(graph: PRODUCTS)
+  topReviews: [Review!]! @join__field(graph: REVIEWS)
+}
+
+type Review
+  @join__type(graph: REVIEWS, key: "id")
+{
+  id: ID!
+  title: String!
+  body: String!
+  rating: Int!
+  product: Product!
+}
+
+type SaleBadge implements Badge
+  @join__implements(graph: PRODUCTS, interface: "Badge")
+  @join__type(graph: PRODUCTS)
+  @inaccessible
+{
+  label: String
+}
+
+type Section
+  @join__type(graph: PRODUCTS)
+{
+  title: String
+  badge: Badge!
+}
+
+type Shelf
+  @join__type(graph: PRODUCTS)
+{
+  title: String
+  section: Section!
+}
+
+type Text
+  @join__type(graph: PRODUCTS)
+{
+  value: String!
+}
+
+type TextHero implements Hero
+  @join__implements(graph: PRODUCTS, interface: "Hero")
+  @join__type(graph: PRODUCTS)
+{
+  id: ID!
+  content: Content!
+}
+
+type User
+  @join__type(graph: ACCOUNTS, key: "id")
+  @join__type(graph: PRODUCTS, key: "id")
+  @join__type(graph: REVIEWS, key: "id")
+{
+  id: ID!
+  name: String @join__field(graph: ACCOUNTS)
+  email: String! @join__field(graph: ACCOUNTS)
+  address: String! @join__field(graph: ACCOUNTS)
+  birthday: String! @join__field(graph: ACCOUNTS)
+  favoriteProduct: Product @join__field(graph: ACCOUNTS)
+  products(first: Int!): [Product!]! @join__field(graph: PRODUCTS)
+  reviews: [Review!]! @join__field(graph: REVIEWS)
+  reviewCount: Int! @join__field(graph: REVIEWS)
+}
+
+type Variant
+  @join__type(graph: INVENTORY)
+{
+  id: ID!
+  name: String!
+}
+
+type VariantConnection
+  @join__type(graph: INVENTORY)
+{
+  edges: [VariantEdge!]
+  totalCount: Int!
+}
+
+type VariantEdge
+  @join__type(graph: INVENTORY)
+{
+  node: Variant!
+  cursor: String!
+}
+
+type Video
+  @join__type(graph: PRODUCTS)
+{
+  file: VideoFile!
+}
+
+type VideoClip
+  @join__type(graph: PRODUCTS)
+{
+  duration: String!
+}
+
+type VideoFile
+  @join__type(graph: PRODUCTS)
+{
+  clip: VideoClip!
+}
+
+type VideoHero implements Hero
+  @join__implements(graph: PRODUCTS, interface: "Hero")
+  @join__type(graph: PRODUCTS)
+{
+  id: ID!
+  content: Content!
+}
+
+type Warehouse
+  @join__type(graph: INVENTORY)
+{
+  id: ID!
+  location: String
+}

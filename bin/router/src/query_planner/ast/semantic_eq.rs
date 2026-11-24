@@ -48,6 +48,7 @@ impl SemanticEq for InlineFragmentSelection {
         self.type_condition == other.type_condition
             && self.skip_if == other.skip_if
             && self.include_if == other.include_if
+            && self.defer == other.defer
             && self.selections.semantic_eq(&other.selections)
     }
 }

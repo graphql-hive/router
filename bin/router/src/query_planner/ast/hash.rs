@@ -272,6 +272,10 @@ impl ASTHash for &InlineFragmentSelection {
             "@skip".hash(hasher);
             var_name.hash(hasher);
         }
+        if let Some(defer) = self.defer.as_ref() {
+            "@defer".hash(hasher);
+            defer.hash(hasher);
+        }
     }
 
     fn semantic_shape_hash<H: Hasher>(&self, hasher: &mut H, ctx: &SemanticShapeHashContext<'_>) {
@@ -656,6 +660,7 @@ mod tests {
                 },
                 include_if: None,
                 skip_if: None,
+                defer: None,
             });
             let mut node_items = vec![fragment];
             node_items.extend(node_siblings);

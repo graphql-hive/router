@@ -2002,6 +2002,7 @@ dependencies = [
  "futures",
  "futures-util",
  "gag",
+ "graphql-differential",
  "graphql-tools",
  "hex",
  "hive-router",

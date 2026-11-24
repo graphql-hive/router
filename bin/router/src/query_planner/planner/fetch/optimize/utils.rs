@@ -358,6 +358,13 @@ impl FetchStepData<MultiTypeFetchStep> {
         field_count(&other.response_path).saturating_sub(field_count(&self.response_path))
     }
 
+    /// Whether two steps could become one request at all, what every merge checks first: they
+    /// fetch for the same deferred part, so neither waits for the other's fields, and their
+    /// `@fromContext` values don't clash.
+    pub(crate) fn can_share_a_request(&self, other: &Self) -> bool {
+        self.defer == other.defer && self.can_merge_context(other)
+    }
+
     pub(crate) fn can_merge_context(&self, other: &Self) -> bool {
         if self.context_producers.contains(&other.id) || other.context_producers.contains(&self.id)
         {
@@ -415,7 +422,7 @@ impl FetchStepData<MultiTypeFetchStep> {
         other: &Self,
         fetch_graph: &FetchGraph<MultiTypeFetchStep>,
     ) -> bool {
-        if !self.can_merge_context(other) {
+        if !self.can_share_a_request(other) {
             return false;
         }
 
@@ -696,6 +703,7 @@ mod tests {
             flags: FetchStepFlags::empty(),
             condition: None,
             gated_by: Vec::new(),
+            defer: None,
             variable_usages: None,
             variable_definitions: None,
             mutation_field_position: None,

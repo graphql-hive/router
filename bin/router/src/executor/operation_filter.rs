@@ -259,9 +259,19 @@ impl<'exec> FilteringContext<'exec> {
                     &fragment.selections,
                     &fragment.type_condition,
                     visitor,
-                );
+                )?;
                 self.path.pop();
-                result
+                // a null stops at a deferred fragment: the deferred part fails, the data
+                // around it stays
+                let deferred = fragment
+                    .defer
+                    .as_ref()
+                    .is_some_and(|marker| marker.is_active(&self.variable_payload.variables_map));
+                Ok(if deferred {
+                    NullPropagation::None
+                } else {
+                    result
+                })
             }
             FilterDecision::Reject { error } => {
                 self.record_error(error);
