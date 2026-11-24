@@ -15,7 +15,7 @@ use crate::query_planner::{
         normalization::{context::RootTypes, normalize_operation_mut},
         type_aware_selection::TypeAwareSelection,
     },
-    state::supergraph_state::{SupergraphDefinition, SupergraphField, SupergraphState},
+    state::supergraph_state::{SupergraphDefinition, SupergraphState},
 };
 
 pub(crate) mod definitions;
@@ -312,38 +312,6 @@ impl FederationRules {
         let mut path = Vec::new();
         collect_sized_field_path(&selection_set, sized_fields_selection, &mut path)?;
         Ok(path)
-    }
-
-    pub fn check_field_subgraph_availability<'a>(
-        field: &'a SupergraphField,
-        current_subgraph_id: &str,
-        parent_definition: &SupergraphDefinition,
-    ) -> (bool, Option<&'a JoinFieldDirective>) {
-        // A field i available if: it has no @join__field directives at all
-        if field.join_field.is_empty() {
-            // AND its parent type is available in the subgraph
-            return (
-                parent_definition
-                    .join_types()
-                    .iter()
-                    .any(|join_type| join_type.graph_id == current_subgraph_id),
-                None,
-            );
-        }
-
-        // Find the relevant join_field and use it to determine availability
-        let join_field = field.join_field.iter().find(|join_field| {
-            join_field
-                .graph_id
-                .as_ref()
-                .is_some_and(|g| g == current_subgraph_id)
-        });
-
-        if let Some(join_field) = join_field {
-            return (true, Some(join_field));
-        }
-
-        (false, None)
     }
 }
 

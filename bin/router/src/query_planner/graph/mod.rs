@@ -10,7 +10,7 @@ mod tests;
 
 use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use std::{
-    collections::BTreeMap,
+    collections::{hash_map::Entry, BTreeMap},
     fmt::{Debug, Display},
     sync::Arc,
 };
@@ -164,6 +164,9 @@ pub struct Graph<'graph> {
     pub mutation_root: Option<NodeIndex>,
     pub subscription_root: Option<NodeIndex>,
     node_to_index: HashMap<Node<'graph>, NodeIndex>,
+    /// The edges `upsert_edge` added, by head and tail, only while building. `push_edge`
+    /// never adds one like them, so they're the only ones to look through.
+    upserted: HashMap<(NodeIndex, NodeIndex), Vec<EdgeIndex>>,
 }
 
 impl<'graph> Graph<'graph> {
@@ -202,6 +205,7 @@ impl<'graph> Graph<'graph> {
         };
 
         instance.build_graph(supergraph_state)?;
+        instance.upserted = HashMap::new();
 
         for node in instance.graph.node_weights_mut() {
             if let Node::SubgraphType(subgraph_type) = node {
@@ -295,14 +299,13 @@ impl<'graph> Graph<'graph> {
     }
 
     pub fn upsert_node(&mut self, node: Node<'graph>) -> NodeIndex {
-        if let Some(&index) = self.node_to_index.get(&node) {
-            return index;
+        match self.node_to_index.entry(node) {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => {
+                let index = self.graph.add_node(entry.key().clone());
+                *entry.insert(index)
+            }
         }
-
-        let index = self.graph.add_node(node);
-        self.node_to_index.insert(self.graph[index].clone(), index);
-
-        index
     }
 
     fn upsert_subgraph_node(
@@ -328,30 +331,14 @@ impl<'graph> Graph<'graph> {
         Ok(node_index)
     }
 
-    pub fn upsert_edge(
-        &mut self,
-        head: NodeIndex,
-        tail: NodeIndex,
-        edge: Edge<'graph>,
-    ) -> EdgeIndex {
-        let existing_edge = self
-            .graph
-            .edges_connecting(head, tail)
-            .find_map(|edge_ref| {
-                let edge_weight = edge_ref.weight();
-
-                if edge_weight == &edge {
-                    Some(edge_ref.id())
-                } else {
-                    None
-                }
-            });
-
-        if let Some(edge) = existing_edge {
-            edge
-        } else {
-            self.graph.add_edge(head, tail, edge)
+    fn upsert_edge(&mut self, head: NodeIndex, tail: NodeIndex, edge: Edge<'graph>) -> EdgeIndex {
+        let edges = self.upserted.entry((head, tail)).or_default();
+        if let Some(&existing) = edges.iter().find(|&&index| self.graph[index] == edge) {
+            return existing;
         }
+        let index = self.graph.add_edge(head, tail, edge);
+        edges.push(index);
+        index
     }
 
     /// Add an edge without scanning the graph for an identical edge.
@@ -802,6 +789,28 @@ impl<'graph> Graph<'graph> {
                     join_type.is_interface_object;
             }
 
+            // The fields each subgraph has, sorted once per type. Asking every field's
+            // @join__field list about every subgraph adds up on a type in hundreds of them.
+            // A field without @join__field is in every subgraph that has the type.
+            let mut everywhere = Vec::new();
+            let mut fields_in: HashMap<&str, Vec<_>> = HashMap::new();
+            for (index, (field_name, field_definition)) in definition.fields().iter().enumerate() {
+                if field_definition.join_field.is_empty() {
+                    everywhere.push((field_name, field_definition, None));
+                    continue;
+                }
+                for join_field in &field_definition.join_field {
+                    let Some(graph_id) = join_field.graph_id.as_deref() else {
+                        continue;
+                    };
+                    let fields = fields_in.entry(graph_id).or_default();
+                    // only the first @join__field for a subgraph counts
+                    if fields.last().is_none_or(|&(last, _)| last != index) {
+                        fields.push((index, (field_name, field_definition, Some(join_field))));
+                    }
+                }
+            }
+
             for (graph_id, is_interface_object) in subgraphs {
                 let graph_name = build_context.resolve_graph_id(state, graph_id)?.0.clone();
                 let has_resolvable_typename = matches!(
@@ -851,29 +860,11 @@ impl<'graph> Graph<'graph> {
                 )?;
                 self.push_edge(head, head, Edge::Selfie(def_name.clone()));
 
-                for (field_name, field_definition) in definition.fields().iter() {
-                    let (is_available, maybe_join_field) = if field_definition.join_field.is_empty()
-                    {
-                        // The type lives in this subgraph, so a field without @join__field does too.
-                        (true, None)
-                    } else {
-                        FederationRules::check_field_subgraph_availability(
-                            field_definition,
-                            graph_id,
-                            definition,
-                        )
-                    };
-
+                let specific = fields_in.get(graph_id).into_iter().flatten();
+                for &(field_name, field_definition, maybe_join_field) in
+                    everywhere.iter().chain(specific.map(|(_, field)| field))
+                {
                     let target_type = field_definition.field_type.inner_type();
-
-                    if !is_available {
-                        // The field is not available in the current subgraph
-                        trace!(
-                              "[ ] Field '{}.{}/{}' is not available in the subgraph, skipping edge creation (type: {})",
-                              def_name, field_name, graph_id, target_type
-                          );
-                        continue;
-                    }
 
                     // A field is considered "overridden" if its resolution is handled by a different subgraph.
                     // This prevents the current subgraph from creating a resolvable edge for a field it no longer owns.
@@ -1075,7 +1066,7 @@ impl<'graph> Graph<'graph> {
                                     def_name.as_str(),
                                     Self::is_leaf_output_type(state, target_type),
                                     field_definition.field_type.list_depth(),
-                                    maybe_join_field.cloned(),
+                                    maybe_join_field,
                                     requirements.clone(),
                                     context_arguments.clone(),
                                     overridden_by.clone(),
@@ -1126,7 +1117,7 @@ impl<'graph> Graph<'graph> {
                             def_name.as_str(),
                             Self::is_leaf_output_type(state, target_type),
                             field_definition.field_type.list_depth(),
-                            maybe_join_field.cloned(),
+                            maybe_join_field,
                             requirements.clone(),
                             context_arguments,
                             overridden_by.clone(),

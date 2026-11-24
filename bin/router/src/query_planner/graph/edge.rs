@@ -47,7 +47,7 @@ pub struct FieldMove<'graph> {
     pub type_name: &'graph str,
     pub is_leaf: bool,
     pub list_depth: usize,
-    pub join_field: Option<JoinFieldDirective>,
+    pub join_field: Option<&'graph JoinFieldDirective>,
     pub requirements: Option<Arc<TypeAwareSelection<'graph>>>,
     pub context_arguments: Vec<ContextArgument<'graph>>,
     pub override_from: Option<String>,
@@ -227,13 +227,13 @@ impl<'graph> Edge<'graph> {
         type_name: &'graph str,
         is_leaf: bool,
         list_depth: usize,
-        join_field: Option<JoinFieldDirective>,
+        join_field: Option<&'graph JoinFieldDirective>,
         requirements: Option<Arc<TypeAwareSelection<'graph>>>,
         context_arguments: Vec<ContextArgument<'graph>>,
         overridden_by: Option<(String, Option<OverrideLabel>)>,
     ) -> Self {
-        let override_from = join_field.as_ref().and_then(|jf| jf.override_value.clone());
-        let override_label = join_field.as_ref().and_then(|jf| jf.override_label.clone());
+        let override_from = join_field.and_then(|jf| jf.override_value.clone());
+        let override_label = join_field.and_then(|jf| jf.override_label.clone());
 
         Self::FieldMove(Box::new(FieldMove {
             name,
