@@ -158,10 +158,10 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn apollo_multipart_closes_a_heartbeat_before_the_next_part_arrives() {
         let mut output =
-            create_apollo_multipart_http_stream(stream::pending(), Duration::from_millis(1));
+            create_apollo_multipart_http_stream(stream::pending(), Duration::from_secs(10));
 
         assert_eq!(read_ready(&mut output), "--graphql");
         assert_eq!(
