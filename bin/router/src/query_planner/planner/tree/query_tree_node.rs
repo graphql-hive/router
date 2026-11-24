@@ -43,17 +43,53 @@ pub struct NodeContext {
     pub resolved_requirements: Vec<Rc<ContextRequirement>>,
 }
 
-/// Implements the `PartialEq` trait for `QueryTreeNode` to allow comparison based on node index, edge from parent, and selection attributes.
-/// This is also the way to "fingerprint" a node in the query tree, as it allows us to determine if two nodes are effectively
-/// the same in terms of their position and attributes in the graph while merging.
-impl PartialEq for QueryTreeNode {
+/// What makes two nodes the same one when trees merge, without their children and requirements.
+/// A path segment has one too, for the node it would become, so merging a path straight into a
+/// tree, and costing that, match children the way merging the path's tree would.
+#[derive(Clone, Copy)]
+pub(crate) struct MergeIdentity<'a> {
+    node_index: NodeIndex,
+    edge_from_parent: Option<EdgeIndex>,
+    mutation_field_position: MutationFieldPosition,
+    condition: Option<&'a Condition>,
+    context_coordinate: Option<(EdgeIndex, usize)>,
+    selection_attributes: &'a Option<Rc<SelectionAttributes>>,
+}
+
+impl PartialEq for MergeIdentity<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.node_index == other.node_index
             && self.edge_from_parent == other.edge_from_parent
             && self.mutation_field_position == other.mutation_field_position
             && self.condition == other.condition
-            && self.context_coordinate() == other.context_coordinate()
-            && same_attributes(&self.selection_attributes, &other.selection_attributes)
+            && self.context_coordinate == other.context_coordinate
+            && same_attributes(self.selection_attributes, other.selection_attributes)
+    }
+}
+
+impl<'a> MergeIdentity<'a> {
+    /// The node `QueryTreeNode::from_path_segment_sequences` makes of `segment`, with `position`
+    /// already only on the first one. Context requirements never get a coordinate there.
+    pub(crate) fn of_segment(
+        segment: &'a PathSegment,
+        tail_node_index: NodeIndex,
+        position: MutationFieldPosition,
+    ) -> Self {
+        Self {
+            node_index: tail_node_index,
+            edge_from_parent: Some(segment.edge_index),
+            mutation_field_position: position,
+            condition: segment.condition.as_ref(),
+            context_coordinate: None,
+            selection_attributes: &segment.selection_attributes,
+        }
+    }
+}
+
+/// Nodes are equal when they merge into one, see `MergeIdentity`.
+impl PartialEq for QueryTreeNode {
+    fn eq(&self, other: &Self) -> bool {
+        self.merge_identity() == other.merge_identity()
     }
 }
 
@@ -112,6 +148,17 @@ impl QueryTreeNode {
         self.context
             .as_ref()
             .map_or(&[], |context| &context.resolved_requirements)
+    }
+
+    pub(crate) fn merge_identity(&self) -> MergeIdentity<'_> {
+        MergeIdentity {
+            node_index: self.node_index,
+            edge_from_parent: self.edge_from_parent,
+            mutation_field_position: self.mutation_field_position,
+            condition: self.condition.as_ref(),
+            context_coordinate: self.context_coordinate(),
+            selection_attributes: &self.selection_attributes,
+        }
     }
 
     pub fn context_coordinate(&self) -> Option<(EdgeIndex, usize)> {

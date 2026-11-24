@@ -22,10 +22,12 @@ use crate::query_planner::{
         error::QueryPlanError,
         tree::{
             query_tree::QueryTree,
-            query_tree_node::{merge_query_tree_node_list, MutationFieldPosition, QueryTreeNode},
+            query_tree_node::{
+                merge_query_tree_node_list, MergeIdentity, MutationFieldPosition, QueryTreeNode,
+            },
         },
         walker::{
-            path::{same_attributes, OperationPath, PathSegment},
+            path::{OperationPath, PathSegment},
             ResolvedOperation,
         },
     },
@@ -506,11 +508,19 @@ impl<'graph> Candidate<'graph> {
         if self.uses_context {
             return Ok(Costs(graph).added_by_merge(root, &self.tree(graph)?.root));
         }
-        Costs(graph).added_by_path(
+        let added = Costs(graph).added_by_path(
             root,
             &self.path.get_segments(),
             self.mutation_field_position,
-        )
+        )?;
+        // costing the path has to match merging its tree
+        #[cfg(test)]
+        assert_eq!(
+            added,
+            Costs(graph).added_by_merge(root, &self.tree(graph)?.root),
+            "path merge cost"
+        );
+        Ok(added)
     }
 
     fn merge_into(&self, graph: &Graph<'_>, root: &mut QueryTreeNode) -> Result<(), GraphError> {
@@ -518,12 +528,22 @@ impl<'graph> Candidate<'graph> {
             root.merge_nodes(&self.tree(graph)?.root);
             return Ok(());
         }
+        // merging the path has to give what merging its tree gives
+        #[cfg(test)]
+        let expected = {
+            let mut expected = root.clone();
+            expected.merge_nodes(&self.tree(graph)?.root);
+            format!("{expected:?}")
+        };
         merge_path(
             graph,
             root,
             &self.path.get_segments(),
             self.mutation_field_position,
-        )
+        )?;
+        #[cfg(test)]
+        assert_eq!(format!("{root:?}"), expected, "path merge");
+        Ok(())
     }
 }
 
@@ -750,21 +770,17 @@ impl<'a> FetchWalk<'a> {
     }
 }
 
-/// The child of `node` made from `segment`, compared like `QueryTreeNode::eq`.
+/// The child of `node` that `segment` merges into.
 fn find_path_child(
     node: &QueryTreeNode,
     tail_node_index: NodeIndex,
     segment: &PathSegment,
     position: MutationFieldPosition,
 ) -> Option<usize> {
-    node.children.iter().position(|child| {
-        child.node_index == tail_node_index
-            && child.edge_from_parent == Some(segment.edge_index)
-            && child.mutation_field_position == position
-            && child.condition == segment.condition
-            && child.context_coordinate().is_none()
-            && same_attributes(&child.selection_attributes, &segment.selection_attributes)
-    })
+    let identity = MergeIdentity::of_segment(segment, tail_node_index, position);
+    node.children
+        .iter()
+        .position(|child| child.merge_identity() == identity)
 }
 
 /// Merges a path into `root` without building its `QueryTree` first. Not for `@fromContext`.
