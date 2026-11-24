@@ -19,7 +19,7 @@ use crate::query_planner::{
 };
 
 impl FetchStepData<MultiTypeFetchStep> {
-    pub fn can_merge_leafs(&self, other: &Self) -> bool {
+    pub fn can_merge_at_same_spot(&self, other: &Self) -> bool {
         if !self.can_merge_context(other) {
             return false;
         }
@@ -67,7 +67,7 @@ impl FetchGraph<MultiTypeFetchStep> {
     /// A leaf only has to fit before the other step's children. Like `c` asked for `x` right
     /// after `b`, and for `y` after `a`, where `d` waits for both: asking `c` for both after `a`
     /// is as fast.
-    pub(crate) fn merge_leafs(&mut self) -> Result<(), FetchGraphError> {
+    pub(crate) fn merge_without_delaying_children(&mut self) -> Result<(), FetchGraphError> {
         let mut group_indexes = HashMap::<GroupKey, usize>::new();
         let mut groups = Vec::<Vec<NodeIndex>>::new();
 
@@ -122,7 +122,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                     }
                     let target_step = self.get_step_data(*target_index)?;
                     let other_step = self.get_step_data(*other_index)?;
-                    if target_step.can_merge_leafs(other_step) {
+                    if target_step.can_merge_at_same_spot(other_step) {
                         perform_fetch_step_merge(*target_index, *other_index, self, false)?;
                         // The merged step waits for the parents of both, so it runs in the later
                         // of the two waves. Nothing else moves: every child of both ran after

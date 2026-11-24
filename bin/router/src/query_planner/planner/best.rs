@@ -528,16 +528,43 @@ impl<'graph> Candidate<'graph> {
 }
 
 /// A fetch the way the fetch graph makes it: a subgraph's root fetch, or the entity calls to a
-/// subgraph after as many other entity calls (`true`, depth). The fetch graph batches calls to a
-/// subgraph across response paths, so it's per depth, not per object.
-type FetchKey = (bool, Option<u16>, u32, MutationFieldPosition);
+/// subgraph after `depth` other entity calls. The fetch graph batches calls to a subgraph across
+/// response paths, so it's per depth, not per object.
+// field order is the sort order, and drop_fetches goes through keys sorted
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct FetchKey {
+    entity_call: bool,
+    subgraph: Option<u16>,
+    depth: u32,
+    position: MutationFieldPosition,
+}
 
-/// Which wave a fetch runs in: root fetches first, entity calls after as many waves as entity
-/// calls before them.
-fn wave((entity_call, _, depth, _): &FetchKey) -> u32 {
-    match entity_call {
-        true => depth + 2,
-        false => 1,
+impl FetchKey {
+    fn root(subgraph: Option<u16>, position: MutationFieldPosition) -> Self {
+        Self {
+            entity_call: false,
+            subgraph,
+            depth: 0,
+            position,
+        }
+    }
+
+    fn entity_call(subgraph: Option<u16>, depth: u32, position: MutationFieldPosition) -> Self {
+        Self {
+            entity_call: true,
+            subgraph,
+            depth,
+            position,
+        }
+    }
+
+    /// Which wave it runs in: root fetches first, entity calls after as many waves as entity
+    /// calls before them.
+    fn wave(&self) -> u32 {
+        match self.entity_call {
+            true => self.depth + 2,
+            false => 1,
+        }
     }
 }
 
@@ -546,18 +573,16 @@ fn wave((entity_call, _, depth, _): &FetchKey) -> u32 {
 #[derive(Default)]
 struct Fetches {
     keys: HashSet<FetchKey>,
-    crossings: u64,
     waves: BTreeMap<MutationFieldPosition, u32>,
 }
 
 impl Fetches {
     fn add(&mut self, candidate: &Candidate<'_>) {
         for key in &candidate.fetches {
-            let waves = self.waves.entry(key.3).or_default();
-            *waves = (*waves).max(wave(key));
+            let waves = self.waves.entry(key.position).or_default();
+            *waves = (*waves).max(key.wave());
             self.keys.insert(*key);
         }
-        self.crossings += candidate.crossings;
     }
 
     /// The waves and fetches adding `candidate` adds to the plan.
@@ -573,8 +598,13 @@ impl Fetches {
                 .filter(|key| !self.keys.contains(*key))
                 .count() as u64;
         let waves = candidate.fetches.first().map_or(0, |first| {
-            let most = candidate.fetches.iter().map(wave).max().unwrap_or(0);
-            most.saturating_sub(self.waves.get(&first.3).copied().unwrap_or(0))
+            let most = candidate
+                .fetches
+                .iter()
+                .map(FetchKey::wave)
+                .max()
+                .unwrap_or(0);
+            most.saturating_sub(self.waves.get(&first.position).copied().unwrap_or(0))
         });
         (waves, fetches)
     }
@@ -619,7 +649,7 @@ impl<'a> FetchWalk<'a> {
                 .node(self.graph.get_edge_tail(&segment.edge_index)?)?
                 .subgraph_index();
             if matches!(edge, Edge::SubgraphEntrypoint { .. }) {
-                self.insert((false, subgraph, 0, position));
+                self.insert(FetchKey::root(subgraph, position));
             }
             let Some(requirement) = &segment.requirement_tree else {
                 object_depth = depth;
@@ -639,7 +669,7 @@ impl<'a> FetchWalk<'a> {
                 .node(requirement, requirement_depth, requirement_depth, position)
                 .map_or(depth, |deepest| depth.max(deepest + 1));
             if is_requires || !only_requires {
-                self.insert((true, subgraph, call_depth, position));
+                self.insert(FetchKey::entity_call(subgraph, call_depth, position));
             }
             object_depth = if is_requires {
                 call_depth + 1
@@ -674,7 +704,7 @@ impl<'a> FetchWalk<'a> {
             matches!(self.graph.edge(edge), Ok(Edge::SubgraphEntrypoint { .. }))
         });
         if entrypoint {
-            self.insert((false, subgraph, 0, position));
+            self.insert(FetchKey::root(subgraph, position));
         }
         let is_field = |node: &QueryTreeNode| {
             node.edge_from_parent
@@ -700,7 +730,7 @@ impl<'a> FetchWalk<'a> {
             deepest = deepest.max(needs);
         }
         if !node.requirements.is_empty() && (is_requires || !only_requires) {
-            self.insert((true, subgraph, call_depth, position));
+            self.insert(FetchKey::entity_call(subgraph, call_depth, position));
             deepest = deepest.max(Some(call_depth));
         }
         for context in node.context_requirements() {

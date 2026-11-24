@@ -1,3 +1,4 @@
+use crate::query_planner::ast::arguments::ArgumentsMap;
 use crate::query_planner::ast::merge_path::{Condition, FieldPathSegment, MergePath, Segment};
 use crate::query_planner::ast::operation::{OperationDefinition, VariableDefinition};
 use crate::query_planner::ast::selection_item::SelectionItem;
@@ -62,15 +63,18 @@ pub(crate) struct ContextVariableKey {
 /// the key it's written under, its arguments, and every condition it's under. Whether the client
 /// asked for it or another `@requires` did doesn't matter: the step that resolves it is the same
 /// kind of step, and the value lands under the same key.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub(crate) struct PlannedRequires {
     edge: EdgeIndex,
     response_path: MergePath,
     response_key: Option<String>,
-    arguments: u64,
+    arguments: Option<ArgumentsMap>,
     conditions: Vec<Condition>,
     current_condition: Option<Condition>,
 }
+
+// argument values come from the operation, they have no NaN to break equality
+impl Eq for PlannedRequires {}
 
 #[derive(Debug, Clone)]
 pub struct FetchGraph<State> {
@@ -1952,9 +1956,7 @@ fn process_requires_field_edge(
                 edge: edge_index,
                 response_path: response_path.clone(),
                 response_key: field_alias.clone(),
-                arguments: query_node
-                    .selection_arguments()
-                    .map_or(0, |arguments| arguments.hash_u64()),
+                arguments: query_node.selection_arguments().cloned(),
                 conditions: conditions.from_root.to_vec(),
                 current_condition: conditions.current.cloned(),
             }
@@ -2212,6 +2214,8 @@ fn process_requires_field_edge(
                         &edge_ref,
                         holder,
                     )
+                    // on purpose: this only checks whether a shortcut works, and if the check
+                    // fails the requirements just take the usual way, which reports real errors
                     .unwrap_or(false)
                 {
                     leave_from_holder = false;
