@@ -24,7 +24,7 @@ jobs:
             bench_args: ""
           - name: "query-planner"
             package: "./bin/router"
-            bench_args: "--bench qp_benches"
+            bench_args: "--bench qp_benches --bench graph_benches"
           - name: "executor"
             package: "./bin/router"
             bench_args: "--bench executor_benches --bench demand_control_benches --bench coprocessor_benches"
@@ -52,6 +52,65 @@ jobs:
         with:
           name: ${{matrix.package}}-benchmark-results
           path: ${{matrix.package}}/target/criterion
+      # main only: the numbers go to the bench history, see store-benchmarks below
+      - name: Collect benchmark numbers
+        if: github.event_name == 'push'
+        run: ./bench/ci-collect-criterion.sh ${{ matrix.name }} > bench-numbers.json
+      - name: Upload benchmark numbers
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: bench-numbers-${{ matrix.name }}
+          path: bench-numbers.json
+
+  # Appends this commit's numbers (criterion and wrk) to data.json on the bench-history branch,
+  # next to bench/history/index.html, which charts them.
+  store-benchmarks:
+    name: benchmark / store
+    # store whatever finished, one failed bench shouldn't drop the rest
+    if: ${{ !cancelled() && github.event_name == 'push' }}
+    needs: [benchmark, router-benchmark]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: bench-numbers-*
+          path: numbers
+      - name: Append to bench history
+        run: |
+          if git fetch --depth 1 origin bench-history; then
+            git worktree add history FETCH_HEAD
+          else
+            git worktree add --orphan -b bench-history history
+          fi
+          [ -f history/data.json ] || echo '[]' > history/data.json
+
+          shopt -s nullglob
+          files=(numbers/*/bench-numbers.json)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No benchmark numbers to store"
+            exit 0
+          fi
+          jq -s add "${files[@]}" > merged.json
+          jq --slurpfile benches merged.json \
+            --arg sha "$GITHUB_SHA" \
+            --arg date "$(git log -1 --format=%cI)" \
+            --arg msg "$(git log -1 --format=%s)" \
+            '. + [{sha: $sha, date: $date, msg: $msg, benches: $benches[0]}]' \
+            history/data.json > data.json
+          mv data.json history/data.json
+          cp bench/history/index.html history/
+
+          cd history
+          # GitHub Pages serves this branch, .nojekyll skips its Jekyll build
+          touch .nojekyll
+          git add data.json index.html .nojekyll
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m "bench: ${GITHUB_SHA::8}"
+          git push origin HEAD:bench-history
 
   router-benchmark:
     strategy:
@@ -138,13 +197,35 @@ jobs:
           sleep 5
         env:
           ROUTER_CONFIG_FILE_PATH: ${{matrix.config}}
+      # runs on main too, so its numbers can go to the bench history
       - name: Run benchmark for ${{ github.ref }}
-        if: github.event_name == 'pull_request'
-        run: ./bench/run-benchmark.sh
+        run: ROUTER_PID=$(cat router.pid) ./bench/run-benchmark.sh
         env:
           SUMMARY_PATH: ./bench/results/pr
           BENCH_PERSISTED_MODE: ${{ matrix.name == 'persisted-documents' && 'true' || '' }}
           BENCH_DOCUMENT_ID: ${{ matrix.name == 'persisted-documents' && 'bench_test_query' || '' }}
+      # ids ending in /rps are requests per second, the rest are nanoseconds like criterion's
+      - name: Collect benchmark numbers
+        if: github.event_name == 'push'
+        run: |
+          jq --arg id "wrk/${{ matrix.name }}" '
+            def ns(us): if us == null then null else us * 1000 end;
+            {
+              ($id + "/rps"): .rate_rps,
+              ($id + "/latency p50"): ns(.latency_p50_us),
+              ($id + "/latency p90"): ns(.latency_p90_us),
+              ($id + "/latency p99"): ns(.latency_p99_us),
+              ($id + "/cpu per request p50"): ns(.cpu_per_request_p50_us),
+              ($id + "/cpu per request p90"): ns(.cpu_per_request_p90_us),
+              ($id + "/cpu per request p99"): ns(.cpu_per_request_p99_us)
+            } | with_entries(select(.value != null))
+          ' bench/results/pr/summary.json > bench-numbers.json
+      - name: Upload benchmark numbers
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: bench-numbers-wrk-${{ matrix.name }}
+          path: bench-numbers.json
       # On main, keep the built router around so PRs can compare against it without building main.
       - name: Upload router binary for main
         if: github.event_name == 'push' && matrix.name == matrix.main_binary

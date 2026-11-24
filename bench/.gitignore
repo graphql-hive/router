@@ -1,2 +1,3 @@
-./results/main
-./results/pr
+/results/main/*
+/results/pr/*
+!/results/*/.gitkeep
