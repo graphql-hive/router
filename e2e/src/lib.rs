@@ -71,6 +71,8 @@ mod laboratory;
 #[cfg(test)]
 mod max_aliases;
 #[cfg(test)]
+mod max_connections_per_host;
+#[cfg(test)]
 mod max_depth;
 #[cfg(test)]
 mod max_directives;

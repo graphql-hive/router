@@ -83,6 +83,32 @@ pub mod values {
         }
     }
 
+    /// How a wait for a slot under `max_connections_per_host` ended.
+    ///
+    /// Defaults to `Cancelled` when a guard drops without a result being set,
+    /// e.g. the router's own `request_timeout` dropped the request while it waited.
+    #[derive(Clone, Copy, Debug, strum::IntoStaticStr)]
+    pub enum SlotWaitResult {
+        #[strum(serialize = "acquired")]
+        Acquired,
+        #[strum(serialize = "timeout")]
+        Timeout,
+        #[strum(serialize = "cancelled")]
+        Cancelled,
+    }
+
+    impl SlotWaitResult {
+        pub const ALL: [SlotWaitResult; 3] = [
+            SlotWaitResult::Acquired,
+            SlotWaitResult::Timeout,
+            SlotWaitResult::Cancelled,
+        ];
+
+        pub fn as_str(self) -> &'static str {
+            self.into()
+        }
+    }
+
     /// Circuit breaker state exposed via metrics.
     ///
     /// The internal recloser state has three values (Closed, HalfOpen, Open),
@@ -197,6 +223,9 @@ pub mod names {
     pub const PERSISTED_DOCUMENTS_EXTRACT_MISSING_ID_TOTAL: &str =
         "hive.router.persisted_documents.extract.missing_id_total";
     pub const REQUEST_DEDUPE_JOINED_TOTAL: &str = "hive.router.request_dedupe.joined_total";
+    pub const SUBGRAPH_REQUESTS_PENDING: &str = "hive.router.subgraph.requests.pending";
+    pub const SUBGRAPH_REQUEST_SLOT_WAIT_DURATION: &str =
+        "hive.router.subgraph.request.slot_wait.duration";
     pub const COPROCESSOR_REQUESTS_TOTAL: &str = "hive.router.coprocessor.requests_total";
     pub const COPROCESSOR_DURATION: &str = "hive.router.coprocessor.duration";
     pub const COPROCESSOR_ERRORS_TOTAL: &str = "hive.router.coprocessor.errors_total";
@@ -497,6 +526,23 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
     (
         names::REQUEST_DEDUPE_JOINED_TOTAL,
         &[labels::GRAPHQL_OPERATION_TYPE],
+    ),
+    (
+        names::SUBGRAPH_REQUESTS_PENDING,
+        &[
+            labels::SUBGRAPH_NAME,
+            labels::SERVER_ADDRESS,
+            labels::SERVER_PORT,
+        ],
+    ),
+    (
+        names::SUBGRAPH_REQUEST_SLOT_WAIT_DURATION,
+        &[
+            labels::SUBGRAPH_NAME,
+            labels::SERVER_ADDRESS,
+            labels::SERVER_PORT,
+            labels::RESULT,
+        ],
     ),
     (
         names::COPROCESSOR_REQUESTS_TOTAL,

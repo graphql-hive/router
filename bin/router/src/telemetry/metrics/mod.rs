@@ -2,6 +2,7 @@ pub mod cache_metrics;
 mod capture;
 pub mod catalog;
 pub mod circuit_breaker_metrics;
+pub mod connection_limit_metrics;
 pub mod coprocessor_metrics;
 pub mod demand_control_metrics;
 pub mod graphql_metrics;
@@ -19,6 +20,7 @@ use opentelemetry::metrics::Meter;
 
 use crate::telemetry::metrics::cache_metrics::CacheMetrics;
 use crate::telemetry::metrics::circuit_breaker_metrics::CircuitBreakerMetrics;
+use crate::telemetry::metrics::connection_limit_metrics::ConnectionLimitMetrics;
 use crate::telemetry::metrics::coprocessor_metrics::CoprocessorMetrics;
 use crate::telemetry::metrics::demand_control_metrics::DemandControlMetrics;
 use crate::telemetry::metrics::graphql_metrics::GraphQLMetrics;
@@ -43,6 +45,7 @@ pub struct Metrics {
     pub subscriptions: SubscriptionMetrics,
     pub websocket_pool: WebSocketPoolMetrics,
     pub request_dedupe: RequestDedupeMetrics,
+    pub connection_limit: ConnectionLimitMetrics,
 }
 
 impl Metrics {
@@ -60,6 +63,7 @@ impl Metrics {
             subscriptions: SubscriptionMetrics::new(meter),
             websocket_pool: WebSocketPoolMetrics::new(meter),
             request_dedupe: RequestDedupeMetrics::new(meter),
+            connection_limit: ConnectionLimitMetrics::new(meter),
         }
     }
 }
