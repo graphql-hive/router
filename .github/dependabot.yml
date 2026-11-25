@@ -42,6 +42,7 @@ updates:
           - "opentelemetry-*"
           - "opentelemetry_sdk"
           - "tracing-opentelemetry"
+          - "datadog-opentelemetry"
       tracing:
         patterns:
           - "tracing"
