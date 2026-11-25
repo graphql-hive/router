@@ -520,13 +520,13 @@ mod tests {
     fn call_graph(
         calls: &str,
         operation_kind: OperationKind,
-    ) -> (MultiTypeFetchGraph, NodeIndex, Vec<(&str, NodeIndex)>) {
+    ) -> (MultiTypeFetchGraph, NodeIndex, Vec<Call<'_>>) {
         let mut graph = FetchGraph::<SingleTypeFetchStep>::new(operation_kind);
         let root = add_step(&mut graph, "root", FetchStepKind::Root, &[]);
         let mut calls_in_order = Vec::new();
         let mut steps: HashMap<&str, NodeIndex> = HashMap::new();
         for line in calls.lines().map(str::trim).filter(|line| !line.is_empty()) {
-            let (call, parents) = match line.split_once(" after ") {
+            let (call, after) = match line.split_once(" after ") {
                 Some((call, parents)) => (call, parents.split(", ").collect()),
                 None => (line, Vec::new()),
             };
@@ -539,38 +539,84 @@ mod tests {
             };
             let subgraph = name.trim_end_matches(|c: char| c.is_ascii_digit());
             let step = add_step(&mut graph, subgraph, FetchStepKind::Entity, &fields);
-            if parents.is_empty() {
+            if after.is_empty() {
                 graph.connect(root, step);
             }
-            for parent in parents {
+            for parent in &after {
                 graph.connect(steps[parent], step);
             }
-            calls_in_order.push((name, step));
+            calls_in_order.push(Call {
+                name,
+                subgraph,
+                step,
+                after,
+            });
             steps.insert(name, step);
         }
         graph.root_index = Some(root);
         (graph.to_multi_type(), root, calls_in_order)
     }
 
-    /// Shows the calls in each wave, in fixture order.
-    fn format_waves(calls: &[(&str, NodeIndex)], waves: &[usize]) -> String {
-        let mut by_wave: Vec<Vec<&str>> = Vec::new();
-        for &(name, step) in calls {
-            let wave = waves[step.index()];
-            if by_wave.len() <= wave {
-                by_wave.resize_with(wave + 1, Vec::new);
-            }
-            by_wave[wave].push(name);
+    struct Call<'a> {
+        name: &'a str,
+        subgraph: &'a str,
+        step: NodeIndex,
+        after: Vec<&'a str>,
+    }
+
+    /// One line per request, in the order they can start: the calls to one subgraph in one wave,
+    /// and the calls it waits for, the parents of all of them.
+    fn format_requests(calls: &[Call], waves: &[usize]) -> String {
+        struct Request<'a> {
+            wave: usize,
+            subgraph: &'a str,
+            calls: Vec<&'a str>,
+            after: Vec<&'a str>,
         }
-        by_wave
+        let mut requests: Vec<Request> = Vec::new();
+        for call in calls {
+            let wave = waves[call.step.index()];
+            let index = match requests
+                .iter()
+                .position(|request| request.wave == wave && request.subgraph == call.subgraph)
+            {
+                Some(index) => index,
+                None => {
+                    requests.push(Request {
+                        wave,
+                        subgraph: call.subgraph,
+                        calls: Vec::new(),
+                        after: Vec::new(),
+                    });
+                    requests.len() - 1
+                }
+            };
+            let request = &mut requests[index];
+            request.calls.push(call.name);
+            for parent in &call.after {
+                if !request.after.contains(parent) {
+                    request.after.push(parent);
+                }
+            }
+        }
+        requests.sort_by_key(|request| request.wave);
+        let names: Vec<String> = requests
             .iter()
-            .enumerate()
-            .map(|(wave, names)| format!("wave {wave}: {}", names.join(" ")))
+            .map(|request| request.calls.join(" "))
+            .collect();
+        let width = names.iter().map(String::len).max().unwrap_or(0);
+        requests
+            .iter()
+            .zip(names)
+            .map(|(request, names)| match request.after.is_empty() {
+                true => names,
+                false => format!("{names:width$}   after {}", request.after.join(" ")),
+            })
             .collect::<Vec<_>>()
             .join("\n")
     }
 
-    /// Schedules the calls of a query and shows the waves they end up in.
+    /// Schedules the calls of a query and shows the requests they end up in.
     fn schedule(calls: &str, entity_reuse: bool) -> String {
         schedule_operation(calls, OperationKind::Query, entity_reuse)
     }
@@ -582,11 +628,11 @@ mod tests {
     ) -> String {
         let (graph, root, calls) = call_graph(calls, operation_kind);
         let waves = schedule_entity_batches(&graph, root, entity_reuse).unwrap();
-        format_waves(&calls, &waves)
+        format_requests(&calls, &waves)
     }
 
-    /// For calls whose moves get dropped, with entity reuse off: the waves after the moves, and
-    /// the waves the calls end up in, each with the requests it estimates. Checks the moves did
+    /// For calls whose moves get dropped, with entity reuse off: the requests after the moves,
+    /// and the requests the calls end up in, each with how many it estimates. Checks the moves did
     /// change the waves, and the calls ended up back in the waves they started in.
     fn fallback_schedules(calls: &str) -> (String, String) {
         let (graph, root, calls) = call_graph(calls, OperationKind::Query);
@@ -601,7 +647,7 @@ mod tests {
             format!(
                 "requests: {}\n{}",
                 input.batch_cost_estimate(schedule),
-                format_waves(&calls, &schedule.earliest)
+                format_requests(&calls, &schedule.earliest)
             )
         };
         (show(&moved), show(&baseline))
@@ -673,15 +719,22 @@ mod tests {
         let (moved, result) = fallback_schedules(calls);
         insta::assert_snapshot!(moved, @r"
         requests: 7
-        wave 0: x
-        wave 1: c1 a2 a3 b2 b3 c2
-        wave 2: a1 b1 d
+        x
+        c1 c2   after x
+        a2 a3   after x
+        b2 b3   after x
+        a1      after c1
+        b1      after c1
+        d       after a2
         ");
         insta::assert_snapshot!(result, @r"
         requests: 6
-        wave 0: c1 x
-        wave 1: a1 a2 a3 b1 b2 b3 c2
-        wave 2: d
+        c1
+        x
+        a1 a2 a3   after c1 x
+        b1 b2 b3   after c1 x
+        c2         after x
+        d          after a2
         ");
     }
 
@@ -708,15 +761,22 @@ mod tests {
         let (moved, result) = fallback_schedules(calls);
         insta::assert_snapshot!(moved, @r"
         requests: 7
-        wave 0: x
-        wave 1: c1 a2 a3 b2 b3 c2 c3 c4
-        wave 2: a1 b1 d1 d2
+        x
+        c1 c2 c3 c4   after x
+        a2 a3         after x
+        b2 b3         after x
+        a1            after c1
+        b1            after c1
+        d1 d2         after a2 b2
         ");
         insta::assert_snapshot!(result, @r"
         requests: 6
-        wave 0: c1 x
-        wave 1: a1 a2 a3 b1 b2 b3 c2 c3 c4
-        wave 2: d1 d2
+        c1
+        x
+        a1 a2 a3   after c1 x
+        b1 b2 b3   after c1 x
+        c2 c3 c4   after x
+        d1 d2      after a2 b2
         ");
     }
 
@@ -740,15 +800,19 @@ mod tests {
         let (moved, result) = fallback_schedules(calls);
         insta::assert_snapshot!(moved, @r"
         requests: 5
-        wave 0: x
-        wave 1: c1 a2 a3 c2
-        wave 2: a1 d
+        x
+        c1 c2   after x
+        a2 a3   after x
+        a1      after c1
+        d       after a2
         ");
         insta::assert_snapshot!(result, @r"
         requests: 5
-        wave 0: c1 x
-        wave 1: a1 a2 a3 c2
-        wave 2: d
+        c1
+        x
+        a1 a2 a3   after c1 x
+        c2         after x
+        d          after a2
         ");
     }
 
@@ -767,9 +831,11 @@ mod tests {
             s3 {a}
         ";
         insta::assert_snapshot!(schedule(calls, true), @r"
-        wave 0: x1 y
-        wave 1: x2 s2
-        wave 2: s1 s3
+        x1
+        y
+        x2      after x1
+        s2      after y
+        s1 s3   after x2
         ");
     }
 
@@ -789,9 +855,13 @@ mod tests {
             s3 {a b} after y
         ";
         insta::assert_snapshot!(schedule(calls, true), @r"
-        wave 0: x1 s2 y
-        wave 1: x2 d
-        wave 2: s1 e s3
+        x1
+        s2
+        y
+        x2      after x1
+        d       after s2
+        s1 s3   after x2 y
+        e       after d
         ");
     }
 
@@ -811,10 +881,14 @@ mod tests {
             z2 after z1
         ";
         insta::assert_snapshot!(schedule(calls, true), @r"
-        wave 0: x1 s2 y
-        wave 1: x2 s3
-        wave 2: s1 z1
-        wave 3: z2
+        x1
+        s2
+        y
+        x2   after x1
+        s3   after y
+        s1   after x2
+        z1   after s3
+        z2   after z1
         ");
     }
 
@@ -828,12 +902,13 @@ mod tests {
             a2 after x
         ";
         insta::assert_snapshot!(schedule(calls, false), @r"
-        wave 0: x
-        wave 1: a1 a2
+        x
+        a1 a2   after x
         ");
         insta::assert_snapshot!(schedule_operation(calls, OperationKind::Mutation, false), @r"
-        wave 0: a1 x
-        wave 1: a2
+        a1
+        x
+        a2   after x
         ");
     }
 
@@ -851,7 +926,7 @@ mod tests {
             .zip(&ss)
             .map(|(p, s)| format!("{p}\n{s} after {p}\n"))
             .collect();
-        let waves = format!("wave 0: {}\nwave 1: {}", ps.join(" "), ss.join(" "));
-        assert_eq!(schedule(&calls, true), waves);
+        let (ps, ss) = (ps.join(" "), ss.join(" "));
+        assert_eq!(schedule(&calls, true), format!("{ps}\n{ss}   after {ps}"));
     }
 }
