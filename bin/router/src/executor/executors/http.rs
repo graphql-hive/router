@@ -1824,7 +1824,7 @@ mod tests {
             ));
             assert!(futures::poll!(&mut waiting).is_pending());
             assert_eq!(probe.pending(), Some(1));
-            // dropped here, as when the client request goes away
+            // dropped here, as when the router's `request_timeout` drops the request
         }
 
         assert_eq!(probe.pending(), Some(0));

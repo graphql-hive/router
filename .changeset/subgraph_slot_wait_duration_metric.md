@@ -10,6 +10,6 @@ The new `hive.router.subgraph.request.slot_wait.duration` histogram (in seconds)
 
 - `acquired`: the request got a slot and was sent to the subgraph.
 - `timeout`: `request_timeout` ran out first, and the request failed with `SUBGRAPH_REQUEST_SLOT_TIMEOUT`.
-- `cancelled`: the request went away while waiting, for example when the client disconnected or the router's own `request_timeout` fired.
+- `cancelled`: the router's own `request_timeout` fired while the request was waiting, so the router dropped it.
 
 Requests that find a free slot don't wait, so they aren't recorded. Long `acquired` waits, or any `timeout` waits, mean the subgraph is slow or `max_connections_per_host` is too low.

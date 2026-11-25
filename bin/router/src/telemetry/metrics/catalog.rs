@@ -86,7 +86,7 @@ pub mod values {
     /// How a wait for a slot under `max_connections_per_host` ended.
     ///
     /// Defaults to `Cancelled` when a guard drops without a result being set,
-    /// e.g. the client request went away while waiting.
+    /// e.g. the router's own `request_timeout` dropped the request while it waited.
     #[derive(Clone, Copy, Debug, strum::IntoStaticStr)]
     pub enum SlotWaitResult {
         #[strum(serialize = "acquired")]

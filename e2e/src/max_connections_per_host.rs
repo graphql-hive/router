@@ -139,18 +139,30 @@ mod max_connections_per_host_e2e_tests {
                 all:
                     dedupe_enabled: false
                     request_timeout: 500ms
+                subgraphs:
+                    products:
+                        request_timeout: 5s
                 "#,
             ))
             .build()
             .start()
             .await;
 
-        let requests = join_all((0..3).map(|_| router.send_graphql_request(QUERY, None, None)));
-        let while_waiting = async {
-            tokio::time::sleep(Duration::from_millis(250)).await;
-            otlp_collector.metrics_view().await
+        // every test subgraph is on the same host, so they share the one slot. `products` takes
+        // it and keeps it for the 2s the subgraph takes, well past the 500ms `accounts` requests
+        // can wait, so both of them have to time out waiting.
+        let holder = router.send_graphql_request("{ topProducts { upc } }", None, None);
+        let waiters = async {
+            // give `products` a head start, so it takes the slot first
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let requests = join_all((0..2).map(|_| router.send_graphql_request(QUERY, None, None)));
+            let while_waiting = async {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                otlp_collector.metrics_view().await
+            };
+            tokio::join!(requests, while_waiting)
         };
-        let (responses, metrics) = tokio::join!(requests, while_waiting);
+        let (holder, (responses, metrics)) = tokio::join!(holder, waiters);
 
         let attrs = [(labels::SUBGRAPH_NAME, "accounts")];
         assert_eq!(
@@ -158,14 +170,12 @@ mod max_connections_per_host_e2e_tests {
             2.0
         );
 
-        let mut slot_timeouts = 0;
         for response in responses {
             let body = response.json_body_string_pretty().await;
-            if body.contains("SUBGRAPH_REQUEST_SLOT_TIMEOUT") {
-                slot_timeouts += 1;
-            }
+            assert!(body.contains("SUBGRAPH_REQUEST_SLOT_TIMEOUT"), "{body}");
         }
-        assert!(slot_timeouts >= 1, "expected a request to time out waiting");
+        let body = holder.json_body_string_pretty().await;
+        assert!(!body.contains("errors"), "{body}");
 
         tokio::time::sleep(Duration::from_millis(200)).await;
         let metrics = otlp_collector.metrics_view().await;
@@ -173,18 +183,15 @@ mod max_connections_per_host_e2e_tests {
             metrics.latest_counter(names::SUBGRAPH_REQUESTS_PENDING, &attrs),
             0.0
         );
-
-        // the slot frees up when the first request times out, at about the same time the
-        // waiters' own timeouts fire, so one of them may still get it
-        let timed_out = waits(&metrics, SlotWaitResult::Timeout).0;
-        let acquired = waits(&metrics, SlotWaitResult::Acquired).0;
-        assert_eq!(timed_out, slot_timeouts);
-        assert_eq!(timed_out + acquired, 2);
+        let (timed_out, seconds) = waits(&metrics, SlotWaitResult::Timeout);
+        assert_eq!(timed_out, 2);
+        assert!(seconds >= 0.9, "{seconds}");
+        assert_eq!(waits(&metrics, SlotWaitResult::Acquired).0, 0);
         assert_eq!(waits(&metrics, SlotWaitResult::Cancelled).0, 0);
     }
 
     /// The router's own `request_timeout` drops the whole request while it waits for a slot,
-    /// so the wait ends without a slot or a slot timeout.
+    /// so the wait doesn't end as a slot timeout.
     #[ntex::test]
     async fn should_stop_counting_requests_cancelled_while_waiting_for_a_slot() {
         let otlp_collector = OtlpCollector::start()
@@ -235,10 +242,15 @@ mod max_connections_per_host_e2e_tests {
             0.0
         );
 
-        let (cancelled, seconds) = waits(&metrics, SlotWaitResult::Cancelled);
-        assert_eq!(cancelled, 2);
-        assert!((0.8..2.0).contains(&seconds), "{seconds}");
-        assert_eq!(waits(&metrics, SlotWaitResult::Acquired).0, 0);
+        // all three requests share one router deadline, and the slot holder started first, so
+        // it's dropped a moment before the waiters. A waiter can take the freed slot just before
+        // its own deadline, so a wait may end as `acquired` instead of `cancelled`. Either way
+        // it never ends as a slot timeout, and the pending count goes back to 0. The unit test
+        // `acquire_slot_stops_counting_a_request_that_is_cancelled_while_waiting` covers the
+        // exact count.
+        let (cancelled, _) = waits(&metrics, SlotWaitResult::Cancelled);
+        let acquired = waits(&metrics, SlotWaitResult::Acquired).0;
+        assert_eq!(cancelled + acquired, 2);
         assert_eq!(waits(&metrics, SlotWaitResult::Timeout).0, 0);
     }
 
