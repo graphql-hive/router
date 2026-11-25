@@ -15,9 +15,7 @@ use tracing::{debug, info, warn};
 use crate::config::cache::{CacheWarmupConfig, CacheWarmupHiveConfig};
 use crate::config::HiveRouterConfig;
 use crate::consts::ROUTER_VERSION;
-use crate::executor::hooks::on_cache_warmup::{
-    CacheWarmupDocument, CacheWarmupOperation, OnCacheWarmupHookPayload,
-};
+use crate::executor::hooks::on_cache_warmup::{CacheWarmupOperation, OnCacheWarmupHookPayload};
 use crate::executor::hooks::on_supergraph_load::SupergraphSnapshot;
 use crate::executor::plugin_trait::RouterPluginBoxed;
 use crate::pipeline::normalize::normalize_document;
@@ -92,8 +90,8 @@ impl CacheWarmup {
 
         if let Some(previous) = previous {
             for (_, payload) in previous.normalize_cache.iter() {
-                operations.push(CacheWarmupOperation::from_document(
-                    payload.source_document.clone(),
+                operations.push(CacheWarmupOperation::from_text(
+                    payload.source_query.clone(),
                     payload.requested_operation_name.clone(),
                     CacheWarmupSource::PreviousSupergraph,
                 ));
@@ -168,19 +166,15 @@ impl CacheWarmup {
 
         // parsing, normalizing and planning are CPU work, keep it off the async thread
         let planned = ntex::rt::spawn_blocking(move || {
-            let document = match operation.document {
-                CacheWarmupDocument::Parsed(document) => document,
-                CacheWarmupDocument::Text(query) => {
-                    let parsed = match max_tokens {
-                        Some(limit) => safe_parse_operation_with_token_limit(&query, limit),
-                        None => safe_parse_operation(&query),
-                    };
-                    Arc::new(parsed.map_err(|error| error.to_string())?)
-                }
-            };
+            let document = match max_tokens {
+                Some(limit) => safe_parse_operation_with_token_limit(&operation.query, limit),
+                None => safe_parse_operation(&operation.query),
+            }
+            .map_err(|error| error.to_string())?;
             let normalized = normalize_document(
                 &supergraph,
                 &document,
+                operation.query.clone(),
                 operation.operation_name.as_deref(),
                 OperationKind::Query,
                 String::new(),
@@ -340,7 +334,7 @@ impl HiveSlowOperations {
             .into_iter()
             .map(|operation| {
                 CacheWarmupOperation::from_text(
-                    operation.query,
+                    Arc::new(operation.query),
                     operation.operation_name,
                     CacheWarmupSource::HiveConsole,
                 )

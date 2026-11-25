@@ -45,9 +45,10 @@ pub struct GraphQLNormalizationPayload {
     /// Values of the variables that hard-coded arguments were turned into.
     /// See `query_planner.arguments_to_variables` in the config.
     pub extracted_variables: Arc<Vec<ExtractedVariable>>,
-    /// The parsed document this was normalized from, and the operation name the client asked for.
-    /// Cache warmup reads these to normalize and plan the same operation against a new supergraph.
-    pub source_document: Arc<Document<'static, String>>,
+    /// The minified query this was normalized from (shared with the parse cache entry),
+    /// and the operation name the client asked for.
+    /// Cache warmup re-parses these to plan the same operation against a new supergraph.
+    pub source_query: Arc<String>,
     pub requested_operation_name: Option<String>,
 }
 
@@ -93,7 +94,7 @@ impl GraphQLNormalizationPayload {
             projection_plan: new_projection_plan,
             operation_identity: self.operation_identity.clone(),
             extracted_variables: self.extracted_variables.clone(),
-            source_document: self.source_document.clone(),
+            source_query: self.source_query.clone(),
             requested_operation_name: self.requested_operation_name.clone(),
         })
     }
@@ -151,7 +152,8 @@ pub fn hash_normalized_operation(
 /// Shared by the request pipeline and cache warmup, so both build the same plan cache keys.
 pub(crate) fn normalize_document(
     supergraph: &SupergraphSnapshot,
-    document: &Arc<Document<'static, String>>,
+    document: &Document<'static, String>,
+    source_query: Arc<String>,
     operation_name: Option<&str>,
     operation_type: OperationKind,
     client_document_hash: String,
@@ -212,7 +214,7 @@ pub(crate) fn normalize_document(
             client_document_hash,
         },
         extracted_variables: Arc::new(extracted_variables),
-        source_document: document.clone(),
+        source_query,
         requested_operation_name: operation_name.map(str::to_string),
     })
 }
@@ -252,6 +254,7 @@ pub async fn normalize_request_with_cache(
                 normalize_document(
                     supergraph,
                     &parser_payload.parsed_operation,
+                    parser_payload.minified_document.clone(),
                     graphql_params.operation_name.as_deref(),
                     parser_payload.operation_type.clone(),
                     parser_payload.cache_key_string.clone(),
