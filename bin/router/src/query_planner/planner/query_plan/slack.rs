@@ -42,21 +42,8 @@ pub(super) fn schedule_entity_batches(
     entity_reuse: bool,
 ) -> Result<Vec<usize>, QueryPlanError> {
     let input = SchedulingInput::new(fetch_graph, root)?;
-    let mut reuse = ReuseIndex::new(&input, entity_reuse);
     let baseline = Schedule::new(&input);
-
-    let mut schedule = baseline.clone();
-    for steps in input
-        .movable_by_subgraph
-        .iter()
-        .filter(|steps| steps.len() > 1)
-    {
-        let mut candidates = BatchCandidates::new(steps, &reuse, &schedule);
-        while let Some(batch_move) = candidates.next_move(&schedule, &mut reuse) {
-            schedule.apply_move(&input, &batch_move);
-            candidates.refresh(&schedule);
-        }
-    }
+    let schedule = greedy_batch_schedule(&input, &baseline, entity_reuse);
 
     // a move also moves what waits for it, and that can take calls of other subgraphs out of
     // requests they shared. Those usually get merged again by later moves, but when the moves
@@ -66,6 +53,30 @@ pub(super) fn schedule_entity_batches(
         return Ok(baseline.earliest);
     }
     Ok(schedule.earliest)
+}
+
+/// Moves calls, one subgraph at a time, to the waves where they share a request with other calls
+/// to their subgraph. The result can make more requests than `baseline`, checking that is up to
+/// the caller.
+fn greedy_batch_schedule(
+    input: &SchedulingInput<'_>,
+    baseline: &Schedule,
+    entity_reuse: bool,
+) -> Schedule {
+    let mut reuse = ReuseIndex::new(input, entity_reuse);
+    let mut schedule = baseline.clone();
+    for steps in input
+        .movable_by_subgraph
+        .iter()
+        .filter(|steps| steps.len() > 1)
+    {
+        let mut candidates = BatchCandidates::new(steps, &reuse, &schedule);
+        while let Some(batch_move) = candidates.next_move(&schedule, &mut reuse) {
+            schedule.apply_move(input, &batch_move);
+            candidates.refresh(&schedule);
+        }
+    }
+    schedule
 }
 
 /// The steps of a fetch graph, and the entity calls that can move.
@@ -496,17 +507,20 @@ mod tests {
         state::supergraph_state::{OperationKind, SubgraphName},
     };
 
-    use super::schedule_entity_batches;
+    use super::{
+        greedy_batch_schedule, schedule_entity_batches, MultiTypeFetchGraph, Schedule,
+        SchedulingInput,
+    };
 
-    /// Schedules entity calls and shows the waves they end up in, one line per wave.
+    /// Builds a fetch graph from named entity calls.
     ///
     /// One call per line: `name {fields} after parent, parent`. The subgraph is the name without
     /// its number, so `a1` and `a2` are calls to `a`. Every call is for type `T`, the fields are
     /// what it asks for, used with entity reuse. A call without `after` runs right after the root.
-    fn schedule(calls: &str, entity_reuse: bool) -> String {
+    fn call_graph(calls: &str) -> (MultiTypeFetchGraph, NodeIndex, Vec<(&str, NodeIndex)>) {
         let mut graph = FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query);
         let root = add_step(&mut graph, "root", FetchStepKind::Root, &[]);
-        let mut names: Vec<&str> = Vec::new();
+        let mut calls_in_order = Vec::new();
         let mut steps: HashMap<&str, NodeIndex> = HashMap::new();
         for line in calls.lines().map(str::trim).filter(|line| !line.is_empty()) {
             let (call, parents) = match line.split_once(" after ") {
@@ -528,16 +542,18 @@ mod tests {
             for parent in parents {
                 graph.connect(steps[parent], step);
             }
-            names.push(name);
+            calls_in_order.push((name, step));
             steps.insert(name, step);
         }
         graph.root_index = Some(root);
-        let graph = graph.to_multi_type();
-        let waves = schedule_entity_batches(&graph, root, entity_reuse).unwrap();
+        (graph.to_multi_type(), root, calls_in_order)
+    }
 
+    /// Shows the calls in each wave, in fixture order.
+    fn format_waves(calls: &[(&str, NodeIndex)], waves: &[usize]) -> String {
         let mut by_wave: Vec<Vec<&str>> = Vec::new();
-        for name in names {
-            let wave = waves[steps[name].index()];
+        for &(name, step) in calls {
+            let wave = waves[step.index()];
             if by_wave.len() <= wave {
                 by_wave.resize_with(wave + 1, Vec::new);
             }
@@ -549,6 +565,35 @@ mod tests {
             .map(|(wave, names)| format!("wave {wave}: {}", names.join(" ")))
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// Schedules the calls and shows the waves they end up in.
+    fn schedule(calls: &str, entity_reuse: bool) -> String {
+        let (graph, root, calls) = call_graph(calls);
+        let waves = schedule_entity_batches(&graph, root, entity_reuse).unwrap();
+        format_waves(&calls, &waves)
+    }
+
+    /// For calls whose moves get dropped, with entity reuse off: the waves after the moves, and
+    /// the waves the calls end up in, each with the requests it estimates. Checks the moves did
+    /// change the waves, and the calls ended up back in the waves they started in.
+    fn fallback_schedules(calls: &str) -> (String, String) {
+        let (graph, root, calls) = call_graph(calls);
+        let input = SchedulingInput::new(&graph, root).unwrap();
+        let baseline = Schedule::new(&input);
+        let moved = greedy_batch_schedule(&input, &baseline, false);
+        assert_ne!(moved.earliest, baseline.earliest);
+        let result = schedule_entity_batches(&graph, root, false).unwrap();
+        assert_eq!(result, baseline.earliest);
+
+        let show = |schedule: &Schedule| {
+            format!(
+                "requests: {}\n{}",
+                input.batch_cost_estimate(schedule),
+                format_waves(&calls, &schedule.earliest)
+            )
+        };
+        (show(&moved), show(&baseline))
     }
 
     fn add_step(
@@ -593,11 +638,12 @@ mod tests {
         })
     }
 
-    /// Without moves it's 4 requests: `c` in waves 0 and 1, `a` and `b` in wave 1.
+    /// Without moves it's 6 requests: `c` in waves 0 and 1, `a` and `b` in wave 1,
+    /// `x` in wave 0, and `d` in wave 2.
     ///
     /// `c1` could join `c2` in wave 1, one `c` request less. But `a1` and `b1` wait for `c1`, so
     /// they'd go to wave 2, away from the rest of their batches: an `a` and a `b` request more.
-    /// 5 requests is worse than 4, so nothing moves.
+    /// 7 requests is worse than 6, so the moves are dropped.
     #[test]
     fn falls_back_when_batch_cost_increases() {
         let calls = "
@@ -612,7 +658,15 @@ mod tests {
             c2 after x
             d after a2
         ";
-        insta::assert_snapshot!(schedule(calls, false), @r"
+        let (moved, result) = fallback_schedules(calls);
+        insta::assert_snapshot!(moved, @r"
+        requests: 7
+        wave 0: x
+        wave 1: c1 a2 a3 b2 b3 c2
+        wave 2: a1 b1 d
+        ");
+        insta::assert_snapshot!(result, @r"
+        requests: 6
         wave 0: c1 x
         wave 1: a1 a2 a3 b1 b2 b3 c2
         wave 2: d
@@ -621,7 +675,7 @@ mod tests {
 
     /// The same, but `c` has the most calls, so it's looked at before `a` and `b`. And `a2` and
     /// `b2` have to stay in wave 1, `d1` and `d2` wait for them, so `a1` and `b1` can't get their
-    /// batches back in wave 2 either. Still more requests than without moves, so nothing moves.
+    /// batches back in wave 2 either. The moves still cost 7 requests instead of 6.
     #[test]
     fn falls_back_when_batch_cost_increases_and_its_subgraph_comes_first() {
         let calls = "
@@ -639,18 +693,27 @@ mod tests {
             d1 after a2
             d2 after b2
         ";
-        insta::assert_snapshot!(schedule(calls, false), @r"
+        let (moved, result) = fallback_schedules(calls);
+        insta::assert_snapshot!(moved, @r"
+        requests: 7
+        wave 0: x
+        wave 1: c1 a2 a3 b2 b3 c2 c3 c4
+        wave 2: a1 b1 d1 d2
+        ");
+        insta::assert_snapshot!(result, @r"
+        requests: 6
         wave 0: c1 x
         wave 1: a1 a2 a3 b1 b2 b3 c2 c3 c4
         wave 2: d1 d2
         ");
     }
 
-    /// Without moves it's 3 requests: `c` in waves 0 and 1, `a` in wave 1.
+    /// Without moves it's 5 requests: `c` in waves 0 and 1, `a` in wave 1, `x` in wave 0,
+    /// and `d` in wave 2.
     ///
     /// `c1` could join `c2` in wave 1, one `c` request less. But `a1` waits for `c1`, so it'd go
-    /// to wave 2, away from `a2` and `a3`: an `a` request more. Still 3 requests, and `c1` and
-    /// `a1` would start later, so nothing moves.
+    /// to wave 2, away from `a2` and `a3`: an `a` request more. Still 5 requests, and `c1` and
+    /// `a1` would start later, so the moves are dropped.
     #[test]
     fn keeps_the_waves_when_moves_save_no_request() {
         let calls = "
@@ -662,7 +725,15 @@ mod tests {
             c2 after x
             d after a2
         ";
-        insta::assert_snapshot!(schedule(calls, false), @r"
+        let (moved, result) = fallback_schedules(calls);
+        insta::assert_snapshot!(moved, @r"
+        requests: 5
+        wave 0: x
+        wave 1: c1 a2 a3 c2
+        wave 2: a1 d
+        ");
+        insta::assert_snapshot!(result, @r"
+        requests: 5
         wave 0: c1 x
         wave 1: a1 a2 a3 c2
         wave 2: d
