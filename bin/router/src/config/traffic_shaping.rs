@@ -21,6 +21,7 @@ pub struct TrafficShapingConfig {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub subgraphs: HashMap<String, TrafficShapingExecutorSubgraphConfig>,
     /// Limits the concurrent amount of requests/connections per host/subgraph.
+    /// Set to `0` to remove the limit.
     #[serde(default = "default_max_connections_per_host")]
     pub max_connections_per_host: usize,
     /// How the router keeps its HTTP clients (and connection pools) to subgraphs.

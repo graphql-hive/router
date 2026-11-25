@@ -195,6 +195,7 @@ pub struct SubgraphExecutorMap {
     config: Arc<SubgraphExecutorConfig>,
     client: Arc<HttpClientProvider>,
     semaphores_by_origin: DashMap<String, Arc<Semaphore>>,
+    /// `0` means no limit, so no semaphore is created.
     max_connections_per_host: usize,
     in_flight_requests: InflightRequestsMap,
     telemetry_context: Arc<TelemetryContext>,
@@ -860,11 +861,12 @@ impl SubgraphExecutorMap {
             })
         );
 
-        let semaphore = self
-            .semaphores_by_origin
-            .entry(origin)
-            .or_insert_with(|| Arc::new(Semaphore::new(self.max_connections_per_host)))
-            .clone();
+        let semaphore = (self.max_connections_per_host > 0).then(|| {
+            self.semaphores_by_origin
+                .entry(origin)
+                .or_insert_with(|| Arc::new(Semaphore::new(self.max_connections_per_host)))
+                .clone()
+        });
 
         let protocol = if for_subscription {
             self.config

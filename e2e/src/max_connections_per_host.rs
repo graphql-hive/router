@@ -242,6 +242,56 @@ mod max_connections_per_host_e2e_tests {
         assert_eq!(waits(&metrics, SlotWaitResult::Timeout).0, 0);
     }
 
+    /// `0` turns the limit off: requests to the same host all run at once and never wait.
+    // https://github.com/graphql-hive/router/issues/1959
+    #[ntex::test]
+    async fn should_not_limit_requests_when_max_connections_per_host_is_zero() {
+        let otlp_collector = OtlpCollector::start()
+            .await
+            .expect("Failed to start OTLP collector");
+        let subgraphs = TestSubgraphs::builder()
+            .with_delay(Duration::from_secs(1))
+            .build()
+            .start()
+            .await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(config(
+                &otlp_collector.http_metrics_endpoint(),
+                r#"
+                max_connections_per_host: 0
+                all:
+                    dedupe_enabled: false
+                    request_timeout: 5s
+                "#,
+            ))
+            .build()
+            .start()
+            .await;
+
+        let started = std::time::Instant::now();
+        let responses =
+            join_all((0..5).map(|_| router.send_graphql_request(QUERY, None, None))).await;
+        let elapsed = started.elapsed();
+
+        for response in responses {
+            assert!(response.status().is_success());
+            let body = response.json_body_string_pretty().await;
+            assert!(!body.contains("errors"), "{body}");
+        }
+        // all five ran at once, not one after another
+        assert!(elapsed < Duration::from_secs(3), "{elapsed:?}");
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let metrics = otlp_collector.metrics_view().await;
+        assert!(metrics.has_histogram(
+            names::HTTP_CLIENT_REQUEST_DURATION,
+            &[(labels::SUBGRAPH_NAME, "accounts")]
+        ));
+        assert!(!metrics.has_counter(names::SUBGRAPH_REQUESTS_PENDING, &[]));
+        assert!(!metrics.has_histogram(names::SUBGRAPH_REQUEST_SLOT_WAIT_DURATION, &[]));
+    }
+
     #[ntex::test]
     async fn should_not_report_pending_requests_under_the_limit() {
         let otlp_collector = OtlpCollector::start()
