@@ -31,6 +31,8 @@ fn graph_building(c: &mut Criterion) {
         let parsed_schema = parse_schema(&supergraph_sdl);
         let supergraph_state = SupergraphState::new(&parsed_schema);
 
+        // bfg takes ~0.3s per build, 10 samples are plenty and 100 take half a minute
+        group.sample_size(if name == "bfg" { 10 } else { 100 });
         group.bench_function(name, |b| {
             b.iter(|| {
                 black_box(

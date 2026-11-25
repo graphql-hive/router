@@ -50,7 +50,8 @@ jobs:
   benchmark:
     name: benchmark / criterion
     needs: [build-criterion, build-bench-binaries]
-    runs-on: ubuntu-latest
+    # main measures on the dedicated benchmark machine, PRs stay on GitHub's runners
+    runs-on: ${{ github.event_name == 'push' && 'hive-router-benchmark-runner' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
@@ -74,8 +75,11 @@ jobs:
           while read -r suite dir benches; do
             for bench in $benches; do
               echo "::group::$suite / $bench"
-              # cargo bench starts each bench in its package dir, the fixtures are read relative to it
-              (cd "$dir" && CRITERION_HOME="$GITHUB_WORKSPACE/target/criterion/$suite" "$GITHUB_WORKSPACE/bench-out/$bench" --bench < /dev/null) \
+              # cargo bench starts each bench in its package dir, the fixtures are read relative to it.
+              # The history only keeps the median, so skip the plots and most of the bootstrap resamples
+              # (they only feed confidence intervals), and warm up for 1s instead of 3s.
+              (cd "$dir" && CRITERION_HOME="$GITHUB_WORKSPACE/target/criterion/$suite" "$GITHUB_WORKSPACE/bench-out/$bench" \
+                --bench --warm-up-time 1 --noplot --nresamples 10000 < /dev/null) \
                 || failed="$failed $suite/$bench"
               echo "::endgroup::"
             done
@@ -286,7 +290,8 @@ jobs:
             compare_with_default: true
             main_binary: "default"
     name: benchmark / router / ${{ matrix.name }}
-    runs-on: ubuntu-latest
+    # main measures on the dedicated benchmark machine, PRs stay on GitHub's runners
+    runs-on: ${{ github.event_name == 'push' && 'hive-router-benchmark-runner' || 'ubuntu-latest' }}
     env:
       NODE_NO_WARNINGS: true
       NODE_ENV: production
@@ -297,8 +302,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup wrk
         run: |
-          sudo apt-get update
-          sudo apt-get install -y wrk
+          if ! command -v wrk >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y wrk
+          fi
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: bench-bin-subgraphs

@@ -87,9 +87,14 @@ fn bench_query_plan(
         })
     };
 
+    // A single plan takes 0.5s or more here, so 10 samples are plenty and 100 take minutes
     if matches!(
         name,
-        "query_plan_wfg_mutation_1" | "query_plan_wfg_query_1" | "query_plan_wfg_query_2"
+        "query_plan_wfg_mutation_1"
+            | "query_plan_wfg_query_1"
+            | "query_plan_wfg_query_2"
+            | "query_plan_heavy_query"
+            | "query_plan_abstract_many_subgraphs"
     ) {
         let mut group = c.benchmark_group(name);
         group.sample_size(10);
