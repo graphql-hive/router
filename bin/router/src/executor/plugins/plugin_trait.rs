@@ -1,5 +1,6 @@
 use crate::executor::{
     hooks::{
+        on_cache_warmup::OnCacheWarmupHookPayload,
         on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
         on_graphql_analysis::{OnGraphqlAnalysisHookPayload, OnGraphqlAnalysisHookResult},
         on_graphql_error::{OnGraphQLErrorHookPayload, OnGraphQLErrorHookResult},
@@ -463,6 +464,10 @@ pub trait RouterPlugin: Send + Sync + 'static {
     ) -> OnGraphQLErrorHookResult<'req> {
         payload.proceed()
     }
+    /// Lets the plugin add, drop or reorder the operations planned before the router
+    /// switches to a new supergraph. Only called when `cache.warmup.enabled` is on.
+    #[inline]
+    async fn on_cache_warmup<'exec>(&'exec self, _payload: &mut OnCacheWarmupHookPayload<'exec>) {}
     #[inline]
     async fn on_shutdown<'exec>(&'exec self) {}
 }
@@ -513,6 +518,7 @@ pub trait DynRouterPlugin: Send + Sync + 'static {
         &'req self,
         payload: OnGraphQLErrorHookPayload<'req>,
     ) -> OnGraphQLErrorHookResult<'req>;
+    async fn on_cache_warmup<'exec>(&'exec self, payload: &mut OnCacheWarmupHookPayload<'exec>);
     async fn on_shutdown<'exec>(&'exec self);
 }
 
@@ -596,6 +602,10 @@ where
         payload: OnGraphQLErrorHookPayload<'req>,
     ) -> OnGraphQLErrorHookResult<'req> {
         RouterPlugin::on_graphql_error(self, payload)
+    }
+    #[inline]
+    async fn on_cache_warmup<'exec>(&'exec self, payload: &mut OnCacheWarmupHookPayload<'exec>) {
+        RouterPlugin::on_cache_warmup(self, payload).await;
     }
     #[inline]
     async fn on_shutdown<'exec>(&'exec self) {

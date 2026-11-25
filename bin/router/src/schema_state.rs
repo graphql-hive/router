@@ -1,5 +1,6 @@
 use crate::background_tasks::{BackgroundTask, BackgroundTasksManager};
 use crate::cache_state::build_cache;
+use crate::cache_warmup::CacheWarmup;
 use crate::config::telemetry::hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig};
 use crate::config::{cache::SupergraphCacheConfig, supergraph::SupergraphSource, HiveRouterConfig};
 use crate::executor::execution::operation_name::OperationNameForwardConfig;
@@ -750,6 +751,8 @@ impl SchemaState {
             let configured_spawn_clone = configured.clone();
             let task_telemetry = telemetry_context.clone();
             let runtime_context_for_reload = runtime_context.clone();
+            let cache_warmup = CacheWarmup::from_config(router_config, plugins.clone())
+                .map_err(SupergraphManagerError::Configuration)?;
 
             bg_tasks_manager.register_handle(async move {
                 let supergraph_metrics = &task_telemetry.metrics.supergraph;
@@ -767,6 +770,18 @@ impl SchemaState {
                     .await
                     {
                         Ok(new_configured) => {
+                            if let Some(cache_warmup) = &cache_warmup {
+                                // the previous supergraph keeps serving until the store below
+                                let previous = configured_spawn_clone.load_full();
+                                cache_warmup
+                                    .run(
+                                        previous.as_ref().as_ref().map(|c| c.runtime.as_ref()),
+                                        &new_configured.snapshot,
+                                        &new_configured.runtime,
+                                        &task_telemetry.metrics.cache_warmup,
+                                    )
+                                    .await;
+                            }
                             // swapping in the new value here is enough: the previous
                             // `ConfiguredSupergraph`'s owner `Arc<Supergraph>` is only kept alive
                             // by this slot (ordinary requests only ever hold a snapshot),

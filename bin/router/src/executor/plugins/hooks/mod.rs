@@ -1,3 +1,4 @@
+pub mod on_cache_warmup;
 pub mod on_execute;
 pub mod on_graphql_analysis;
 pub mod on_graphql_error;

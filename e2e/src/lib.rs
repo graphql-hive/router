@@ -13,6 +13,8 @@ mod cache;
 #[cfg(test)]
 mod cache_control;
 #[cfg(test)]
+mod cache_warmup;
+#[cfg(test)]
 mod circuit_breaker;
 #[cfg(test)]
 mod compression;

@@ -5,6 +5,7 @@ mod allocator;
 pub mod anonymize;
 pub mod background_tasks;
 mod cache_state;
+mod cache_warmup;
 pub mod config;
 mod consts;
 pub mod error;

@@ -17,6 +17,7 @@ use crate::telemetry::logging::targets;
 use crate::telemetry::traces::spans::graphql::{
     GraphQLNormalizeSpan, GraphQLSpanOperationIdentity,
 };
+use graphql_tools::parser::query::Document;
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::cache_state::{CacheHitMiss, EntryResultHitMissExt};
@@ -44,6 +45,10 @@ pub struct GraphQLNormalizationPayload {
     /// Values of the variables that hard-coded arguments were turned into.
     /// See `query_planner.arguments_to_variables` in the config.
     pub extracted_variables: Arc<Vec<ExtractedVariable>>,
+    /// The parsed document this was normalized from, and the operation name the client asked for.
+    /// Cache warmup reads these to normalize and plan the same operation against a new supergraph.
+    pub source_document: Arc<Document<'static, String>>,
+    pub requested_operation_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +93,8 @@ impl GraphQLNormalizationPayload {
             projection_plan: new_projection_plan,
             operation_identity: self.operation_identity.clone(),
             extracted_variables: self.extracted_variables.clone(),
+            source_document: self.source_document.clone(),
+            requested_operation_name: self.requested_operation_name.clone(),
         })
     }
 }
@@ -140,6 +147,76 @@ pub fn hash_normalized_operation(
     }
 }
 
+/// Normalizes one operation of a parsed document against a supergraph.
+/// Shared by the request pipeline and cache warmup, so both build the same plan cache keys.
+pub(crate) fn normalize_document(
+    supergraph: &SupergraphSnapshot,
+    document: &Arc<Document<'static, String>>,
+    operation_name: Option<&str>,
+    operation_type: OperationKind,
+    client_document_hash: String,
+) -> Result<GraphQLNormalizationPayload, NormalizationError> {
+    let doc = normalize_operation(&supergraph.planner.supergraph, document, operation_name)?;
+
+    debug!(
+        target: targets::GRAPHQL_NORMALIZATION,
+        operation_name = ?doc.operation_name,
+        result = %doc.operation,
+        "successfully normalized GraphQL operation"
+    );
+
+    let operation = doc.operation;
+    let operation_kind = operation
+        .operation_kind
+        .clone()
+        .unwrap_or(OperationKind::Query);
+    let (root_type_name, projection_plan) =
+        ProjectionPlan::from_operation(&operation, &supergraph.metadata);
+    let root_type_name = root_type_name.to_string();
+    let projection_plan = Arc::new(projection_plan);
+    let mut partitioned_operation = partition_operation(operation);
+    let extracted_variables = if supergraph.options.query_planner.arguments_to_variables {
+        arguments_to_variables(
+            &mut partitioned_operation.downstream_operation,
+            &supergraph.planner.supergraph,
+        )
+    } else {
+        Vec::new()
+    };
+    partitioned_operation.downstream_operation.shrink_memory();
+    if let Some(operation) = &mut partitioned_operation.introspection_operation {
+        operation.shrink_memory();
+    }
+
+    let operation_for_plan = Arc::new(partitioned_operation.downstream_operation);
+    let operation_for_introspection = partitioned_operation.introspection_operation.map(Arc::new);
+
+    let hashes = hash_normalized_operation(
+        &operation_for_plan,
+        operation_for_introspection.as_deref(),
+        &extracted_variables,
+    );
+
+    Ok(GraphQLNormalizationPayload {
+        root_type_name,
+        operation_kind,
+        projection_plan,
+        operation_for_plan,
+        operation_for_plan_hash: hashes.operation_for_plan_hash,
+        operation_for_introspection,
+        operation_for_introspection_hash: hashes.operation_for_introspection_hash,
+        normalized_operation_hash: hashes.combined_operation_hash,
+        operation_identity: OperationIdentity {
+            name: doc.operation_name,
+            operation_type,
+            client_document_hash,
+        },
+        extracted_variables: Arc::new(extracted_variables),
+        source_document: document.clone(),
+        requested_operation_name: operation_name.map(str::to_string),
+    })
+}
+
 pub struct NormalizedOperationHashes {
     pub operation_for_plan_hash: u128,
     pub operation_for_introspection_hash: Option<u128>,
@@ -172,71 +249,14 @@ pub async fn normalize_request_with_cache(
             .normalize_cache
             .entry(cache_key)
             .or_try_insert_with::<_, NormalizationError>(async {
-                let doc = normalize_operation(
-                    &supergraph.planner.supergraph,
+                normalize_document(
+                    supergraph,
                     &parser_payload.parsed_operation,
                     graphql_params.operation_name.as_deref(),
-                )?;
-
-                debug!(
-                    target: targets::GRAPHQL_NORMALIZATION,
-                    operation_name = ?doc.operation_name,
-                    result = %doc.operation,
-                    "successfully normalized GraphQL operation"
-                );
-
-                let operation = doc.operation;
-                let operation_kind = operation
-                    .operation_kind
-                    .clone()
-                    .unwrap_or(OperationKind::Query);
-                let (root_type_name, projection_plan) =
-                    ProjectionPlan::from_operation(&operation, &supergraph.metadata);
-                let root_type_name = root_type_name.to_string();
-                let projection_plan = Arc::new(projection_plan);
-                let mut partitioned_operation = partition_operation(operation);
-                let extracted_variables = if supergraph.options.query_planner.arguments_to_variables
-                {
-                    arguments_to_variables(
-                        &mut partitioned_operation.downstream_operation,
-                        &supergraph.planner.supergraph,
-                    )
-                } else {
-                    Vec::new()
-                };
-                partitioned_operation.downstream_operation.shrink_memory();
-                if let Some(operation) = &mut partitioned_operation.introspection_operation {
-                    operation.shrink_memory();
-                }
-
-                let operation_for_plan = Arc::new(partitioned_operation.downstream_operation);
-                let operation_for_introspection =
-                    partitioned_operation.introspection_operation.map(Arc::new);
-
-                let hashes = hash_normalized_operation(
-                    &operation_for_plan,
-                    operation_for_introspection.as_deref(),
-                    &extracted_variables,
-                );
-
-                let payload = GraphQLNormalizationPayload {
-                    root_type_name,
-                    operation_kind,
-                    projection_plan,
-                    operation_for_plan,
-                    operation_for_plan_hash: hashes.operation_for_plan_hash,
-                    operation_for_introspection,
-                    operation_for_introspection_hash: hashes.operation_for_introspection_hash,
-                    normalized_operation_hash: hashes.combined_operation_hash,
-                    operation_identity: OperationIdentity {
-                        name: doc.operation_name.clone(),
-                        operation_type: parser_payload.operation_type.clone(),
-                        client_document_hash: parser_payload.cache_key_string.clone(),
-                    },
-                    extracted_variables: Arc::new(extracted_variables),
-                };
-
-                Ok(Arc::new(payload))
+                    parser_payload.operation_type.clone(),
+                    parser_payload.cache_key_string.clone(),
+                )
+                .map(Arc::new)
             })
             .await
             .map_err(PipelineError::from)

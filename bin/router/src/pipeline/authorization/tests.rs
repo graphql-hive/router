@@ -173,6 +173,8 @@ impl SupergraphTestData {
                 client_document_hash: "".to_string(),
             },
             extracted_variables: Default::default(),
+            source_document: Arc::new(parsed_query),
+            requested_operation_name: None,
         }
     }
 }

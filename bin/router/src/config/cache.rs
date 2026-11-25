@@ -82,6 +82,79 @@ pub struct CacheConfig {
     /// Plugins can override each limit per variant.
     #[serde(default)]
     pub supergraph: SupergraphCacheConfig,
+
+    /// Plans known operations against a new supergraph before the router switches to it,
+    /// so the first requests after a schema change don't wait on the query planner.
+    #[serde(default)]
+    pub warmup: CacheWarmupConfig,
+}
+
+/// Plan cache warmup, run every time the router loads a new supergraph.
+///
+/// The router keeps serving the previous supergraph while it plans these operations:
+///   - the slowest operations reported by Hive Console (when `hive` is set),
+///   - the operations the previous supergraph served,
+///   - anything plugins add in the `on_cache_warmup` hook.
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+#[non_exhaustive]
+pub struct CacheWarmupConfig {
+    /// Off by default.
+    #[serde(default)]
+    pub enabled: bool,
+    /// How long warmup can hold back the switch to a new supergraph.
+    /// When it runs out, the router switches over with whatever got planned so far.
+    #[serde(
+        default = "default_warmup_timeout",
+        deserialize_with = "humantime_serde::deserialize",
+        serialize_with = "humantime_serde::serialize"
+    )]
+    #[schemars(with = "String")]
+    pub timeout: Duration,
+    /// Fetches the slowest operations from Hive Console and plans them first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hive: Option<CacheWarmupHiveConfig>,
+}
+
+impl Default for CacheWarmupConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            timeout: default_warmup_timeout(),
+            hive: None,
+        }
+    }
+}
+
+fn default_warmup_timeout() -> Duration {
+    Duration::from_secs(30)
+}
+
+/// Where to fetch the slowest operations from.
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+#[non_exhaustive]
+pub struct CacheWarmupHiveConfig {
+    /// The CDN endpoint from Hive Console target.
+    /// Can also be set using the `HIVE_CDN_ENDPOINT` environment variable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    /// The CDN Access Token from the Hive Console target.
+    /// Can also be set using the `HIVE_CDN_KEY` environment variable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// Request timeout for fetching the operations.
+    #[serde(
+        default = "default_warmup_hive_request_timeout",
+        deserialize_with = "humantime_serde::deserialize",
+        serialize_with = "humantime_serde::serialize"
+    )]
+    #[schemars(with = "String")]
+    pub request_timeout: Duration,
+}
+
+fn default_warmup_hive_request_timeout() -> Duration {
+    Duration::from_secs(5)
 }
 
 /// Caches with a single instance per router process.

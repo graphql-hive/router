@@ -1,4 +1,5 @@
 pub mod cache_metrics;
+pub mod cache_warmup_metrics;
 mod capture;
 pub mod catalog;
 pub mod circuit_breaker_metrics;
@@ -19,6 +20,7 @@ pub use setup::{build_meter_provider_from_config, PrometheusRuntimeConfig};
 use opentelemetry::metrics::Meter;
 
 use crate::telemetry::metrics::cache_metrics::CacheMetrics;
+use crate::telemetry::metrics::cache_warmup_metrics::CacheWarmupMetrics;
 use crate::telemetry::metrics::circuit_breaker_metrics::CircuitBreakerMetrics;
 use crate::telemetry::metrics::connection_limit_metrics::ConnectionLimitMetrics;
 use crate::telemetry::metrics::coprocessor_metrics::CoprocessorMetrics;
@@ -39,6 +41,7 @@ pub struct Metrics {
     pub demand_control: DemandControlMetrics,
     pub supergraph: SupergraphMetrics,
     pub cache: CacheMetrics,
+    pub cache_warmup: CacheWarmupMetrics,
     pub circuit_breaker: CircuitBreakerMetrics,
     pub persisted_documents: PersistedDocumentsMetrics,
     pub coprocessor: CoprocessorMetrics,
@@ -57,6 +60,7 @@ impl Metrics {
             demand_control: DemandControlMetrics::new(meter),
             supergraph: SupergraphMetrics::new(meter),
             cache: CacheMetrics::new(meter),
+            cache_warmup: CacheWarmupMetrics::new(meter),
             circuit_breaker: CircuitBreakerMetrics::new(meter),
             persisted_documents: PersistedDocumentsMetrics::new(meter),
             coprocessor: CoprocessorMetrics::new(meter),

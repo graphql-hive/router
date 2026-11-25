@@ -78,6 +78,8 @@ fn authorization_benchmark(c: &mut Criterion) {
             operation_for_introspection_hash: hashes.operation_for_introspection_hash,
             normalized_operation_hash: hashes.combined_operation_hash,
             extracted_variables: Default::default(),
+            source_document: Arc::new(parsed),
+            requested_operation_name: None,
         }
     }
 

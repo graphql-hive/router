@@ -34,6 +34,61 @@ pub mod values {
         }
     }
 
+    /// Where a plan cache warmup operation came from.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, strum::IntoStaticStr)]
+    pub enum CacheWarmupSource {
+        #[strum(serialize = "previous_supergraph")]
+        PreviousSupergraph,
+        #[strum(serialize = "hive_console")]
+        HiveConsole,
+        #[strum(serialize = "plugin")]
+        Plugin,
+    }
+
+    impl CacheWarmupSource {
+        pub fn as_str(self) -> &'static str {
+            self.into()
+        }
+    }
+
+    /// What happened to one plan cache warmup operation.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, strum::IntoStaticStr)]
+    pub enum CacheWarmupOperationResult {
+        /// Planned and stored in the new plan cache.
+        #[strum(serialize = "warmed")]
+        Warmed,
+        /// Didn't parse, normalize or plan against the new supergraph.
+        #[strum(serialize = "failed")]
+        Failed,
+        /// Its plan was already in the new plan cache (the same operation came from two sources).
+        #[strum(serialize = "skipped")]
+        Skipped,
+        /// Never got its turn before the warmup timeout.
+        #[strum(serialize = "timed_out")]
+        TimedOut,
+    }
+
+    impl CacheWarmupOperationResult {
+        pub fn as_str(self) -> &'static str {
+            self.into()
+        }
+    }
+
+    /// How a whole plan cache warmup run ended.
+    #[derive(Clone, Copy, Debug, strum::IntoStaticStr)]
+    pub enum CacheWarmupResult {
+        #[strum(serialize = "completed")]
+        Completed,
+        #[strum(serialize = "timed_out")]
+        TimedOut,
+    }
+
+    impl CacheWarmupResult {
+        pub fn as_str(self) -> &'static str {
+            self.into()
+        }
+    }
+
     #[derive(Clone, Copy, Debug, strum::IntoStaticStr)]
     pub enum GraphQLResponseStatus {
         #[strum(serialize = "ok")]
@@ -147,6 +202,7 @@ pub mod values {
 pub mod labels {
     pub const CODE: &str = "code";
     pub const RESULT: &str = "result";
+    pub const SOURCE: &str = "source";
     pub const STATUS: &str = "status";
     pub const ERROR_TYPE: &str = "error.type";
     pub const SUBGRAPH_NAME: &str = "subgraph.name";
@@ -212,6 +268,9 @@ pub mod names {
     pub const PLAN_CACHE_REQUESTS_TOTAL: &str = "hive.router.plan_cache.requests_total";
     pub const PLAN_CACHE_DURATION: &str = "hive.router.plan_cache.duration";
     pub const PLAN_CACHE_SIZE: &str = "hive.router.plan_cache.size";
+    pub const PLAN_CACHE_WARMUP_OPERATIONS_TOTAL: &str =
+        "hive.router.plan_cache.warmup.operations_total";
+    pub const PLAN_CACHE_WARMUP_DURATION: &str = "hive.router.plan_cache.warmup.duration";
     pub const CIRCUIT_BREAKER_SHORT_CIRCUITS_TOTAL: &str =
         "hive.router.circuit_breaker.short_circuits_total";
     pub const CIRCUIT_BREAKER_STATE: &str = "hive.router.circuit_breaker.state";
@@ -504,6 +563,11 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
     (names::PLAN_CACHE_REQUESTS_TOTAL, &[labels::RESULT]),
     (names::PLAN_CACHE_DURATION, &[labels::RESULT]),
     (names::PLAN_CACHE_SIZE, &[]),
+    (
+        names::PLAN_CACHE_WARMUP_OPERATIONS_TOTAL,
+        &[labels::SOURCE, labels::RESULT],
+    ),
+    (names::PLAN_CACHE_WARMUP_DURATION, &[labels::RESULT]),
     (
         names::CIRCUIT_BREAKER_SHORT_CIRCUITS_TOTAL,
         &[labels::SUBGRAPH_NAME],

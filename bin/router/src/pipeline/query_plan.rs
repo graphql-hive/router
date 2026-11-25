@@ -6,6 +6,7 @@ use crate::executor::execution::plan::PlanExecutionOutput;
 use crate::executor::hooks::on_query_plan::{
     OnQueryPlanEndHookPayload, OnQueryPlanStartHookPayload,
 };
+use crate::executor::hooks::on_supergraph_load::SupergraphSnapshot;
 use crate::executor::plugin_context::PluginRequestState;
 use crate::executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
 use crate::executor::plugins::hooks;
@@ -14,10 +15,12 @@ use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
 use crate::query_planner::ast::hash::Blake3Hasher;
+use crate::query_planner::ast::operation::OperationDefinition;
 use crate::query_planner::planner::plan_nodes::{Planning, QueryPlan};
+use crate::query_planner::planner::PlannerError;
 use crate::query_planner::state::supergraph_state::OperationKind;
 use crate::query_planner::utils::cancellation::CancellationToken;
-use crate::schema_state::{SchemaState, SelectedSupergraph};
+use crate::schema_state::{RouterSupergraphRuntime, SchemaState, SelectedSupergraph};
 use crate::telemetry::traces::spans::graphql::GraphQLPlanSpan;
 use tracing::Instrument;
 
@@ -95,29 +98,6 @@ pub async fn plan_operation_with_cache(
             filtered_operation_for_plan.hash()
         };
         let plan_cache_key = calculate_cache_key(operation_for_plan_hash, &stable_override_context);
-        let is_plan_operation_empty = filtered_operation_for_plan.selection_set.is_empty();
-        let is_projection_plan_empty = normalized_operation.projection_plan.is_empty();
-        let contains_introspection = normalized_operation.operation_for_introspection.is_some();
-        let is_pure_introspection = is_plan_operation_empty && contains_introspection;
-        let is_subscription = matches!(
-            filtered_operation_for_plan.operation_kind,
-            Some(OperationKind::Subscription)
-        );
-
-        let compile_demand_control = |plan: &QueryPlan<Planning>| {
-            supergraph
-                .runtime
-                .demand_control_runtime
-                .as_ref()
-                .map(|runtime| {
-                    Arc::new(runtime.compile_plan(
-                        plan,
-                        filtered_operation_for_plan,
-                        &normalized_operation.root_type_name,
-                        &supergraph.snapshot.planner.supergraph,
-                    ))
-                })
-        };
 
         let mut cache_hint = CacheHint::Hit;
         plan_span.record_cache_hit(true);
@@ -126,53 +106,14 @@ pub async fn plan_operation_with_cache(
             .plan_cache
             .entry(plan_cache_key)
             .or_try_insert_with(async {
-                if is_pure_introspection {
-                    return Ok(PlannedQuery {
-                        plan: EMPTY_QUERY_PLAN.clone(),
-                        demand_control: compile_demand_control(&QueryPlan::<Planning>::empty()),
-                    });
-                }
-
-                // If the operation is empty, but the projection plan is not,,
-                // we don't need to run the planner,
-                // as there is nothing to plan,
-                // but we can't error out either,
-                // as it would unwind into PipelineError,
-                // and the response would be malformed.
-                //
-                // One example here is a scenario when all requested fields
-                // were unauthorized and stripped out from the operation,
-                // but we still need to project nulls for them in the response.
-                // That's why we return an empty plan,
-                // and allow for response projection to happen later.
-                //
-                // The same goes for a query or a mutation whose fields were all skipped,
-                // like `topProducts @skip(if: true)`: its data is `{}`.
-                // A subscription has to select one field, so that one still fails to plan.
-                if is_plan_operation_empty && (!is_projection_plan_empty || !is_subscription) {
-                    return Ok(PlannedQuery {
-                        plan: EMPTY_QUERY_PLAN.clone(),
-                        demand_control: compile_demand_control(&QueryPlan::<Planning>::empty()),
-                    });
-                }
-
-                supergraph
-                    .snapshot
-                    .planner
-                    .plan_from_normalized_operation(
-                        filtered_operation_for_plan,
-                        (&request_override_context.clone()).into(),
-                        cancellation_token,
-                    )
-                    .map(|plan| {
-                        let demand_control = compile_demand_control(&plan);
-                        PlannedQuery {
-                            plan: Arc::new(
-                                plan.into_executable(&supergraph.snapshot.planner.supergraph),
-                            ),
-                            demand_control,
-                        }
-                    })
+                plan_normalized_operation(
+                    &supergraph.snapshot,
+                    &supergraph.runtime,
+                    filtered_operation_for_plan,
+                    normalized_operation,
+                    request_override_context,
+                    cancellation_token,
+                )
             })
             .await
             .map_err(PipelineError::from)
@@ -218,6 +159,79 @@ pub async fn plan_operation_with_cache(
     }
     .instrument(plan_span.clone())
     .await
+}
+
+/// Plans an operation for the plan cache.
+/// Shared by the request pipeline and cache warmup, so both store the same plans under the same keys.
+pub(crate) fn plan_normalized_operation(
+    supergraph: &SupergraphSnapshot,
+    runtime: &RouterSupergraphRuntime,
+    operation: &OperationDefinition,
+    normalized_operation: &GraphQLNormalizationPayload,
+    request_override_context: &RequestOverrideContext,
+    cancellation_token: &CancellationToken,
+) -> Result<PlannedQuery, PlannerError> {
+    let is_plan_operation_empty = operation.selection_set.is_empty();
+    let is_projection_plan_empty = normalized_operation.projection_plan.is_empty();
+    let contains_introspection = normalized_operation.operation_for_introspection.is_some();
+    let is_pure_introspection = is_plan_operation_empty && contains_introspection;
+    let is_subscription = matches!(operation.operation_kind, Some(OperationKind::Subscription));
+
+    let compile_demand_control = |plan: &QueryPlan<Planning>| {
+        runtime.demand_control_runtime.as_ref().map(|runtime| {
+            Arc::new(runtime.compile_plan(
+                plan,
+                operation,
+                &normalized_operation.root_type_name,
+                &supergraph.planner.supergraph,
+            ))
+        })
+    };
+
+    if is_pure_introspection {
+        return Ok(PlannedQuery {
+            plan: EMPTY_QUERY_PLAN.clone(),
+            demand_control: compile_demand_control(&QueryPlan::<Planning>::empty()),
+        });
+    }
+
+    // If the operation is empty, but the projection plan is not,,
+    // we don't need to run the planner,
+    // as there is nothing to plan,
+    // but we can't error out either,
+    // as it would unwind into PipelineError,
+    // and the response would be malformed.
+    //
+    // One example here is a scenario when all requested fields
+    // were unauthorized and stripped out from the operation,
+    // but we still need to project nulls for them in the response.
+    // That's why we return an empty plan,
+    // and allow for response projection to happen later.
+    //
+    // The same goes for a query or a mutation whose fields were all skipped,
+    // like `topProducts @skip(if: true)`: its data is `{}`.
+    // A subscription has to select one field, so that one still fails to plan.
+    if is_plan_operation_empty && (!is_projection_plan_empty || !is_subscription) {
+        return Ok(PlannedQuery {
+            plan: EMPTY_QUERY_PLAN.clone(),
+            demand_control: compile_demand_control(&QueryPlan::<Planning>::empty()),
+        });
+    }
+
+    supergraph
+        .planner
+        .plan_from_normalized_operation(
+            operation,
+            request_override_context.into(),
+            cancellation_token,
+        )
+        .map(|plan| {
+            let demand_control = compile_demand_control(&plan);
+            PlannedQuery {
+                plan: Arc::new(plan.into_executable(&supergraph.planner.supergraph)),
+                demand_control,
+            }
+        })
 }
 
 #[inline]
