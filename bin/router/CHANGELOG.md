@@ -116,6 +116,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.3.20 (2026-11-25)
+
+### Fixes
+
+#### Less CPU spent per request in the GraphQL endpoint
+
+The request handler future is boxed, so it isn't copied around on every request. About 6.5 µs (~2%) less router CPU per request.
+
+#### Turn off `max_connections_per_host` by setting it to `0`
+
+`traffic_shaping.max_connections_per_host` caps how many requests the router sends at once to one subgraph host, and defaults to `100`. There was no way to turn the cap off: setting it to `0` left no slots at all, so every subgraph request waited until it failed with `SUBGRAPH_REQUEST_SLOT_TIMEOUT`.
+
+Now `0` removes the cap. Requests to a subgraph never wait for a slot, so they don't show up in the `hive.router.subgraph.requests.pending` and `hive.router.subgraph.request.slot_wait.duration` metrics. The pool of idle connections to each host, which normally keeps up to `max_connections_per_host` of them, has no size limit either; `pool_idle_timeout` still closes the ones that stay unused.
+
+```yaml
+traffic_shaping:
+  max_connections_per_host: 0
+```
+
+Closes https://github.com/graphql-hive/router/issues/1959
+
+#### Faster query planner graph build
+
+Building the query planner's graph from a supergraph is faster, which shortens router startup and supergraph reloads. On a supergraph with 745 subgraphs it went from 276 ms to 121 ms. The planner gets the same graph, so query plans don't change.
+
+#### Multipart subscription events reach clients without waiting for the next one
+
+The router wrote the boundary before each part of a `multipart/mixed` subscription response and nothing after it, so a part only ended when the next one began. Clients that hand a part on once the boundary closing it arrives, such as Apollo Kotlin, got each event only when the next event or the 10-second heartbeat came. Each part is now sent together with the boundary that closes it. The response body is the same byte for byte; only the moment each boundary is sent changed.
+
+#### Query plans with fewer subgraph requests, planned faster
+
+The query planner now picks a plan by how many rounds of subgraph requests run one after another, then by how many requests it makes. When choosing how to get a field, it looks at what the plan already fetches, so fields that one request can serve together share it more often.
+
+Compared with before:
+
+- 142 plans make fewer subgraph requests in the same number of rounds.
+- 13 plans need fewer rounds. 5 of those make one more request to save a round.
+- 2 operations that failed with "Failed to find Satisfiable Key" now get a plan.
+- 1 plan makes one more request in the same number of rounds.
+
+Planning also takes 17–41% less time on the planner benchmarks, for example 4.57 s to 2.72 s and 634 ms to 378 ms on two large operations.
+
+#### Stop reusing an HTTP/2 subgraph connection after a request on it times out
+
+Over HTTP/1, a timed-out subgraph request closes its connection. Over HTTP/2 only the request was canceled, and the connection kept getting new requests, likely to the same stuck instance. Now the router stops reusing it: requests already on it finish, and new ones open a fresh connection. Other cancellations, like the client going away, leave the connection alone.
+
+#### Root `__typename` is answered without a subgraph request
+
+`{ __typename }` and `... on Mutation { __typename }` used to be sent to a subgraph, even though the router writes the root type's name into the response by itself. The router now leaves root `__typename` out of subgraph requests, so an operation that only asks for it makes no request at all, and root fetches no longer carry it. Subscriptions still send it, since they have to select their one field from a subgraph.
+
+This doesn't go through introspection, so it works when introspection is disabled.
+
+#### Less CPU spent on disabled log levels
+
+The router's log filters are combined into one, so `debug!` and `trace!` calls are skipped early when the log level is higher. About 3% less router CPU per request at `log.level: error`.
+
+#### Waiting for a subgraph slot counts toward the request timeout
+
+`request_timeout` used to start only once a request got a slot under `traffic_shaping.max_connections_per_host`. When one subgraph instance hung and its requests took every slot, all other requests to that subgraph waited until the router's own `traffic_shaping.router.request_timeout` (60s by default) failed the whole client request, with no data from the other subgraphs either.
+
+Now the wait counts toward `request_timeout`, and a request that can't get a slot in time fails with the new `SUBGRAPH_REQUEST_SLOT_TIMEOUT` error code, and the router can still return data from the other subgraphs. Seeing it means the subgraph is slow or `max_connections_per_host` is too low. The circuit breaker ignores these requests, since they never reached the subgraph.
+
+The same budget covers deduplicated requests: a request waiting on an identical one in flight gives up at its own timeout, and if it takes over after that one fails, it only gets the time it has left.
+
+#### `request_timeout` covers reading the subgraph's response body
+
+`traffic_shaping.all.request_timeout` used to stop once the subgraph's response headers arrived. A subgraph that sent its headers and then stalled in the middle of the body kept the request waiting, and held its `max_connections_per_host` slot, until the router's own `request_timeout` failed the whole client request.
+
+The headers and the body now share one deadline, and a stalled body fails with `SUBGRAPH_REQUEST_TIMEOUT`.
+
+#### Replace old subgraph connections, and detect dead ones
+
+Three new settings under `traffic_shaping.all`:
+
+```yaml
+traffic_shaping:
+  all:
+    max_connection_age: 30s
+    tcp_keepalive: 30s
+    http2_keep_alive_interval: 10s
+```
+
+- `max_connection_age` (off by default) retires a connection at roughly this age, up to 10% earlier so they don't all reconnect at once. Busy connections never go idle, so without it they stay on the same subgraph instance; behind a Kubernetes Service that keeps traffic on a failing pod. The age is checked when a request on the connection gets its response: from then on the connection takes no new requests, and the next one opens a new connection, resolving DNS again.
+- `tcp_keepalive` (30s by default, `null` turns it off) sends TCP keepalive probes after this much silence and closes the connection after 3 unanswered, so a vanished host is noticed in about 2 minutes. At least `1s`, in whole seconds. Subgraph connections had no TCP keepalive before.
+- `http2_keep_alive_interval` (off by default) sends HTTP/2 pings and closes a connection whose ping isn't answered within 20s. The subgraph process has to answer, so this also catches a hung one.
+
+`max_connection_age` and `http2_keep_alive_interval` don't accept `0s`.
+
+#### Metric for subgraph requests waiting on `max_connections_per_host`
+
+`traffic_shaping.max_connections_per_host` caps how many requests the router sends at once to one subgraph host. When that limit was reached, further requests waited for a free slot, and nothing showed how many were waiting.
+
+The new `hive.router.subgraph.requests.pending` metric counts the subgraph requests that are waiting for a slot right now. It has the `subgraph.name`, `server.address` and `server.port` labels. Subgraphs served from the same host share the limit, so add up their series to see that host's queue.
+
+A request counts while it waits, and stops counting once it gets a slot, times out (`SUBGRAPH_REQUEST_SLOT_TIMEOUT`) or is cancelled. Requests that find a free slot are never counted. A value that stays above `0` means the subgraph is slow or `max_connections_per_host` is too low.
+
+Closes https://github.com/graphql-hive/router/issues/1958
+
+#### Metric for how long subgraph requests wait on `max_connections_per_host`
+
+When `traffic_shaping.max_connections_per_host` is reached, requests to that subgraph host wait for a free slot, and that wait counts toward `request_timeout`. Nothing showed how long those waits took.
+
+The new `hive.router.subgraph.request.slot_wait.duration` histogram (in seconds) records each wait once it ends. It has the `subgraph.name`, `server.address` and `server.port` labels, and a `result` label for how the wait ended:
+
+- `acquired`: the request got a slot and was sent to the subgraph.
+- `timeout`: `request_timeout` ran out first, and the request failed with `SUBGRAPH_REQUEST_SLOT_TIMEOUT`.
+- `cancelled`: the router's own `request_timeout` fired while the request was waiting, so the router dropped it.
+
+Requests that find a free slot don't wait, so they aren't recorded. Long `acquired` waits, or any `timeout` waits, mean the subgraph is slow or `max_connections_per_host` is too low.
+
 ## 0.3.19 (2026-11-20)
 
 ### Features
