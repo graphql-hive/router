@@ -67,12 +67,7 @@ impl User {
                     "https://github.com/{}",
                     self.username.as_deref().unwrap_or("unknown")
                 ),
-                handle: self
-                    .username
-                    .as_ref()
-                    .as_deref()
-                    .unwrap_or("unknown")
-                    .to_string(),
+                handle: self.username.as_deref().unwrap_or("unknown").to_string(),
                 repo_count: 42,
             }),
         ]
