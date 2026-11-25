@@ -15,52 +15,97 @@ permissions:
   contents: read
 
 jobs:
-  benchmark:
-    strategy:
-      matrix:
-        include:
-          - name: "graphql-tools"
-            package: "./lib/graphql-tools"
-            bench_args: ""
-          - name: "query-planner"
-            package: "./bin/router"
-            bench_args: "--bench qp_benches --bench graph_benches"
-          - name: "executor"
-            package: "./bin/router"
-            bench_args: "--bench executor_benches --bench demand_control_benches --bench coprocessor_benches"
-          - name: "router"
-            package: "./bin/router"
-            bench_args: "--features testing --bench persisted_documents_matcher_benches --bench router_benches"
-    name: benchmark / ${{ matrix.name }}
+  # Compiles every criterion bench once, without running them, so the run job below
+  # only measures. All router benches share one build, with `testing` on for router_benches
+  # (it only changes a subscription heartbeat grace period, nothing the benches measure).
+  build-criterion:
+    name: benchmark / build / criterion
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
-      - if: matrix.name == 'executor'
-        name: Build subgraphs
-        run: cargo build --release -p subgraphs
-      - if: matrix.name == 'executor'
-        name: Run subgraphs
-        run: ./target/release/subgraphs & sleep 5
+      - name: Build bench executables
+        run: |
+          mkdir -p bench-out
+          # cargo prints where it put each bench executable, copy them out under their target name
+          copy_benches() {
+            jq -r 'select(.reason == "compiler-artifact" and .executable != null and (.target.kind | index("bench"))) | "\(.executable) \(.target.name)"' \
+              | while read -r exe name; do cp "$exe" "$GITHUB_WORKSPACE/bench-out/$name"; echo "built $name"; done
+          }
+          (cd lib/graphql-tools && cargo bench --no-run --message-format=json) | copy_benches
+          (cd bin/router && cargo bench --no-run --message-format=json --features testing \
+            --bench qp_benches --bench graph_benches \
+            --bench executor_benches --bench demand_control_benches --bench coprocessor_benches \
+            --bench persisted_documents_matcher_benches --bench router_benches) | copy_benches
+          [ "$(ls bench-out | wc -l)" -eq 8 ] || { echo "expected 8 bench executables"; ls bench-out; exit 1; }
+      - name: Upload bench executables
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: bench-criterion
+          path: bench-out
+          retention-days: 3
+
+  # Runs all criterion suites in one job, so every suite of a run measures on the same machine.
+  benchmark:
+    name: benchmark / criterion
+    needs: [build-criterion, build-bench-binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: bench-criterion
+          path: bench-out
+      # the executor benches send requests to the bench subgraphs
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: bench-bin-subgraphs
+          path: bin/subgraphs
+      # artifacts don't keep the executable bit
+      - name: Make binaries executable
+        run: chmod +x bench-out/* bin/subgraphs/subgraphs
+      - name: Run subgraphs
+        run: ./bin/subgraphs/subgraphs & sleep 5
       - name: Run benchmarks
-        run: cargo bench ${{ matrix.bench_args }}
-        working-directory: ${{ matrix.package }}
+        run: |
+          failed=""
+          # <suite> <package dir> <bench executables>, the suite names the numbers in the bench history
+          while read -r suite dir benches; do
+            for bench in $benches; do
+              echo "::group::$suite / $bench"
+              # cargo bench starts each bench in its package dir, the fixtures are read relative to it
+              (cd "$dir" && CRITERION_HOME="$GITHUB_WORKSPACE/target/criterion/$suite" "$GITHUB_WORKSPACE/bench-out/$bench" --bench < /dev/null) \
+                || failed="$failed $suite/$bench"
+              echo "::endgroup::"
+            done
+          done <<'EOF'
+          graphql-tools lib/graphql-tools parser
+          query-planner bin/router qp_benches graph_benches
+          executor bin/router executor_benches demand_control_benches coprocessor_benches
+          router bin/router persisted_documents_matcher_benches router_benches
+          EOF
+          # keep going after a failed bench so the others still get measured, fail at the end
+          if [ -n "$failed" ]; then echo "Failed:$failed"; exit 1; fi
       - name: Upload benchmark results
         if: always() # Upload results even if benchmarks fail
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: ${{matrix.package}}-benchmark-results
-          path: ${{matrix.package}}/target/criterion
+          name: criterion-results
+          path: target/criterion
       # main only: the numbers go to the bench history, see store-benchmarks below
       - name: Collect benchmark numbers
-        if: github.event_name == 'push'
-        run: ./bench/ci-collect-criterion.sh ${{ matrix.name }} > bench-numbers.json
+        if: ${{ !cancelled() && github.event_name == 'push' }}
+        run: |
+          for dir in target/criterion/*/; do
+            suite=$(basename "$dir")
+            ./bench/ci-collect-criterion.sh "$suite" "$dir"
+          done | jq -s 'add // {}' > bench-numbers.json
       - name: Upload benchmark numbers
-        if: github.event_name == 'push'
+        if: ${{ !cancelled() && github.event_name == 'push' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: bench-numbers-${{ matrix.name }}
+          name: bench-numbers-criterion
           path: bench-numbers.json
 
   # Appends this commit's numbers (criterion and wrk) to data.json on the bench-history branch,
