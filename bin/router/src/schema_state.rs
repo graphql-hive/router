@@ -751,8 +751,7 @@ impl SchemaState {
             let configured_spawn_clone = configured.clone();
             let task_telemetry = telemetry_context.clone();
             let runtime_context_for_reload = runtime_context.clone();
-            let cache_warmup = CacheWarmup::from_config(router_config, plugins.clone())
-                .map_err(SupergraphManagerError::Configuration)?;
+            let cache_warmup = CacheWarmup::from_config(router_config, plugins.clone());
 
             bg_tasks_manager.register_handle(async move {
                 let supergraph_metrics = &task_telemetry.metrics.supergraph;

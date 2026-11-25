@@ -39,8 +39,6 @@ pub mod values {
     pub enum CacheWarmupSource {
         #[strum(serialize = "previous_supergraph")]
         PreviousSupergraph,
-        #[strum(serialize = "hive_console")]
-        HiveConsole,
         #[strum(serialize = "plugin")]
         Plugin,
     }

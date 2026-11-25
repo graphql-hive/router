@@ -19,9 +19,8 @@ mod cache_warmup_e2e_tests {
     const SUPERGRAPH: &str = include_str!("../supergraph.graphql");
 
     const PREVIOUS_OPERATION: &str = "query FromTraffic { users { id } }";
-    const HIVE_OPERATION: &str = "query SlowOne { topProducts { upc name } }";
-    const HIVE_BROKEN_OPERATION: &str = "query Broken { doesNotExist }";
-    const PLUGIN_OPERATION: &str = "query FromPlugin { me { id } }";
+    const PLUGIN_OPERATION: &str = "query FromPlugin { topProducts { upc name } }";
+    const PLUGIN_BROKEN_OPERATION: &str = "query Broken { doesNotExist }";
 
     // serves the first supergraph, then 304s until `publish_second_supergraph` is called
     fn serve_first_supergraph(server: &mut ServerGuard) -> (Mock, Mock) {
@@ -147,44 +146,20 @@ mod cache_warmup_e2e_tests {
     }
 
     #[ntex::test]
-    async fn plans_hive_console_and_previous_operations_before_switching() {
+    async fn plans_previous_operations_before_switching() {
         let mut server = Server::new_async().await;
-        let host = server.host_with_port();
-        let slow_operations = server
-            .mock("GET", "/slow-operations")
-            .match_header("x-hive-cdn-key", "dummy_key")
-            .with_status(200)
-            .with_body(
-                sonic_rs::to_string(&sonic_rs::json!({
-                    "operations": [
-                        { "query": HIVE_OPERATION, "operationName": "SlowOne" },
-                        { "query": HIVE_BROKEN_OPERATION, "operationName": "Broken" },
-                    ]
-                }))
-                .unwrap(),
-            )
-            .expect_at_least(2)
-            .create();
         let first = serve_first_supergraph(&mut server);
-
         let router = start_router(
             &server,
-            &format!(
-                r#"
+            r#"
                         enabled: true
-                        hive:
-                            endpoint: http://{host}/supergraph
-                            key: dummy_key
-                "#
-            ),
+            "#,
             "",
         )
         .await;
 
-        // the first load has no previous supergraph, only Hive Console operations
+        // the first load has nothing to warm from
         let body = wait_for_warmup_runs(&router, 1.0).await;
-        assert_eq!(warmup_ops(&body, "hive_console", "warmed"), 1.0, "{body}");
-        assert_eq!(warmup_ops(&body, "hive_console", "failed"), 1.0, "{body}");
         assert_eq!(
             warmup_ops(&body, "previous_supergraph", "warmed"),
             0.0,
@@ -198,18 +173,10 @@ mod cache_warmup_e2e_tests {
 
         publish_second_supergraph(&mut server, first).await;
         let body = wait_for_warmup_runs(&router, 2.0).await;
-        slow_operations.assert();
 
-        assert_eq!(warmup_ops(&body, "hive_console", "warmed"), 2.0, "{body}");
-        assert_eq!(warmup_ops(&body, "hive_console", "failed"), 2.0, "{body}");
         assert_eq!(
             warmup_ops(&body, "previous_supergraph", "warmed"),
             1.0,
-            "{body}"
-        );
-        assert_eq!(
-            warmup_ops(&body, "previous_supergraph", "timed_out"),
-            0.0,
             "{body}"
         );
         assert_eq!(
@@ -222,7 +189,7 @@ mod cache_warmup_e2e_tests {
             "{body}"
         );
 
-        // both operations get a plan cache hit on the new supergraph, first try
+        // the operation gets a plan cache hit on the new supergraph, first try
         let hits_before = sample(
             &body,
             "hive_router_plan_cache_requests_total",
@@ -231,9 +198,6 @@ mod cache_warmup_e2e_tests {
         router
             .send_graphql_request(PREVIOUS_OPERATION, None, None)
             .await;
-        router
-            .send_graphql_request(HIVE_OPERATION, None, None)
-            .await;
         let body = scrape(&router).await;
         assert_eq!(
             sample(
@@ -241,7 +205,7 @@ mod cache_warmup_e2e_tests {
                 "hive_router_plan_cache_requests_total",
                 &["result=\"hit\""]
             ),
-            hits_before + 2.0,
+            hits_before + 1.0,
             "{body}"
         );
     }
@@ -312,6 +276,7 @@ mod cache_warmup_e2e_tests {
 
         let body = wait_for_warmup_runs(&router, 1.0).await;
         assert_eq!(warmup_ops(&body, "plugin", "warmed"), 1.0, "{body}");
+        assert_eq!(warmup_ops(&body, "plugin", "failed"), 1.0, "{body}");
 
         router
             .send_graphql_request(PREVIOUS_OPERATION, None, None)
@@ -326,9 +291,29 @@ mod cache_warmup_e2e_tests {
             "{body}"
         );
         assert_eq!(warmup_ops(&body, "plugin", "warmed"), 2.0, "{body}");
+
+        // what the plugin added gets a plan cache hit on the new supergraph
+        let hits_before = sample(
+            &body,
+            "hive_router_plan_cache_requests_total",
+            &["result=\"hit\""],
+        );
+        router
+            .send_graphql_request(PLUGIN_OPERATION, None, None)
+            .await;
+        let body = scrape(&router).await;
+        assert_eq!(
+            sample(
+                &body,
+                "hive_router_plan_cache_requests_total",
+                &["result=\"hit\""]
+            ),
+            hits_before + 1.0,
+            "{body}"
+        );
     }
 
-    // keeps only its own operation
+    // replaces the list with its own two operations, one the schema rejects
     #[derive(Default)]
     struct WarmupPlugin;
 
@@ -352,6 +337,10 @@ mod cache_warmup_e2e_tests {
             payload.operations.push(CacheWarmupOperation::new(
                 PLUGIN_OPERATION,
                 Some("FromPlugin".to_string()),
+            ));
+            payload.operations.push(CacheWarmupOperation::new(
+                PLUGIN_BROKEN_OPERATION,
+                Some("Broken".to_string()),
             ));
         }
     }

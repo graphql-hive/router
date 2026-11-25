@@ -9,12 +9,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use serde::Deserialize;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-use crate::config::cache::{CacheWarmupConfig, CacheWarmupHiveConfig};
 use crate::config::HiveRouterConfig;
-use crate::consts::ROUTER_VERSION;
 use crate::executor::hooks::on_cache_warmup::{CacheWarmupOperation, OnCacheWarmupHookPayload};
 use crate::executor::hooks::on_supergraph_load::SupergraphSnapshot;
 use crate::executor::plugin_trait::RouterPluginBoxed;
@@ -36,7 +33,6 @@ use crate::telemetry::metrics::catalog::values::{
 pub(crate) struct CacheWarmup {
     timeout: Duration,
     max_tokens: Option<usize>,
-    hive: Option<HiveSlowOperations>,
     plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
 }
 
@@ -45,21 +41,13 @@ impl CacheWarmup {
     pub fn from_config(
         router_config: &HiveRouterConfig,
         plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
-    ) -> Result<Option<Self>, String> {
-        let config: &CacheWarmupConfig = &router_config.cache.warmup;
-        if !config.enabled {
-            return Ok(None);
-        }
-        Ok(Some(Self {
+    ) -> Option<Self> {
+        let config = &router_config.cache.warmup;
+        config.enabled.then(|| Self {
             timeout: config.timeout,
             max_tokens: router_config.limits.max_tokens.as_ref().map(|cfg| cfg.n),
-            hive: config
-                .hive
-                .as_ref()
-                .map(HiveSlowOperations::try_new)
-                .transpose()?,
             plugins,
-        }))
+        })
     }
 
     /// Fills `runtime`'s plan cache. Returns once everything is planned or the timeout runs out.
@@ -74,19 +62,6 @@ impl CacheWarmup {
         let deadline = started_at + self.timeout;
 
         let mut operations = Vec::new();
-
-        // slowest first, they're the ones worth the time budget the most
-        if let Some(hive) = &self.hive {
-            match tokio::time::timeout_at(deadline.into(), hive.fetch()).await {
-                Ok(Ok(hive_operations)) => operations.extend(hive_operations),
-                Ok(Err(error)) => {
-                    warn!(target: targets::SUPERGRAPH, %error, "failed to fetch slow operations from Hive Console for cache warmup")
-                }
-                Err(_) => {
-                    warn!(target: targets::SUPERGRAPH, "fetching slow operations from Hive Console took the whole cache warmup timeout")
-                }
-            }
-        }
 
         if let Some(previous) = previous {
             for (_, payload) in previous.normalize_cache.iter() {
@@ -259,86 +234,5 @@ impl Counts {
             CacheWarmupOperationResult::TimedOut => self.timed_out += 1,
         }
         metrics.record_operations(source, result, 1);
-    }
-}
-
-/// Fetches the operations Hive Console found slowest to plan.
-///
-/// The endpoint is `<cdn endpoint>/slow-operations`, answering with
-/// `{ "operations": [{ "query": "...", "operationName": "..." }] }`, slowest first.
-struct HiveSlowOperations {
-    client: reqwest::Client,
-    url: String,
-    key: String,
-}
-
-#[derive(Deserialize)]
-struct HiveSlowOperationsResponse {
-    operations: Vec<HiveSlowOperation>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct HiveSlowOperation {
-    query: String,
-    #[serde(default)]
-    operation_name: Option<String>,
-}
-
-impl HiveSlowOperations {
-    fn try_new(config: &CacheWarmupHiveConfig) -> Result<Self, String> {
-        let endpoint = std::env::var("HIVE_CDN_ENDPOINT")
-            .ok()
-            // the env var can hold a comma-separated list, the first one is enough here
-            .and_then(|value| value.split(',').next().map(|s| s.trim().to_string()))
-            .filter(|value| !value.is_empty())
-            .or_else(|| config.endpoint.clone())
-            .ok_or("cache warmup from Hive Console needs 'cache.warmup.hive.endpoint' or the HIVE_CDN_ENDPOINT environment variable")?;
-        let key = std::env::var("HIVE_CDN_KEY")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .or_else(|| config.key.clone())
-            .ok_or("cache warmup from Hive Console needs 'cache.warmup.hive.key' or the HIVE_CDN_KEY environment variable")?;
-
-        let base = endpoint.trim_end_matches('/');
-        // people paste the same endpoint they use for the supergraph
-        let base = base.strip_suffix("/supergraph").unwrap_or(base);
-
-        let client = reqwest::Client::builder()
-            .timeout(config.request_timeout)
-            .user_agent(format!("hive-router/{ROUTER_VERSION}"))
-            .build()
-            .map_err(|error| error.to_string())?;
-
-        Ok(Self {
-            client,
-            url: format!("{base}/slow-operations"),
-            key,
-        })
-    }
-
-    async fn fetch(&self) -> Result<Vec<CacheWarmupOperation>, String> {
-        let response = self
-            .client
-            .get(&self.url)
-            .header("X-Hive-CDN-Key", &self.key)
-            .send()
-            .await
-            .and_then(|response| response.error_for_status())
-            .map_err(|error| error.to_string())?;
-        let body = response.bytes().await.map_err(|error| error.to_string())?;
-        let parsed: HiveSlowOperationsResponse =
-            serde_json::from_slice(&body).map_err(|error| error.to_string())?;
-        Ok(parsed
-            .operations
-            .into_iter()
-            .map(|operation| {
-                CacheWarmupOperation::from_text(
-                    Arc::new(operation.query),
-                    operation.operation_name,
-                    CacheWarmupSource::HiveConsole,
-                )
-            })
-            .collect())
     }
 }
