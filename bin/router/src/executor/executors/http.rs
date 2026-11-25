@@ -27,6 +27,7 @@ use crate::query_planner::planner::plan_nodes::CustomScalarPaths;
 use crate::telemetry::external_wait;
 use crate::telemetry::logging::targets;
 use crate::telemetry::metrics::catalog::values::GraphQLResponseStatus;
+use crate::telemetry::metrics::connection_limit_metrics::PendingRequests;
 use crate::telemetry::metrics::http_client_metrics::HttpClientRequestStateCapture;
 use crate::telemetry::metrics::subscription_metrics::SubscriptionTransport;
 use crate::telemetry::TelemetryContext;
@@ -75,6 +76,8 @@ pub struct HTTPSubgraphExecutor {
     pub subgraph_buffer_capacity: usize,
     pub compression: TrafficShapingSubgraphRequestCompressionConfig,
     apq: SubgraphApq,
+    /// Requests waiting for a slot under `max_connections_per_host`.
+    pending_requests: PendingRequests,
 }
 
 /// How long APQ stays off after a subgraph says it doesn't support it.
@@ -493,6 +496,11 @@ impl HTTPSubgraphExecutor {
             }
         }
 
+        let pending_requests = telemetry_context
+            .metrics
+            .connection_limit
+            .pending_requests(&subgraph_name, &endpoint);
+
         Self {
             subgraph_name,
             endpoint,
@@ -505,6 +513,7 @@ impl HTTPSubgraphExecutor {
             subgraph_buffer_capacity,
             compression,
             apq: SubgraphApq::new(apq_enabled),
+            pending_requests,
         }
     }
 }
@@ -575,14 +584,17 @@ async fn until<F: std::future::Future>(
 /// Takes a slot under `max_connections_per_host`, counting the wait toward the timeout: all
 /// pods behind the URL share the slots, so a hung pod mustn't make requests queue forever.
 /// Returns the permit and the time left for the request.
-async fn acquire_slot(
-    semaphore: &Semaphore,
+async fn acquire_slot<'a>(
+    semaphore: &'a Semaphore,
     timeout: Option<Duration>,
-) -> Result<(SemaphorePermit<'_>, Option<Duration>), SubgraphExecutorError> {
-    // a free slot is the common case, so skip the clock and the timer for it
+    pending_requests: &PendingRequests,
+) -> Result<(SemaphorePermit<'a>, Option<Duration>), SubgraphExecutorError> {
+    // a free slot is the common case, so skip the clock, the timer and the metric for it
     if let Ok(permit) = semaphore.try_acquire() {
         return Ok((permit, timeout));
     }
+    // counted until it gets a slot, times out or is dropped
+    let _pending = pending_requests.start();
     // the semaphore is never closed, so acquire() can't fail
     let Some(timeout) = timeout else {
         return Ok((semaphore.acquire().await.unwrap(), None));
@@ -863,7 +875,12 @@ impl HTTPSubgraphExecutor {
 
                 if deduplicate_request {
                     let (_permit, timeout) =
-                        acquire_slot(&self.semaphore, send_request_opts.timeout).await?;
+                        acquire_slot(
+                            &self.semaphore,
+                            send_request_opts.timeout,
+                            &self.pending_requests,
+                        )
+                        .await?;
                     let external_wait_guard = external_wait::enter();
                     let fetched_response = send_request(SendRequestOpts {
                         timeout,
@@ -898,7 +915,8 @@ impl HTTPSubgraphExecutor {
                             send_request_opts.timeout,
                             |timeout| async move {
                                 let (_permit, timeout) =
-                                    acquire_slot(&self.semaphore, timeout).await?;
+                                    acquire_slot(&self.semaphore, timeout, &self.pending_requests)
+                                        .await?;
                                 send_request(SendRequestOpts {
                                     timeout,
                                     ..send_request_opts
@@ -1440,6 +1458,15 @@ mod tests {
     use crate::executor::executors::common::SubgraphExecutionRequest;
     use crate::executor::executors::error::SubgraphExecutorError;
     use crate::executor::executors::inflight::{InFlightMap, InFlightRole};
+    use crate::telemetry::metrics::catalog::names;
+    use crate::telemetry::metrics::connection_limit_metrics::{
+        ConnectionLimitMetrics, PendingRequests,
+    };
+    use opentelemetry::metrics::MeterProvider as _;
+    use opentelemetry_sdk::metrics::{
+        data::{AggregatedMetrics, MetricData},
+        InMemoryMetricExporter, PeriodicReader, SdkMeterProvider,
+    };
 
     const MS: Duration = Duration::from_millis(1);
 
@@ -1495,8 +1522,9 @@ mod tests {
 
     #[tokio::test]
     async fn acquire_slot_keeps_the_whole_timeout_when_a_slot_is_free() {
+        let no_metrics = PendingRequests::disabled();
         let semaphore = Semaphore::new(1);
-        let (_permit, left) = acquire_slot(&semaphore, Some(Duration::from_secs(5)))
+        let (_permit, left) = acquire_slot(&semaphore, Some(Duration::from_secs(5)), &no_metrics)
             .await
             .unwrap();
         assert_eq!(left, Some(Duration::from_secs(5)));
@@ -1504,9 +1532,10 @@ mod tests {
 
     #[tokio::test]
     async fn acquire_slot_times_out_when_every_slot_stays_taken() {
+        let no_metrics = PendingRequests::disabled();
         let semaphore = Semaphore::new(1);
         let _held = semaphore.acquire().await.unwrap();
-        let result = acquire_slot(&semaphore, Some(Duration::from_millis(50))).await;
+        let result = acquire_slot(&semaphore, Some(Duration::from_millis(50)), &no_metrics).await;
         assert!(matches!(
             result,
             Err(SubgraphExecutorError::RequestSlotTimeout)
@@ -1515,19 +1544,165 @@ mod tests {
 
     #[tokio::test]
     async fn acquire_slot_takes_the_wait_out_of_the_timeout() {
+        let no_metrics = PendingRequests::disabled();
         let semaphore = std::sync::Arc::new(Semaphore::new(1));
         let held = semaphore.clone().acquire_owned().await.unwrap();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(100)).await;
             drop(held);
         });
-        let (_permit, left) = acquire_slot(&semaphore, Some(Duration::from_secs(5)))
+        let (_permit, left) = acquire_slot(&semaphore, Some(Duration::from_secs(5)), &no_metrics)
             .await
             .unwrap();
         let left = left.unwrap();
         // waited ~100ms for the slot, so less than the full 5s is left for the request
         assert!(left <= Duration::from_millis(4900), "{left:?}");
         assert!(left > Duration::from_secs(4), "{left:?}");
+    }
+
+    /// Reads the pending-requests counter back through an in-memory exporter.
+    struct PendingProbe {
+        provider: SdkMeterProvider,
+        exporter: InMemoryMetricExporter,
+        pending: PendingRequests,
+    }
+
+    impl PendingProbe {
+        fn new() -> Self {
+            let exporter = InMemoryMetricExporter::default();
+            let provider = SdkMeterProvider::builder()
+                .with_reader(PeriodicReader::builder(exporter.clone()).build())
+                .build();
+            let metrics = ConnectionLimitMetrics::new(Some(&provider.meter("test")));
+            let endpoint = "http://localhost:4200/accounts".parse().unwrap();
+            let pending = metrics.pending_requests("accounts", &endpoint);
+            Self {
+                provider,
+                exporter,
+                pending,
+            }
+        }
+
+        /// The current count, or `None` if nothing was ever recorded.
+        fn value(&self) -> Option<i64> {
+            self.exporter.reset();
+            self.provider.force_flush().unwrap();
+            let exported = self.exporter.get_finished_metrics().unwrap();
+            let value = exported
+                .last()?
+                .scope_metrics()
+                .flat_map(|scope| scope.metrics())
+                .find(|metric| metric.name() == names::SUBGRAPH_REQUESTS_PENDING)
+                .map(|metric| match metric.data() {
+                    AggregatedMetrics::I64(MetricData::Sum(sum)) => {
+                        sum.data_points().map(|point| point.value()).sum()
+                    }
+                    _ => panic!("pending requests must be an i64 sum"),
+                });
+            value
+        }
+    }
+
+    #[tokio::test]
+    async fn acquire_slot_does_not_count_a_request_that_gets_a_free_slot() {
+        let probe = PendingProbe::new();
+        let semaphore = Semaphore::new(1);
+        let _permit = acquire_slot(&semaphore, Some(Duration::from_secs(5)), &probe.pending)
+            .await
+            .unwrap();
+        assert_eq!(probe.value(), None);
+    }
+
+    #[tokio::test]
+    async fn acquire_slot_counts_a_request_while_it_waits_for_a_slot() {
+        let probe = PendingProbe::new();
+        let semaphore = Semaphore::new(1);
+        let held = semaphore.acquire().await.unwrap();
+
+        let mut waiting = std::pin::pin!(acquire_slot(
+            &semaphore,
+            Some(Duration::from_secs(5)),
+            &probe.pending
+        ));
+        assert!(futures::poll!(&mut waiting).is_pending());
+        assert_eq!(probe.value(), Some(1));
+
+        drop(held);
+        let (_permit, _) = waiting.await.unwrap();
+        // it holds the slot now, so it's no longer pending
+        assert_eq!(probe.value(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn acquire_slot_counts_a_request_waiting_without_a_timeout() {
+        let probe = PendingProbe::new();
+        let semaphore = Semaphore::new(1);
+        let held = semaphore.acquire().await.unwrap();
+
+        let mut waiting = std::pin::pin!(acquire_slot(&semaphore, None, &probe.pending));
+        assert!(futures::poll!(&mut waiting).is_pending());
+        assert_eq!(probe.value(), Some(1));
+
+        drop(held);
+        let (_permit, _) = waiting.await.unwrap();
+        assert_eq!(probe.value(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn acquire_slot_stops_counting_a_request_that_times_out_waiting() {
+        let probe = PendingProbe::new();
+        let semaphore = Semaphore::new(1);
+        let _held = semaphore.acquire().await.unwrap();
+
+        let mut waiting = std::pin::pin!(acquire_slot(&semaphore, Some(50 * MS), &probe.pending));
+        assert!(futures::poll!(&mut waiting).is_pending());
+        assert_eq!(probe.value(), Some(1));
+
+        assert!(matches!(
+            waiting.await,
+            Err(SubgraphExecutorError::RequestSlotTimeout)
+        ));
+        assert_eq!(probe.value(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn acquire_slot_stops_counting_a_request_that_is_cancelled_while_waiting() {
+        let probe = PendingProbe::new();
+        let semaphore = Semaphore::new(1);
+        let _held = semaphore.acquire().await.unwrap();
+
+        {
+            let mut waiting = std::pin::pin!(acquire_slot(
+                &semaphore,
+                Some(Duration::from_secs(5)),
+                &probe.pending
+            ));
+            assert!(futures::poll!(&mut waiting).is_pending());
+            assert_eq!(probe.value(), Some(1));
+            // dropped here, as when the client request goes away
+        }
+
+        assert_eq!(probe.value(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn acquire_slot_counts_every_request_waiting_for_the_same_slot() {
+        let probe = PendingProbe::new();
+        let semaphore = Semaphore::new(1);
+        let held = semaphore.acquire().await.unwrap();
+
+        let mut first = std::pin::pin!(acquire_slot(&semaphore, None, &probe.pending));
+        let mut second = std::pin::pin!(acquire_slot(&semaphore, None, &probe.pending));
+        assert!(futures::poll!(&mut first).is_pending());
+        assert!(futures::poll!(&mut second).is_pending());
+        assert_eq!(probe.value(), Some(2));
+
+        drop(held);
+        let (permit, _) = first.await.unwrap();
+        assert_eq!(probe.value(), Some(1));
+        drop(permit);
+        let (_permit, _) = second.await.unwrap();
+        assert_eq!(probe.value(), Some(0));
     }
 
     #[test]

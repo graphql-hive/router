@@ -197,6 +197,7 @@ pub mod names {
     pub const PERSISTED_DOCUMENTS_EXTRACT_MISSING_ID_TOTAL: &str =
         "hive.router.persisted_documents.extract.missing_id_total";
     pub const REQUEST_DEDUPE_JOINED_TOTAL: &str = "hive.router.request_dedupe.joined_total";
+    pub const SUBGRAPH_REQUESTS_PENDING: &str = "hive.router.subgraph.requests.pending";
     pub const COPROCESSOR_REQUESTS_TOTAL: &str = "hive.router.coprocessor.requests_total";
     pub const COPROCESSOR_DURATION: &str = "hive.router.coprocessor.duration";
     pub const COPROCESSOR_ERRORS_TOTAL: &str = "hive.router.coprocessor.errors_total";
@@ -497,6 +498,14 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
     (
         names::REQUEST_DEDUPE_JOINED_TOTAL,
         &[labels::GRAPHQL_OPERATION_TYPE],
+    ),
+    (
+        names::SUBGRAPH_REQUESTS_PENDING,
+        &[
+            labels::SUBGRAPH_NAME,
+            labels::SERVER_ADDRESS,
+            labels::SERVER_PORT,
+        ],
     ),
     (
         names::COPROCESSOR_REQUESTS_TOTAL,
