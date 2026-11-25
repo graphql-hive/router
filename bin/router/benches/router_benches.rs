@@ -79,6 +79,7 @@ fn authorization_benchmark(c: &mut Criterion) {
             normalized_operation_hash: hashes.combined_operation_hash,
             extracted_variables: Default::default(),
             source_query: Default::default(),
+            usage: Default::default(),
             requested_operation_name: None,
         }
     }

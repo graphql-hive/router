@@ -174,6 +174,7 @@ impl SupergraphTestData {
             },
             extracted_variables: Default::default(),
             source_query: Default::default(),
+            usage: Default::default(),
             requested_operation_name: None,
         }
     }

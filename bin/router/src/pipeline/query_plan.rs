@@ -1,5 +1,6 @@
 use std::hash::Hash;
 use std::sync::{Arc, LazyLock};
+use std::time::{Duration, Instant};
 
 use crate::cache_state::{CacheHitMiss, EntryResultHitMissExt};
 use crate::executor::execution::plan::PlanExecutionOutput;
@@ -33,6 +34,8 @@ pub enum QueryPlanResult {
 pub struct PlannedQuery {
     pub plan: Arc<QueryPlan>,
     pub demand_control: Option<Arc<DemandControlFormulaPlan>>,
+    /// How long the planner took, zero when there was nothing to plan.
+    pub planning_duration: Duration,
 }
 
 static EMPTY_QUERY_PLAN: LazyLock<Arc<QueryPlan>> = LazyLock::new(|| Arc::new(QueryPlan::empty()));
@@ -130,6 +133,11 @@ pub async fn plan_operation_with_cache(
                 }
             })?;
 
+        // a hit on a plan built for another request still says how slow this operation is to plan
+        normalized_operation
+            .usage
+            .record_plan_duration(prepared.planning_duration);
+
         if !on_end_callbacks.is_empty() {
             let mut end_payload = OnQueryPlanEndHookPayload {
                 query_plan: prepared.plan,
@@ -192,6 +200,7 @@ pub(crate) fn plan_normalized_operation(
         return Ok(PlannedQuery {
             plan: EMPTY_QUERY_PLAN.clone(),
             demand_control: compile_demand_control(&QueryPlan::<Planning>::empty()),
+            planning_duration: Duration::ZERO,
         });
     }
 
@@ -215,9 +224,11 @@ pub(crate) fn plan_normalized_operation(
         return Ok(PlannedQuery {
             plan: EMPTY_QUERY_PLAN.clone(),
             demand_control: compile_demand_control(&QueryPlan::<Planning>::empty()),
+            planning_duration: Duration::ZERO,
         });
     }
 
+    let started_at = Instant::now();
     supergraph
         .planner
         .plan_from_normalized_operation(
@@ -230,6 +241,7 @@ pub(crate) fn plan_normalized_operation(
             PlannedQuery {
                 plan: Arc::new(plan.into_executable(&supergraph.planner.supergraph)),
                 demand_control,
+                planning_duration: started_at.elapsed(),
             }
         })
 }

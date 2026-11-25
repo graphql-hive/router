@@ -1,5 +1,7 @@
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock};
+use std::time::{Duration, Instant};
 
 use crate::executor::hooks::on_graphql_params::GraphQLParams;
 use crate::executor::hooks::on_supergraph_load::SupergraphSnapshot;
@@ -50,6 +52,60 @@ pub struct GraphQLNormalizationPayload {
     /// Cache warmup re-parses these to plan the same operation against a new supergraph.
     pub source_query: Arc<String>,
     pub requested_operation_name: Option<String>,
+    /// How often and how recently this operation is requested, and how long it took to plan.
+    /// Cache warmup orders operations by these.
+    pub usage: Arc<OperationUsage>,
+}
+
+/// Counters cache warmup sorts by. All relaxed, they're hints, not exact numbers.
+#[derive(Debug, Default)]
+pub struct OperationUsage {
+    hits: AtomicU64,
+    last_used_ms: AtomicU64,
+    plan_duration_us: AtomicU64,
+}
+
+impl OperationUsage {
+    #[inline]
+    pub fn record_use(&self) {
+        self.hits.fetch_add(1, Ordering::Relaxed);
+        self.last_used_ms
+            .store(millis_since_start(), Ordering::Relaxed);
+    }
+
+    /// Keeps the first planning time it sees, later ones are the same operation planned again.
+    #[inline]
+    pub fn record_plan_duration(&self, duration: Duration) {
+        if duration.is_zero() || self.plan_duration_us.load(Ordering::Relaxed) != 0 {
+            return;
+        }
+        let micros = u64::try_from(duration.as_micros())
+            .unwrap_or(u64::MAX)
+            .max(1);
+        self.plan_duration_us.store(micros, Ordering::Relaxed);
+    }
+
+    pub fn hits(&self) -> u64 {
+        self.hits.load(Ordering::Relaxed)
+    }
+
+    /// Milliseconds since the router started, 0 when it was never used.
+    pub fn last_used_ms(&self) -> u64 {
+        self.last_used_ms.load(Ordering::Relaxed)
+    }
+
+    pub fn plan_duration(&self) -> Duration {
+        Duration::from_micros(self.plan_duration_us.load(Ordering::Relaxed))
+    }
+}
+
+/// A monotonic clock that fits in an atomic, starts at 1 so 0 can mean "never used".
+/// A u64 of milliseconds lasts 584 million years.
+pub(crate) fn millis_since_start() -> u64 {
+    static START: LazyLock<Instant> = LazyLock::new(Instant::now);
+    u64::try_from(START.elapsed().as_millis())
+        .unwrap_or(u64::MAX)
+        .saturating_add(1)
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +152,7 @@ impl GraphQLNormalizationPayload {
             extracted_variables: self.extracted_variables.clone(),
             source_query: self.source_query.clone(),
             requested_operation_name: self.requested_operation_name.clone(),
+            usage: self.usage.clone(),
         })
     }
 }
@@ -216,6 +273,7 @@ pub(crate) fn normalize_document(
         extracted_variables: Arc::new(extracted_variables),
         source_query,
         requested_operation_name: operation_name.map(str::to_string),
+        usage: Default::default(),
     })
 }
 
@@ -273,6 +331,7 @@ pub async fn normalize_request_with_cache(
                     normalize_cache_capture.finish_miss();
                 }
             })
+            .inspect(|payload| payload.usage.record_use())
     }
     .instrument(normalize_span.clone())
     .await

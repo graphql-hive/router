@@ -18,6 +18,19 @@ Operations come from, in this order:
 - every operation the previous supergraph served,
 - plugins, through the new `on_cache_warmup` hook, which can add, drop or reorder the list.
 
+`order` decides which operations of the previous supergraph go first, which matters once `timeout` cuts warmup short. It's `slowest_to_plan` by default, or `most_used`, or `recently_used`. It can also be an expression that scores each operation, where `null` leaves it out:
+
+```yaml
+cache:
+  warmup:
+    enabled: true
+    order:
+      expression: |
+        if .operation.type == "mutation" { null } else { .operation.plan_duration_ms * .operation.hits }
+```
+
+The expression gets `.operation.type`, `.operation.hits` and `.operation.plan_duration_ms`, plus `.operation.last_used_ms_ago`, which can be `null`. The counts start from zero with every new supergraph.
+
 Plans are built for requests with no progressive override labels. Requests with active labels, and operations that authorization or plugins trim, plan on their first request like before.
 
 Two new metrics show how it went:

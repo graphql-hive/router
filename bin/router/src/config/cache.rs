@@ -110,6 +110,11 @@ pub struct CacheWarmupConfig {
     )]
     #[schemars(with = "String")]
     pub timeout: Duration,
+    /// Which operations of the previous supergraph get planned first.
+    /// It only matters when `timeout` runs out before all of them are planned.
+    /// Plugins see the sorted list in `on_cache_warmup` and can reorder it.
+    #[serde(default)]
+    pub order: CacheWarmupOrder,
 }
 
 impl Default for CacheWarmupConfig {
@@ -117,8 +122,47 @@ impl Default for CacheWarmupConfig {
         Self {
             enabled: false,
             timeout: default_warmup_timeout(),
+            order: CacheWarmupOrder::default(),
         }
     }
+}
+
+/// Which operations of the previous supergraph get planned first: one of the presets,
+/// or an expression that scores each operation.
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, PartialEq)]
+#[serde(untagged)]
+pub enum CacheWarmupOrder {
+    Preset(CacheWarmupOrderPreset),
+    /// Runs once per operation during warmup and returns a number, highest goes first.
+    /// Return `null` to leave the operation out of warmup.
+    ///
+    /// The expression gets:
+    ///   - `.operation.type`: `"query"`, `"mutation"` or `"subscription"`
+    ///   - `.operation.hits`: requests since this supergraph loaded
+    ///   - `.operation.last_used_ms_ago`: milliseconds since the last request
+    ///   - `.operation.plan_duration_ms`: how long it took to plan, `0` when it never was
+    Expression {
+        expression: String,
+    },
+}
+
+impl Default for CacheWarmupOrder {
+    fn default() -> Self {
+        Self::Preset(CacheWarmupOrderPreset::default())
+    }
+}
+
+/// Counted per supergraph, so after a reload they start from zero again.
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheWarmupOrderPreset {
+    /// The ones that took the planner longest. Warmup saves the most time on these.
+    #[default]
+    SlowestToPlan,
+    /// The ones requested the most.
+    MostUsed,
+    /// The ones requested most recently.
+    RecentlyUsed,
 }
 
 fn default_warmup_timeout() -> Duration {
