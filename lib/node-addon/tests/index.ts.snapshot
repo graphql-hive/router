@@ -26,21 +26,23 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
         ]
       },
       {
-        "kind": "Parallel",
-        "nodes": [
-          {
-            "kind": "Flatten",
-            "path": [
-              {
-                "Field": "topProducts"
-              },
-              "@"
-            ],
-            "node": {
-              "kind": "Fetch",
-              "serviceName": "inventory",
-              "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate inStock}}}",
+        "kind": "BatchFetch",
+        "serviceName": "reviews",
+        "operationKind": "query",
+        "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{reviews{...a}}} _e1: _entities(representations: $__batch_reps_1){...on User{reviews{id body product{__typename upc reviews{...a}}}}}}\\n\\nfragment a on Review {id body author{__typename id username reviews{id body product{__typename upc}}}}\\n",
+        "entityBatch": {
+          "aliases": [
+            {
+              "alias": "_e0",
+              "representationsVariableName": "__batch_reps_0",
+              "paths": [
+                [
+                  {
+                    "Field": "topProducts"
+                  },
+                  "@"
+                ]
+              ],
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -52,100 +54,50 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                     },
                     {
                       "kind": "Field",
-                      "name": "price"
-                    },
-                    {
-                      "kind": "Field",
-                      "name": "weight"
-                    },
-                    {
-                      "kind": "Field",
                       "name": "upc"
-                    }
-                  ]
-                }
-              ],
-              "id": 15,
-              "dependsOn": [
-                13
-              ]
-            }
-          },
-          {
-            "kind": "BatchFetch",
-            "serviceName": "reviews",
-            "operationKind": "query",
-            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{reviews{...a}}} _e1: _entities(representations: $__batch_reps_1){...on User{reviews{id body product{__typename upc reviews{...a}}}}}}\\n\\nfragment a on Review {id body author{__typename id username reviews{id body product{__typename upc}}}}\\n",
-            "entityBatch": {
-              "aliases": [
-                {
-                  "alias": "_e0",
-                  "representationsVariableName": "__batch_reps_0",
-                  "paths": [
-                    [
-                      {
-                        "Field": "topProducts"
-                      },
-                      "@"
-                    ]
-                  ],
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "Product",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "upc"
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "alias": "_e1",
-                  "representationsVariableName": "__batch_reps_1",
-                  "paths": [
-                    [
-                      {
-                        "Field": "users"
-                      },
-                      "@"
-                    ]
-                  ],
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "User",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
-                        }
-                      ]
                     }
                   ]
                 }
               ]
             },
-            "id": 17,
-            "dependsOn": [
-              2,
-              13
-            ],
-            "completes": [
-              17,
-              3
-            ]
-          }
+            {
+              "alias": "_e1",
+              "representationsVariableName": "__batch_reps_1",
+              "paths": [
+                [
+                  {
+                    "Field": "users"
+                  },
+                  "@"
+                ]
+              ],
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "User",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "id": 17,
+        "dependsOn": [
+          2,
+          13
+        ],
+        "completes": [
+          17,
+          3
         ]
       },
       {
@@ -333,7 +285,7 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
         "kind": "BatchFetch",
         "serviceName": "inventory",
         "operationKind": "query",
-        "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{inStock shippingEstimate}}}",
+        "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{...a}} _e1: _entities(representations: $__batch_reps_1){...on Product{...a}}}\\n\\nfragment a on Product {inStock shippingEstimate}\\n",
         "entityBatch": {
           "aliases": [
             {
@@ -425,6 +377,42 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                   ]
                 }
               ]
+            },
+            {
+              "alias": "_e1",
+              "representationsVariableName": "__batch_reps_1",
+              "paths": [
+                [
+                  {
+                    "Field": "topProducts"
+                  },
+                  "@"
+                ]
+              ],
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Product",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "price"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "weight"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "upc"
+                    }
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -432,12 +420,14 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
         "dependsOn": [
           7,
           12,
+          13,
           22
         ],
         "completes": [
           19,
           9,
-          4
+          4,
+          15
         ]
       }
     ]
@@ -743,21 +733,23 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
         ]
       },
       {
-        "kind": "Parallel",
-        "nodes": [
-          {
-            "kind": "Flatten",
-            "path": [
-              {
-                "Field": "topProducts"
-              },
-              "@"
-            ],
-            "node": {
-              "kind": "Fetch",
-              "serviceName": "inventory",
-              "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate inStock}}}",
+        "kind": "BatchFetch",
+        "serviceName": "reviews",
+        "operationKind": "query",
+        "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{reviews{...a}}} _e1: _entities(representations: $__batch_reps_1){...on User{reviews{id body product{__typename upc reviews{...a}}}}}}\\n\\nfragment a on Review {id body author{__typename id username reviews{id body product{__typename upc}}}}\\n",
+        "entityBatch": {
+          "aliases": [
+            {
+              "alias": "_e0",
+              "representationsVariableName": "__batch_reps_0",
+              "paths": [
+                [
+                  {
+                    "Field": "topProducts"
+                  },
+                  "@"
+                ]
+              ],
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -769,100 +761,50 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
                     },
                     {
                       "kind": "Field",
-                      "name": "price"
-                    },
-                    {
-                      "kind": "Field",
-                      "name": "weight"
-                    },
-                    {
-                      "kind": "Field",
                       "name": "upc"
-                    }
-                  ]
-                }
-              ],
-              "id": 15,
-              "dependsOn": [
-                13
-              ]
-            }
-          },
-          {
-            "kind": "BatchFetch",
-            "serviceName": "reviews",
-            "operationKind": "query",
-            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{reviews{...a}}} _e1: _entities(representations: $__batch_reps_1){...on User{reviews{id body product{__typename upc reviews{...a}}}}}}\\n\\nfragment a on Review {id body author{__typename id username reviews{id body product{__typename upc}}}}\\n",
-            "entityBatch": {
-              "aliases": [
-                {
-                  "alias": "_e0",
-                  "representationsVariableName": "__batch_reps_0",
-                  "paths": [
-                    [
-                      {
-                        "Field": "topProducts"
-                      },
-                      "@"
-                    ]
-                  ],
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "Product",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "upc"
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "alias": "_e1",
-                  "representationsVariableName": "__batch_reps_1",
-                  "paths": [
-                    [
-                      {
-                        "Field": "users"
-                      },
-                      "@"
-                    ]
-                  ],
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "User",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
-                        }
-                      ]
                     }
                   ]
                 }
               ]
             },
-            "id": 17,
-            "dependsOn": [
-              2,
-              13
-            ],
-            "completes": [
-              17,
-              3
-            ]
-          }
+            {
+              "alias": "_e1",
+              "representationsVariableName": "__batch_reps_1",
+              "paths": [
+                [
+                  {
+                    "Field": "users"
+                  },
+                  "@"
+                ]
+              ],
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "User",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "id": 17,
+        "dependsOn": [
+          2,
+          13
+        ],
+        "completes": [
+          17,
+          3
         ]
       },
       {
@@ -1050,7 +992,7 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
         "kind": "BatchFetch",
         "serviceName": "inventory",
         "operationKind": "query",
-        "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{inStock shippingEstimate}}}",
+        "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{...a}} _e1: _entities(representations: $__batch_reps_1){...on Product{...a}}}\\n\\nfragment a on Product {inStock shippingEstimate}\\n",
         "entityBatch": {
           "aliases": [
             {
@@ -1142,6 +1084,42 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
                   ]
                 }
               ]
+            },
+            {
+              "alias": "_e1",
+              "representationsVariableName": "__batch_reps_1",
+              "paths": [
+                [
+                  {
+                    "Field": "topProducts"
+                  },
+                  "@"
+                ]
+              ],
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Product",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "price"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "weight"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "upc"
+                    }
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -1149,12 +1127,14 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
         "dependsOn": [
           7,
           12,
+          13,
           22
         ],
         "completes": [
           19,
           9,
-          4
+          4,
+          15
         ]
       }
     ]

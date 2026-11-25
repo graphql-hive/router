@@ -56,7 +56,7 @@ mod entity_batching_e2e_tests {
             @r#"
         {
           "accounts": 2,
-          "inventory": 2,
+          "inventory": 1,
           "products": 2,
           "reviews": 1
         }
@@ -113,7 +113,7 @@ mod entity_batching_e2e_tests {
         [
           {
             "accounts": 2,
-            "inventory": 2,
+            "inventory": 1,
             "products": 2,
             "reviews": 1
           },

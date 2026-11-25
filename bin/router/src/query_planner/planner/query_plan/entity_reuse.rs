@@ -741,7 +741,7 @@ fn find_in(
 }
 
 /// The type and fields an entity fetch could copy from the response, if it could copy at all
-fn wanted(step: &Step) -> Option<(&str, &SelectionSet)> {
+pub(super) fn wanted(step: &Step) -> Option<(&str, &SelectionSet)> {
     if !step.is_entity_call()
         || step.input_rewrites.is_some()
         || step.output_rewrites.is_some()
@@ -777,7 +777,7 @@ fn key_mask(selections: &SelectionSet, keep: impl Fn(&FieldSelection) -> bool + 
 
 /// Does `source` ask for every field in `needed`, with the same response key and arguments?
 /// `__typename` always counts: the executor checks it's really there before copying.
-fn covers(source: &SelectionSet, needed: &SelectionSet) -> bool {
+pub(super) fn covers(source: &SelectionSet, needed: &SelectionSet) -> bool {
     needed.items.iter().all(|item| {
         let SelectionItem::Field(needed_field) = item else {
             return false;

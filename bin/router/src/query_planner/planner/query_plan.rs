@@ -25,6 +25,7 @@ use super::{
 
 mod entity_reuse;
 mod optimize;
+mod slack;
 
 pub static QUERY_PLAN_KIND: &str = "QueryPlan";
 
@@ -73,7 +74,24 @@ pub fn build_query_plan_from_fetch_graph(
     let mut entity_reuse =
         entity_reuse::EntityReuseIndex::new(&fetch_graph, supergraph, options.entity_reuse);
 
-    while !queue.is_empty() {
+    // the wave each step runs in, when it's moved later than its parents need
+    let assigned_waves = if options.merge_across_waves {
+        Some(slack::schedule_entity_batches(
+            &fetch_graph,
+            root_index,
+            options.entity_reuse,
+        )?)
+    } else {
+        None
+    };
+    // steps that are ready but wait for a later wave, by wave
+    let mut later: Vec<Vec<NodeIndex>> = Vec::new();
+    let mut wave: usize = 0;
+
+    while !queue.is_empty() || later.iter().any(|steps| !steps.is_empty()) {
+        if let Some(steps) = later.get_mut(wave) {
+            queue.extend(steps.drain(..));
+        }
         let mut current_wave_nodes: Vec<PlanNode> = Vec::new();
         let mut current_wave_steps = Vec::new();
         let wave_size = queue.len();
@@ -119,7 +137,18 @@ pub fn build_query_plan_from_fetch_graph(
 
                 unplanned_parents[child_index.index()] -= 1;
                 if unplanned_parents[child_index.index()] == 0 {
-                    queue.push_back(child_index);
+                    match assigned_waves
+                        .as_ref()
+                        .map(|waves| waves[child_index.index()])
+                    {
+                        Some(child_wave) if child_wave > wave + 1 => {
+                            if later.len() <= child_wave {
+                                later.resize_with(child_wave + 1, Vec::new);
+                            }
+                            later[child_wave].push(child_index);
+                        }
+                        _ => queue.push_back(child_index),
+                    }
                 }
             }
         }
@@ -128,6 +157,7 @@ pub fn build_query_plan_from_fetch_graph(
             entity_reuse.add_step(index, step);
         }
 
+        wave += 1;
         // a wave can end up empty when none of its fetches would ever run
         if current_wave_nodes.len() > 1 {
             overall_plan_sequence.push(PlanNode::Parallel(ParallelNode {
