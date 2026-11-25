@@ -294,15 +294,8 @@ struct BatchCandidates {
     /// the ready calls that can't copy, and the ones that can, by selection group
     ready: BTreeSet<Candidate>,
     ready_by_group: HashMap<SelectionGroupId, BTreeSet<Candidate>>,
-    /// per selection group, when its calls run
-    earliest_pairs: HashMap<SelectionGroupId, EarliestPair>,
-}
-
-/// The first two waves a selection group's calls run in, and the call in the first.
-struct EarliestPair {
-    first_call: usize,
-    first: usize,
-    second: usize,
+    /// per selection group, the waves its calls run in, sorted
+    group_waves: HashMap<SelectionGroupId, Vec<usize>>,
 }
 
 impl BatchCandidates {
@@ -323,7 +316,7 @@ impl BatchCandidates {
             not_ready: Vec::new(),
             ready: BTreeSet::new(),
             ready_by_group: HashMap::new(),
-            earliest_pairs: HashMap::new(),
+            group_waves: HashMap::new(),
         };
         candidates.refresh(schedule);
         candidates
@@ -345,23 +338,15 @@ impl BatchCandidates {
         self.ready.clear();
         self.ready_by_group.clear();
 
-        self.earliest_pairs.clear();
+        self.group_waves.clear();
         for call in &self.all {
-            let Some(group) = call.group else {
-                continue;
-            };
-            let wave = schedule.earliest(call.step);
-            let pair = self.earliest_pairs.entry(group).or_insert(EarliestPair {
-                first_call: call.subgraph_order,
-                first: usize::MAX,
-                second: usize::MAX,
-            });
-            if wave < pair.first {
-                (pair.first_call, pair.first, pair.second) =
-                    (call.subgraph_order, wave, pair.first);
-            } else {
-                pair.second = pair.second.min(wave);
+            if let Some(group) = call.group {
+                let waves = self.group_waves.entry(group).or_default();
+                waves.push(schedule.earliest(call.step));
             }
+        }
+        for waves in self.group_waves.values_mut() {
+            waves.sort_unstable();
         }
     }
 
@@ -387,7 +372,7 @@ impl BatchCandidates {
             // a call another one could copy from mustn't move to or past where that one runs
             compatible.retain(|call| {
                 earliest(call) >= proposed_wave
-                    || !self.has_potential_copier_by(call, proposed_wave, reuse)
+                    || !self.has_copier_between(call, earliest(call), proposed_wave, reuse)
             });
             for &call in &compatible {
                 self.consume(call);
@@ -457,20 +442,22 @@ impl BatchCandidates {
         compatible
     }
 
-    /// Does another call that could copy from `call` run by `wave`?
-    fn has_potential_copier_by(
+    /// Does a call that could copy from `call` run after `from` and by `to`? Moving `call` from
+    /// wave `from` to `to` would take its entities away from such a call. One that runs by
+    /// `from` couldn't copy from it anyway, and that includes `call` itself.
+    fn has_copier_between(
         &self,
         call: &Candidate,
-        wave: usize,
+        from: usize,
+        to: usize,
         reuse: &mut ReuseIndex,
     ) -> bool {
         let Some(group) = call.group else {
             return false;
         };
-        self.earliest_pairs.iter().any(|(&other, pair)| {
-            let another_runs_by_then = pair.first <= wave
-                && (pair.first_call != call.subgraph_order || pair.second <= wave);
-            another_runs_by_then && reuse.covers(group, other)
+        self.group_waves.iter().any(|(&other, waves)| {
+            let after_from = waves.partition_point(|&wave| wave <= from);
+            waves.get(after_from).is_some_and(|&wave| wave <= to) && reuse.covers(group, other)
         })
     }
 
@@ -686,6 +673,27 @@ mod tests {
         let edges = [(0, 1), (1, 2), (3, 4)];
         let waves = waves(&subgraphs, &fields, &edges, true);
         assert_eq!(waves, [0, 1, 2, 0, 1, 2]);
+    }
+
+    /// With entity reuse on, `c` could copy from `s`, but it runs before `s`, so it never does.
+    /// It doesn't stop `s` from joining `t` in wave 2. `c` can't move, what waits for it fills
+    /// the waves after it.
+    #[test]
+    fn a_call_that_runs_before_its_source_doesnt_hold_it() {
+        let subgraphs = [
+            "x", // 0: wave 0
+            "x", // 1: after 0, wave 1
+            "s", // 2: t, after 1, wave 2
+            "s", // 3: c, wave 0
+            "d", // 4: after c, wave 1
+            "e", // 5: after 4, wave 2
+            "y", // 6: wave 0
+            "s", // 7: s, after y, wave 1
+        ];
+        let fields: [&[&str]; 8] = [&[], &[], &["z"], &["a"], &[], &[], &[], &["a", "b"]];
+        let edges = [(0, 1), (1, 2), (3, 4), (4, 5), (6, 7)];
+        let waves = waves(&subgraphs, &fields, &edges, true);
+        assert_eq!(waves, [0, 1, 2, 0, 1, 2, 0, 2]);
     }
 
     /// With entity reuse on, calls asking for the same thing could copy from each other, so none
