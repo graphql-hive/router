@@ -22,7 +22,6 @@ use tracing::{debug, error, trace, warn, Instrument};
 use crate::executor::executors::graphql_transport_ws::{
     ClientMessage, CloseCode, ConnectionInitPayload, ServerMessage, WS_SUBPROTOCOL,
 };
-use crate::executor::executors::inflight::InFlightRole;
 use crate::executor::executors::websocket_common::{
     handshake_timeout, heartbeat, parse_frame_to_text, FrameNotParsedToText, WsState,
 };
@@ -30,7 +29,6 @@ use crate::executor::hooks::on_graphql_params::GraphQLParams;
 use crate::executor::plugin_context::{PluginContext, PluginRequestState, RouterHttpRequest};
 use crate::executor::request_context::{RequestContextExt, SharedRequestContext};
 use crate::executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
-use crate::query_planner::state::supergraph_state::OperationKind;
 use crate::telemetry::metrics::catalog::values::SubscriptionEndReason;
 use crate::telemetry::metrics::subscription_metrics::{
     ActiveClientConnectionGuard, SubscriptionTransport,
@@ -40,14 +38,9 @@ use crate::telemetry::traces::spans::graphql::GraphQLOperationSpan;
 use crate::jwt::errors::JwtError;
 use crate::pipeline::active_subscriptions::SubscriptionEvent;
 use crate::pipeline::error::{ClientPipelineError, PipelineError};
-use crate::pipeline::execute_planned_request;
 use crate::pipeline::execution_request::{OperationPreparation, OperationPreparationResult};
 use crate::pipeline::header::{ResponseMode, SingleContentType, StreamContentType};
-use crate::pipeline::{
-    connection_fingerprint, hash_graphql_extensions, hash_graphql_variables,
-    inbound_request_fingerprint, normalize::normalize_request_with_cache,
-    parser::parse_operation_with_cache, usage_reporting, validation::validate_operation_with_cache,
-};
+use crate::pipeline::operation::{execute_operation, OperationOutcome, OperationRequest};
 use crate::schema_state::SchemaState;
 use crate::shared_state::{RouterSharedState, SharedRouterResponse};
 use crate::telemetry::logging::request_id::WithRequestIdentifiers;
@@ -517,134 +510,10 @@ async fn handle_text_frame(
                           });
                           operation.graphql_params
                       }
-                      Ok(OperationPreparationResult::EarlyResponse(mut response)) => {
-                          let mut response_body = response.take_body();
-                          let mut body = Vec::new();
-                          while let Some(chunk) = response_body.next().await {
-                              match chunk {
-                                  Ok(chunk) => body.extend_from_slice(&chunk),
-                                  Err(err) => {
-                                      error!(target: targets::WEBSOCKET_SERVER, error = ?err, "Failed to read GraphQL params hook response body");
-                                      return Some(CloseCode::InternalServerError(None).into());
-                                  }
-                              }
-                          }
-                          let _ = sink.send(ServerMessage::next(&id, &body)).await;
-                          return Some(ServerMessage::complete(&id));
+                      Ok(OperationPreparationResult::EarlyResponse(response)) => {
+                          return forward_early_response(&sink, &id, response).await;
                       }
                       Err(err) => return Some(err.into_server_message(&id, shared_state, &supergraph.snapshot.name)),
-                  };
-
-                  let parser_result =
-                      match parse_operation_with_cache(shared_state, &payload, &plugin_req_state).await {
-                          Ok(result) => result,
-                          Err(err) => return Some(err.into_server_message(&id, shared_state, &supergraph.snapshot.name)),
-                      };
-
-                  let parser_payload = match parser_result {
-                      crate::pipeline::parser::ParseResult::Payload(payload) => payload,
-                      crate::pipeline::parser::ParseResult::EarlyResponse(_) => {
-                          return Some(ServerMessage::error(
-                              &id,
-                              &[GraphQLError::from_message_and_code(
-                                  "Unexpected early response during parse",
-                                  "INTERNAL_SERVER_ERROR",
-                              )],
-                          ));
-                      }
-                  };
-
-                  operation_span.record_details(
-                      &parser_payload.minified_document,
-                      (&parser_payload).into(),
-                      client_name,
-                      client_version,
-                      &parser_payload.hive_operation_hash,
-                  );
-
-                  match validate_operation_with_cache(
-                      supergraph,
-                      schema_state,
-                      shared_state,
-                      &parser_payload,
-                      &plugin_req_state,
-                  )
-                  .await
-                  {
-                      Ok(Some(_)) => {
-                          return Some(ServerMessage::error(
-                              &id,
-                              &[GraphQLError::from_message_and_code(
-                                  "Unexpected early response during validation",
-                                  "INTERNAL_SERVER_ERROR",
-                              )],
-                          ));
-                      }
-                      Ok(None) => {}
-                      Err(err) => return Some(err.into_server_message(&id, shared_state, &supergraph.snapshot.name)),
-                  }
-
-                  let normalize_payload = match normalize_request_with_cache(
-                      &supergraph.snapshot,
-                      &supergraph.runtime,
-                      schema_state,
-                      &payload,
-                      &parser_payload,
-                  )
-                  .await
-                  {
-                      Ok(payload) => payload,
-                      Err(err) => return Some(err.into_server_message(&id, shared_state, &supergraph.snapshot.name)),
-                  };
-
-                  let is_subscription = matches!(
-                      normalize_payload.operation_for_plan.operation_kind,
-                      Some(OperationKind::Subscription)
-                  );
-
-                  if is_subscription && !shared_state.router_config.subscriptions.enabled {
-                      return Some(PipelineError::from(ClientPipelineError::SubscriptionsNotSupported).into_server_message(&id, shared_state, &supergraph.snapshot.name));
-                  }
-
-                  let request_dedupe_enabled =
-                      shared_state.router_config.traffic_shaping.router.dedupe.enabled;
-                  let websocket_reuse_enabled = supergraph.snapshot.options.traffic_shaping
-                  .any_websocket_connection_reuse_enabled();
-
-                  let connection_fingerprint = (request_dedupe_enabled || websocket_reuse_enabled)
-                    .then(|| connection_fingerprint(
-                      &Method::POST,
-                      ws_uri.path().as_str(),
-                      headers.as_ref(),
-                      &shared_state.in_flight_requests_header_policy,
-                      supergraph.snapshot.cache_id,
-                    ));
-
-                  let fingerprint = if request_dedupe_enabled
-                      && matches!(
-                          normalize_payload.operation_for_plan.operation_kind,
-                          // same deduplication applies for queries and subscriptions
-                          None | Some(OperationKind::Query) | Some(OperationKind::Subscription)
-                      ) {
-                      let variables_hash = hash_graphql_variables(&payload.variables);
-                      let extensions_hash = payload
-                          .extensions
-                          .as_ref()
-                          .map_or(0, hash_graphql_extensions);
-                      let partition = plugin_req_state
-                          .as_ref()
-                          .and_then(|state| state.context.inbound_dedupe_partition());
-                      Some(inbound_request_fingerprint(
-                          // let chains are only allowed in Rust 2024 or later... so we assert
-                          // connection_fingerprint because it will be present when request_dedupe_enabled
-                          connection_fingerprint.expect("dedupe computes a connection fingerprint"),
-                          normalize_payload.normalized_operation_hash,
-                          variables_hash,
-                          extensions_hash,
-                          partition,
-                      ))
-                  } else {
-                      None
                   };
 
                   // synthetic request details for plan executor
@@ -658,90 +527,17 @@ async fn handle_text_frame(
                       target: targets::GRAPHQL_EXECUTION,
                       client_name,
                       client_version,
-                      operation_name = parser_payload.operation_name.as_deref(),
+                      operation_name = payload.operation_name.as_deref(),
                       operation = payload.query.as_deref(),
                       "graphql request started",
                   );
 
                   summary::record(|s| {
                       s.set_client_info(client_name, client_version);
-                      s.set_operation_name(parser_payload.operation_name.as_deref());
-                      s.set_operation_type(parser_payload.operation_type.as_str());
-                      s.set_operation_hash(Some(parser_payload.hive_operation_hash.as_str()));
                       s.set_response_mode(response_mode.as_str());
                   });
 
-                  let usage_variables = usage_reporting::usage_report_variables(
-                      supergraph.runtime.hive_usage_agent.as_ref(),
-                      &payload.variables,
-                  );
-
-                  let exec = |guard| execute_planned_request(
-                      &method,
-                      ws_uri,
-                      headers.as_ref().clone(),
-                      // TODO: WebSocket subscriptions do not yet expose route path params
-                      Default::default(),
-                      payload,
-                      &normalize_payload,
-                      supergraph,
-                      shared_state,
-                      schema_state,
-                      operation_span,
-                      plugin_req_state,
-                      request_context,
-                      &response_mode,
-                      guard,
-                      response_header_sink.clone(),
-                      connection_fingerprint,
-                  );
-
-                  let shared_response = if let Some(fp) = fingerprint {
-                      let result = if is_subscription {
-                          shared_state
-                              .in_flight_requests
-                              .claim(fp)
-                              .get_or_try_init_with_guard(|guard| exec(Some(guard)))
-                              .await
-                      } else {
-                          shared_state
-                              .in_flight_requests
-                              .claim(fp)
-                              .get_or_try_init(|| exec(None))
-                              .await
-                      };
-                      let (shared_response, role) = match result {
-                          Ok(result) => result,
-                          Err(PipelineError::Client(ClientPipelineError::JwtError(err))) => {
-                              let _ = sink.send(err.clone().into_server_message(&id, shared_state, &supergraph.snapshot.name)).await;
-                              // we report error as graphql error, but we also close the
-                              // connection since we're dealing with auth so let's be safe
-                              return Some(err.into_close_message());
-                          },
-                          Err(err) => return Some(err.into_server_message(&id, shared_state, &supergraph.snapshot.name)),
-                      };
-                      if role == InFlightRole::Joiner {
-                          shared_state
-                              .telemetry_context
-                              .metrics
-                              .request_dedupe
-                              .record_joined(normalize_payload.operation_kind.as_str());
-                      }
-                      Arc::unwrap_or_clone(shared_response)
-                  } else {
-                      match exec(None).await {
-                          Ok(result) => result,
-                          Err(PipelineError::Client(ClientPipelineError::JwtError(err))) => {
-                              let _ = sink.send(err.clone().into_server_message(&id, shared_state, &supergraph.snapshot.name)).await;
-                              // we report error as graphql error, but we also close the
-                              // connection since we're dealing with auth so let's be safe
-                              return Some(err.into_close_message());
-                          },
-                          Err(err) => return Some(err.into_server_message(&id, shared_state, &supergraph.snapshot.name)),
-                      }
-                  };
-
-                  if let Some(hive_usage_agent) = &supergraph.runtime.hive_usage_agent {
+                  let usage_request_details = supergraph.runtime.hive_usage_agent.is_some().then(|| {
                       let mut headers_vec = Vec::with_capacity(headers.len());
                       for (name, value) in headers.iter() {
                           if let Ok(val_str) = value.to_str() {
@@ -749,34 +545,57 @@ async fn handle_text_frame(
                           }
                       }
 
-                      let request_details = RequestDetails {
+                      RequestDetails {
                           method: Method::POST,
                           // the usage agent works with `http::Uri`, an unconvertible path falls back to "/"
                           url: http::Uri::try_from(ws_uri).unwrap_or_default(),
                           headers: headers_vec,
-                      };
-                      usage_reporting::collect_usage_report(
-                          supergraph.snapshot.supergraph_schema.clone(),
-                          started_at.elapsed(),
-                          client_name,
-                          client_version,
-                          normalize_payload.operation_for_plan.name.as_deref(),
-                          normalize_payload.operation_for_plan.operation_kind.as_ref(),
-                          &parser_payload.minified_document,
-                          hive_usage_agent,
-                          shared_response.error_count(),
-                          Some(request_details),
+                      }
+                  });
+
+                  let outcome = execute_operation(
+                      OperationRequest {
+                          method: &method,
+                          uri: ws_uri,
+                          // TODO: WebSocket subscriptions do not yet expose route path params
+                          path_params: Default::default(),
+                          headers: headers.as_ref().clone(),
+                          graphql_params: payload,
                           // The graphql-transport-ws Subscribe payload carries no document id
                           // and this path never invokes the document id resolver.
-                          None,
-                          usage_variables,
-                      )
-                      .await;
-                  }
+                          resolved_document_id: None,
+                          client_name,
+                          client_version,
+                          supergraph,
+                          plugin_req_state,
+                          request_context,
+                          response_mode: &response_mode,
+                          response_header_sink: response_header_sink.clone(),
+                          operation_span,
+                          started_at,
+                          usage_request_details,
+                          // the websocket server limits connections, not operations
+                          reserve_long_lived_client: false,
+                      },
+                      shared_state,
+                      schema_state,
+                      &(),
+                  )
+                  .await;
 
-                  debug!(target: targets::GRAPHQL_EXECUTION, error_count = shared_response.error_count(), "graphql request completed");
-
-                  summary::record(|s| s.set_error_count(shared_response.error_count() as u32));
+                  let shared_response = match outcome {
+                      Ok(OperationOutcome::Executed { response, .. }) => response,
+                      Ok(OperationOutcome::EarlyResponse(response)) => {
+                          return forward_early_response(&sink, &id, response).await;
+                      }
+                      Err(PipelineError::Client(ClientPipelineError::JwtError(err))) => {
+                          let _ = sink.send(err.clone().into_server_message(&id, shared_state, &supergraph.snapshot.name)).await;
+                          // we report error as graphql error, but we also close the
+                          // connection since we're dealing with auth so let's be safe
+                          return Some(err.into_close_message());
+                      },
+                      Err(err) => return Some(err.into_server_message(&id, shared_state, &supergraph.snapshot.name)),
+                  };
 
                   match shared_response {
                       SharedRouterResponse::Single(response) => {
@@ -889,6 +708,44 @@ async fn handle_text_frame(
         }
         ClientMessage::Pong {} => None,
     }
+}
+
+/// Sends a response that a plugin or coprocessor ended the operation with as the
+/// operation's only result.
+async fn forward_early_response(
+    sink: &ws::WsSink,
+    id: &str,
+    mut response: HttpResponse,
+) -> Option<ws::Message> {
+    let mut response_body = response.take_body();
+    let mut body = Vec::new();
+    while let Some(chunk) = response_body.next().await {
+        match chunk {
+            Ok(chunk) => body.extend_from_slice(&chunk),
+            Err(err) => {
+                error!(target: targets::WEBSOCKET_SERVER, error = ?err, "Failed to read early response body");
+                return Some(CloseCode::InternalServerError(None).into());
+            }
+        }
+    }
+
+    // a coprocessor break without a body, or a failed coprocessor stage, ends the operation
+    // with a status alone. `next` can't carry that and would close the whole connection, so
+    // the status is reported as the operation's error instead
+    if sonic_rs::from_slice::<sonic_rs::Value>(&body).is_err() {
+        let status = response.status();
+        let reason = status.canonical_reason().unwrap_or("Unknown status");
+        return Some(ServerMessage::error(
+            id,
+            &[GraphQLError::from_message_and_code(
+                format!("Operation ended with status {} {reason}", status.as_u16()),
+                reason.to_uppercase().replace(' ', "_"),
+            )],
+        ));
+    }
+
+    let _ = sink.send(ServerMessage::next(id, &body)).await;
+    Some(ServerMessage::complete(id))
 }
 
 /// Parses headers from a sonic_rs::Object into a HeaderMap. Only stringifiable

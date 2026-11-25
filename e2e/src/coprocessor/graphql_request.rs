@@ -641,3 +641,252 @@ async fn condition_check() {
         "router should return successful response"
     );
 }
+
+mod websocket {
+    use futures::StreamExt;
+    use hive_router::executor::executors::{
+        graphql_transport_ws::SubscribePayload, websocket_client::WsClient,
+    };
+
+    use super::*;
+
+    #[ntex::test]
+    /// graphql.request runs for operations sent over WebSocket, and its body mutation is the
+    /// operation that gets executed.
+    async fn applies_body_mutation_to_websocket_operation() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let mut coprocessor = TestCoprocessor::new().await;
+        let host = coprocessor.host_with_port();
+
+        let request_stage_mock = coprocessor
+            .mock_stage_with_matcher("graphql.request", |payload| {
+                payload
+                    .pointer(&["body", "query"])
+                    .and_then(|query| query.as_str())
+                    .is_some_and(|query| query.contains("price"))
+            })
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "version": 1,
+                    "control": "continue",
+                    "body": { "query": "{ topProducts(first:1) { name } }" }
+                })
+                .to_string(),
+            )
+            .expect(1)
+            .create();
+
+        let analysis_stage_mock = coprocessor
+            .mock_stage_with_matcher("graphql.analysis", |payload| {
+                payload
+                    .pointer(&["body", "query"])
+                    .and_then(|query| query.as_str())
+                    .is_some_and(|query| query.contains("name") && !query.contains("price"))
+            })
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({"version": 1, "control": "continue"}).to_string())
+            .expect(1)
+            .create();
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(format!(
+                r#"
+                supergraph:
+                  source: file
+                  path: supergraph.graphql
+                websocket:
+                  enabled: true
+                coprocessor:
+                  url: http://{host}/coprocessor
+                  protocol: http1
+                  stages:
+                    graphql:
+                      request:
+                        include:
+                          body: [query]
+                      analysis:
+                        include:
+                          body: [query]
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let mut client = WsClient::new(router.ws().await)
+            .init(None)
+            .await
+            .expect("Failed to init WsClient");
+        let mut stream = client
+            .subscribe(
+                SubscribePayload {
+                    query: "{ topProducts(first:1) { name price } }".into(),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .expect("Failed to subscribe")
+            .map(|response| response.expect("WebSocket response failed"));
+
+        let response = stream.next().await.expect("Expected a response");
+        assert!(
+            response.errors.is_none(),
+            "unexpected errors: {:?}",
+            response.errors
+        );
+        assert!(stream.next().await.is_none(), "Expected stream to complete");
+
+        request_stage_mock.assert_async().await;
+        analysis_stage_mock.assert_async().await;
+    }
+
+    #[ntex::test]
+    /// A graphql.request break ends a WebSocket operation with the coprocessor's body.
+    async fn break_ends_websocket_operation_with_coprocessor_body() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let mut coprocessor = TestCoprocessor::new().await;
+        let host = coprocessor.host_with_port();
+
+        let request_stage_mock = coprocessor
+            .mock_stage("graphql.request")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "version": 1,
+                    "control": { "break": 401 },
+                    "body": {
+                        "errors": [
+                            {
+                                "message": "unauthorized from graphql.request",
+                                "extensions": { "code": "COPROCESSOR_REJECTED" }
+                            }
+                        ]
+                    }
+                })
+                .to_string(),
+            )
+            .expect(1)
+            .create();
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(format!(
+                r#"
+                supergraph:
+                  source: file
+                  path: supergraph.graphql
+                websocket:
+                  enabled: true
+                coprocessor:
+                  url: http://{host}/coprocessor
+                  protocol: http1
+                  stages:
+                    graphql:
+                      request: {{}}
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let mut client = WsClient::new(router.ws().await)
+            .init(None)
+            .await
+            .expect("Failed to init WsClient");
+        let mut stream = client
+            .subscribe(
+                SubscribePayload {
+                    query: "{ topProducts { name } }".into(),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .expect("Failed to subscribe")
+            .map(|response| response.expect("WebSocket response failed"));
+
+        let response = stream.next().await.expect("Expected a response");
+        let errors = response.errors.expect("Expected GraphQL errors");
+        assert_eq!(
+            errors[0].extensions.code.as_deref(),
+            Some("COPROCESSOR_REJECTED")
+        );
+        assert!(stream.next().await.is_none(), "Expected stream to complete");
+
+        request_stage_mock.assert_async().await;
+    }
+
+    #[ntex::test]
+    /// A graphql.request break without a body ends the WebSocket operation with an error
+    /// carrying the status, and keeps the connection open for the next operation.
+    async fn bodyless_break_ends_websocket_operation_and_keeps_connection() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let mut coprocessor = TestCoprocessor::new().await;
+        let host = coprocessor.host_with_port();
+
+        let request_stage_mock = coprocessor
+            .mock_stage("graphql.request")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({"version": 1, "control": { "break": 401 }}).to_string())
+            .expect(2)
+            .create();
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(format!(
+                r#"
+                supergraph:
+                  source: file
+                  path: supergraph.graphql
+                websocket:
+                  enabled: true
+                coprocessor:
+                  url: http://{host}/coprocessor
+                  protocol: http1
+                  stages:
+                    graphql:
+                      request: {{}}
+                "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let mut client = WsClient::new(router.ws().await)
+            .init(None)
+            .await
+            .expect("Failed to init WsClient");
+
+        // the second operation only gets an answer if the first one left the connection open
+        for _ in 0..2 {
+            let mut stream = client
+                .subscribe(
+                    SubscribePayload {
+                        query: "{ topProducts { name } }".into(),
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .await
+                .expect("Failed to subscribe")
+                .map(|response| response.expect("WebSocket response failed"));
+
+            let response = stream.next().await.expect("Expected a response");
+            let errors = response.errors.expect("Expected GraphQL errors");
+            assert_eq!(errors[0].extensions.code.as_deref(), Some("UNAUTHORIZED"));
+            assert_eq!(
+                errors[0].message,
+                "Operation ended with status 401 Unauthorized"
+            );
+        }
+
+        request_stage_mock.assert_async().await;
+    }
+}

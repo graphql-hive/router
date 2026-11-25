@@ -365,20 +365,18 @@ impl CoprocessorRuntime {
 
     pub async fn on_graphql_request(
         &self,
-        request: &web::HttpRequest,
-        request_headers: &mut HeaderMap,
+        request: MutableRequestState<'_>,
         graphql_request: &mut GraphQLParams,
+        context: &SharedRequestContext,
         sdl_fn: impl FnOnce() -> Arc<str>,
     ) -> Result<ControlFlow<web::HttpResponse, PerformedMutations>, CoprocessorError> {
         let Some(stage) = &self.graphql_request else {
             return Ok(ControlFlow::Continue(Default::default()));
         };
 
-        let shared_context = request.read_request_context()?;
         let sdl = stage.stage.include_sdl().then(sdl_fn);
-        let mut input =
-            GraphqlRequestInput::new(request, request_headers, graphql_request, sdl.as_deref());
-        stage.execute(&mut input, &shared_context).await
+        let mut input = GraphqlRequestInput::new(request, graphql_request, sdl.as_deref());
+        stage.execute(&mut input, context).await
     }
 
     pub async fn on_graphql_analysis(

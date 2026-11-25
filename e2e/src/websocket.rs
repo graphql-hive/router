@@ -17,6 +17,9 @@ mod websocket_e2e_tests {
                 on_graphql_params::{
                     OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult,
                 },
+                on_graphql_validation::{
+                    OnGraphQLValidationStartHookPayload, OnGraphQLValidationStartHookResult,
+                },
                 on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
             },
             plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload},
@@ -83,6 +86,35 @@ mod websocket_e2e_tests {
                 GraphQLError::from_message_and_code(
                     "Rejected by GraphQL parameters hook",
                     "GRAPHQL_PARAMS_REJECTED",
+                ),
+                StatusCode::BAD_REQUEST,
+            )
+        }
+    }
+
+    #[derive(Default)]
+    struct TestWebSocketValidationEarlyResponsePlugin;
+
+    #[async_trait]
+    impl RouterPlugin for TestWebSocketValidationEarlyResponsePlugin {
+        type Config = ();
+
+        fn plugin_name() -> &'static str {
+            "test_websocket_validation_early_response"
+        }
+
+        fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
+            payload.initialize_plugin_with_defaults()
+        }
+
+        async fn on_graphql_validation<'exec>(
+            &'exec self,
+            payload: OnGraphQLValidationStartHookPayload<'exec>,
+        ) -> OnGraphQLValidationStartHookResult<'exec> {
+            payload.end_with_graphql_error(
+                GraphQLError::from_message_and_code(
+                    "Rejected by GraphQL validation hook",
+                    "GRAPHQL_VALIDATION_REJECTED",
                 ),
                 StatusCode::BAD_REQUEST,
             )
@@ -409,6 +441,57 @@ mod websocket_e2e_tests {
         assert_eq!(
             errors[0].extensions.code.as_deref(),
             Some("GRAPHQL_PARAMS_REJECTED")
+        );
+        assert!(stream.next().await.is_none(), "Expected stream to complete");
+    }
+
+    #[ntex::test]
+    async fn validation_hook_early_response_completes_websocket_operation() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                websocket:
+                    enabled: true
+                plugins:
+                    test_websocket_validation_early_response:
+                        enabled: true
+                "#,
+            )
+            .register_plugin::<TestWebSocketValidationEarlyResponsePlugin>()
+            .build()
+            .start()
+            .await;
+
+        let wsconn = router.ws().await;
+        let mut client = WsClient::new(wsconn)
+            .init(None)
+            .await
+            .expect("Failed to init WsClient");
+        let mut stream = client
+            .subscribe(
+                SubscribePayload {
+                    query: "{ __typename }".to_string(),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .expect("failed to subscribe");
+
+        let response = stream
+            .next()
+            .await
+            .map(|response| response.expect("WebSocket response failed"))
+            .expect("Expected a response");
+        let errors = response.errors.expect("Expected GraphQL errors");
+        assert_eq!(
+            errors[0].extensions.code.as_deref(),
+            Some("GRAPHQL_VALIDATION_REJECTED")
         );
         assert!(stream.next().await.is_none(), "Expected stream to complete");
     }
