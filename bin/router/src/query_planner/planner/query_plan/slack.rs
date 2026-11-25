@@ -517,8 +517,11 @@ mod tests {
     /// One call per line: `name {fields} after parent, parent`. The subgraph is the name without
     /// its number, so `a1` and `a2` are calls to `a`. Every call is for type `T`, the fields are
     /// what it asks for, used with entity reuse. A call without `after` runs right after the root.
-    fn call_graph(calls: &str) -> (MultiTypeFetchGraph, NodeIndex, Vec<(&str, NodeIndex)>) {
-        let mut graph = FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query);
+    fn call_graph(
+        calls: &str,
+        operation_kind: OperationKind,
+    ) -> (MultiTypeFetchGraph, NodeIndex, Vec<(&str, NodeIndex)>) {
+        let mut graph = FetchGraph::<SingleTypeFetchStep>::new(operation_kind);
         let root = add_step(&mut graph, "root", FetchStepKind::Root, &[]);
         let mut calls_in_order = Vec::new();
         let mut steps: HashMap<&str, NodeIndex> = HashMap::new();
@@ -567,9 +570,17 @@ mod tests {
             .join("\n")
     }
 
-    /// Schedules the calls and shows the waves they end up in.
+    /// Schedules the calls of a query and shows the waves they end up in.
     fn schedule(calls: &str, entity_reuse: bool) -> String {
-        let (graph, root, calls) = call_graph(calls);
+        schedule_operation(calls, OperationKind::Query, entity_reuse)
+    }
+
+    fn schedule_operation(
+        calls: &str,
+        operation_kind: OperationKind,
+        entity_reuse: bool,
+    ) -> String {
+        let (graph, root, calls) = call_graph(calls, operation_kind);
         let waves = schedule_entity_batches(&graph, root, entity_reuse).unwrap();
         format_waves(&calls, &waves)
     }
@@ -578,7 +589,7 @@ mod tests {
     /// the waves the calls end up in, each with the requests it estimates. Checks the moves did
     /// change the waves, and the calls ended up back in the waves they started in.
     fn fallback_schedules(calls: &str) -> (String, String) {
-        let (graph, root, calls) = call_graph(calls);
+        let (graph, root, calls) = call_graph(calls, OperationKind::Query);
         let input = SchedulingInput::new(&graph, root).unwrap();
         let baseline = Schedule::new(&input);
         let moved = greedy_batch_schedule(&input, &baseline, false);
@@ -615,6 +626,7 @@ mod tests {
                 .collect(),
         };
         output.add(&asked).unwrap();
+        let operation_kind = graph.operation_kind.clone();
         let id = graph.create_fetch_id();
         graph.add_step(FetchStepData {
             id,
@@ -623,7 +635,7 @@ mod tests {
             input: FetchStepSelections::new("T"),
             output,
             kind,
-            operation_kind: OperationKind::Query,
+            operation_kind,
             flags: FetchStepFlags::empty(),
             condition: None,
             gated_by: Vec::new(),
@@ -740,9 +752,10 @@ mod tests {
         ");
     }
 
-    /// With entity reuse on, `s3` could copy from `s2`, it asks for less. So the two can't share
-    /// a request. Both could join `s1` in wave 2, `s3` does: that empties wave 0 of `s` calls,
-    /// and in wave 2 it runs after `s2`, so it can copy from it.
+    /// With entity reuse on, `s3` could copy from `s2`, it asks for less, so the two never share a
+    /// request. Both could join `s1` in wave 2 and save an `s` request, but only one can. The one
+    /// the planner looks at first does, here `s3`. In wave 2 it runs after `s2`, so it can copy
+    /// from it.
     #[test]
     fn of_two_calls_that_could_copy_from_each_other_one_joins() {
         let calls = "
@@ -782,9 +795,52 @@ mod tests {
         ");
     }
 
+    /// With entity reuse on, `s3` copies from `s2`: it asks for less and runs a wave later.
+    /// `s2` could join `s1` in wave 2 and save an `s` request, but then `s3` would have nothing
+    /// to copy from yet, so `s2` stays. `s3` can't move either, `z1` and `z2` wait for it.
+    #[test]
+    fn a_call_doesnt_move_past_a_call_that_copies_from_it() {
+        let calls = "
+            x1
+            x2 after x1
+            s1 {c} after x2
+            s2 {a b}
+            y
+            s3 {a} after y
+            z1 after s3
+            z2 after z1
+        ";
+        insta::assert_snapshot!(schedule(calls, true), @r"
+        wave 0: x1 s2 y
+        wave 1: x2 s3
+        wave 2: s1 z1
+        wave 3: z2
+        ");
+    }
+
+    /// Only calls of a query move. In a mutation, a call moved to a later wave could run after
+    /// the next mutation field, and read what that field changed. The same calls move in a query.
+    #[test]
+    fn calls_of_a_mutation_dont_move() {
+        let calls = "
+            a1
+            x
+            a2 after x
+        ";
+        insta::assert_snapshot!(schedule(calls, false), @r"
+        wave 0: x
+        wave 1: a1 a2
+        ");
+        insta::assert_snapshot!(schedule_operation(calls, OperationKind::Mutation, false), @r"
+        wave 0: a1 x
+        wave 1: a2
+        ");
+    }
+
     /// With entity reuse on, calls asking for the same thing could copy from each other, so none
-    /// of them join. Each round places one call, and the rest of its group is skipped as a
-    /// whole, not looked at one by one: that'd be quadratic.
+    /// of them share a request. This one is about time: each round places one call, and the rest
+    /// of its group is skipped as a whole. Looking at them one by one made it quadratic. Nothing
+    /// times it, a slow scheduler only shows as a slow test.
     #[test]
     fn many_calls_asking_for_the_same_thing() {
         let numbers = 1..=3000;
