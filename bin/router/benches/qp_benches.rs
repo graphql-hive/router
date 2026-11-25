@@ -87,14 +87,9 @@ fn bench_query_plan(
         })
     };
 
-    // A single plan takes 0.5s or more here, so 10 samples are plenty and 100 take minutes
     if matches!(
         name,
-        "query_plan_wfg_mutation_1"
-            | "query_plan_wfg_query_1"
-            | "query_plan_wfg_query_2"
-            | "query_plan_heavy_query"
-            | "query_plan_abstract_many_subgraphs"
+        "query_plan_wfg_mutation_1" | "query_plan_wfg_query_1" | "query_plan_wfg_query_2"
     ) {
         let mut group = c.benchmark_group(name);
         group.sample_size(10);
@@ -119,74 +114,47 @@ fn query_plan_pipeline(c: &mut Criterion) {
         get_executable_operation(&parsed_document, &supergraph_state, Some("TestQuery"));
     bench_query_plan(c, "query_plan", &graph, &supergraph_state, &operation);
 
-    for (benchmark_name, schema_path, operation_path, operation_name) in [
-        (
-            "query_plan_grafbase_many_plans",
-            "./fixture/grafbase-many-plans/supergraph.graphql",
-            "./fixture/grafbase-many-plans/operation.graphql",
-            Some("ManyPlansQuery"),
-        ),
-        (
-            "query_plan_abstract_many_subgraphs",
-            "./fixture/abstract-many-subgraphs/supergraph.graphql",
-            "./fixture/abstract-many-subgraphs/operation.graphql",
-            Some("AbstractManySubgraphsBench"),
-        ),
-        (
-            "query_plan_heavy_query",
-            "./fixture/heavy-query/supergraph.graphql",
-            "./fixture/heavy-query/operation.graphql",
-            Some("TvpVod"),
-        ),
-        (
-            "query_plan_bfg_operation_1",
-            "./fixture/bfg/supergraph.graphql",
-            "./fixture/bfg/operation-1.graphql",
-            Some("Query1"),
-        ),
-        (
-            "query_plan_bfg_operation_2",
-            "./fixture/bfg/supergraph.graphql",
-            "./fixture/bfg/operation-2.graphql",
-            Some("Query2"),
-        ),
-        (
-            "query_plan_wfg_mutation_1",
-            "./fixture/wfg/supergraph.graphql",
-            "./fixture/wfg/mutation-1.graphql",
-            Some("Mutation1"),
-        ),
-        (
-            "query_plan_wfg_query_1",
-            "./fixture/wfg/supergraph.graphql",
-            "./fixture/wfg/query-1.graphql",
-            Some("Query1"),
-        ),
-        (
-            "query_plan_wfg_query_2",
-            "./fixture/wfg/supergraph.graphql",
-            "./fixture/wfg/query-2.graphql",
-            Some("Query2"),
-        ),
-    ] {
-        let supergraph_sdl =
-            std::fs::read_to_string(schema_path).expect("Unable to read supergraph fixture");
-        let parsed_schema = parse_schema(&supergraph_sdl);
-        let fixture_supergraph = SupergraphState::new(&parsed_schema);
-        let fixture_graph = Graph::graph_from_supergraph_state(&fixture_supergraph)
-            .expect("failed to create graph");
-        let fixture_document = get_operation(operation_path);
-        let fixture_operation =
-            get_executable_operation(&fixture_document, &fixture_supergraph, operation_name);
-
-        bench_query_plan(
-            c,
-            benchmark_name,
-            &fixture_graph,
-            &fixture_supergraph,
-            &fixture_operation,
-        );
-    }
+    bench_fixture_plans(
+        c,
+        &[
+            (
+                "query_plan_grafbase_many_plans",
+                "./fixture/grafbase-many-plans/supergraph.graphql",
+                "./fixture/grafbase-many-plans/operation.graphql",
+                Some("ManyPlansQuery"),
+            ),
+            (
+                "query_plan_bfg_operation_1",
+                "./fixture/bfg/supergraph.graphql",
+                "./fixture/bfg/operation-1.graphql",
+                Some("Query1"),
+            ),
+            (
+                "query_plan_bfg_operation_2",
+                "./fixture/bfg/supergraph.graphql",
+                "./fixture/bfg/operation-2.graphql",
+                Some("Query2"),
+            ),
+            (
+                "query_plan_wfg_mutation_1",
+                "./fixture/wfg/supergraph.graphql",
+                "./fixture/wfg/mutation-1.graphql",
+                Some("Mutation1"),
+            ),
+            (
+                "query_plan_wfg_query_1",
+                "./fixture/wfg/supergraph.graphql",
+                "./fixture/wfg/query-1.graphql",
+                Some("Query1"),
+            ),
+            (
+                "query_plan_wfg_query_2",
+                "./fixture/wfg/supergraph.graphql",
+                "./fixture/wfg/query-2.graphql",
+                Some("Query2"),
+            ),
+        ],
+    );
 
     c.bench_function("normalization", |b| {
         b.iter(|| {
@@ -302,6 +270,51 @@ fn provides_planning(c: &mut Criterion) {
     });
 }
 
+/// Plans one operation per fixture, each bench named after the fixture
+fn bench_fixture_plans(c: &mut Criterion, fixtures: &[(&str, &str, &str, Option<&str>)]) {
+    for &(benchmark_name, schema_path, operation_path, operation_name) in fixtures {
+        let supergraph_sdl =
+            std::fs::read_to_string(schema_path).expect("Unable to read supergraph fixture");
+        let parsed_schema = parse_schema(&supergraph_sdl);
+        let fixture_supergraph = SupergraphState::new(&parsed_schema);
+        let fixture_graph = Graph::graph_from_supergraph_state(&fixture_supergraph)
+            .expect("failed to create graph");
+        let fixture_document = get_operation(operation_path);
+        let fixture_operation =
+            get_executable_operation(&fixture_document, &fixture_supergraph, operation_name);
+
+        bench_query_plan(
+            c,
+            benchmark_name,
+            &fixture_graph,
+            &fixture_supergraph,
+            &fixture_operation,
+        );
+    }
+}
+
+/// A single plan takes 0.5s or more here, so these run in their own group with 10 samples
+/// instead of 100. Same bench names as before, unlike a benchmark_group.
+fn slow_query_plans(c: &mut Criterion) {
+    bench_fixture_plans(
+        c,
+        &[
+            (
+                "query_plan_abstract_many_subgraphs",
+                "./fixture/abstract-many-subgraphs/supergraph.graphql",
+                "./fixture/abstract-many-subgraphs/operation.graphql",
+                Some("AbstractManySubgraphsBench"),
+            ),
+            (
+                "query_plan_heavy_query",
+                "./fixture/heavy-query/supergraph.graphql",
+                "./fixture/heavy-query/operation.graphql",
+                Some("TvpVod"),
+            ),
+        ],
+    );
+}
+
 fn all_benchmarks(c: &mut Criterion) {
     let _ = tracing::subscriber::set_global_default(tracing::subscriber::NoSubscriber::default());
 
@@ -311,4 +324,9 @@ fn all_benchmarks(c: &mut Criterion) {
 }
 
 criterion_group!(benches, all_benchmarks);
-criterion_main!(benches);
+criterion_group! {
+    name = slow_benches;
+    config = Criterion::default().sample_size(10);
+    targets = slow_query_plans
+}
+criterion_main!(benches, slow_benches);
