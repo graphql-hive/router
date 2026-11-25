@@ -14,7 +14,6 @@ mod mutations;
 mod object_entities;
 mod override_requires;
 mod overrides;
-mod plan_oracle;
 mod provides;
 mod renamed_root_types;
 mod requires;
