@@ -498,10 +498,12 @@ impl HTTPSubgraphExecutor {
             }
         }
 
-        let slot_wait_metrics = telemetry_context
-            .metrics
-            .connection_limit
-            .slot_wait(&subgraph_name, &endpoint);
+        let (host, port) = endpoint_host_port(&endpoint);
+        let slot_wait_metrics =
+            telemetry_context
+                .metrics
+                .connection_limit
+                .slot_wait(&subgraph_name, host, port);
 
         Self {
             subgraph_name,
@@ -581,6 +583,16 @@ async fn until<F: std::future::Future>(
         Some(deadline) => tokio::time::timeout_at(deadline, fut).await,
         None => Ok(fut.await),
     }
+}
+
+pub(crate) fn endpoint_host_port(endpoint: &http::Uri) -> (&str, u16) {
+    let port = endpoint
+        .port_u16()
+        .unwrap_or_else(|| match endpoint.scheme_str() {
+            Some("https") | Some("wss") => 443,
+            _ => 80,
+        });
+    (endpoint.host().unwrap_or(""), port)
 }
 
 /// How many idle connections the pool keeps per host. It follows `max_connections_per_host`,
@@ -1606,8 +1618,7 @@ mod tests {
                 .with_reader(PeriodicReader::builder(exporter.clone()).build())
                 .build();
             let metrics = ConnectionLimitMetrics::new(Some(&provider.meter("test")));
-            let endpoint = "http://localhost:4200/accounts".parse().unwrap();
-            let metrics = metrics.slot_wait("accounts", &endpoint);
+            let metrics = metrics.slot_wait("accounts", "localhost", 4200);
             Self {
                 provider,
                 exporter,

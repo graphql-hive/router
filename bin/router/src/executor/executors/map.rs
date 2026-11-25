@@ -35,7 +35,9 @@ use crate::executor::{
     executors::{
         common::{SubgraphExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
         error::SubgraphExecutorError,
-        http::{HTTPSubgraphExecutor, HttpClientProvider, SubgraphHttpResponse},
+        http::{
+            endpoint_host_port, HTTPSubgraphExecutor, HttpClientProvider, SubgraphHttpResponse,
+        },
         http_callback::{CallbackSubscriptionsMap, HttpCallbackSubgraphExecutor},
         tls::{build_https_client_config, get_merged_tls_config},
         websocket::WsSubgraphExecutor,
@@ -849,16 +851,10 @@ impl SubgraphExecutorMap {
             SubgraphExecutorError::EndpointParseFailure(endpoint_str.to_string(), e)
         })?;
 
+        let (host, port) = endpoint_host_port(&endpoint_uri);
         let origin = format!(
-            "{}://{}:{}",
+            "{}://{host}:{port}",
             endpoint_uri.scheme_str().unwrap_or("http"),
-            endpoint_uri.host().unwrap_or(""),
-            endpoint_uri.port_u16().unwrap_or_else(|| {
-                match endpoint_uri.scheme_str() {
-                    Some("https") | Some("wss") => 443,
-                    _ => 80,
-                }
-            })
         );
 
         let semaphore = (self.max_connections_per_host > 0).then(|| {

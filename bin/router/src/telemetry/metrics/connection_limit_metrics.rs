@@ -48,26 +48,22 @@ impl ConnectionLimitMetrics {
 
     /// Returns the slot-wait recorder for one subgraph endpoint, so its attributes are built
     /// once per executor instead of on every wait.
-    pub fn slot_wait(&self, subgraph_name: &str, endpoint: &http::Uri) -> SlotWaitMetrics {
+    pub fn slot_wait(
+        &self,
+        subgraph_name: &str,
+        server_address: &str,
+        server_port: u16,
+    ) -> SlotWaitMetrics {
         let Some(instruments) = &self.instruments else {
             return SlotWaitMetrics::disabled();
         };
 
-        let server_port = endpoint
-            .port_u16()
-            .unwrap_or_else(|| match endpoint.scheme_str() {
-                Some("https") => 443,
-                _ => 80,
-            });
         let endpoint_attributes = [
             KeyValue::new(labels::SUBGRAPH_NAME, subgraph_name.to_string()),
-            KeyValue::new(
-                labels::SERVER_ADDRESS,
-                endpoint.host().unwrap_or("unknown").to_string(),
-            ),
+            KeyValue::new(labels::SERVER_ADDRESS, server_address.to_string()),
             KeyValue::new(labels::SERVER_PORT, i64::from(server_port)),
         ];
-        let result_attributes = SlotWaitResult::ALL.map(|result| {
+        let with_result = |result: SlotWaitResult| {
             let [subgraph_name, server_address, server_port] = endpoint_attributes.clone();
             [
                 subgraph_name,
@@ -75,13 +71,21 @@ impl ConnectionLimitMetrics {
                 server_port,
                 KeyValue::new(labels::RESULT, result.as_str()),
             ]
-        });
+        };
+        let result_attributes = ResultAttributes {
+            acquired: with_result(SlotWaitResult::Acquired),
+            timeout: with_result(SlotWaitResult::Timeout),
+            cancelled: with_result(SlotWaitResult::Cancelled),
+        };
 
         #[cfg(debug_assertions)]
         {
             debug_assert_attrs(names::SUBGRAPH_REQUESTS_PENDING, &endpoint_attributes);
-            for attributes in &result_attributes {
-                debug_assert_attrs(names::SUBGRAPH_REQUEST_SLOT_WAIT_DURATION, attributes);
+            for result in SlotWaitResult::ALL {
+                debug_assert_attrs(
+                    names::SUBGRAPH_REQUEST_SLOT_WAIT_DURATION,
+                    result_attributes.get(result),
+                );
             }
         }
 
@@ -103,8 +107,24 @@ pub struct SlotWaitMetrics {
 struct SlotWaitRecorder {
     instruments: SlotWaitInstruments,
     endpoint_attributes: [KeyValue; 3],
-    /// The duration attributes for each [`SlotWaitResult`], in [`SlotWaitResult::ALL`] order.
-    result_attributes: [[KeyValue; 4]; 3],
+    result_attributes: ResultAttributes,
+}
+
+/// The duration attributes for each [`SlotWaitResult`], built once per endpoint.
+struct ResultAttributes {
+    acquired: [KeyValue; 4],
+    timeout: [KeyValue; 4],
+    cancelled: [KeyValue; 4],
+}
+
+impl ResultAttributes {
+    fn get(&self, result: SlotWaitResult) -> &[KeyValue; 4] {
+        match result {
+            SlotWaitResult::Acquired => &self.acquired,
+            SlotWaitResult::Timeout => &self.timeout,
+            SlotWaitResult::Cancelled => &self.cancelled,
+        }
+    }
 }
 
 impl SlotWaitMetrics {
@@ -159,7 +179,7 @@ impl Drop for SlotWait<'_> {
             .add(-1, &recorder.endpoint_attributes);
         recorder.instruments.wait_duration.record(
             started.elapsed().as_secs_f64(),
-            &recorder.result_attributes[self.result as usize],
+            recorder.result_attributes.get(self.result),
         );
     }
 }
