@@ -59,9 +59,10 @@ pub(super) fn schedule_entity_batches(
     }
 
     // a move also moves what waits for it, and that can take calls of other subgraphs out of
-    // requests they shared. Those usually get merged again by later moves, but when they don't,
-    // the plan is better off without any.
-    if input.batch_cost_estimate(&schedule) > input.batch_cost_estimate(&baseline) {
+    // requests they shared. Those usually get merged again by later moves, but when the moves
+    // don't save a request in the end, the plan is better off without any: they'd only make calls
+    // start later.
+    if input.batch_cost_estimate(&schedule) >= input.batch_cost_estimate(&baseline) {
         return Ok(baseline.earliest);
     }
     Ok(schedule.earliest)
@@ -649,20 +650,42 @@ mod tests {
         assert_eq!(waves, [0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2]);
     }
 
-    /// With entity reuse on, `p` asks for all `q` asks for, so `q` could copy from `p`: they
-    /// can't share a request. Both could join `f` in wave 1, the one that comes first in the
-    /// plan gets to.
+    /// Moving `c1` to wave 1 saves a `c` request, but it pushes `a1` to wave 2, out of the `a`
+    /// batch: one request more. Same number of requests as with no moves, and two calls would
+    /// start later, so nothing moves.
     #[test]
-    fn calls_that_could_copy_from_each_other_join_in_plan_order() {
+    fn keeps_the_waves_when_moves_save_no_request() {
+        let subgraphs = [
+            "c", // 0: c1, wave 0
+            "x", // 1: x, wave 0
+            "a", // 2: a1, after c1
+            "a", // 3: a2, after x
+            "a", // 4: a3, after x
+            "c", // 5: c2, after x
+            "d", // 6: after a2, so the plan has a wave 2
+        ];
+        let edges = [(0, 2), (1, 3), (1, 4), (1, 5), (3, 6)];
+        let waves = waves(&subgraphs, &[], &edges, false);
+        assert_eq!(waves, [0, 0, 1, 1, 1, 1, 2]);
+    }
+
+    /// With entity reuse on, `q` asks for all `p` asks for, so `p` could copy from `q`: they
+    /// can't share a request. `p` joins `f` in wave 2, which saves its wave 0 request, and runs
+    /// after `q` there, so it can copy from it.
+    #[test]
+    fn of_two_calls_that_could_copy_from_each_other_one_joins() {
         let subgraphs = [
             "x", // 0: wave 0
-            "s", // 1: f, after x
-            "s", // 2: p, wave 0
-            "s", // 3: q, wave 0, comes before p in the plan
+            "x", // 1: after 0, wave 1
+            "s", // 2: f, after 1, wave 2
+            "y", // 3: wave 0
+            "s", // 4: q, after y, wave 1
+            "s", // 5: p, wave 0
         ];
-        let fields: [&[&str]; 4] = [&[], &["c"], &["a", "b"], &["a"]];
-        let waves = waves(&subgraphs, &fields, &[(0, 1)], true);
-        assert_eq!(waves, [0, 1, 0, 1]);
+        let fields: [&[&str]; 6] = [&[], &[], &["c"], &[], &["a", "b"], &["a"]];
+        let edges = [(0, 1), (1, 2), (3, 4)];
+        let waves = waves(&subgraphs, &fields, &edges, true);
+        assert_eq!(waves, [0, 1, 2, 0, 1, 2]);
     }
 
     /// With entity reuse on, calls asking for the same thing could copy from each other, so none
