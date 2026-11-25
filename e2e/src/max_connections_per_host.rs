@@ -3,9 +3,14 @@ mod max_connections_per_host_e2e_tests {
     use std::time::Duration;
 
     use futures::future::join_all;
-    use hive_router::telemetry::metrics::catalog::{labels, labels_for, names};
+    use hive_router::telemetry::metrics::catalog::{
+        labels, labels_for, names, values::SlotWaitResult,
+    };
 
-    use crate::testkit::{otel::OtlpCollector, ClientResponseExt, TestRouter, TestSubgraphs};
+    use crate::testkit::{
+        otel::{CollectedMetrics, OtlpCollector},
+        ClientResponseExt, TestRouter, TestSubgraphs,
+    };
 
     const QUERY: &str = "{ users { id } }";
 
@@ -29,6 +34,28 @@ mod max_connections_per_host_e2e_tests {
 {traffic_shaping}
             "#
         )
+    }
+
+    /// How many of the `accounts` waits for a slot ended with `result`, and how long they took.
+    fn waits(metrics: &CollectedMetrics, result: SlotWaitResult) -> (u64, f64) {
+        metrics.latest_histogram_count_sum(
+            names::SUBGRAPH_REQUEST_SLOT_WAIT_DURATION,
+            &[
+                (labels::SUBGRAPH_NAME, "accounts"),
+                (labels::RESULT, result.as_str()),
+            ],
+        )
+    }
+
+    fn assert_has_labels(metrics: &CollectedMetrics, name: &str) {
+        // the exported series also carry resource attributes such as `service.name`
+        let actual_labels = metrics.latest_attribute_names(name);
+        for label in labels_for(name).unwrap() {
+            assert!(
+                actual_labels.contains(*label),
+                "missing {label} on {name} in {actual_labels:?}"
+            );
+        }
     }
 
     #[ntex::test]
@@ -69,14 +96,7 @@ mod max_connections_per_host_e2e_tests {
             metrics.latest_counter(names::SUBGRAPH_REQUESTS_PENDING, &attrs),
             2.0
         );
-        // the exported series also carry resource attributes such as `service.name`
-        let actual_labels = metrics.latest_attribute_names(names::SUBGRAPH_REQUESTS_PENDING);
-        for label in labels_for(names::SUBGRAPH_REQUESTS_PENDING).unwrap() {
-            assert!(
-                actual_labels.contains(*label),
-                "missing {label} in {actual_labels:?}"
-            );
-        }
+        assert_has_labels(&metrics, names::SUBGRAPH_REQUESTS_PENDING);
 
         for response in responses {
             assert!(response.status().is_success());
@@ -90,6 +110,14 @@ mod max_connections_per_host_e2e_tests {
             metrics.latest_counter(names::SUBGRAPH_REQUESTS_PENDING, &attrs),
             0.0
         );
+
+        // the two waiters got the slot after ~1s and ~2s
+        let (acquired, seconds) = waits(&metrics, SlotWaitResult::Acquired);
+        assert_eq!(acquired, 2);
+        assert!((2.5..6.0).contains(&seconds), "{seconds}");
+        assert_eq!(waits(&metrics, SlotWaitResult::Timeout).0, 0);
+        assert_eq!(waits(&metrics, SlotWaitResult::Cancelled).0, 0);
+        assert_has_labels(&metrics, names::SUBGRAPH_REQUEST_SLOT_WAIT_DURATION);
     }
 
     #[ntex::test]
@@ -145,6 +173,14 @@ mod max_connections_per_host_e2e_tests {
             metrics.latest_counter(names::SUBGRAPH_REQUESTS_PENDING, &attrs),
             0.0
         );
+
+        // the slot frees up when the first request times out, at about the same time the
+        // waiters' own timeouts fire, so one of them may still get it
+        let timed_out = waits(&metrics, SlotWaitResult::Timeout).0;
+        let acquired = waits(&metrics, SlotWaitResult::Acquired).0;
+        assert_eq!(timed_out, slot_timeouts);
+        assert_eq!(timed_out + acquired, 2);
+        assert_eq!(waits(&metrics, SlotWaitResult::Cancelled).0, 0);
     }
 
     /// The router's own `request_timeout` drops the whole request while it waits for a slot,
@@ -198,6 +234,12 @@ mod max_connections_per_host_e2e_tests {
             metrics.latest_counter(names::SUBGRAPH_REQUESTS_PENDING, &attrs),
             0.0
         );
+
+        let (cancelled, seconds) = waits(&metrics, SlotWaitResult::Cancelled);
+        assert_eq!(cancelled, 2);
+        assert!((0.8..2.0).contains(&seconds), "{seconds}");
+        assert_eq!(waits(&metrics, SlotWaitResult::Acquired).0, 0);
+        assert_eq!(waits(&metrics, SlotWaitResult::Timeout).0, 0);
     }
 
     #[ntex::test]
@@ -234,5 +276,6 @@ mod max_connections_per_host_e2e_tests {
             &[(labels::SUBGRAPH_NAME, "accounts")]
         ));
         assert!(!metrics.has_counter(names::SUBGRAPH_REQUESTS_PENDING, &[]));
+        assert!(!metrics.has_histogram(names::SUBGRAPH_REQUEST_SLOT_WAIT_DURATION, &[]));
     }
 }
