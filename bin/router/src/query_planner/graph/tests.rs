@@ -128,10 +128,7 @@ mod graph_tests {
         utils::parsing::parse_schema,
     };
     use ahash::{HashSet, HashSetExt};
-    use petgraph::{
-        graph::NodeIndex,
-        visit::{EdgeRef, NodeRef},
-    };
+    use petgraph::{graph::NodeIndex, visit::NodeRef};
     use std::path::PathBuf;
 
     fn init_test(supergraph_sdl: &str) -> Graph<'static> {

@@ -3566,14 +3566,14 @@ mod issues_e2e_tests {
             "__batch_reps_0": [
               {
                 "__typename": "Order",
-                "price": 90,
+                "price": 100,
                 "id": "o1"
               }
             ],
             "__batch_reps_1": [
               {
                 "__typename": "Order",
-                "price": 100,
+                "price": 90,
                 "id": "o1"
               }
             ]
@@ -3698,22 +3698,6 @@ mod issues_e2e_tests {
               {
                 "__typename": "Product",
                 "category": {
-                  "averagePrice": 30
-                },
-                "upc": "p1"
-              },
-              {
-                "__typename": "Product",
-                "category": {
-                  "averagePrice": 16
-                },
-                "upc": "p2"
-              }
-            ],
-            "__batch_reps_1": [
-              {
-                "__typename": "Product",
-                "category": {
                   "averagePrice": 15
                 },
                 "upc": "p1"
@@ -3722,6 +3706,22 @@ mod issues_e2e_tests {
                 "__typename": "Product",
                 "category": {
                   "averagePrice": 8
+                },
+                "upc": "p2"
+              }
+            ],
+            "__batch_reps_1": [
+              {
+                "__typename": "Product",
+                "category": {
+                  "averagePrice": 30
+                },
+                "upc": "p1"
+              },
+              {
+                "__typename": "Product",
+                "category": {
+                  "averagePrice": 16
                 },
                 "upc": "p2"
               }
@@ -4689,11 +4689,12 @@ mod issues_e2e_tests {
         );
     }
 
-    /// `{ t { x: id  id: x  y } }`. The client's `id: x` comes from `a`, so the key `id` that `c`
-    /// needs comes from `b` as `_internal_qp_alias_0`. `c` waits for `b` only. The router used to
-    /// check the key by looking at `id`, the client's field, so when `a` was slower than `b`,
-    /// `id` wasn't there yet, `t` wasn't sent to `c`, and `y` came back `null`. The answer
-    /// mustn't depend on which of `a` and `b` answers first.
+    /// `{ t { x: id  id: x  y } }`. The key `id` that `c` needs comes from `b` as
+    /// `_internal_qp_alias_0`, and the client's `id: x` is another field under the same name. The
+    /// router used to check the key by looking at `id`, the client's field, so when that came from
+    /// `a` and `a` was slower than `b`, `id` wasn't there yet, `t` wasn't sent to `c`, and `y` came
+    /// back `null`. `c` resolves `x` too, so the plan now asks `c` for it along with `y`, but the
+    /// key still has to be read from `_internal_qp_alias_0`, whichever subgraph answers first.
     ///
     /// With `{ t { x: id  id: y } }`, the client's `id` is `c`'s `y`, so it can't exist before
     /// `c` is called. The router still has to send `c` the key it got from `b`.
@@ -4706,7 +4707,7 @@ mod issues_e2e_tests {
                 .with_on_request(mock_subgraphs(json!({
                     "a": { "query": { "t": { "x": 7 } } },
                     "b": { "query": { "t": { "__typename": "T", "id": "1" } } },
-                    "c": { "entities": [{ "__typename": "T", "id": "1", "y": 41 }] }
+                    "c": { "entities": [{ "__typename": "T", "id": "1", "x": 7, "y": 41 }] }
                 })))
                 .with_path_delay(slow, Duration::from_millis(200))
                 .build()

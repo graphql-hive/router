@@ -134,8 +134,8 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
           products {
             id
             categories {
-              id
               name
+              id
             }
           }
         }
@@ -149,7 +149,7 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
         "kind": "Fetch",
         "serviceName": "category",
         "operationKind": "query",
-        "operation": "{products{id categories{id name}}}"
+        "operation": "{products{id categories{name id}}}"
       }
     }
     "#);
@@ -187,8 +187,8 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
           media {
             __typename
             ... on Book {
-              title
               id
+              title
             }
             ... on Movie {
               id
@@ -205,7 +205,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
         "kind": "Fetch",
         "serviceName": "b",
         "operationKind": "query",
-        "operation": "{media{__typename ...on Book{title id} ...on Movie{id}}}"
+        "operation": "{media{__typename ...on Book{id title} ...on Movie{id}}}"
       }
     }
     "#);
@@ -239,8 +239,8 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
             media {
               __typename
               ... on Book {
-                title
                 id
+                title
               }
               ... on Movie {
                 __typename
@@ -277,7 +277,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "{media{__typename ...on Book{title id} ...on Movie{__typename id}}}"
+            "operation": "{media{__typename ...on Book{id title} ...on Movie{__typename id}}}"
           },
           {
             "kind": "Flatten",
@@ -350,6 +350,7 @@ fn provides_on_interface_1_test() -> Result<(), Box<dyn Error>> {
         {
           media {
             __typename
+            id
             ... on Book {
               animals {
                 __typename
@@ -357,7 +358,6 @@ fn provides_on_interface_1_test() -> Result<(), Box<dyn Error>> {
                 name
               }
             }
-            id
           }
         }
       },
@@ -597,6 +597,7 @@ fn provides_on_interface_2_test() -> Result<(), Box<dyn Error>> {
           {
             media {
               __typename
+              id
               ... on Book {
                 animals {
                   __typename
@@ -611,7 +612,6 @@ fn provides_on_interface_2_test() -> Result<(), Box<dyn Error>> {
                   }
                 }
               }
-              id
             }
           }
         },

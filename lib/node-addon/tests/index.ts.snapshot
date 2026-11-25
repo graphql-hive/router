@@ -12,7 +12,7 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
             "serviceName": "products",
             "operationKind": "query",
             "operation": "{topProducts{__typename upc name price weight}}",
-            "id": 15,
+            "id": 13,
             "dependsOn": []
           },
           {
@@ -65,9 +65,9 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                   ]
                 }
               ],
-              "id": 17,
+              "id": 15,
               "dependsOn": [
-                15
+                13
               ]
             }
           },
@@ -136,13 +136,13 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                 }
               ]
             },
-            "id": 20,
+            "id": 17,
             "dependsOn": [
               2,
-              15
+              13
             ],
             "completes": [
-              20,
+              17,
               3
             ]
           }
@@ -155,7 +155,7 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
             "kind": "BatchFetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{price weight name}}}",
+            "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{name price weight}}}",
             "entityBatch": {
               "aliases": [
                 {
@@ -193,19 +193,6 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                       "@",
                       {
                         "Field": "product"
-                      }
-                    ],
-                    [
-                      {
-                        "Field": "users"
-                      },
-                      "@",
-                      {
-                        "Field": "reviews"
-                      },
-                      "@",
-                      {
-                        "Field": "product"
                       },
                       {
                         "Field": "reviews"
@@ -214,6 +201,19 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                       {
                         "Field": "author"
                       },
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "product"
+                      }
+                    ],
+                    [
+                      {
+                        "Field": "users"
+                      },
+                      "@",
                       {
                         "Field": "reviews"
                       },
@@ -242,15 +242,15 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                 }
               ]
             },
-            "id": 25,
+            "id": 22,
             "dependsOn": [
               3,
-              20
+              17
             ],
             "completes": [
-              25,
-              7,
-              13
+              22,
+              12,
+              7
             ]
           },
           {
@@ -317,14 +317,14 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                 }
               ]
             },
-            "id": 21,
+            "id": 18,
             "dependsOn": [
               3,
-              20
+              17
             ],
             "completes": [
-              21,
-              9
+              18,
+              8
             ]
           }
         ]
@@ -371,19 +371,6 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                   "@",
                   {
                     "Field": "product"
-                  }
-                ],
-                [
-                  {
-                    "Field": "users"
-                  },
-                  "@",
-                  {
-                    "Field": "reviews"
-                  },
-                  "@",
-                  {
-                    "Field": "product"
                   },
                   {
                     "Field": "reviews"
@@ -392,6 +379,19 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                   {
                     "Field": "author"
                   },
+                  {
+                    "Field": "reviews"
+                  },
+                  "@",
+                  {
+                    "Field": "product"
+                  }
+                ],
+                [
+                  {
+                    "Field": "users"
+                  },
+                  "@",
                   {
                     "Field": "reviews"
                   },
@@ -428,16 +428,16 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
             }
           ]
         },
-        "id": 22,
+        "id": 19,
         "dependsOn": [
           7,
-          13,
-          25
+          12,
+          22
         ],
         "completes": [
-          22,
-          4,
-          10
+          19,
+          9,
+          4
         ]
       }
     ]
@@ -729,7 +729,7 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
             "serviceName": "products",
             "operationKind": "query",
             "operation": "{topProducts{__typename upc name price weight}}",
-            "id": 15,
+            "id": 13,
             "dependsOn": []
           },
           {
@@ -782,9 +782,9 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
                   ]
                 }
               ],
-              "id": 17,
+              "id": 15,
               "dependsOn": [
-                15
+                13
               ]
             }
           },
@@ -853,13 +853,13 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
                 }
               ]
             },
-            "id": 20,
+            "id": 17,
             "dependsOn": [
               2,
-              15
+              13
             ],
             "completes": [
-              20,
+              17,
               3
             ]
           }
@@ -872,7 +872,7 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
             "kind": "BatchFetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{price weight name}}}",
+            "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{name price weight}}}",
             "entityBatch": {
               "aliases": [
                 {
@@ -910,19 +910,6 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
                       "@",
                       {
                         "Field": "product"
-                      }
-                    ],
-                    [
-                      {
-                        "Field": "users"
-                      },
-                      "@",
-                      {
-                        "Field": "reviews"
-                      },
-                      "@",
-                      {
-                        "Field": "product"
                       },
                       {
                         "Field": "reviews"
@@ -931,6 +918,19 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
                       {
                         "Field": "author"
                       },
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "product"
+                      }
+                    ],
+                    [
+                      {
+                        "Field": "users"
+                      },
+                      "@",
                       {
                         "Field": "reviews"
                       },
@@ -959,15 +959,15 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
                 }
               ]
             },
-            "id": 25,
+            "id": 22,
             "dependsOn": [
               3,
-              20
+              17
             ],
             "completes": [
-              25,
-              7,
-              13
+              22,
+              12,
+              7
             ]
           },
           {
@@ -1034,14 +1034,14 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
                 }
               ]
             },
-            "id": 21,
+            "id": 18,
             "dependsOn": [
               3,
-              20
+              17
             ],
             "completes": [
-              21,
-              9
+              18,
+              8
             ]
           }
         ]
@@ -1088,19 +1088,6 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
                   "@",
                   {
                     "Field": "product"
-                  }
-                ],
-                [
-                  {
-                    "Field": "users"
-                  },
-                  "@",
-                  {
-                    "Field": "reviews"
-                  },
-                  "@",
-                  {
-                    "Field": "product"
                   },
                   {
                     "Field": "reviews"
@@ -1109,6 +1096,19 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
                   {
                     "Field": "author"
                   },
+                  {
+                    "Field": "reviews"
+                  },
+                  "@",
+                  {
+                    "Field": "product"
+                  }
+                ],
+                [
+                  {
+                    "Field": "users"
+                  },
+                  "@",
                   {
                     "Field": "reviews"
                   },
@@ -1145,16 +1145,16 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
             }
           ]
         },
-        "id": 22,
+        "id": 19,
         "dependsOn": [
           7,
-          13,
-          25
+          12,
+          22
         ],
         "completes": [
-          22,
-          4,
-          10
+          19,
+          9,
+          4
         ]
       }
     ]

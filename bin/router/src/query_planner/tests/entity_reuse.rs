@@ -122,14 +122,14 @@ fn bench_operation_entities_can_come_from_earlier_fetches() -> Result<(), Box<dy
     // the deep `inventory` batch [22] asks what the call at `topProducts` [17] asked, so it waits
     // for that one too and copies. without the wait the copy would be a race the deep call loses.
     insta::assert_snapshot!(describe(&query_plan), @r"
-    [15] products at root <- - after []
+    [13] products at root <- - after []
     [2] accounts at root <- - after []
-    [17] inventory at topProducts.@ <- - after [15]
-    [3, 20] reviews at topProducts.@ <- - after [2, 15]
-    [3, 20] reviews at users.@ <- - after [2, 15]
-    [7, 13, 25] products at topProducts.@.reviews.@.author.reviews.@.product + users.@.reviews.@.product + users.@.reviews.@.product.reviews.@.author.reviews.@.product <- topProducts.@ after [3, 20]
-    [9, 21] accounts at topProducts.@.reviews.@.author + users.@.reviews.@.product.reviews.@.author <- users.@ after [3, 20]
-    [4, 10, 22] inventory at topProducts.@.reviews.@.author.reviews.@.product + users.@.reviews.@.product + users.@.reviews.@.product.reviews.@.author.reviews.@.product <- topProducts.@ after [7, 13, 17, 25]
+    [15] inventory at topProducts.@ <- - after [13]
+    [3, 17] reviews at topProducts.@ <- - after [2, 13]
+    [3, 17] reviews at users.@ <- - after [2, 13]
+    [7, 12, 22] products at topProducts.@.reviews.@.author.reviews.@.product + users.@.reviews.@.product.reviews.@.author.reviews.@.product + users.@.reviews.@.product <- topProducts.@ after [3, 17]
+    [8, 18] accounts at topProducts.@.reviews.@.author + users.@.reviews.@.product.reviews.@.author <- users.@ after [3, 17]
+    [4, 9, 19] inventory at topProducts.@.reviews.@.author.reviews.@.product + users.@.reviews.@.product.reviews.@.author.reviews.@.product + users.@.reviews.@.product <- topProducts.@ after [7, 12, 15, 22]
     ");
 
     // with reuse off, nothing copies

@@ -52,12 +52,12 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
               {
                 ... on Product {
                   __typename
+                  price
+                  weight
+                  upc
                   category {
                     averagePrice
                   }
-                  upc
-                  price: _internal_qp_alias_0
-                  weight
                 }
               }
             }
@@ -68,7 +68,7 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
               {
                 ... on Product {
                   __typename
-                  price
+                  price: _internal_qp_alias_0
                   weight
                   upc
                 }
@@ -78,13 +78,13 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
           {
             _e0: _entities(representations: $__batch_reps_0) {
               ... on Product {
+                shippingEstimate
                 isExpensiveCategory
-                shippingEstimateEUR
               }
             }
             _e1: _entities(representations: $__batch_reps_1) {
               ... on Product {
-                shippingEstimate
+                shippingEstimateEUR
               }
             }
           }
@@ -109,7 +109,7 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
             "kind": "BatchFetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{isExpensiveCategory shippingEstimateEUR}} _e1: _entities(representations: $__batch_reps_1){...on Product{shippingEstimate}}}",
+            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{shippingEstimate isExpensiveCategory}} _e1: _entities(representations: $__batch_reps_1){...on Product{shippingEstimateEUR}}}",
             "entityBatch": {
               "aliases": [
                 {
@@ -134,13 +134,11 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
                         },
                         {
                           "kind": "Field",
-                          "name": "category",
-                          "selections": [
-                            {
-                              "kind": "Field",
-                              "name": "averagePrice"
-                            }
-                          ]
+                          "name": "price"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "weight"
                         },
                         {
                           "kind": "Field",
@@ -148,12 +146,13 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
                         },
                         {
                           "kind": "Field",
-                          "name": "_internal_qp_alias_0",
-                          "alias": "price"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "weight"
+                          "name": "category",
+                          "selections": [
+                            {
+                              "kind": "Field",
+                              "name": "averagePrice"
+                            }
+                          ]
                         }
                       ]
                     }
@@ -181,7 +180,8 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
                         },
                         {
                           "kind": "Field",
-                          "name": "price"
+                          "name": "_internal_qp_alias_0",
+                          "alias": "price"
                         },
                         {
                           "kind": "Field",
@@ -1150,9 +1150,9 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
             } =>
             {
               ... on Test {
+                otherField(arg: 1)
                 _internal_qp_alias_0: otherField(arg: 2)
                 _internal_qp_alias_1: otherField(arg: 3)
-                otherField(arg: 1)
               }
             }
           },
@@ -1166,7 +1166,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
               {
                 ... on Test {
                   __typename
-                  otherField: _internal_qp_alias_1
+                  otherField: _internal_qp_alias_0
                   id
                 }
               }
@@ -1178,7 +1178,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
               {
                 ... on Test {
                   __typename
-                  otherField: _internal_qp_alias_0
+                  otherField: _internal_qp_alias_1
                   id
                 }
               }
@@ -1187,12 +1187,12 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
           {
             _e0: _entities(representations: $__batch_reps_0) {
               ... on Test {
-                anotherWithRequiresAndArgs
+                fieldWithRequiresAndArgs
               }
             }
             _e1: _entities(representations: $__batch_reps_1) {
               ... on Test {
-                fieldWithRequiresAndArgs
+                anotherWithRequiresAndArgs
               }
             }
           }
@@ -1224,7 +1224,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
               "kind": "Fetch",
               "serviceName": "b",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{_internal_qp_alias_0: otherField(arg: 2) _internal_qp_alias_1: otherField(arg: 3) otherField(arg: 1)}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{otherField(arg: 1) _internal_qp_alias_0: otherField(arg: 2) _internal_qp_alias_1: otherField(arg: 3)}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -1247,7 +1247,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
             "kind": "BatchFetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Test{anotherWithRequiresAndArgs}} _e1: _entities(representations: $__batch_reps_1){...on Test{fieldWithRequiresAndArgs}}}",
+            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Test{fieldWithRequiresAndArgs}} _e1: _entities(representations: $__batch_reps_1){...on Test{anotherWithRequiresAndArgs}}}",
             "entityBatch": {
               "aliases": [
                 {
@@ -1271,7 +1271,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
                         },
                         {
                           "kind": "Field",
-                          "name": "_internal_qp_alias_1",
+                          "name": "_internal_qp_alias_0",
                           "alias": "otherField"
                         },
                         {
@@ -1303,7 +1303,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
                         },
                         {
                           "kind": "Field",
-                          "name": "_internal_qp_alias_0",
+                          "name": "_internal_qp_alias_1",
                           "alias": "otherField"
                         },
                         {
@@ -2324,7 +2324,7 @@ fn requires_with_argument_conflict_after_entity_hop() -> Result<(), Box<dyn Erro
               {
                 ... on Order {
                   __typename
-                  price: _internal_qp_alias_0
+                  price
                   id
                 }
               }
@@ -2336,7 +2336,7 @@ fn requires_with_argument_conflict_after_entity_hop() -> Result<(), Box<dyn Erro
               {
                 ... on Order {
                   __typename
-                  price
+                  price: _internal_qp_alias_0
                   id
                 }
               }
@@ -2345,12 +2345,12 @@ fn requires_with_argument_conflict_after_entity_hop() -> Result<(), Box<dyn Erro
           {
             _e0: _entities(representations: $__batch_reps_0) {
               ... on Order {
-                eur
+                usd
               }
             }
             _e1: _entities(representations: $__batch_reps_1) {
               ... on Order {
-                usd
+                eur
               }
             }
           }
@@ -2415,7 +2415,7 @@ fn requires_with_nested_argument_conflict() -> Result<(), Box<dyn Error>> {
                 ... on Product {
                   __typename
                   category {
-                    averagePrice: _internal_qp_alias_0
+                    averagePrice
                   }
                   upc
                 }
@@ -2429,7 +2429,7 @@ fn requires_with_nested_argument_conflict() -> Result<(), Box<dyn Error>> {
                 ... on Product {
                   __typename
                   category {
-                    averagePrice
+                    averagePrice: _internal_qp_alias_0
                   }
                   upc
                 }
@@ -2439,12 +2439,12 @@ fn requires_with_nested_argument_conflict() -> Result<(), Box<dyn Error>> {
           {
             _e0: _entities(representations: $__batch_reps_0) {
               ... on Product {
-                expensiveEurCategory
+                expensiveUsdCategory
               }
             }
             _e1: _entities(representations: $__batch_reps_1) {
               ... on Product {
-                expensiveUsdCategory
+                expensiveEurCategory
               }
             }
           }
@@ -2503,8 +2503,8 @@ fn requires_with_same_nested_arguments_share_a_call() -> Result<(), Box<dyn Erro
             } =>
             {
               ... on Product {
-                cheapUsdCategory
                 expensiveUsdCategory
+                cheapUsdCategory
               }
             }
           },

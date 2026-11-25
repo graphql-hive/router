@@ -715,8 +715,8 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Product {
-                shippingEstimate2
                 shippingEstimate
+                shippingEstimate2
               }
             }
           },
@@ -748,7 +748,7 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "inventory",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate2 shippingEstimate}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate shippingEstimate2}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -1915,5 +1915,55 @@ fn requires_reenters_with_a_key_its_source_lacks_next_to_a_conditional_field(
     },
     "#);
 
+    Ok(())
+}
+
+#[test]
+fn leaf_skips_requires_when_another_subgraph_has_it_plain() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // `a` has `shipping` but needs `weight` from `b` for it, `c` has it with nothing needed:
+    // going to `c` is one entity call instead of two
+    let document = parse_operation(
+        r#"
+        query {
+          products {
+            shipping
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-or-plain.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            products {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "c") {
+            {
+              ... on Product {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                shipping
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
     Ok(())
 }

@@ -1,10 +1,7 @@
 use std::rc::Rc;
 use std::{cmp, fmt::Debug};
 
-use petgraph::{
-    graph::{EdgeIndex, NodeIndex},
-    visit::EdgeRef,
-};
+use petgraph::graph::{EdgeIndex, NodeIndex};
 
 use crate::query_planner::ast::merge_path::Condition;
 use crate::query_planner::graph::node::UnionMembersData;
@@ -20,6 +17,19 @@ use crate::query_planner::{
 pub struct SelectionAttributes {
     pub alias: Option<String>,
     pub arguments: Option<ArgumentsMap>,
+}
+
+/// Equal attributes. Paths into a field share one `Rc`, so it's mostly the same allocation, and
+/// comparing the arguments is only needed when it isn't.
+pub fn same_attributes(
+    a: &Option<Rc<SelectionAttributes>>,
+    b: &Option<Rc<SelectionAttributes>>,
+) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => Rc::ptr_eq(a, b) || a == b,
+        (None, None) => true,
+        _ => false,
+    }
 }
 
 impl PartialEq for SelectionAttributes {
@@ -51,7 +61,8 @@ pub struct PathSegment {
     pub requirement_tree: Option<Rc<QueryTreeNode>>,
     // `None` when empty, and cloning it is a refcount bump
     context_requirements: Option<Rc<[Rc<ContextRequirement>]>>,
-    pub selection_attributes: Option<SelectionAttributes>,
+    /// Shared by every path into the same field, built once with its navigation target
+    pub selection_attributes: Option<Rc<SelectionAttributes>>,
     pub condition: Option<Condition>,
 }
 
@@ -225,10 +236,7 @@ impl<'graph> OperationPath<'graph> {
             context_requirements: (!context_requirements.is_empty())
                 .then(|| context_requirements.into()),
             selection_attributes: match target {
-                NavigationTarget::Field { field, .. } => Some(SelectionAttributes {
-                    alias: field.alias.clone(),
-                    arguments: field.arguments.clone(),
-                }),
+                NavigationTarget::Field { attributes, .. } => Some(Rc::clone(attributes)),
                 NavigationTarget::ConcreteType(_, _) => None,
             },
             condition: match target {
