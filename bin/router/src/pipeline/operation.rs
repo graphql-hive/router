@@ -66,8 +66,27 @@ pub(crate) struct OperationRequest<'exec> {
     pub started_at: Instant,
     /// Sent with the usage report. Only needed when Hive usage reporting is enabled.
     pub usage_request_details: Option<RequestDetails>,
-    /// Count subscriptions toward the long-lived client limit.
-    pub reserve_long_lived_client: bool,
+    pub transport: Transport<'exec>,
+}
+
+/// Where the operation came from, for the bits that only make sense on one transport.
+#[derive(Clone, Copy)]
+pub(crate) enum Transport<'a> {
+    /// The operation's identity goes into the request's metrics, and a subscription takes
+    /// a long-lived client slot for as long as its stream is open.
+    Http(&'a web::HttpRequest),
+    /// The websocket server limits connections, not operations, and has no per-operation
+    /// HTTP request to attach metrics to.
+    WebSocket,
+}
+
+impl Transport<'_> {
+    #[inline]
+    fn record_operation_identity(self, name: Option<&str>, operation_type: Option<&'static str>) {
+        if let Transport::Http(req) = self {
+            write_graphql_operation_metric_identity(req, name.map(str::to_owned), operation_type);
+        }
+    }
 }
 
 pub(crate) enum OperationOutcome {
@@ -80,29 +99,10 @@ pub(crate) enum OperationOutcome {
     },
 }
 
-/// Learns the operation's identity as soon as it is known, so an entry point can attribute
-/// metrics to it even when the operation fails later on.
-pub(crate) trait OperationObserver {
-    fn operation_identity(&self, name: Option<&str>, operation_type: Option<&'static str>);
-}
-
-impl OperationObserver for () {
-    #[inline]
-    fn operation_identity(&self, _: Option<&str>, _: Option<&'static str>) {}
-}
-
-impl OperationObserver for web::HttpRequest {
-    #[inline]
-    fn operation_identity(&self, name: Option<&str>, operation_type: Option<&'static str>) {
-        write_graphql_operation_metric_identity(self, name.map(str::to_owned), operation_type);
-    }
-}
-
 pub(crate) async fn execute_operation<'exec>(
     request: OperationRequest<'exec>,
     shared_state: &'exec Arc<RouterSharedState>,
     schema_state: &'exec Arc<SchemaState>,
-    observer: &impl OperationObserver,
 ) -> Result<OperationOutcome, PipelineError> {
     let OperationRequest {
         method,
@@ -121,10 +121,11 @@ pub(crate) async fn execute_operation<'exec>(
         operation_span,
         started_at,
         usage_request_details,
-        reserve_long_lived_client,
+        transport,
     } = request;
 
-    observer.operation_identity(graphql_params.operation_name.as_deref(), None);
+    // set as early as possible, so metrics are attributed even when the operation fails
+    transport.record_operation_identity(graphql_params.operation_name.as_deref(), None);
 
     let parser_result =
         parse_operation_with_cache(shared_state, &graphql_params, &plugin_req_state).await?;
@@ -223,7 +224,7 @@ pub(crate) async fn execute_operation<'exec>(
     )
     .await?;
 
-    observer.operation_identity(
+    transport.record_operation_identity(
         normalize_payload.operation_identity.name.as_deref(),
         Some(normalize_payload.operation_identity.operation_type.as_str()),
     );
@@ -271,7 +272,7 @@ pub(crate) async fn execute_operation<'exec>(
     // operation, and regular queries must not count toward the limit.
     // TODO: SharedRouterResponse::Stream should be used for long-lived connection count
     // once we add support for things like @stream and @defer
-    let long_lived_client_guard = if reserve_long_lived_client && is_subscription {
+    let long_lived_client_guard = if is_subscription && matches!(transport, Transport::Http(_)) {
         match try_reserve_long_lived_client(shared_state) {
             Ok(guard) => guard,
             Err(error) => {
