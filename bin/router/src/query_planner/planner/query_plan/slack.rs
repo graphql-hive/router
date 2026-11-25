@@ -477,7 +477,7 @@ impl BatchCandidates {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeSet, HashMap};
 
     use petgraph::graph::NodeIndex;
 
@@ -498,202 +498,217 @@ mod tests {
 
     use super::schedule_entity_batches;
 
-    /// Entity calls to `subgraphs`, each for type `T`, asking for `fields` by position (none when
-    /// left out). `edges` are (parent, child) by position, the root is the parent of the rest.
-    /// Gives the wave of each call.
-    fn waves(
-        subgraphs: &[&str],
-        fields: &[&[&str]],
-        edges: &[(usize, usize)],
-        entity_reuse: bool,
-    ) -> Vec<usize> {
+    /// Schedules entity calls and shows the waves they end up in, one line per wave.
+    ///
+    /// One call per line: `name {fields} after parent, parent`. The subgraph is the name without
+    /// its number, so `a1` and `a2` are calls to `a`. Every call is for type `T`, the fields are
+    /// what it asks for, used with entity reuse. A call without `after` runs right after the root.
+    fn schedule(calls: &str, entity_reuse: bool) -> String {
         let mut graph = FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query);
-        let step =
-            |graph: &mut FetchGraph<SingleTypeFetchStep>, name: &str, kind, fields: &[&str]| {
-                let mut output = FetchStepSelections::new("T");
-                let asked = SelectionSet {
-                    items: fields
-                        .iter()
-                        .map(|&name| {
-                            SelectionItem::Field(FieldSelection {
-                                name: name.to_string(),
-                                ..FieldSelection::new_typename()
-                            })
-                        })
-                        .collect(),
-                };
-                output.add(&asked).unwrap();
-                let id = graph.create_fetch_id();
-                graph.add_step(FetchStepData {
-                    id,
-                    service_name: SubgraphName(name.to_string()),
-                    response_path: MergePath::default(),
-                    input: FetchStepSelections::new("T"),
-                    output,
-                    kind,
-                    operation_kind: OperationKind::Query,
-                    flags: FetchStepFlags::empty(),
-                    condition: None,
-                    gated_by: Vec::new(),
-                    variable_usages: None,
-                    variable_definitions: None,
-                    mutation_field_position: None,
-                    input_rewrites: None,
-                    output_rewrites: None,
-                    context_rewrites: None,
-                    context_variable_definitions: Vec::new(),
-                    context_producers: BTreeSet::new(),
-                })
+        let root = add_step(&mut graph, "root", FetchStepKind::Root, &[]);
+        let mut names: Vec<&str> = Vec::new();
+        let mut steps: HashMap<&str, NodeIndex> = HashMap::new();
+        for line in calls.lines().map(str::trim).filter(|line| !line.is_empty()) {
+            let (call, parents) = match line.split_once(" after ") {
+                Some((call, parents)) => (call, parents.split(", ").collect()),
+                None => (line, Vec::new()),
             };
-        let root = step(&mut graph, "root", FetchStepKind::Root, &[]);
-        let indexes: Vec<NodeIndex> = subgraphs
-            .iter()
-            .enumerate()
-            .map(|(i, name)| {
-                let fields = fields.get(i).copied().unwrap_or_default();
-                step(&mut graph, name, FetchStepKind::Entity, fields)
-            })
-            .collect();
-        let children: BTreeSet<usize> = edges.iter().map(|&(_, child)| child).collect();
-        for (i, &index) in indexes.iter().enumerate() {
-            if !children.contains(&i) {
-                graph.connect(root, index);
+            let (name, fields) = match call.split_once(" {") {
+                Some((name, fields)) => (
+                    name,
+                    fields.trim_end_matches('}').split_whitespace().collect(),
+                ),
+                None => (call, Vec::new()),
+            };
+            let subgraph = name.trim_end_matches(|c: char| c.is_ascii_digit());
+            let step = add_step(&mut graph, subgraph, FetchStepKind::Entity, &fields);
+            if parents.is_empty() {
+                graph.connect(root, step);
             }
-        }
-        for &(parent, child) in edges {
-            graph.connect(indexes[parent], indexes[child]);
+            for parent in parents {
+                graph.connect(steps[parent], step);
+            }
+            names.push(name);
+            steps.insert(name, step);
         }
         graph.root_index = Some(root);
         let graph = graph.to_multi_type();
         let waves = schedule_entity_batches(&graph, root, entity_reuse).unwrap();
-        indexes.iter().map(|index| waves[index.index()]).collect()
+
+        let mut by_wave: Vec<Vec<&str>> = Vec::new();
+        for name in names {
+            let wave = waves[steps[name].index()];
+            if by_wave.len() <= wave {
+                by_wave.resize_with(wave + 1, Vec::new);
+            }
+            by_wave[wave].push(name);
+        }
+        by_wave
+            .iter()
+            .enumerate()
+            .map(|(wave, names)| format!("wave {wave}: {}", names.join(" ")))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
-    /// `a` and `b` each have three calls that share a request in wave 1, one of each waits for
-    /// `c`'s call in wave 0. Moving that `c` call to wave 1 saves a `c` request, but it pushes
-    /// the `a` and `b` calls after it to wave 2, out of their batches: two requests more. With
-    /// more requests than before any move, the plan goes back to no moves at all.
+    fn add_step(
+        graph: &mut FetchGraph<SingleTypeFetchStep>,
+        subgraph: &str,
+        kind: FetchStepKind,
+        fields: &[&str],
+    ) -> NodeIndex {
+        let mut output = FetchStepSelections::new("T");
+        let asked = SelectionSet {
+            items: fields
+                .iter()
+                .map(|&name| {
+                    SelectionItem::Field(FieldSelection {
+                        name: name.to_string(),
+                        ..FieldSelection::new_typename()
+                    })
+                })
+                .collect(),
+        };
+        output.add(&asked).unwrap();
+        let id = graph.create_fetch_id();
+        graph.add_step(FetchStepData {
+            id,
+            service_name: SubgraphName(subgraph.to_string()),
+            response_path: MergePath::default(),
+            input: FetchStepSelections::new("T"),
+            output,
+            kind,
+            operation_kind: OperationKind::Query,
+            flags: FetchStepFlags::empty(),
+            condition: None,
+            gated_by: Vec::new(),
+            variable_usages: None,
+            variable_definitions: None,
+            mutation_field_position: None,
+            input_rewrites: None,
+            output_rewrites: None,
+            context_rewrites: None,
+            context_variable_definitions: Vec::new(),
+            context_producers: BTreeSet::new(),
+        })
+    }
+
+    /// Without moves it's 4 requests: `c` in waves 0 and 1, `a` and `b` in wave 1.
+    ///
+    /// `c1` could join `c2` in wave 1, one `c` request less. But `a1` and `b1` wait for `c1`, so
+    /// they'd go to wave 2, away from the rest of their batches: an `a` and a `b` request more.
+    /// 5 requests is worse than 4, so nothing moves.
     #[test]
     fn falls_back_when_batch_cost_increases() {
-        let subgraphs = [
-            "c", // 0: c1, wave 0
-            "x", // 1: x, wave 0
-            "a", // 2: a1, after c1
-            "a", // 3: a2, after x
-            "a", // 4: a3, after x
-            "b", // 5: b1, after c1
-            "b", // 6: b2, after x
-            "b", // 7: b3, after x
-            "c", // 8: c2, after x
-            "d", // 9: after a2, so the plan has a wave 2
-        ];
-        let edges = [
-            (0, 2),
-            (1, 3),
-            (1, 4),
-            (0, 5),
-            (1, 6),
-            (1, 7),
-            (1, 8),
-            (3, 9),
-        ];
-        let waves = waves(&subgraphs, &[], &edges, false);
-        assert_eq!(waves, [0, 0, 1, 1, 1, 1, 1, 1, 1, 2]);
+        let calls = "
+            c1
+            x
+            a1 after c1
+            a2 after x
+            a3 after x
+            b1 after c1
+            b2 after x
+            b3 after x
+            c2 after x
+            d after a2
+        ";
+        insta::assert_snapshot!(schedule(calls, false), @r"
+        wave 0: c1 x
+        wave 1: a1 a2 a3 b1 b2 b3 c2
+        wave 2: d
+        ");
     }
 
-    /// The same, but `c` has the most calls, so it's placed before `a` and `b`, and `a` and `b`
-    /// each have a call that has to stay in wave 1.
+    /// The same, but `c` has the most calls, so it's looked at before `a` and `b`. And `a2` and
+    /// `b2` have to stay in wave 1, `d1` and `d2` wait for them, so `a1` and `b1` can't get their
+    /// batches back in wave 2 either. Still more requests than without moves, so nothing moves.
     #[test]
     fn falls_back_when_batch_cost_increases_and_its_subgraph_comes_first() {
-        let subgraphs = [
-            "c", // 0: c1, wave 0
-            "x", // 1: x, wave 0
-            "a", // 2: a1, after c1
-            "a", // 3: a2, after x
-            "a", // 4: a3, after x
-            "b", // 5: b1, after c1
-            "b", // 6: b2, after x
-            "b", // 7: b3, after x
-            "c", // 8: c2, after x
-            "c", // 9: c3, after x
-            "c", // 10: c4, after x
-            "d", // 11: after a2
-            "d", // 12: after b2
-        ];
-        let edges = [
-            (0, 2),
-            (1, 3),
-            (1, 4),
-            (0, 5),
-            (1, 6),
-            (1, 7),
-            (1, 8),
-            (1, 9),
-            (1, 10),
-            (3, 11),
-            (6, 12),
-        ];
-        let waves = waves(&subgraphs, &[], &edges, false);
-        assert_eq!(waves, [0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2]);
+        let calls = "
+            c1
+            x
+            a1 after c1
+            a2 after x
+            a3 after x
+            b1 after c1
+            b2 after x
+            b3 after x
+            c2 after x
+            c3 after x
+            c4 after x
+            d1 after a2
+            d2 after b2
+        ";
+        insta::assert_snapshot!(schedule(calls, false), @r"
+        wave 0: c1 x
+        wave 1: a1 a2 a3 b1 b2 b3 c2 c3 c4
+        wave 2: d1 d2
+        ");
     }
 
-    /// Moving `c1` to wave 1 saves a `c` request, but it pushes `a1` to wave 2, out of the `a`
-    /// batch: one request more. Same number of requests as with no moves, and two calls would
-    /// start later, so nothing moves.
+    /// Without moves it's 3 requests: `c` in waves 0 and 1, `a` in wave 1.
+    ///
+    /// `c1` could join `c2` in wave 1, one `c` request less. But `a1` waits for `c1`, so it'd go
+    /// to wave 2, away from `a2` and `a3`: an `a` request more. Still 3 requests, and `c1` and
+    /// `a1` would start later, so nothing moves.
     #[test]
     fn keeps_the_waves_when_moves_save_no_request() {
-        let subgraphs = [
-            "c", // 0: c1, wave 0
-            "x", // 1: x, wave 0
-            "a", // 2: a1, after c1
-            "a", // 3: a2, after x
-            "a", // 4: a3, after x
-            "c", // 5: c2, after x
-            "d", // 6: after a2, so the plan has a wave 2
-        ];
-        let edges = [(0, 2), (1, 3), (1, 4), (1, 5), (3, 6)];
-        let waves = waves(&subgraphs, &[], &edges, false);
-        assert_eq!(waves, [0, 0, 1, 1, 1, 1, 2]);
+        let calls = "
+            c1
+            x
+            a1 after c1
+            a2 after x
+            a3 after x
+            c2 after x
+            d after a2
+        ";
+        insta::assert_snapshot!(schedule(calls, false), @r"
+        wave 0: c1 x
+        wave 1: a1 a2 a3 c2
+        wave 2: d
+        ");
     }
 
-    /// With entity reuse on, `q` asks for all `p` asks for, so `p` could copy from `q`: they
-    /// can't share a request. `p` joins `f` in wave 2, which saves its wave 0 request, and runs
-    /// after `q` there, so it can copy from it.
+    /// With entity reuse on, `s3` could copy from `s2`, it asks for less. So the two can't share
+    /// a request. Both could join `s1` in wave 2, `s3` does: that empties wave 0 of `s` calls,
+    /// and in wave 2 it runs after `s2`, so it can copy from it.
     #[test]
     fn of_two_calls_that_could_copy_from_each_other_one_joins() {
-        let subgraphs = [
-            "x", // 0: wave 0
-            "x", // 1: after 0, wave 1
-            "s", // 2: f, after 1, wave 2
-            "y", // 3: wave 0
-            "s", // 4: q, after y, wave 1
-            "s", // 5: p, wave 0
-        ];
-        let fields: [&[&str]; 6] = [&[], &[], &["c"], &[], &["a", "b"], &["a"]];
-        let edges = [(0, 1), (1, 2), (3, 4)];
-        let waves = waves(&subgraphs, &fields, &edges, true);
-        assert_eq!(waves, [0, 1, 2, 0, 1, 2]);
+        let calls = "
+            x1
+            x2 after x1
+            s1 {c} after x2
+            y
+            s2 {a b} after y
+            s3 {a}
+        ";
+        insta::assert_snapshot!(schedule(calls, true), @r"
+        wave 0: x1 y
+        wave 1: x2 s2
+        wave 2: s1 s3
+        ");
     }
 
-    /// With entity reuse on, `c` could copy from `s`, but it runs before `s`, so it never does.
-    /// It doesn't stop `s` from joining `t` in wave 2. `c` can't move, what waits for it fills
-    /// the waves after it.
+    /// With entity reuse on, `s2` could copy from `s3`, but it runs before `s3`, so it never does.
+    /// That doesn't stop `s3` from joining `s1` in wave 2. `s2` itself can't move: `d` and `e`
+    /// wait for it, in waves 1 and 2.
     #[test]
     fn a_call_that_runs_before_its_source_doesnt_hold_it() {
-        let subgraphs = [
-            "x", // 0: wave 0
-            "x", // 1: after 0, wave 1
-            "s", // 2: t, after 1, wave 2
-            "s", // 3: c, wave 0
-            "d", // 4: after c, wave 1
-            "e", // 5: after 4, wave 2
-            "y", // 6: wave 0
-            "s", // 7: s, after y, wave 1
-        ];
-        let fields: [&[&str]; 8] = [&[], &[], &["z"], &["a"], &[], &[], &[], &["a", "b"]];
-        let edges = [(0, 1), (1, 2), (3, 4), (4, 5), (6, 7)];
-        let waves = waves(&subgraphs, &fields, &edges, true);
-        assert_eq!(waves, [0, 1, 2, 0, 1, 2, 0, 2]);
+        let calls = "
+            x1
+            x2 after x1
+            s1 {z} after x2
+            s2 {a}
+            d after s2
+            e after d
+            y
+            s3 {a b} after y
+        ";
+        insta::assert_snapshot!(schedule(calls, true), @r"
+        wave 0: x1 s2 y
+        wave 1: x2 d
+        wave 2: s1 e s3
+        ");
     }
 
     /// With entity reuse on, calls asking for the same thing could copy from each other, so none
@@ -701,12 +716,15 @@ mod tests {
     /// whole, not looked at one by one: that'd be quadratic.
     #[test]
     fn many_calls_asking_for_the_same_thing() {
-        let calls = 3000;
-        let mut subgraphs = vec!["p"; calls];
-        subgraphs.extend(vec!["s"; calls]);
-        let edges: Vec<(usize, usize)> = (0..calls).map(|i| (i, calls + i)).collect();
-        let waves = waves(&subgraphs, &[], &edges, true);
-        assert!(waves[..calls].iter().all(|&wave| wave == 0));
-        assert!(waves[calls..].iter().all(|&wave| wave == 1));
+        let numbers = 1..=3000;
+        let ps: Vec<String> = numbers.clone().map(|i| format!("p{i}")).collect();
+        let ss: Vec<String> = numbers.map(|i| format!("s{i}")).collect();
+        let calls: String = ps
+            .iter()
+            .zip(&ss)
+            .map(|(p, s)| format!("{p}\n{s} after {p}\n"))
+            .collect();
+        let waves = format!("wave 0: {}\nwave 1: {}", ps.join(" "), ss.join(" "));
+        assert_eq!(schedule(&calls, true), waves);
     }
 }
