@@ -112,58 +112,130 @@ jobs:
             commit -m "bench: ${GITHUB_SHA::8}"
           git push origin HEAD:bench-history
 
-  router-benchmark:
+  # Builds every binary the router benchmarks need once, instead of once per config.
+  # On PRs it also gets main's build of the default and otel routers to compare against.
+  build-bench-binaries:
     strategy:
-      fail-fast: false
       matrix:
         include:
           - name: "default"
-            args: ""
             package: "hive-router"
+            args: ""
+            binary: "hive_router"
+            main: true
+          - name: "otel"
+            package: "hive-router"
+            # turns otlp http/grpc to noop
+            args: "--features noop_otlp_exporter"
+            binary: "hive_router"
+            main: true
+          - name: "plugins"
+            package: "plugin-template"
+            args: ""
+            binary: "hive_router_with_plugin"
+            main: false
+          - name: "subgraphs"
+            package: "subgraphs"
+            args: ""
+            binary: "subgraphs"
+            main: false
+    name: benchmark / build / ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: setup rust
+        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
+      - name: Build ${{ matrix.package }}
+        run: cargo build --release -p ${{ matrix.package }} ${{ matrix.args }}
+      # On main, keep the routers for 30 days so PRs can compare against them without building main.
+      - name: Upload ${{ matrix.binary }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: bench-bin-${{ matrix.name }}
+          path: target/release/${{ matrix.binary }}
+          retention-days: ${{ github.event_name == 'push' && matrix.main && 30 || 3 }}
+      - name: Download ${{ matrix.binary }} built on main
+        id: main-binary
+        if: github.event_name == 'pull_request' && matrix.main
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p main-bin
+          # push events only come from this repo, so forks can't plant a "main" binary
+          for run_id in $(gh run list --workflow benchmark.yaml --branch main --event push --limit 10 --json databaseId --jq '.[].databaseId'); do
+            if gh run download "$run_id" --name "bench-bin-${{ matrix.name }}" --dir main-bin; then
+              echo "Using ${{ matrix.binary }} built on main in run $run_id"
+              echo "found=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "No ${{ matrix.binary }} from main found, building main from source"
+      - name: Checkout main branch in a separate directory
+        if: github.event_name == 'pull_request' && matrix.main && steps.main-binary.outputs.found != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          path: main-branch
+      - name: Build ${{ matrix.package }} from main branch
+        if: github.event_name == 'pull_request' && matrix.main && steps.main-binary.outputs.found != 'true'
+        run: |
+          cargo build --release -p ${{ matrix.package }} ${{ matrix.args }}
+          cp target/release/${{ matrix.binary }} ../main-bin/
+        working-directory: main-branch
+      - name: Upload ${{ matrix.binary }} from main
+        if: github.event_name == 'pull_request' && matrix.main
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: bench-bin-${{ matrix.name }}-main
+          path: main-bin/${{ matrix.binary }}
+          retention-days: 3
+
+  router-benchmark:
+    needs: build-bench-binaries
+    strategy:
+      fail-fast: false
+      matrix:
+        # build: which bench-bin-* router to run, main_binary: which main router to compare with
+        include:
+          - name: "default"
+            build: "default"
             binary: "hive_router"
             config: "bench/configs/default.config.yaml"
             compare_with_default: true
             main_binary: "default"
           - name: "dedupe-inbound"
-            args: ""
-            package: "hive-router"
+            build: "default"
             binary: "hive_router"
             config: "bench/configs/dedupe-inbound.config.yaml"
             compare_with_default: false
             main_binary: "default"
           - name: "no-dedupe"
-            args: ""
-            package: "hive-router"
+            build: "default"
             binary: "hive_router"
             config: bench/configs/no-deduplication.config.yaml
             compare_with_default: false
             main_binary: "default"
           - name: "hive-tracing"
-            # turns otlp http/grpc to noop
-            args: "--features noop_otlp_exporter"
-            package: "hive-router"
+            build: "otel"
             binary: "hive_router"
             config: bench/configs/hive-tracing.config.yaml
             compare_with_default: false
             main_binary: "otel"
           - name: "otel"
-            # turns otlp http/grpc to noop
-            args: "--features noop_otlp_exporter"
-            package: "hive-router"
+            build: "otel"
             binary: "hive_router"
             config: bench/configs/otel.config.yaml
             compare_with_default: false
             main_binary: "otel"
           - name: "plugins"
-            args: ""
-            package: "plugin-template"
+            build: "plugins"
             binary: "hive_router_with_plugin"
             config: "bench/configs/plugins.config.yaml"
             compare_with_default: true
             main_binary: "default"
           - name: "persisted-documents"
-            args: ""
-            package: "hive-router"
+            build: "default"
             binary: "hive_router"
             config: "bench/configs/persisted-documents.config.yaml"
             compare_with_default: true
@@ -178,21 +250,31 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: setup rust
-        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
       - name: Setup wrk
         run: |
           sudo apt-get update
           sudo apt-get install -y wrk
-      - name: Build subgraphs
-        run: cargo build --release -p subgraphs
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: bench-bin-subgraphs
+          path: bin/subgraphs
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: bench-bin-${{ matrix.build }}
+          path: bin/router
+      - if: github.event_name == 'pull_request'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: bench-bin-${{ matrix.main_binary }}-main
+          path: bin/main
+      # artifacts don't keep the executable bit
+      - name: Make binaries executable
+        run: chmod +x bin/*/*
       - name: Run subgraphs
-        run: ./target/release/subgraphs & sleep 5
-      - name: Build router
-        run: cargo build --release -p ${{ matrix.package }} ${{matrix.args}}
+        run: ./bin/subgraphs/subgraphs & sleep 5
       - name: Run router
         run: |
-          ./target/release/${{ matrix.binary }} &
+          ./bin/router/${{ matrix.binary }} &
           echo "$!" > router.pid
           sleep 5
         env:
@@ -226,48 +308,11 @@ jobs:
         with:
           name: bench-numbers-wrk-${{ matrix.name }}
           path: bench-numbers.json
-      # On main, keep the built router around so PRs can compare against it without building main.
-      - name: Upload router binary for main
-        if: github.event_name == 'push' && matrix.name == matrix.main_binary
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: router-main-${{ matrix.main_binary }}
-          path: target/release/hive_router
-          retention-days: 30
-      - name: Download router binary built on main
-        id: main-binary
-        if: github.event_name == 'pull_request'
-        env:
-          GH_REPO: ${{ github.repository }}
-        run: |
-          mkdir -p main-bin
-          # push events only come from this repo, so forks can't plant a "main" binary
-          for run_id in $(gh run list --workflow benchmark.yaml --branch main --event push --limit 10 --json databaseId --jq '.[].databaseId'); do
-            if gh run download "$run_id" --name "router-main-${{ matrix.main_binary }}" --dir main-bin; then
-              chmod +x main-bin/hive_router
-              echo "Using hive_router built on main in run $run_id"
-              echo "found=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          done
-          echo "No router binary from main found, building main from source"
-      - name: Checkout main branch in a separate directory
-        if: github.event_name == 'pull_request' && steps.main-binary.outputs.found != 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: main
-          path: main-branch
-      - name: Build router from main branch
-        if: github.event_name == 'pull_request' && steps.main-binary.outputs.found != 'true'
-        run: |
-          cargo build --release -p hive-router ${{ matrix.main_binary == 'otel' && '--features noop_otlp_exporter' || '' }}
-          cp target/release/hive_router ../main-bin/
-        working-directory: main-branch
       - name: Run router from main branch
         if: github.event_name == 'pull_request'
         run: |
           kill $(cat router.pid)
-          ./main-bin/hive_router &
+          ./bin/main/hive_router &
           sleep 5
         env:
           ROUTER_CONFIG_FILE_PATH: ${{ matrix.compare_with_default && 'bench/configs/default.config.yaml' || matrix.config }}
@@ -282,4 +327,3 @@ jobs:
         run: |
           chmod +x ./bench/ci-detect-regression.sh
           ./bench/ci-detect-regression.sh
-
