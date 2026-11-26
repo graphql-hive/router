@@ -116,13 +116,21 @@ pub struct MoveRequirements<'graph> {
     /// arguments, so aliases of a field with other arguments don't scan each other's. A field
     /// gets searched for from the same node many times in one operation, like under every type
     /// of a union. What a search finds doesn't depend on how the path got to that node: the
-    /// requirements are resolved from there on. So the steps it found go on from the next path
-    /// too, without searching again.
+    /// requirements are resolved from there on. Only on the type it got down to, see
+    /// `OperationPath::narrowed_to`, so that's in the key too. So the steps it found go on from
+    /// the next path too, without searching again.
     searches: RefCell<SearchesByStart<'graph>>,
 }
 
-type SearchesByStart<'graph> =
-    HashMap<(NodeIndex, &'graph str, Option<&'graph ArgumentsMap>), Vec<IndirectSearch<'graph>>>;
+type SearchesByStart<'graph> = HashMap<
+    (
+        NodeIndex,
+        Option<&'graph str>,
+        &'graph str,
+        Option<&'graph ArgumentsMap>,
+    ),
+    Vec<IndirectSearch<'graph>>,
+>;
 
 struct IndirectSearch<'graph> {
     union_context: Option<UnionContext<'graph>>,
@@ -160,7 +168,12 @@ impl<'graph> MoveRequirements<'graph> {
         if graph.has_context_arguments() {
             return search();
         }
-        let key = (path.tail(), field.name.as_str(), field.arguments());
+        let key = (
+            path.tail(),
+            path.narrowed_to(graph),
+            field.name.as_str(),
+            field.arguments(),
+        );
         let found = self.searches.borrow().get(&key).and_then(|searches| {
             searches
                 .iter()
