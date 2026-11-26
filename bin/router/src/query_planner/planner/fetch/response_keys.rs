@@ -96,8 +96,11 @@ impl ResponseKeys {
                             occupants.insert(key.to_string(), vec![signature(field)]);
                         }
                     }
-                    let child = self.child(place, key);
-                    self.take_client_keys(child, &field.selections);
+                    // a leaf needs no place under it, `child` makes one if it ever does
+                    if !field.selections.items.is_empty() {
+                        let child = self.child(place, key);
+                        self.take_client_keys(child, &field.selections);
+                    }
                 }
                 SelectionItem::InlineFragment(fragment) => {
                     self.take_client_keys(place, &fragment.selections)
@@ -185,8 +188,12 @@ impl ResponseKeys {
             .map(|item| match item {
                 SelectionItem::Field(field) => {
                     let key = self.wire_key_at(place, field);
-                    let child = self.child(place, &key);
-                    let selections = self.map(child, &field.selections, apply);
+                    let selections = if field.selections.items.is_empty() {
+                        SelectionSet::default()
+                    } else {
+                        let child = self.child(place, &key);
+                        self.map(child, &field.selections, apply)
+                    };
                     let mut field = field.with_new_selections(selections);
                     apply(&mut field, key);
                     SelectionItem::Field(field)
