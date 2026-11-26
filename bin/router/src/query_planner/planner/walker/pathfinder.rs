@@ -8,6 +8,7 @@ use petgraph::graph::{EdgeIndex, NodeIndex};
 use petgraph::visit::NodeRef;
 use tracing::{instrument, trace};
 
+use crate::query_planner::ast::arguments::ArgumentsMap;
 use crate::query_planner::ast::merge_path::Condition;
 use crate::query_planner::ast::selection_set::InlineFragmentSelection;
 use crate::query_planner::graph::edge::PlannerOverrideContext;
@@ -111,13 +112,17 @@ pub struct MoveRequirements<'graph> {
     /// By the path's last segment, root and the edge. The segment is kept, so its address isn't
     /// reused by another path while it's a key.
     checked: RefCell<HashMap<(usize, NodeIndex, EdgeIndex), Vec<CheckedMove<'graph>>>>,
-    /// The indirect searches done so far, by the node they started from and the field. A field
+    /// The indirect searches done so far, by the node they started from, the field and its
+    /// arguments, so aliases of a field with other arguments don't scan each other's. A field
     /// gets searched for from the same node many times in one operation, like under every type
     /// of a union. What a search finds doesn't depend on how the path got to that node: the
     /// requirements are resolved from there on. So the steps it found go on from the next path
     /// too, without searching again.
-    searches: RefCell<HashMap<(NodeIndex, &'graph str), Vec<IndirectSearch<'graph>>>>,
+    searches: RefCell<SearchesByStart<'graph>>,
 }
+
+type SearchesByStart<'graph> =
+    HashMap<(NodeIndex, &'graph str, Option<&'graph ArgumentsMap>), Vec<IndirectSearch<'graph>>>;
 
 struct IndirectSearch<'graph> {
     union_context: Option<UnionContext<'graph>>,
@@ -148,7 +153,7 @@ impl<'graph> MoveRequirements<'graph> {
         if graph.has_context_arguments {
             return search();
         }
-        let key = (path.tail(), field.name.as_str());
+        let key = (path.tail(), field.name.as_str(), field.arguments());
         let found = self.searches.borrow().get(&key).and_then(|searches| {
             searches
                 .iter()
