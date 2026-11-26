@@ -1967,3 +1967,115 @@ fn leaf_skips_requires_when_another_subgraph_has_it_plain() -> Result<(), Box<dy
     "#);
     Ok(())
 }
+
+/// `reviews` needs `username` from `accounts` to resolve `reviewsUrl`, and the key of the seller
+/// (its `id`) comes from the `reviews` call for `Product`. `accounts` already hands `username`
+/// over next to `sellerRating`. Whichever fetch ends up giving `username`, the `reviews` call for
+/// `User` still has to run after the `reviews` call for `Product`: its key is in that response.
+/// In one request with it, the representations would go out without `id`.
+#[test]
+fn requires_waits_for_the_fetch_with_its_key() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"{ products { reviewCount sellerRating seller { reviewsUrl username } } }"#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requirement-key-from-another-fetch.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            products {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "reviews") {
+            {
+              ... on Product {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                reviewCount
+                seller {
+                  __typename
+                  id
+                }
+              }
+            }
+          },
+        },
+        BatchFetch(service: "accounts") {
+          {
+            _e0 {
+              paths: [
+                "products.@.seller"
+              ]
+              {
+                ... on User {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1 {
+              paths: [
+                "products.@"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on User {
+                ...a
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Product {
+                sellerRating
+                seller {
+                  ...a
+                }
+              }
+            }
+          }
+          fragment a on User {
+            username
+          }
+        },
+        Flatten(path: "products.@.seller") {
+          Fetch(service: "reviews") {
+            {
+              ... on User {
+                __typename
+                username
+                id
+              }
+            } =>
+            {
+              ... on User {
+                reviewsUrl
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
