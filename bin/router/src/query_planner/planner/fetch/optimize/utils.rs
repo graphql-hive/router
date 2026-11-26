@@ -110,14 +110,15 @@ pub(crate) fn perform_fetch_step_merge(
 
     // the merged call only keeps the gates both had, so before they go, see which ones each
     // side had on its own
-    let (target_gates, source_gates) = if target.is_entity_call() && source.is_entity_call() {
-        (
-            target.gates_not_shared_with(source),
-            source.gates_not_shared_with(target),
-        )
-    } else {
-        Default::default()
-    };
+    let (target_gates, source_gates): (Vec<_>, Vec<_>) =
+        if target.is_entity_call() && source.is_entity_call() {
+            (
+                target.gates_not_shared_with(source).cloned().collect(),
+                source.gates_not_shared_with(target).cloned().collect(),
+            )
+        } else {
+            Default::default()
+        };
     target.merge_context_metadata(source);
     let source_id = source.id;
     let target_id = target.id;
@@ -405,21 +406,19 @@ impl FetchStepData<MultiTypeFetchStep> {
     /// The gates we count on a step above for: not our own `condition` and not the ones on our
     /// path, the call has those itself.
     fn outer_gates(&self) -> impl Iterator<Item = &Condition> {
-        self.gated_by.iter().filter(|gate| {
-            self.condition.as_ref() != Some(*gate)
+        self.gated_by.iter().filter(|&gate| {
+            self.condition.as_ref() != Some(gate)
                 && !self
                     .response_path
                     .conditions()
-                    .any(|on_path| on_path == *gate)
+                    .any(|on_path| on_path == gate)
         })
     }
 
     /// Our outer gates that `other` doesn't have. The merged call doesn't count on them anymore.
-    fn gates_not_shared_with(&self, other: &Self) -> Vec<Condition> {
+    fn gates_not_shared_with<'a>(&'a self, other: &'a Self) -> impl Iterator<Item = &'a Condition> {
         self.outer_gates()
             .filter(|gate| !other.gated_by.contains(gate))
-            .cloned()
-            .collect()
     }
 
     pub(crate) fn merge_context_metadata(&mut self, other: &mut Self) {
@@ -585,8 +584,8 @@ impl FetchStepData<MultiTypeFetchStep> {
                 .eq(other.response_path.conditions())
             || self.flags.contains(FetchStepFlags::CONDITIONAL_INPUT)
             || other.flags.contains(FetchStepFlags::CONDITIONAL_INPUT)
-            || !self.gates_not_shared_with(other).is_empty()
-            || !other.gates_not_shared_with(self).is_empty()
+            || self.gates_not_shared_with(other).next().is_some()
+            || other.gates_not_shared_with(self).next().is_some()
     }
 
     /// This call always runs and its input is always there.
