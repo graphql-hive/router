@@ -273,6 +273,18 @@ impl<'graph> Graph<'graph> {
             })
     }
 
+    /// Whether the field `name` of the abstract type at `node` can be read there for an object of
+    /// `type_name`. Not when `type_name` is one of its types in that subgraph but doesn't resolve
+    /// the field itself, like when it's `@external` there: the interface has the field, but that
+    /// type's objects don't. Anything else, `node` decides alone.
+    pub fn field_resolvable_for(&self, node: NodeIndex, type_name: &str, name: &str) -> bool {
+        let member = self.edges_from(node).find_map(|edge| match edge.weight() {
+            Edge::AbstractMove(member) if member == type_name => Some(edge.target()),
+            _ => None,
+        });
+        member.is_none_or(|member| self.field_edges_from(member, name).next().is_some())
+    }
+
     /// The entity and interface object moves out of `node`, like going through `edges_from` for
     /// them.
     pub fn entity_moves_from(&self, node: NodeIndex) -> impl Iterator<Item = EdgeReference<'_>> {
