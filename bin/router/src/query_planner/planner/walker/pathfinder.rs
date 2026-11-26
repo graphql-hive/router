@@ -138,18 +138,25 @@ struct CheckedMove<'graph> {
 }
 
 impl<'graph> MoveRequirements<'graph> {
-    /// `find_indirect_paths` from `path` to `field`, or what it found from the same node before,
-    /// see `searches`. Not with `@fromContext` fields in the graph: they read their value from
-    /// an ancestor, so a search depends on the whole path.
-    pub fn indirect_paths(
+    /// What a search for the field `target` from `path` found from the same node before, see
+    /// `searches`, or else `search`. Only for a search that starts with nothing excluded, which
+    /// `find_indirect_paths` checks. Not with `@fromContext` fields in the graph: they read their
+    /// value from an ancestor, so a search depends on the whole path.
+    fn indirect_paths(
         &self,
         graph: &'graph Graph<'graph>,
         path: &OperationPath<'graph>,
-        field: &'graph FieldSelection,
-        target_subgraph_ids: Option<&[u16]>,
-        target: &NavigationTarget<'_>,
+        target: &NavigationTarget<'graph, '_>,
         search: impl FnOnce() -> Result<Vec<OperationPath<'graph>>, WalkOperationError>,
     ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
+        let &NavigationTarget::Field {
+            field,
+            target_subgraph_ids,
+            ..
+        } = target
+        else {
+            return search();
+        };
         if graph.has_context_arguments() {
             return search();
         }
@@ -249,19 +256,21 @@ fn same_selections(a: &SelectionSet, b: &SelectionSet) -> bool {
         })
 }
 
+/// Where a search goes. The field is the operation's, kept as long as the operation, the
+/// subgraphs it may end in are often worked out for one field only, so they can live shorter.
 #[derive(Debug)]
-pub enum NavigationTarget<'op> {
+pub enum NavigationTarget<'op, 'ids> {
     Field {
         field: &'op FieldSelection,
-        target_subgraph_ids: Option<&'op [u16]>,
+        target_subgraph_ids: Option<&'ids [u16]>,
         /// The field's alias and arguments, for every path advanced to it
         attributes: Rc<SelectionAttributes>,
     },
     ConcreteType(&'op str, Option<Condition>),
 }
 
-impl<'op> NavigationTarget<'op> {
-    pub fn field(field: &'op FieldSelection, target_subgraph_ids: Option<&'op [u16]>) -> Self {
+impl<'op, 'ids> NavigationTarget<'op, 'ids> {
+    pub fn field(field: &'op FieldSelection, target_subgraph_ids: Option<&'ids [u16]>) -> Self {
         NavigationTarget::Field {
             field,
             target_subgraph_ids,
@@ -273,7 +282,10 @@ impl<'op> NavigationTarget<'op> {
     }
 
     /// The same field target, limited to these subgraphs.
-    pub fn in_subgraphs(&self, target_subgraph_ids: Option<&'op [u16]>) -> Self {
+    pub fn in_subgraphs<'other>(
+        &self,
+        target_subgraph_ids: Option<&'other [u16]>,
+    ) -> NavigationTarget<'op, 'other> {
         match self {
             NavigationTarget::Field {
                 field, attributes, ..
@@ -295,8 +307,8 @@ enum NavigationTargetKey<'op> {
     ConcreteType(&'op str),
 }
 
-impl<'op> From<&'op NavigationTarget<'op>> for NavigationTargetKey<'op> {
-    fn from(target: &'op NavigationTarget<'op>) -> Self {
+impl<'op> From<&'op NavigationTarget<'op, '_>> for NavigationTargetKey<'op> {
+    fn from(target: &'op NavigationTarget<'op, '_>) -> Self {
         match target {
             NavigationTarget::Field { field, .. } => NavigationTargetKey::Field(&field.name),
             NavigationTarget::ConcreteType(type_name, _) => {
@@ -343,13 +355,23 @@ pub fn find_indirect_paths<'graph>(
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
-    target: &NavigationTarget<'_>,
+    target: &NavigationTarget<'graph, '_>,
     excluded: &ExcludedFromLookup<'graph>,
     cancellation_token: &'graph CancellationToken,
     moves: Option<&MoveRequirements<'graph>>,
 ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
-    PathSearch::new(graph, supergraph, override_context, cancellation_token)
-        .find_indirect_paths(path, target, excluded, moves)
+    let search = || {
+        PathSearch::new(graph, supergraph, override_context, cancellation_token)
+            .find_indirect_paths(path, target, excluded, moves)
+    };
+    match moves {
+        // with nothing excluded a search depends only on where it starts, so what it found
+        // from the same node before is reused, see `MoveRequirements::indirect_paths`
+        Some(moves) if excluded.graph_ids.is_empty() && excluded.requirement.is_empty() => {
+            moves.indirect_paths(graph, path, target, search)
+        }
+        _ => search(),
+    }
 }
 
 impl<'graph> PathSearch<'graph> {
@@ -373,7 +395,7 @@ impl<'graph> PathSearch<'graph> {
     fn find_indirect_paths(
         &mut self,
         path: &OperationPath<'graph>,
-        target: &NavigationTarget<'_>,
+        target: &NavigationTarget<'_, '_>,
         excluded: &ExcludedFromLookup<'graph>,
         moves: Option<&MoveRequirements<'graph>>,
     ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
@@ -608,7 +630,7 @@ impl<'graph> PathSearch<'graph> {
         &mut self,
         path: &OperationPath<'graph>,
         edge_ref: &EdgeReference<'graph>,
-        target: &NavigationTarget<'_>,
+        target: &NavigationTarget<'_, '_>,
     ) -> Result<Option<OperationPath<'graph>>, WalkOperationError> {
         let graph = self.graph;
         trace!(
@@ -688,7 +710,7 @@ pub fn find_direct_paths<'graph>(
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
-    target: &NavigationTarget<'_>,
+    target: &NavigationTarget<'_, '_>,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
     PathSearch::new(graph, supergraph, override_context, cancellation_token)
@@ -704,7 +726,7 @@ pub fn find_direct_path<'graph>(
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
-    target: &NavigationTarget<'_>,
+    target: &NavigationTarget<'_, '_>,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<Option<OperationPath<'graph>>, WalkOperationError> {
     PathSearch::new(graph, supergraph, override_context, cancellation_token)
@@ -717,7 +739,7 @@ fn direct_edges<'graph, 't>(
     graph: &'graph Graph<'graph>,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
-    target: &'t NavigationTarget<'_>,
+    target: &'t NavigationTarget<'_, '_>,
 ) -> Box<dyn Iterator<Item = EdgeReference<'graph>> + 't>
 where
     'graph: 't,
@@ -762,7 +784,7 @@ impl<'graph> PathSearch<'graph> {
     fn find_direct_path(
         &mut self,
         path: &OperationPath<'graph>,
-        target: &NavigationTarget<'_>,
+        target: &NavigationTarget<'_, '_>,
     ) -> Result<Option<OperationPath<'graph>>, WalkOperationError> {
         for edge_ref in direct_edges(self.graph, self.override_context, path, target) {
             if let Some(next_path) = self.try_advance_direct_path(path, &edge_ref, target)? {
@@ -778,7 +800,7 @@ impl<'graph> PathSearch<'graph> {
     fn find_direct_paths(
         &mut self,
         path: &OperationPath<'graph>,
-        target: &NavigationTarget<'_>,
+        target: &NavigationTarget<'_, '_>,
     ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
         let mut result: Vec<OperationPath<'graph>> = vec![];
 
