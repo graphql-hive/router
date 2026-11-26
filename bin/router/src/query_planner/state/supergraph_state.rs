@@ -367,6 +367,20 @@ impl SupergraphState {
                 };
                 indices.sort_unstable();
                 indices.dedup();
+                field.is_shared = indices.len() > 1;
+                // and both sides of a labelled @override, which one depends on the request
+                let before = indices.len();
+                indices.extend(
+                    field
+                        .join_field
+                        .iter()
+                        .filter(|jf| jf.override_label.is_some() && !jf.external)
+                        .filter_map(|jf| jf.graph_id.as_deref().and_then(index_of)),
+                );
+                if indices.len() > before {
+                    indices.sort_unstable();
+                    indices.dedup();
+                }
                 field.resolvable_in = indices.into_boxed_slice();
             }
         }
@@ -866,6 +880,7 @@ impl SupergraphState {
                         cost: linked_specs.extract_cost_directive(&field.directives),
                         list_size: linked_specs.extract_list_size_directive(&field.directives),
                         resolvable_in: Box::default(),
+                        is_shared: false,
                         cost_by_arguments: field
                             .arguments
                             .iter()
@@ -914,6 +929,7 @@ impl SupergraphState {
                             .next(),
                         list_size: None,
                         resolvable_in: Box::default(),
+                        is_shared: false,
                         cost_by_arguments: Default::default(),
                         argument_types: Default::default(),
                     },
@@ -1353,8 +1369,12 @@ pub struct SupergraphField {
     pub cost: Option<CostDirective>,
     pub list_size: Option<ListSizeDirective>,
     /// The subgraphs that resolve this field, as sorted indices into
-    /// `SupergraphState::subgraph_names`.
+    /// `SupergraphState::subgraph_names`. Both sides of a labelled `@override` count: which one
+    /// resolves it depends on the request, and its field edges check that.
     pub resolvable_in: Box<[u16]>,
+    /// Whether more than one subgraph resolves this field on every request, like a `@shareable`
+    /// one. Not the two sides of a labelled `@override`: a request only gets one of them.
+    pub is_shared: bool,
     pub cost_by_arguments: HashMap<String, CostDirective>,
     pub argument_types: HashMap<String, TypeNode>,
 }
@@ -1497,6 +1517,31 @@ mod tests {
         // External in `a` and `c`.
         assert_eq!(resolvable_in("name"), ["b"]);
         assert_eq!(resolvable_in("aName"), ["a"]);
+    }
+
+    #[test]
+    fn resolvable_in_counts_both_sides_of_a_labelled_override() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixture/tests/simple-progressive-overrides.supergraph.graphql"
+        );
+        let supergraph =
+            SupergraphState::new(&parse_schema(&std::fs::read_to_string(path).unwrap()));
+        let field = |type_name: &str, field: &str| -> (Vec<&str>, bool) {
+            let field = &supergraph.definitions[type_name].fields()[field];
+            let names = field
+                .resolvable_in
+                .iter()
+                .map(|index| supergraph.subgraph_names[*index as usize].as_str())
+                .collect();
+            (names, field.is_shared)
+        };
+
+        // `b` takes `createdAt` over from `a` for some requests, each of them gets one
+        assert_eq!(field("Post", "createdAt"), (vec!["a", "b"], false));
+        // `id` is in both on every request
+        assert_eq!(field("Post", "id"), (vec!["a", "b"], true));
+        assert_eq!(field("Query", "aFeed"), (vec!["a"], false));
     }
 
     #[test]
