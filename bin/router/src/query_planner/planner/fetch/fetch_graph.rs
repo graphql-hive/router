@@ -909,6 +909,9 @@ fn ensure_batched_fetch_step(
         if step.service_name != *subgraph_name
             || step.condition.as_ref() != condition
             || step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES) != created_from_requires
+            // same rule as a call for one type: planned under the same gates, the merge works
+            // out where the gates go when calls under different ones come together
+            || step.gated_by != conditions.from_root
             || !same_but_last_types(&step.response_path, response_path)
         {
             continue;
@@ -950,8 +953,6 @@ fn ensure_batched_fetch_step(
         }
     };
     let step = fetch_graph.get_step_data_mut(step_index)?;
-    step.gated_by
-        .retain(|condition| conditions.from_root.contains(condition));
     if step.input.selections_for_definition(type_name).is_none() {
         trace!(
             "fetch step [{}] takes the {} objects at {} too",
