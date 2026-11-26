@@ -2013,68 +2013,44 @@ fn requires_waits_for_the_fetch_with_its_key() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Flatten(path: "products.@") {
-          Fetch(service: "reviews") {
-            {
-              ... on Product {
-                __typename
-                id
-              }
-            } =>
-            {
-              ... on Product {
-                reviewCount
-                seller {
-                  __typename
-                  id
-                }
-              }
-            }
-          },
-        },
-        BatchFetch(service: "accounts") {
-          {
-            _e0 {
-              paths: [
-                "products.@.seller"
-              ]
-              {
-                ... on User {
-                  __typename
-                  id
-                }
-              }
-            }
-            _e1 {
-              paths: [
-                "products.@"
-              ]
+        Parallel {
+          Flatten(path: "products.@") {
+            Fetch(service: "accounts") {
               {
                 ... on Product {
                   __typename
                   id
                 }
-              }
-            }
-          }
-          {
-            _e0: _entities(representations: $__batch_reps_0) {
-              ... on User {
-                ...a
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on Product {
-                sellerRating
-                seller {
-                  ...a
+              } =>
+              {
+                ... on Product {
+                  sellerRating
+                  seller {
+                    username
+                  }
                 }
               }
-            }
-          }
-          fragment a on User {
-            username
-          }
+            },
+          },
+          Flatten(path: "products.@") {
+            Fetch(service: "reviews") {
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Product {
+                  reviewCount
+                  seller {
+                    __typename
+                    id
+                  }
+                }
+              }
+            },
+          },
         },
         Flatten(path: "products.@.seller") {
           Fetch(service: "reviews") {

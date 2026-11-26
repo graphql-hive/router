@@ -285,10 +285,25 @@ impl FetchGraph<SingleTypeFetchStep> {
                 .children_of(candidate)
                 .map(|edge| edge.target())
                 .collect();
-            for child in children {
+            let parents: Vec<NodeIndex> = self
+                .parents_of(candidate)
+                .map(|edge| edge.source())
+                .collect();
+            for &child in &children {
                 self.connect(cover, child);
             }
             self.remove_step(candidate);
+            // A child can need more than the requirement from what the candidate waited for, like
+            // the key of a `@requires` call. Without the candidate it'd stop waiting for that, so
+            // when nothing it still waits for returns all of its input, it waits for the
+            // candidate's parents too.
+            for child in children {
+                if !self.input_is_ready(supergraph, child) {
+                    for &parent in &parents {
+                        self.connect(parent, child);
+                    }
+                }
+            }
             // what came after it can start earlier now, the depths are worked out again
             depths.fill(0);
         }
@@ -352,6 +367,45 @@ impl FetchGraph<SingleTypeFetchStep> {
             }
         }
         None
+    }
+
+    /// Whether the steps `step` waits for, directly or not, return every field of its input at
+    /// its spot. An abstract `__typename` only counts from its own subgraph, like in
+    /// `covering_step`.
+    fn input_is_ready(&self, supergraph: &SupergraphState, step: NodeIndex) -> bool {
+        let data = &self.graph[step];
+        let Some((type_name, input)) = data.input.iter().next() else {
+            return true;
+        };
+        let mut ancestors = Vec::new();
+        let mut seen = vec![false; self.graph.node_bound()];
+        let mut stack = vec![step];
+        while let Some(index) = stack.pop() {
+            for parent in self.parents_of(index).map(|edge| edge.source()) {
+                if !std::mem::replace(&mut seen[parent.index()], true) {
+                    ancestors.push(parent);
+                    stack.push(parent);
+                }
+            }
+        }
+        let path = &data.response_path.inner;
+        input.items.iter().all(|item| {
+            let wanted = SelectionSet {
+                items: vec![item.clone()],
+            };
+            let same_subgraph = abstract_typename(supergraph, type_name, &wanted);
+            ancestors.iter().any(|&ancestor| {
+                let other = &self.graph[ancestor];
+                let len = other.response_path.inner.len();
+                len <= path.len()
+                    && *other.response_path.inner == path[..len]
+                    && (!same_subgraph || other.service_name == data.service_name)
+                    && other.output.iter().any(|(_, selections)| {
+                        find_selection_set_by_segments(selections, &path[len..])
+                            .is_some_and(|found| found.contains(&wanted))
+                    })
+            })
+        })
     }
 
     /// How many steps run one after another up to and including `index`, kept in `depths`.
