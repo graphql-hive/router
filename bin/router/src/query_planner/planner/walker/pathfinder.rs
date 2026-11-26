@@ -761,12 +761,8 @@ impl<'graph> PathSearch<'graph> {
         let override_context = self.override_context;
         let edge = edge_ref.weight();
 
-        if let Edge::FieldMove(field_move) = edge {
-            // TODO: This should be passed from the executor,
-            //       I will work on it next.
-            if !field_move.satisfies_override_rules(override_context) {
-                return Ok(None);
-            }
+        if !edge.satisfies_override_rules(override_context) {
+            return Ok(None);
         }
 
         let paths = if let Some(selections) = edge.requirements() {

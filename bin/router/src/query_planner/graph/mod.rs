@@ -291,10 +291,7 @@ impl<'graph> Graph<'graph> {
         });
         member.is_none_or(|member| {
             self.field_edges_from(member, name)
-                .any(|edge| match edge.weight() {
-                    Edge::FieldMove(field) => field.satisfies_override_rules(override_context),
-                    _ => true,
-                })
+                .any(|edge| edge.weight().satisfies_override_rules(override_context))
         })
     }
 
@@ -1264,6 +1261,8 @@ impl<'graph> Graph<'graph> {
                                     field_name.clone(),
                                     def_name.clone(),
                                     field_definition.field_type.list_depth(),
+                                    maybe_join_field,
+                                    overridden_by.clone(),
                                 ),
                             );
                         }

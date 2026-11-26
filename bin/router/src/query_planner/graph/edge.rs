@@ -61,42 +61,58 @@ pub struct ReentryMove {
     pub name: String,
     pub type_name: String,
     pub list_depth: usize,
+    /// The `@override` rules of the field it re-enters with, see `FieldMove`.
+    pub override_label: Option<OverrideLabel>,
+    pub overridden_by: Option<(String, Option<OverrideLabel>)>,
 }
 
 impl FieldMove<'_> {
     pub fn satisfies_override_rules(&self, ctx: &PlannerOverrideContext) -> bool {
-        // Field is being progressively overridden by another subgraph
-        if let Some((_, Some(label))) = &self.overridden_by {
-            return self.check_progressive_override(label, ctx, false);
-        }
-
-        // Field is being fully overridden, so it's not resolvable
-        if self.overridden_by.is_some() {
-            return false;
-        }
-
-        // Field is progressively overriding another subgraph
-        if let Some(label) = &self.override_label {
-            return self.check_progressive_override(label, ctx, true);
-        }
-
-        // The field is not involved in an override, so it's always resolvable.
-        true
+        satisfies_override_rules(
+            self.override_label.as_ref(),
+            self.overridden_by.as_ref(),
+            ctx,
+        )
     }
+}
 
-    fn check_progressive_override(
-        &self,
-        label: &OverrideLabel,
-        ctx: &PlannerOverrideContext,
-        is_overriding_field: bool,
-    ) -> bool {
-        match label {
-            OverrideLabel::Custom(flag_name) => {
-                is_overriding_field == ctx.is_flag_active(flag_name)
-            }
-            OverrideLabel::Percentage(percentage_in_label) => {
-                is_overriding_field == ctx.is_in_range(percentage_in_label)
-            }
+impl ReentryMove {
+    pub fn satisfies_override_rules(&self, ctx: &PlannerOverrideContext) -> bool {
+        satisfies_override_rules(
+            self.override_label.as_ref(),
+            self.overridden_by.as_ref(),
+            ctx,
+        )
+    }
+}
+
+/// Whether a field with these `@override` rules is resolvable in its subgraph for the request.
+fn satisfies_override_rules(
+    override_label: Option<&OverrideLabel>,
+    overridden_by: Option<&(String, Option<OverrideLabel>)>,
+    ctx: &PlannerOverrideContext,
+) -> bool {
+    match (overridden_by, override_label) {
+        // Field is being progressively overridden by another subgraph
+        (Some((_, Some(label))), _) => check_progressive_override(label, ctx, false),
+        // Field is being fully overridden, so it's not resolvable
+        (Some(_), _) => false,
+        // Field is progressively overriding another subgraph
+        (None, Some(label)) => check_progressive_override(label, ctx, true),
+        // The field is not involved in an override, so it's always resolvable.
+        (None, None) => true,
+    }
+}
+
+fn check_progressive_override(
+    label: &OverrideLabel,
+    ctx: &PlannerOverrideContext,
+    is_overriding_field: bool,
+) -> bool {
+    match label {
+        OverrideLabel::Custom(flag_name) => is_overriding_field == ctx.is_flag_active(flag_name),
+        OverrideLabel::Percentage(percentage_in_label) => {
+            is_overriding_field == ctx.is_in_range(percentage_in_label)
         }
     }
 }
@@ -175,7 +191,8 @@ pub enum Edge<'graph> {
         operation_kind: OperationKind,
     },
     FieldMove(Box<FieldMove<'graph>>),
-    ReentryMove(ReentryMove),
+    /// Boxed like `FieldMove`: it's rare, and inline it would make every edge bigger.
+    ReentryMove(Box<ReentryMove>),
     EntityMove(EntityMove<'graph>),
     /// join__implements
     AbstractMove(String),
@@ -296,12 +313,30 @@ impl<'graph> Edge<'graph> {
         }))
     }
 
-    pub fn create_reentry_move(name: String, type_name: String, list_depth: usize) -> Self {
-        Self::ReentryMove(ReentryMove {
-            name: name.clone(),
-            type_name: type_name.clone(),
+    pub fn create_reentry_move(
+        name: String,
+        type_name: String,
+        list_depth: usize,
+        join_field: Option<&JoinFieldDirective>,
+        overridden_by: Option<(String, Option<OverrideLabel>)>,
+    ) -> Self {
+        Self::ReentryMove(Box::new(ReentryMove {
+            name,
+            type_name,
             list_depth,
-        })
+            override_label: join_field.and_then(|jf| jf.override_label.clone()),
+            overridden_by,
+        }))
+    }
+
+    /// Whether the edge can be taken for the request, as far as `@override` goes. Only a field
+    /// and the re-entry next to it have override rules.
+    pub fn satisfies_override_rules(&self, ctx: &PlannerOverrideContext) -> bool {
+        match self {
+            Self::FieldMove(field_move) => field_move.satisfies_override_rules(ctx),
+            Self::ReentryMove(reentry) => reentry.satisfies_override_rules(ctx),
+            _ => true,
+        }
     }
 
     pub fn display_name(&self) -> &str {
