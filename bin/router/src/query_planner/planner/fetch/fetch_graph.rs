@@ -3,8 +3,7 @@ use crate::query_planner::ast::merge_path::{Condition, FieldPathSegment, MergePa
 use crate::query_planner::ast::operation::{OperationDefinition, VariableDefinition};
 use crate::query_planner::ast::selection_item::SelectionItem;
 use crate::query_planner::ast::selection_set::{
-    find_selection_set_by_segments, response_keys_conflict, FieldSelection,
-    InlineFragmentSelection, SelectionSet,
+    find_selection_set_by_segments, FieldSelection, InlineFragmentSelection, SelectionSet,
 };
 use crate::query_planner::ast::type_aware_selection::TypeAwareSelection;
 use crate::query_planner::ast::value::Value;
@@ -45,6 +44,13 @@ use std::rc::Rc;
 use tracing::{instrument, trace};
 
 use super::error::FetchGraphError;
+
+mod several_types;
+
+use several_types::{
+    add_input_for_types, batched_call_hash, ensure_batched_fetch_step, joins_other_types,
+    planned_with, take_type, SeveralTypes,
+};
 
 /// Where a contextual argument reads its value from. Two arguments with the same one read the
 /// same value, so they share a variable.
@@ -87,17 +93,14 @@ pub struct FetchGraph<State> {
     pub(crate) entity_owners: HashMap<NodeIndex, NodeIndex>,
     /// For each entity call step and the type it calls (as a graph node), the type and subgraph
     /// its objects came from, as a graph node. By type, as a step can take several, see
-    /// `batched`.
+    /// `several_types`.
     pub(crate) entity_sources: HashMap<(NodeIndex, NodeIndex), NodeIndex>,
     /// For each entity call step and the type it calls (as a graph node), the entity move it was
     /// made for, so the key it calls the subgraph with.
     pub(crate) entity_moves: HashMap<(NodeIndex, NodeIndex), EdgeIndex>,
-    /// Entity calls that take the objects of several types at one spot, see `joins_other_types`.
-    /// Only kept while the graph is built.
-    pub(crate) batched: HashSet<NodeIndex>,
-    /// Steps for a field with `@requires` that took the types planned with theirs, see
-    /// `SelectionAttributes::also`. Finished like `batched` ones, so they line up with them.
-    pub(crate) requires_for_types: HashSet<NodeIndex>,
+    /// The steps that take several types, see `several_types`. Only kept while the graph is
+    /// built.
+    pub(crate) several_types: SeveralTypes,
     /// The keys of the fields the planner adds itself. Only needed while the graph is built.
     pub(crate) response_keys: ResponseKeys,
     pub(crate) context_producers: HashMap<(MergePath, (EdgeIndex, usize)), Vec<NodeIndex>>,
@@ -145,8 +148,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             entity_owners: HashMap::new(),
             entity_sources: HashMap::new(),
             entity_moves: HashMap::new(),
-            batched: HashSet::new(),
-            requires_for_types: HashSet::new(),
+            several_types: SeveralTypes::default(),
             response_keys: ResponseKeys::default(),
             context_producers: HashMap::new(),
             context_variables: HashMap::new(),
@@ -168,8 +170,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             entity_owners: HashMap::new(),
             entity_sources: HashMap::new(),
             entity_moves: HashMap::new(),
-            batched: HashSet::new(),
-            requires_for_types: HashSet::new(),
+            several_types: SeveralTypes::default(),
             response_keys: ResponseKeys::default(),
             context_producers: HashMap::new(),
             context_variables: HashMap::new(),
@@ -196,21 +197,6 @@ impl FetchGraph<SingleTypeFetchStep> {
         self.children_making(
             parent,
             entity_call_hash(subgraph_name, input_type_name, response_path, condition),
-        )
-    }
-
-    /// The children of `parent` that take the objects at `response_path`, whatever their type,
-    /// see `joins_other_types`. Newest first, and they still need checking too.
-    fn batched_entity_calls(
-        &self,
-        parent: NodeIndex,
-        subgraph_name: &SubgraphName,
-        response_path: &MergePath,
-        condition: Option<&Condition>,
-    ) -> impl Iterator<Item = NodeIndex> + '_ {
-        self.children_making(
-            parent,
-            batched_call_hash(subgraph_name, response_path, condition),
         )
     }
 
@@ -259,8 +245,7 @@ impl FetchGraph<SingleTypeFetchStep> {
                 step.flags.contains(FetchStepFlags::FETCHES_REQUIREMENTS)
                     && step.output_rewrites.is_none()
                     && !step.output.is_fetching_multiple_types()
-                    && !self.batched.contains(&index)
-                    && !self.requires_for_types.contains(&index)
+                    && !self.several_types.contains(index)
             })
             .collect();
         if candidates.is_empty() {
@@ -510,7 +495,7 @@ impl<State> FetchGraph<State> {
     /// files it under: `entity_call_hash`, or `batched_call_hash` when it takes several types.
     fn entity_call_hash_of(&self, index: NodeIndex) -> Option<u64> {
         let step = self.graph.node_weight(index)?;
-        if self.batched.contains(&index) {
+        if self.several_types.is_batched(index) {
             return Some(batched_call_hash(
                 &step.service_name,
                 &step.response_path,
@@ -962,64 +947,6 @@ fn entity_call_hash(
     hasher.finish()
 }
 
-/// Makes `step` take the objects of `type_name` too, when it doesn't yet, see
-/// `SelectionAttributes::also`: an input and an output for it.
-fn take_type(
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
-    step_index: NodeIndex,
-    type_name: &str,
-) -> Result<(), FetchGraphError> {
-    let step = fetch_graph.get_step_data(step_index)?;
-    if step.input.selections_for_definition(type_name).is_some() {
-        return Ok(());
-    }
-    let step = fetch_graph.get_step_data_mut(step_index)?;
-    step.input.add_definition(type_name);
-    step.input.add_to(
-        type_name,
-        &SelectionSet {
-            items: vec![SelectionItem::Field(FieldSelection::new_typename())],
-        },
-    )?;
-    step.output.add_definition(type_name);
-    Ok(())
-}
-
-/// The types planned with `type_name` at the end of `response_path`, see
-/// `SelectionAttributes::also`: the type condition there, when it has several and `type_name`
-/// is one of them.
-fn planned_with<'a>(response_path: &'a MergePath, type_name: &str) -> Option<&'a BTreeSet<String>> {
-    match response_path.last() {
-        Some(Segment::TypeCondition(type_names, _))
-            if type_names.len() > 1 && type_names.contains(type_name) =>
-        {
-            Some(type_names)
-        }
-        _ => None,
-    }
-}
-
-/// Adds `selection_set` to what `step` reads of `type_name`, and of the types planned with it,
-/// see `planned_with`. The step takes those types too.
-fn add_input_for_types(
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
-    step: NodeIndex,
-    response_path: &MergePath,
-    type_name: &str,
-    selection_set: &SelectionSet,
-) -> Result<(), FetchGraphError> {
-    match planned_with(response_path, type_name) {
-        Some(type_names) => {
-            for type_name in type_names {
-                take_type(fetch_graph, step, type_name)?;
-                fetch_graph.add_input(step, type_name, selection_set)?;
-            }
-            Ok(())
-        }
-        None => fetch_graph.add_input(step, type_name, selection_set),
-    }
-}
-
 /// Hashes `segments` without the types of their type conditions.
 fn hash_without_types(segments: &[Segment], hasher: &mut ahash::AHasher) {
     use std::hash::Hash;
@@ -1039,54 +966,6 @@ fn hash_without_types(segments: &[Segment], hasher: &mut ahash::AHasher) {
     }
 }
 
-/// Goes into `batched_call_hash` only.
-const BATCHED_CALL: u8 = 2;
-
-/// Like `entity_call_hash`, for an entity call that takes the objects of several types at the
-/// end of `response_path`, see `joins_other_types`. Every type there gets the same hash.
-fn batched_call_hash(
-    subgraph_name: &SubgraphName,
-    response_path: &MergePath,
-    condition: Option<&Condition>,
-) -> u64 {
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = ahash::AHasher::default();
-    subgraph_name.hash(&mut hasher);
-    condition.hash(&mut hasher);
-    if let Some((Segment::TypeCondition(_, type_condition), rest)) =
-        response_path.inner.split_last()
-    {
-        hash_without_types(rest, &mut hasher);
-        type_condition.hash(&mut hasher);
-    }
-    // so it's never the hash of a plain call to the same spot
-    BATCHED_CALL.hash(&mut hasher);
-    hasher.finish()
-}
-
-/// Whether an entity call for `input_type_name` at `response_path` can take the objects of
-/// other types there too, as one call: the path ends with a type condition on that type, like
-/// `search.@|[Book]`, and the call reads and writes that type. The calls for `Movie` and `Song`
-/// there go to the same subgraph with their own key and fields, and each type gets its own
-/// selection set, so they can't get in each other's way.
-fn joins_other_types(
-    response_path: &MergePath,
-    input_type_name: &str,
-    output_type_name: &str,
-) -> bool {
-    if input_type_name != output_type_name {
-        return false;
-    }
-    let Some((Segment::TypeCondition(type_names, _), rest)) = response_path.inner.split_last()
-    else {
-        return false;
-    };
-    type_names.contains(input_type_name)
-        // two type conditions in a row mean both, a union of them would be wrong
-        && !matches!(rest.last(), Some(Segment::TypeCondition(..)))
-}
-
 /// Whether reading `nodes` takes a fetch of its own: an entity call or a reentry somewhere in
 /// them, or a requirement.
 fn takes_another_fetch(graph: &Graph<'_>, nodes: &[Rc<QueryTreeNode>]) -> bool {
@@ -1101,17 +980,6 @@ fn takes_another_fetch(graph: &Graph<'_>, nodes: &[Rc<QueryTreeNode>]) -> bool {
             })
             || takes_another_fetch(graph, &node.children)
     })
-}
-
-/// Whether two paths are the same but for the types of the type condition at their end.
-fn same_but_last_types(left: &MergePath, right: &MergePath) -> bool {
-    match (left.inner.split_last(), right.inner.split_last()) {
-        (
-            Some((Segment::TypeCondition(_, left_condition), left_rest)),
-            Some((Segment::TypeCondition(_, right_condition), right_rest)),
-        ) => left_condition == right_condition && left_rest == right_rest,
-        _ => false,
-    }
 }
 
 /// An entity call to find or make a step for: to `subgraph_name` under `parent`, for the objects
@@ -1216,111 +1084,6 @@ fn ensure_fetch_step_for_subgraph(
             Ok(step_index)
         }
     }
-}
-
-/// The step for an entity call that can take the objects of other types at the same spot too,
-/// see `joins_other_types`. One that has the type already, when it was made for the same key,
-/// or another key that doesn't clash with it. Otherwise one at that spot that doesn't have the
-/// type yet, which takes it on. Or a new one.
-fn ensure_batched_fetch_step(
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
-    call: EntityCall<'_>,
-) -> Result<NodeIndex, FetchGraphError> {
-    let EntityCall {
-        parent: parent_fetch_step_index,
-        subgraph_name,
-        input_type_name: type_name,
-        response_path,
-        key,
-        conditions,
-        created_from_requires,
-        ..
-    } = call;
-    let condition = conditions.current;
-    let mut with_type_and_key = None;
-    let mut with_type = None;
-    let mut without_type = None;
-    for child_index in fetch_graph.batched_entity_calls(
-        parent_fetch_step_index,
-        subgraph_name,
-        response_path,
-        condition,
-    ) {
-        let step = fetch_graph.get_step_data(child_index)?;
-        if step.service_name != *subgraph_name
-            || step.condition.as_ref() != condition
-            || step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES) != created_from_requires
-            // same rule as a call for one type: planned under the same gates, the merge works
-            // out where the gates go when calls under different ones come together
-            || step.gated_by != conditions.from_root
-            || !same_but_last_types(&step.response_path, response_path)
-        {
-            continue;
-        }
-        match step.input.selections_for_definition(type_name) {
-            Some(input) => {
-                if input.contains(&key.selection_set) {
-                    with_type_and_key = Some(child_index);
-                    break;
-                }
-                if with_type.is_none() && !response_keys_conflict(input, &key.selection_set) {
-                    with_type = Some(child_index);
-                }
-            }
-            None => {
-                without_type = without_type.or(Some(child_index));
-            }
-        }
-    }
-
-    let step_index = match with_type_and_key.or(with_type).or(without_type) {
-        Some(step_index) => step_index,
-        None => {
-            let step_index = create_fetch_step_for_entity_call(
-                fetch_graph,
-                parent_fetch_step_index,
-                subgraph_name,
-                type_name,
-                type_name,
-                response_path,
-                conditions,
-                created_from_requires,
-            );
-            fetch_graph.batched.insert(step_index);
-            step_index
-        }
-    };
-    // the call's type, and the ones planned with it, see `SelectionAttributes::also`. They
-    // read the same key.
-    let type_names: Vec<&str> = match response_path.last() {
-        Some(Segment::TypeCondition(type_names, _)) => {
-            type_names.iter().map(String::as_str).collect()
-        }
-        _ => vec![type_name],
-    };
-    for type_name in type_names {
-        let new_type = fetch_graph
-            .get_step_data(step_index)?
-            .input
-            .selections_for_definition(type_name)
-            .is_none();
-        if new_type {
-            trace!(
-                "fetch step [{}] takes the {} objects at {} too",
-                step_index.index(),
-                type_name,
-                response_path
-            );
-            take_type(fetch_graph, step_index, type_name)?;
-            let step = fetch_graph.get_step_data_mut(step_index)?;
-            let last = step.response_path.len().saturating_sub(1);
-            if let Some(path) = step.response_path.with_type_added_at(last, type_name) {
-                step.response_path = path;
-            }
-        }
-        fetch_graph.add_input(step_index, type_name, &key.selection_set)?;
-    }
-    Ok(step_index)
 }
 
 fn ensure_fetch_step_for_requirement(
@@ -2610,7 +2373,7 @@ fn process_requires_field_edge(
         for type_name in type_names {
             take_type(fetch_graph, field_fetch, type_name)?;
         }
-        fetch_graph.requires_for_types.insert(field_fetch);
+        fetch_graph.several_types.add_for_requires(field_fetch);
     }
     if let Some(holder_node) = reentry.holder {
         fetch_graph
@@ -3013,7 +2776,9 @@ fn add_requirements_fetch(
         &key_input.selection_set,
     )?;
     if planned_with(response_path, type_name).is_some() {
-        fetch_graph.requires_for_types.insert(requirements_fetch);
+        fetch_graph
+            .several_types
+            .add_for_requires(requirements_fetch);
     }
     fetch_graph.connect(reentry.from, requirements_fetch);
     for &step in &reentry.key_fetched_by {
@@ -3653,10 +3418,9 @@ pub fn build_fetch_graph_from_query_tree(
     // fine to unwrap as we have already checked the length
     fetch_graph.root_index = Some(*root_indexes.first().unwrap());
     fetch_graph.drop_covered_requirement_steps(supergraph);
-    let mut batched = std::mem::take(&mut fetch_graph.batched);
-    batched.extend(std::mem::take(&mut fetch_graph.requires_for_types));
+    let several_types = std::mem::take(&mut fetch_graph.several_types);
     let mut fetch_graph = fetch_graph.to_multi_type();
-    fetch_graph.finish_batched_steps(batched, supergraph)?;
+    fetch_graph.finish_batched_steps(several_types.into_steps(), supergraph)?;
     fetch_graph.optimize(supergraph, options, cancellation_token)?;
     fetch_graph.collect_variable_usages()?;
 
