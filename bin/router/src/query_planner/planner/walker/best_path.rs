@@ -14,30 +14,13 @@ pub struct BestPathTracker<'graph> {
     subgraph_to_best_paths: BTreeMap<&'graph str, (Vec<OperationPath<'graph>>, u64)>,
 }
 
-#[cfg(test)]
-thread_local! {
-    /// The plan oracle test sets this, so the walker keeps every path it finds, not only the
-    /// best ones, and the oracle can try every plan they make.
-    pub(crate) static KEEP_EVERY_PATH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-fn keep_every_path() -> bool {
-    #[cfg(test)]
-    return KEEP_EVERY_PATH.get();
-    #[cfg(not(test))]
-    false
-}
-
 /// How much more than a leaf's cheapest path a path can cost and still be a candidate: the
 /// search can take a pricier path when the plan makes its trips anyway.
 const LEAF_PATH_WINDOW: u64 = 2000;
 
 /// The paths to a leaf the search chooses from: the cheapest, and the best one to each other
-/// subgraph within `LEAF_PATH_WINDOW` of it. Every path for the plan oracle.
+/// subgraph within `LEAF_PATH_WINDOW` of it.
 pub fn find_leaf_paths<'graph>(paths: Vec<OperationPath<'graph>>) -> Vec<OperationPath<'graph>> {
-    if keep_every_path() {
-        return paths;
-    }
     let Some(cheapest) = paths.iter().map(|path| path.cost).min() else {
         return paths;
     };
@@ -116,9 +99,6 @@ impl<'graph> BestPathTracker<'graph> {
             .expect("Graph ID not found in node");
 
         match self.subgraph_to_best_paths.entry(tail_graph_id) {
-            Entry::Occupied(mut entry) if keep_every_path() => {
-                entry.get_mut().0.push(path.clone());
-            }
             Entry::Occupied(mut entry) => {
                 let (existing_paths, existing_cost) = entry.get_mut();
 

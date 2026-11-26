@@ -398,62 +398,6 @@ fn most_by<R: Ord>(indexes: impl Iterator<Item = usize>, rank: impl Fn(usize) ->
     tied
 }
 
-/// Every plan the leaves' paths make, one per pick of a path for each leaf, handed to `each`.
-/// For the plan oracle test, to check what the passes above pick against all of them.
-/// `None` when there are more than `limit` of them, otherwise how many there were.
-#[cfg(test)]
-pub(crate) fn every_combination(
-    graph: &Graph<'_>,
-    operation: ResolvedOperation,
-    limit: usize,
-    mut each: impl FnMut(QueryTree),
-) -> Result<Option<usize>, QueryPlanError> {
-    let leaves = Leaves::of(operation);
-    let base = BasePlan::merge(graph, leaves.singles, &CancellationToken::new())?;
-    let groups = leaves
-        .groups
-        .into_iter()
-        .map(|paths| Candidate::alternatives(graph, paths))
-        .collect::<Result<Vec<_>, _>>()?;
-    let Some(count) = groups.iter().try_fold(1usize, |count, alternatives| {
-        count
-            .checked_mul(alternatives.len())
-            .filter(|count| *count <= limit)
-    }) else {
-        return Ok(None);
-    };
-
-    // counts up like an odometer, one digit per leaf
-    let mut picks = vec![0; groups.len()];
-    loop {
-        let mut plan = base.tree.clone();
-        let merged = groups.iter().zip(&picks).all(|(alternatives, &pick)| {
-            let candidate = &alternatives[pick];
-            match plan.as_mut() {
-                Some(tree) => candidate
-                    .merge_into(graph, Rc::make_mut(&mut tree.root))
-                    .is_ok(),
-                None => candidate.tree(graph).map(|tree| plan = Some(tree)).is_ok(),
-            }
-        });
-        if let (true, Some(tree)) = (merged, plan) {
-            each(tree);
-        }
-        let mut digit = 0;
-        loop {
-            if digit == picks.len() {
-                return Ok(Some(count));
-            }
-            picks[digit] += 1;
-            if picks[digit] < groups[digit].len() {
-                break;
-            }
-            picks[digit] = 0;
-            digit += 1;
-        }
-    }
-}
-
 /// The ways to get each leaf of the query.
 struct Leaves<'graph> {
     singles: Vec<PathAndPosition<'graph>>,
@@ -720,8 +664,7 @@ impl Fetches {
 
     /// The waves and fetches adding `candidate` adds to the plan.
     // ponytail: depth stands in for the batching the fetch graph does, it's only exact when
-    // calls at the same depth don't depend on each other. Checked against real plans by the
-    // plan oracle test.
+    // calls at the same depth don't depend on each other.
     /// A path's fetches are all at its mutation field's position.
     fn added_by(&self, candidate: &Candidate<'_>) -> (u32, u64) {
         let fetches = candidate.crossings

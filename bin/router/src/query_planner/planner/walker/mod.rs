@@ -5,9 +5,6 @@ pub(crate) mod path;
 pub(crate) mod pathfinder;
 pub(crate) mod utils;
 
-#[cfg(test)]
-pub(crate) use best_path::KEEP_EVERY_PATH;
-
 use std::{borrow::Cow, collections::VecDeque, rc::Rc};
 
 use crate::query_planner::{
