@@ -298,6 +298,23 @@ impl<'graph> OperationPath<'graph> {
             .map_or(self.root_node, |segment| segment.tail_node)
     }
 
+    /// The object type the path got down to since its last field, with `🔮 T` or `🔎 T`. Entity
+    /// moves keep it, they're the same object in another subgraph. Most paths end with a field,
+    /// so this usually looks at one segment.
+    pub fn narrowed_to(&self, graph: &'graph Graph<'graph>) -> Option<&'graph str> {
+        for segment in self.segments_rev() {
+            match graph.edge(segment.edge_index).ok()? {
+                Edge::AbstractMove(type_name) => return Some(type_name),
+                Edge::InterfaceObjectTypeMove(type_move) => {
+                    return Some(type_move.object_type_name)
+                }
+                Edge::EntityMove(_) | Edge::Selfie(_) => continue,
+                _ => return None,
+            }
+        }
+        None
+    }
+
     pub fn before_segment(&self, graph: &'graph Graph, segment: &PathSegment) -> Self {
         let mut prefix = Self::new(self.root_node, segment.prev.clone());
         let tail = graph.node(prefix.tail()).expect("path node exists");

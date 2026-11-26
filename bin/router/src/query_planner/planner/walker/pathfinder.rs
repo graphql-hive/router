@@ -115,7 +115,8 @@ pub struct SearchCache<'graph> {
     /// The indirect searches done so far, by the node they started from, the field and its
     /// arguments, so aliases of a field with other arguments don't scan each other's. A field
     /// gets searched for from the same node many times in one operation, like under every type
-    /// of a union. What a search finds doesn't depend on how the path got to that node: the
+    /// of a union. What a search finds doesn't depend on how the path got to that node, other
+    /// than the union scope and the type it got down to (see `OperationPath::narrowed_to`): the
     /// requirements are resolved from there on. So the steps it found go on from the next path
     /// too, without searching again.
     searches: RefCell<SearchesByStart<'graph>>,
@@ -126,6 +127,7 @@ type SearchesByStart<'graph> =
 
 struct IndirectSearch<'graph> {
     union_context: Option<UnionContext<'graph>>,
+    narrowed_to: Option<&'graph str>,
     field: &'graph FieldSelection,
     target_subgraph_ids: Option<Box<[u16]>>,
     found: Rc<[Vec<PathStep>]>,
@@ -161,12 +163,14 @@ impl<'graph> SearchCache<'graph> {
             return search();
         }
         let key = (path.tail(), field.name.as_str(), field.arguments());
+        let narrowed_to = path.narrowed_to(graph);
         let found = self.searches.borrow().get(&key).and_then(|searches| {
             searches
                 .iter()
                 .find(|search| {
                     // the name and arguments are in the key already
                     search.union_context == path.union_context
+                        && search.narrowed_to == narrowed_to
                         && search.target_subgraph_ids.as_deref() == target_subgraph_ids
                         && same_selections(&search.field.selections, &field.selections)
                 })
@@ -192,6 +196,7 @@ impl<'graph> SearchCache<'graph> {
                 .or_default()
                 .push(IndirectSearch {
                     union_context: path.union_context.clone(),
+                    narrowed_to,
                     field,
                     target_subgraph_ids: target_subgraph_ids.map(Box::from),
                     found: found.into(),
@@ -407,7 +412,8 @@ impl<'graph> PathSearch<'graph> {
             // only the first item is the path the search started from
             let first_step_moves = moves.take();
 
-            if !seen.insert((path.tail(), target_key)) {
+            // a field found at an interface depends on the type the path got down to too
+            if !seen.insert((path.tail(), target_key, path.narrowed_to(graph))) {
                 trace!(
                     "Ignoring. Already searched this path tail for this target: {}",
                     path.pretty_print(graph)
@@ -724,7 +730,15 @@ where
             Box::new(std::iter::empty())
         }
         NavigationTarget::Field { field, .. } => {
-            Box::new(graph.field_edges_from(path_tail_index, &field.name))
+            let edges = graph.field_edges_from(path_tail_index, &field.name);
+            // A path that knows its object type, but is at an interface again, after `🔎 T` and
+            // a key move, can only read a field there that `T` resolves in that subgraph.
+            match path.narrowed_to(graph) {
+                Some(type_name) => Box::new(edges.filter(move |_| {
+                    graph.field_resolvable_for(path_tail_index, type_name, &field.name)
+                })),
+                None => Box::new(edges),
+            }
         }
         NavigationTarget::ConcreteType(type_name, _, _) => Box::new(
             graph

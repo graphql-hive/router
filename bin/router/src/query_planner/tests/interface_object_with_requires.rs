@@ -901,3 +901,83 @@ fn conditional_type_condition_inside_a_conditional_fragment() -> Result<(), Box<
 
     Ok(())
 }
+
+#[test]
+fn interface_object_requires_field_external_in_one_member() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          accounts {
+            fullTitle
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-object-requires-external-member-field.supergraph.graphql",
+        document,
+    )?;
+
+    // `fourth` needs `Account.title`. `first` has the field on the interface, but `Admin.title`
+    // is `@external` there, so it can't give it for an `Admin`. That one comes from `third`.
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "first") {
+          {
+            accounts {
+              __typename
+              id
+              ... on Admin {
+                __typename
+                id
+              }
+              ... on Moderator {
+                title
+              }
+            }
+          }
+        },
+        Flatten(path: "accounts.@|[Admin]") {
+          Fetch(service: "third") {
+            {
+              ... on Admin {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Admin {
+                title
+              }
+            }
+          },
+        },
+        Flatten(path: "accounts.@") {
+          Fetch(service: "fourth") {
+            {
+              ... on Account {
+                __typename
+                id
+                ... on Admin {
+                  title
+                }
+                ... on Moderator {
+                  title
+                }
+              }
+            } =>
+            {
+              ... on Account {
+                fullTitle
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
