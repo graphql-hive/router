@@ -2986,3 +2986,122 @@ fn merged_entity_call_keeps_the_condition_above_it() -> Result<(), Box<dyn Error
 
     Ok(())
 }
+
+/// `u` comes in either way, so `x` and `y` share a call to `b`. But `y` needs `w` from `c`, and
+/// that's only fetched when `$skip` is false. The shared call can't send `w` then, it'd go out as
+/// `null` for a field nobody asked for, so `y` gets its own call.
+#[test]
+fn merged_entity_call_reads_only_what_both_sides_have() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($skip: Boolean!, $include: Boolean!) {
+          t {
+            u { x @include(if: $include) }
+            u @skip(if: $skip) { y @include(if: $include) }
+          }
+        }
+      "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/skipped-branch-requires.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            t {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "t") {
+          Fetch(service: "l") {
+            {
+              ... on T {
+                __typename
+                id
+              }
+            } =>
+            ($skip:Boolean!) {
+              ... on T {
+                ... on T @skip(if: $skip) {
+                  u {
+                    ...a
+                  }
+                }
+                u {
+                  ...a
+                }
+              }
+            }
+            fragment a on U {
+              __typename
+              id
+            }
+          },
+        },
+        Flatten(path: "t.u") {
+          Fetch(service: "c", if: $include && !$skip) {
+            {
+              ... on U {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on U {
+                w
+              }
+            }
+          },
+        },
+        BatchFetch(service: "b") {
+          {
+            _e0(if: $include && !$skip) {
+              paths: [
+                "t.u"
+              ]
+              {
+                ... on U {
+                  __typename
+                  w
+                  id
+                }
+              }
+            }
+            _e1(if: $include) {
+              paths: [
+                "t.u"
+              ]
+              {
+                ... on U {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on U {
+                y
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on U {
+                x
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}

@@ -402,19 +402,22 @@ impl FetchStepData<MultiTypeFetchStep> {
         })
     }
 
-    /// The gates we counted on a step above for that `other` doesn't have. Our own `condition`
-    /// and the ones on our path don't count, the merged call still has those.
+    /// The gates we count on a step above for: not our own `condition` and not the ones on our
+    /// path, the call has those itself.
+    fn outer_gates(&self) -> impl Iterator<Item = &Condition> {
+        self.gated_by.iter().filter(|gate| {
+            self.condition.as_ref() != Some(*gate)
+                && !self
+                    .response_path
+                    .conditions()
+                    .any(|on_path| on_path == *gate)
+        })
+    }
+
+    /// Our outer gates that `other` doesn't have. The merged call doesn't count on them anymore.
     fn gates_not_shared_with(&self, other: &Self) -> Vec<Condition> {
-        self.gated_by
-            .iter()
-            .filter(|gate| {
-                !other.gated_by.contains(gate)
-                    && self.condition.as_ref() != Some(*gate)
-                    && !self
-                        .response_path
-                        .conditions()
-                        .any(|on_path| on_path == *gate)
-            })
+        self.outer_gates()
+            .filter(|gate| !other.gated_by.contains(gate))
             .cloned()
             .collect()
     }
@@ -571,8 +574,9 @@ impl FetchStepData<MultiTypeFetchStep> {
         !self.inputs_hold_when_merged(other)
     }
 
-    /// The two calls don't run under the same `@include`/`@skip`, on the call, its path or its
-    /// input.
+    /// The two calls don't run under the same `@include`/`@skip`, on the call, its path, its
+    /// input or the steps above it. An outer gate counts too: what was fetched for a call under
+    /// `first @skip(if: $s)` isn't there when `$s` is true, even when the other call runs.
     fn conditions_differ(&self, other: &Self) -> bool {
         self.condition != other.condition
             || !self
@@ -581,6 +585,8 @@ impl FetchStepData<MultiTypeFetchStep> {
                 .eq(other.response_path.conditions())
             || self.flags.contains(FetchStepFlags::CONDITIONAL_INPUT)
             || other.flags.contains(FetchStepFlags::CONDITIONAL_INPUT)
+            || !self.gates_not_shared_with(other).is_empty()
+            || !other.gates_not_shared_with(self).is_empty()
     }
 
     /// This call always runs and its input is always there.
@@ -588,6 +594,7 @@ impl FetchStepData<MultiTypeFetchStep> {
         self.condition.is_none()
             && self.response_path.conditions().next().is_none()
             && !self.flags.contains(FetchStepFlags::CONDITIONAL_INPUT)
+            && self.outer_gates().next().is_none()
     }
 
     /// Is our input there every time the merged call runs? Yes if we always run. Otherwise
