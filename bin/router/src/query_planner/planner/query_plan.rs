@@ -80,6 +80,7 @@ pub fn build_query_plan_from_fetch_graph(
             &fetch_graph,
             root_index,
             options.entity_reuse,
+            cancellation_token,
         )?)
     } else {
         None

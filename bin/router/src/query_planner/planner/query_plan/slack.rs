@@ -11,7 +11,7 @@
 //! for, and skip the subgraph. Those two never go in one request, and the earlier one never
 //! moves to where the later one runs: there'd be nothing to copy from yet.
 
-use std::{cmp::Reverse, collections::BTreeSet};
+use std::{cmp::Reverse, collections::BTreeSet, num::NonZeroU32};
 
 use ahash::{HashMap, HashMapExt};
 use petgraph::{
@@ -28,6 +28,7 @@ use crate::query_planner::{
         fetch::{fetch_graph::FetchGraph, state::MultiTypeFetchStep},
     },
     state::supergraph_state::OperationKind,
+    utils::cancellation::{CancelTick, CancellationError, CancellationToken},
 };
 
 use super::entity_reuse::{covers, wanted};
@@ -40,10 +41,11 @@ pub(super) fn schedule_entity_batches(
     fetch_graph: &MultiTypeFetchGraph,
     root: NodeIndex,
     entity_reuse: bool,
+    cancellation_token: &CancellationToken,
 ) -> Result<Vec<usize>, QueryPlanError> {
     let input = SchedulingInput::new(fetch_graph, root)?;
     let baseline = Schedule::new(&input);
-    let schedule = greedy_batch_schedule(&input, &baseline, entity_reuse);
+    let schedule = greedy_batch_schedule(&input, &baseline, entity_reuse, cancellation_token)?;
 
     // a move also moves what waits for it, and that can take calls of other subgraphs out of
     // requests they shared. Those usually get merged again by later moves, but when the moves
@@ -62,8 +64,12 @@ fn greedy_batch_schedule(
     input: &SchedulingInput<'_>,
     baseline: &Schedule,
     entity_reuse: bool,
-) -> Schedule {
+    cancellation_token: &CancellationToken,
+) -> Result<Schedule, CancellationError> {
     let mut reuse = ReuseIndex::new(input, entity_reuse);
+    // ticks once per call looked at and once per candidate compared, so a scan of thousands of
+    // calls still stops soon after the deadline. The clock is read every 16 ticks.
+    let mut tick = cancellation_token.throttle_check(NonZeroU32::new(16).unwrap());
     let mut schedule = baseline.clone();
     for steps in input
         .movable_by_subgraph
@@ -71,12 +77,12 @@ fn greedy_batch_schedule(
         .filter(|steps| steps.len() > 1)
     {
         let mut candidates = BatchCandidates::new(steps, &reuse, &schedule);
-        while let Some(batch_move) = candidates.next_move(&schedule, &mut reuse) {
+        while let Some(batch_move) = candidates.next_move(&schedule, &mut reuse, &mut tick)? {
             schedule.apply_move(input, &batch_move);
             candidates.refresh(&schedule);
         }
     }
-    schedule
+    Ok(schedule)
 }
 
 /// The steps of a fetch graph, and the entity calls that can move.
@@ -364,16 +370,22 @@ impl BatchCandidates {
     /// The next calls to move: the call left with the earliest deadline, and the ready calls that
     /// can share a request with it, moved to the earliest wave they can all run in. Calls that
     /// would run alone, or share a request anyway, stay where they are.
-    fn next_move(&mut self, schedule: &Schedule, reuse: &mut ReuseIndex) -> Option<BatchMove> {
+    fn next_move(
+        &mut self,
+        schedule: &Schedule,
+        reuse: &mut ReuseIndex,
+        tick: &mut CancelTick,
+    ) -> Result<Option<BatchMove>, CancellationError> {
         let earliest = |call: &Candidate| schedule.earliest(call.step);
         // the earliest wave all of `calls` can run in
         let earliest_shared = |calls: &[Candidate]| calls.iter().map(earliest).fold(0, usize::max);
         while let Some(first) = self.next_by_deadline() {
+            tick.bail_if_cancelled()?;
             // calls are taken by deadline, so every call left has a deadline at `deadline` or
             // later. Whether one can run in that wave only depends on its earliest wave then.
             let deadline = schedule.latest(first.step);
             self.advance_to_deadline(deadline, schedule);
-            let mut compatible = self.compatible_candidates(first, reuse);
+            let mut compatible = self.compatible_candidates(first, reuse, tick)?;
             self.consume(first);
             if compatible.len() < 2 {
                 continue;
@@ -396,12 +408,12 @@ impl BatchCandidates {
             if compatible.iter().all(|call| earliest(call) == target_wave) {
                 continue;
             }
-            return Some(BatchMove {
+            return Ok(Some(BatchMove {
                 steps: compatible.iter().map(|call| call.step).collect(),
                 wave: target_wave,
-            });
+            }));
         }
-        None
+        Ok(None)
     }
 
     /// The call left with the earliest deadline.
@@ -431,7 +443,12 @@ impl BatchCandidates {
     /// `first` and the ready calls that can go in one request with it, in plan order. Never a
     /// call and one that could copy from it. Calls of one selection group conflict, so only the
     /// first ready call of each group has a chance.
-    fn compatible_candidates(&self, first: Candidate, reuse: &mut ReuseIndex) -> Vec<Candidate> {
+    fn compatible_candidates(
+        &self,
+        first: Candidate,
+        reuse: &mut ReuseIndex,
+        tick: &mut CancelTick,
+    ) -> Result<Vec<Candidate>, CancellationError> {
         let heads = self
             .ready_by_group
             .values()
@@ -442,6 +459,7 @@ impl BatchCandidates {
         let mut compatible = vec![first];
         let mut joined: Vec<SelectionGroupId> = first.group.into_iter().collect();
         for call in candidates.into_iter().filter(|&call| call != first) {
+            tick.bail_if_cancelled()?;
             if let Some(group) = call.group {
                 if joined.iter().any(|&other| reuse.conflict(group, other)) {
                     continue;
@@ -450,7 +468,7 @@ impl BatchCandidates {
             }
             compatible.push(call);
         }
-        compatible
+        Ok(compatible)
     }
 
     /// Does a call that could copy from `call` run after `from` and by `to`? Moving `call` from
@@ -508,8 +526,8 @@ mod tests {
     };
 
     use super::{
-        greedy_batch_schedule, schedule_entity_batches, MultiTypeFetchGraph, Schedule,
-        SchedulingInput,
+        greedy_batch_schedule, schedule_entity_batches, CancellationError, CancellationToken,
+        MultiTypeFetchGraph, QueryPlanError, Schedule, SchedulingInput,
     };
 
     /// Builds a fetch graph from named entity calls.
@@ -627,7 +645,8 @@ mod tests {
         entity_reuse: bool,
     ) -> String {
         let (graph, root, calls) = call_graph(calls, operation_kind);
-        let waves = schedule_entity_batches(&graph, root, entity_reuse).unwrap();
+        let waves =
+            schedule_entity_batches(&graph, root, entity_reuse, &CancellationToken::new()).unwrap();
         format_requests(&calls, &waves)
     }
 
@@ -638,9 +657,11 @@ mod tests {
         let (graph, root, calls) = call_graph(calls, OperationKind::Query);
         let input = SchedulingInput::new(&graph, root).unwrap();
         let baseline = Schedule::new(&input);
-        let moved = greedy_batch_schedule(&input, &baseline, false);
+        let moved =
+            greedy_batch_schedule(&input, &baseline, false, &CancellationToken::new()).unwrap();
         assert_ne!(moved.earliest, baseline.earliest);
-        let result = schedule_entity_batches(&graph, root, false).unwrap();
+        let result =
+            schedule_entity_batches(&graph, root, false, &CancellationToken::new()).unwrap();
         assert_eq!(result, baseline.earliest);
 
         let show = |schedule: &Schedule| {
@@ -910,6 +931,24 @@ mod tests {
         x
         a2   after x
         ");
+    }
+
+    /// A cancelled plan stops the scheduler too, also in the middle of comparing thousands of
+    /// calls that each ask for something else.
+    #[test]
+    fn stops_when_planning_is_cancelled() {
+        let mut calls: String = (1..=3000).map(|i| format!("s{i} {{f{i}}}\n")).collect();
+        calls.push_str("x\ns0 {g} after x\n");
+        let (graph, root, _) = call_graph(&calls, OperationKind::Query);
+        let token = CancellationToken::new();
+        token.cancel();
+        let result = schedule_entity_batches(&graph, root, true, &token);
+        assert!(matches!(
+            result,
+            Err(QueryPlanError::CancellationError(
+                CancellationError::Cancelled
+            ))
+        ));
     }
 
     /// With entity reuse on, calls asking for the same thing could copy from each other, so none
