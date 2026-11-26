@@ -2839,3 +2839,150 @@ fn abstract_field_selected_again_under_a_condition_in_an_entity_call_asks_for_it
 
     Ok(())
 }
+
+/// `first` also comes in without `@skip`, so the `Product` objects are there either way and the
+/// `price` call for `a` merges into the one for `price`. The merged call still has to keep `a`
+/// under `$skip`, it can't count on the step above for it anymore.
+#[test]
+fn merged_entity_call_keeps_the_condition_above_it() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($skip: Boolean!, $include: Boolean!) {
+          topProducts {
+            first { price { price } }
+            first @skip(if: $skip) { price @include(if: $include) { a: price } }
+          }
+        }
+      "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/products-list-first-only-in-list.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            topProducts {
+              __typename
+              products {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "topProducts.products.@") {
+          Fetch(service: "link") {
+            {
+              ... on Product {
+                __typename
+                id
+              }
+            } =>
+            ($skip:Boolean!) {
+              ... on Product {
+                ... on Product @skip(if: $skip) {
+                  pid
+                }
+                pid
+              }
+            }
+          },
+        },
+        Flatten(path: "topProducts") {
+          Fetch(service: "list") {
+            {
+              ... on ProductList {
+                __typename
+                products {
+                  id
+                  pid
+                }
+              }
+            } =>
+            ($skip:Boolean!) {
+              ... on ProductList {
+                ... on ProductList @skip(if: $skip) {
+                  first {
+                    ...a
+                  }
+                }
+                first {
+                  ...a
+                }
+              }
+            }
+            fragment a on Product {
+              __typename
+              id
+              pid
+            }
+          },
+        },
+        Flatten(path: "topProducts.first") {
+          Fetch(service: "products") {
+            {
+              ... on Product {
+                __typename
+                id
+              }
+            } =>
+            ($include:Boolean!,$skip:Boolean!) {
+              ... on Product {
+                category {
+                  ...a
+                }
+                ... on Product @skip(if: $skip) {
+                  ... on Product @include(if: $include) {
+                    category {
+                      ...a
+                    }
+                  }
+                }
+              }
+            }
+            fragment a on Category {
+              tag
+              id
+            }
+          },
+        },
+        Flatten(path: "topProducts.first") {
+          Fetch(service: "price") {
+            {
+              ... on Product {
+                __typename
+                id
+                pid
+                category {
+                  id
+                  tag
+                }
+              }
+            } =>
+            ($include:Boolean!,$skip:Boolean!) {
+              ... on Product {
+                price {
+                  price
+                }
+                ... on Product @skip(if: $skip) {
+                  ... on Product @include(if: $include) {
+                    price {
+                      a: price
+                    }
+                  }
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}

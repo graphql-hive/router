@@ -47,7 +47,8 @@ pub struct FetchStepData<State> {
     /// The step only runs when all of these hold, top first. A step under
     /// `orders @include(if: $a) { ... on Order @include(if: $b) { name } }` only has `$b` as its
     /// `condition`, it relies on the `orders` step for `$a`, but it's gated by both. Merged with
-    /// a step of another branch, only the conditions both have stay.
+    /// a step of another branch, only the conditions both have stay, the rest go on each side's
+    /// own fields.
     pub gated_by: Vec<Condition>,
     pub variable_usages: Option<BTreeSet<String>>,
     pub variable_definitions: Option<Vec<VariableDefinition>>,
@@ -222,17 +223,21 @@ impl FetchStepData<MultiTypeFetchStep> {
 
 impl FetchStepData<SingleTypeFetchStep> {
     /// Whether an entity call to this subgraph, type, path and condition could reuse this step.
+    /// It also has to be planned under the same gates: the step counts on the steps above for
+    /// them, and when calls under different gates merge, the merge works out where they go.
     pub fn matches_entity_call(
         &self,
         subgraph_name: &SubgraphName,
         input_type_name: &str,
         response_path: &MergePath,
         condition: Option<&Condition>,
+        gated_by: &[Condition],
     ) -> bool {
         self.service_name == *subgraph_name
             && self.input.definition_name() == input_type_name
             && self.response_path == *response_path
             && self.condition.as_ref() == condition
+            && self.gated_by == gated_by
     }
 
     pub fn into_multi_type(self) -> FetchStepData<MultiTypeFetchStep> {

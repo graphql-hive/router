@@ -11,7 +11,7 @@ use tracing::{instrument, trace};
 
 use crate::query_planner::{
     ast::{
-        merge_path::{MergePath, Segment},
+        merge_path::{Condition, MergePath, Segment},
         selection_set::find_selection_set_by_path,
     },
     planner::fetch::{
@@ -108,6 +108,16 @@ pub(crate) fn perform_fetch_step_merge(
         source_index.index(),
     );
 
+    // the merged call only keeps the gates both had, so before they go, see which ones each
+    // side had on its own
+    let (target_gates, source_gates) = if target.is_entity_call() && source.is_entity_call() {
+        (
+            target.gates_not_shared_with(source),
+            source.gates_not_shared_with(target),
+        )
+    } else {
+        Default::default()
+    };
     target.merge_context_metadata(source);
     let source_id = source.id;
     let target_id = target.id;
@@ -126,6 +136,16 @@ pub(crate) fn perform_fetch_step_merge(
     let source_condition_merged = merge_source_condition_into_non_entity_target(target, source)?;
     if !source_condition_merged {
         target.scope_fetch_conditions_before_merge(source);
+    }
+    // A call counts on the step above for its outer gates: under `first @skip(if: $s) { .. }`
+    // no `first` comes in when `$s` is true, so there's nothing to call for. Merged with a call
+    // for the same objects that come in without `$s`, the objects are there anyway, so `$s`
+    // goes on the call's own fields. Innermost first, so the outer gate ends up outside.
+    for gate in target_gates.into_iter().rev() {
+        target.output.wrap_with_condition(gate);
+    }
+    for gate in source_gates.into_iter().rev() {
+        source.output.wrap_with_condition(gate);
     }
 
     let source_fetch_path = source.response_path.slice_from(target.response_path.len());
@@ -380,6 +400,23 @@ impl FetchStepData<MultiTypeFetchStep> {
                     >= levels
             })
         })
+    }
+
+    /// The gates we counted on a step above for that `other` doesn't have. Our own `condition`
+    /// and the ones on our path don't count, the merged call still has those.
+    fn gates_not_shared_with(&self, other: &Self) -> Vec<Condition> {
+        self.gated_by
+            .iter()
+            .filter(|gate| {
+                !other.gated_by.contains(gate)
+                    && self.condition.as_ref() != Some(*gate)
+                    && !self
+                        .response_path
+                        .conditions()
+                        .any(|on_path| on_path == *gate)
+            })
+            .cloned()
+            .collect()
     }
 
     pub(crate) fn merge_context_metadata(&mut self, other: &mut Self) {
