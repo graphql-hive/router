@@ -2100,6 +2100,7 @@ mod tests {
                             PathSegment::List,
                         ])],
                         copy: Default::default(),
+                        trie: Default::default(),
                     }));
                     fetch.reuse_waits = reuse_waits.iter().copied().map(FetchId).collect();
                     fetch.depends_on = std::iter::once(FetchId(10))

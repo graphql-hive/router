@@ -1,7 +1,7 @@
 use std::{
     collections::hash_map::Entry,
     hash::{Hash, Hasher},
-    sync::Arc,
+    ops::Range,
 };
 
 use ahash::{HashMap as AHashMap, HashMapExt};
@@ -16,16 +16,14 @@ use crate::{
             graphql_error::GraphQLErrorPathSegment, subgraph_response::SubgraphResponse,
             value::Value,
         },
-        utils::{prehashed_map::PrehashedMap, traverse::traverse_and_callback},
+        utils::{prehashed_map::PrehashedMap, traverse::PathTrie},
     },
     query_planner::{
         ast::{
             operation::{ContextAliasTemplate, SubgraphFetchOperation},
             requires::RequiresSelectionSet,
         },
-        planner::plan_nodes::{
-            EntityReuse, FetchContext, FetchNodePathSegment, FetchRewrite, ResponsePathRef,
-        },
+        planner::plan_nodes::{EntityReuse, FetchContext, FetchNodePathSegment, FetchRewrite},
         state::entity_keys::KeysByType,
     },
 };
@@ -38,9 +36,25 @@ pub enum EntityRef {
     Copied { index: u32 },
 }
 
-/// The [`EntityRef`] of each target on a path, in walk order. `None` when the target sends
-/// nothing (null, or not projected).
-pub(super) type TargetEntities = Arc<Vec<Option<EntityRef>>>;
+/// Which entity goes into each target at the ends of a fetch's paths, path by path and in walk
+/// order. `None` when the target sends nothing (null, or not projected).
+#[derive(Debug, Default)]
+pub struct TargetEntities {
+    targets: Vec<Option<EntityRef>>,
+    /// Where each path's targets are in `targets`
+    paths: Vec<Range<usize>>,
+}
+
+impl TargetEntities {
+    pub fn path(&self, path: usize) -> &[Option<EntityRef>] {
+        &self.targets[self.paths[path].clone()]
+    }
+
+    /// Every path's targets, one after another
+    pub fn iter(&self) -> impl Iterator<Item = &Option<EntityRef>> {
+        self.targets.iter()
+    }
+}
 
 pub(super) struct ContextGroup<'a> {
     pub variables: Vec<(&'a str, Vec<u8>)>,
@@ -240,33 +254,107 @@ impl<'a, 'd, 'v> ContextGroups<'a, 'd, 'v> {
     }
 }
 
+/// The values at the end of one path, each with the nearest objects above it, which context
+/// values are read from.
+#[derive(Default)]
+pub(super) struct PathValues<'d, 'v> {
+    /// Each value, with where its objects end in `objects`
+    values: Vec<(&'d Value<'v>, usize)>,
+    objects: Vec<&'d Value<'v>>,
+}
+
+/// How many objects above an entity its context values may be read from
+pub(super) fn context_depth(context: &Option<Box<FetchContext>>) -> usize {
+    FetchContext::rewrites(context)
+        .unwrap_or_default()
+        .iter()
+        .map(|rewrite| {
+            rewrite
+                .path
+                .iter()
+                .take_while(|s| matches!(s, FetchNodePathSegment::Parent))
+                .count()
+        })
+        .max()
+        .unwrap_or_default()
+}
+
+/// Walks all the paths of `trie` at once and keeps the values at their ends, by end node. Each
+/// value keeps up to `depth` of the objects above it, see [`context_depth`].
+pub(super) fn collect_path_values<'d, 'v>(
+    trie: &PathTrie,
+    data: &'d Value<'v>,
+    possible_types: &PossibleTypes,
+    depth: usize,
+) -> Vec<PathValues<'d, 'v>> {
+    let mut by_node: Vec<PathValues> = std::iter::repeat_with(PathValues::default)
+        .take(trie.len())
+        .collect();
+    trie.walk(data, possible_types, &mut |node, value, objects| {
+        let path_values = &mut by_node[node];
+        path_values
+            .objects
+            .extend_from_slice(&objects[objects.len().saturating_sub(depth)..]);
+        path_values.values.push((value, path_values.objects.len()));
+    });
+    by_node
+}
+
 /// What [`collect_context_entities`] found: the representations to send per context group, the
-/// entity of each target per path, and the copies of entities already in the response.
+/// entities of the targets, and the copies of entities already in the response.
 pub(super) struct Collected<'a, 'v> {
     pub groups: Vec<ContextGroup<'a>>,
-    pub targets: Vec<TargetEntities>,
+    pub targets: TargetEntities,
     pub copies: Vec<Value<'v>>,
 }
 
-/// Walks every flatten path, deduplicates the entities by hash and projects their
+/// Where a fetch's entities are: at the end of the `paths` of `trie` in `data`
+pub(super) struct EntityPaths<'p, 'd, 'v> {
+    pub data: &'d Value<'v>,
+    pub trie: &'p PathTrie,
+    pub paths: Range<usize>,
+    /// The values at the ends of the paths of `trie`, see [`collect_path_values`]. Without them
+    /// `trie` has to have one path, and it's walked.
+    pub path_values: Option<&'p [PathValues<'d, 'v>]>,
+}
+
+/// What a fetch sends for each entity, and where it may copy one from instead. `context` lives as
+/// long as the groups that come out, the rest only as long as the call.
+pub(super) struct EntityInputs<'a, 'f> {
+    pub requires: &'f RequiresSelectionSet,
+    pub input_rewrites: Option<&'f [FetchRewrite]>,
+    pub context: &'a Option<Box<FetchContext>>,
+    pub subgraph_keys: Option<&'f KeysByType>,
+    pub reuse: Option<&'f EntityReuse>,
+}
+
+/// Goes over the entities at `at`, deduplicates them by hash and projects their
 /// representations. Entities are grouped by the tuple of their context values (one request per
 /// group), without context variables there is at most one group. With `reuse`, entities already
 /// in the response are copied instead of sent.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn collect_context_entities<'a, 'd, 'v>(
-    data: &'d Value<'v>,
-    paths: impl IntoIterator<Item = ResponsePathRef<'a>>,
-    requires: &RequiresSelectionSet,
-    input_rewrites: Option<&[FetchRewrite]>,
-    context: &'a Option<Box<FetchContext>>,
+    at: EntityPaths<'_, 'd, 'v>,
+    inputs: EntityInputs<'a, '_>,
     possible_types: &PossibleTypes,
-    subgraph_keys: Option<&KeysByType>,
-    reuse: Option<&EntityReuse>,
 ) -> Collected<'a, 'v> {
+    let EntityPaths {
+        data,
+        trie,
+        paths,
+        path_values,
+    } = at;
+    let EntityInputs {
+        requires,
+        input_rewrites,
+        context,
+        subgraph_keys,
+        reuse,
+    } = inputs;
     let mut contexts = ContextGroups::new(context);
     // the planner keeps fetches with context from copying. the hashes below mix in the group
     // there, so nothing would match anyway
     debug_assert!(reuse.is_none() || contexts.names.is_empty());
+    debug_assert!(path_values.is_some() || trie.ends().len() == 1);
     let required_selections = requires.root_selections();
     // every entity we know of, by its hash: the ones we could copy, and every one with a target.
     // the hash covers the context group, so one map serves all of them
@@ -276,9 +364,11 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
     }
     let copy = reuse.map(|reuse| reuse.copy.root_selections());
     let mut copies = Vec::new();
-    let mut path_entities: Vec<TargetEntities> = Vec::new();
+    let mut targets = TargetEntities::default();
     for path in paths {
-        let mut entities = Vec::new();
+        let end = trie.ends()[path] as usize;
+        let start = targets.targets.len();
+        let entities = &mut targets.targets;
         // the callback gets references into `data`, which the ancestor cache relies on
         let mut collect = |entity: &'d Value<'v>, objects: &[&'d Value<'v>]| {
             if entity.is_null() {
@@ -353,15 +443,28 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
             }
             entities.push(target);
         };
-        traverse_and_callback(data, path.as_slice(), possible_types, &mut collect);
-        path_entities.push(Arc::new(entities));
+        match path_values {
+            Some(path_values) => {
+                let values = &path_values[end];
+                let mut objects_start = 0;
+                for &(entity, objects_end) in &values.values {
+                    collect(entity, &values.objects[objects_start..objects_end]);
+                    objects_start = objects_end;
+                }
+            }
+            // a trie of one path walks in the order it collects, so nothing to keep in between
+            None => trie.walk(data, possible_types, &mut |_, entity, objects| {
+                collect(entity, objects)
+            }),
+        }
+        targets.paths.push(start..targets.targets.len());
     }
     for group in &mut contexts.groups {
         group.representations.push(b']');
     }
     Collected {
         groups: contexts.groups,
-        targets: path_entities,
+        targets,
         copies,
     }
 }
@@ -498,7 +601,7 @@ mod tests {
     use super::*;
     use crate::query_planner::{
         ast::selection_set::SelectionSet,
-        planner::plan_nodes::{FlattenNodePath, KeyRenamer, PathSegment},
+        planner::plan_nodes::{FlattenNodePath, KeyRenamer, PathSegment, ResponsePathRef},
         utils::parsing::parse_operation,
     };
 
@@ -508,6 +611,40 @@ mod tests {
             panic!("not fetched");
         };
         context_group as usize
+    }
+
+    /// Collects the entities at `paths` like a fetch does
+    #[allow(clippy::too_many_arguments)]
+    fn collect<'a, 'd, 'v>(
+        data: &'d Value<'v>,
+        paths: impl IntoIterator<Item = ResponsePathRef<'a>>,
+        requires: &RequiresSelectionSet,
+        input_rewrites: Option<&[FetchRewrite]>,
+        context: &'a Option<Box<FetchContext>>,
+        possible_types: &PossibleTypes,
+        subgraph_keys: Option<&KeysByType>,
+        reuse: Option<&EntityReuse>,
+    ) -> Collected<'a, 'v> {
+        let trie = PathTrie::new(paths.into_iter().map(|path| path.as_slice()));
+        // like a fetch: one path is walked directly, more are collected first
+        let path_values = (trie.ends().len() > 1)
+            .then(|| collect_path_values(&trie, data, possible_types, context_depth(context)));
+        collect_context_entities(
+            EntityPaths {
+                data,
+                trie: &trie,
+                paths: 0..trie.ends().len(),
+                path_values: path_values.as_deref(),
+            },
+            EntityInputs {
+                requires,
+                input_rewrites,
+                context,
+                subgraph_keys,
+                reuse,
+            },
+            possible_types,
+        )
     }
 
     #[test]
@@ -556,7 +693,7 @@ mod tests {
         let context = FetchContext::new(vec!["__context_0".into()], Some(rewrites.to_vec()));
         let Collected {
             groups, targets, ..
-        } = collect_context_entities(
+        } = collect(
             &data,
             [path.as_ref()],
             &requires,
@@ -576,13 +713,13 @@ mod tests {
             ]
         );
         assert!(groups.iter().all(|g| g.count == 1));
-        assert_eq!(targets[0][0], targets[0][1]);
-        assert_ne!(targets[0][0], targets[0][2]);
-        assert_eq!(targets[0][4], None);
+        assert_eq!(targets.path(0)[0], targets.path(0)[1]);
+        assert_ne!(targets.path(0)[0], targets.path(0)[2]);
+        assert_eq!(targets.path(0)[4], None);
         // another parent with the same value lands in the same group
-        assert_eq!(targets[0][5], targets[0][0]);
-        assert_eq!(group_of(targets[0][0]), 0);
-        assert_ne!(group_of(targets[0][2]), 0);
+        assert_eq!(targets.path(0)[5], targets.path(0)[0]);
+        assert_eq!(group_of(targets.path(0)[0]), 0);
+        assert_ne!(group_of(targets.path(0)[2]), 0);
     }
 
     #[test]
@@ -610,13 +747,14 @@ mod tests {
         let reuse = EntityReuse {
             sources: vec![vec![PathSegment::Field("top".into()), PathSegment::List].into()],
             copy: selection("{ __typename name }"),
+            trie: Default::default(),
         };
         let possible_types = PossibleTypes::default();
         let path: FlattenNodePath =
             vec![PathSegment::Field("again".into()), PathSegment::List].into();
         let Collected {
             targets, copies, ..
-        } = collect_context_entities(
+        } = collect(
             &data,
             [path.as_ref()],
             &requires,
@@ -627,7 +765,7 @@ mod tests {
             Some(&reuse),
         );
         assert_eq!(
-            targets[0].as_slice(),
+            targets.path(0),
             [Some(EntityRef::Fetched {
                 context_group: 0,
                 index: 0
@@ -663,13 +801,14 @@ mod tests {
         let reuse = EntityReuse {
             sources: vec![vec![PathSegment::Field("top".into()), PathSegment::List].into()],
             copy: selection("{ __typename name }"),
+            trie: Default::default(),
         };
         let possible_types = PossibleTypes::default();
         let path: FlattenNodePath =
             vec![PathSegment::Field("again".into()), PathSegment::List].into();
         let Collected {
             targets, copies, ..
-        } = collect_context_entities(
+        } = collect(
             &data,
             [path.as_ref()],
             &requires,
@@ -679,10 +818,7 @@ mod tests {
             None,
             Some(&reuse),
         );
-        assert_eq!(
-            targets[0].as_slice(),
-            [Some(EntityRef::Copied { index: 0 })]
-        );
+        assert_eq!(targets.path(0), [Some(EntityRef::Copied { index: 0 })]);
         assert_eq!(
             sonic_rs::to_string(&copies).unwrap(),
             r#"[{"__typename":"P","name":"A"}]"#
@@ -736,7 +872,7 @@ mod tests {
         let possible_types = PossibleTypes::default();
         let Collected {
             groups, targets, ..
-        } = collect_context_entities(
+        } = collect(
             &data,
             [path.as_ref()],
             &requires,
@@ -749,7 +885,11 @@ mod tests {
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].variables[1].1, b"\"A\"");
         assert_eq!(groups[1].variables[1].1, b"\"B\"");
-        let entity_groups: Vec<usize> = targets[0].iter().map(|entity| group_of(*entity)).collect();
+        let entity_groups: Vec<usize> = targets
+            .path(0)
+            .iter()
+            .map(|entity| group_of(*entity))
+            .collect();
         assert_eq!(entity_groups[..3], [0, 1, 0]);
 
         // resolving the same sources again reuses the cached group, a different entity under
@@ -841,7 +981,7 @@ mod tests {
         );
         let Collected {
             groups, targets, ..
-        } = collect_context_entities(
+        } = collect(
             &data,
             [posts.as_ref(), drafts.as_ref()],
             &requires,
@@ -866,7 +1006,7 @@ mod tests {
             ]
         );
         // posts 1 to 4, then drafts 5 and 6, with the group each one must land in
-        let entities = targets[0].iter().chain(targets[1].iter());
+        let entities = targets.path(0).iter().chain(targets.path(1).iter());
         for (entity, group) in entities.zip([0, 0, 1, 2, 0, 2]) {
             assert_eq!(group_of(*entity), group);
         }
@@ -894,7 +1034,7 @@ mod tests {
             .into_iter()
             .collect();
         let context = FetchContext::new(vec!["__context_0".into()], Some(Vec::new()));
-        let Collected { groups, .. } = collect_context_entities(
+        let Collected { groups, .. } = collect(
             &data,
             [path.as_ref()],
             &requires,
@@ -934,7 +1074,7 @@ mod tests {
         let context = FetchContext::new(vec!["__context_0".into()], Some(rewrites.to_vec()));
         let Collected {
             groups, targets, ..
-        } = collect_context_entities(
+        } = collect(
             &data,
             [path.as_ref()],
             &requires,
@@ -950,8 +1090,8 @@ mod tests {
             groups[0].representations,
             br#"[{"__typename":"U","id":"1"}]"#
         );
-        assert_eq!(targets[0].len(), 1);
-        assert!(targets[0][0].is_some());
+        assert_eq!(targets.path(0).len(), 1);
+        assert!(targets.path(0)[0].is_some());
     }
 
     #[test]
@@ -1128,5 +1268,46 @@ mod tests {
         assert!(errors[1].path.is_none());
         assert_eq!(errors[2].message, "surplus entity");
         assert!(errors[2].path.is_none());
+    }
+
+    #[test]
+    fn copies_of_aliases_sharing_a_trie_merge_in_one_walk() {
+        use crate::executor::execution::entity_reuse::{merge_copies, EntityCopyBatch};
+        use std::sync::Arc;
+
+        let mut data: Value<'_> =
+            sonic_rs::from_str(r#"{"a":[{"id":1},{"id":2}],"b":[{"id":3}]}"#).unwrap();
+        let path = |field: &str| -> FlattenNodePath {
+            vec![PathSegment::Field(field.into()), PathSegment::List].into()
+        };
+        // the first alias has `a` and `b`, the second `a` again, which ends at the same node
+        let paths = [path("a"), path("b"), path("a")];
+        let trie = PathTrie::new(paths.iter().map(|path| path.as_slice()));
+        let copied = |index| Some(EntityRef::Copied { index });
+        let field =
+            |name, value: &'static str| Value::Object(vec![(name, Value::String(value.into()))]);
+        let first = EntityCopyBatch {
+            trie: &trie,
+            paths: 0..2,
+            targets_by_path: Arc::new(TargetEntities {
+                targets: vec![copied(0), None, copied(1)],
+                paths: vec![0..2, 2..3],
+            }),
+            entities: vec![field("x", "a0"), field("x", "b0")],
+        };
+        let second = EntityCopyBatch {
+            trie: &trie,
+            paths: 2..3,
+            targets_by_path: Arc::new(TargetEntities {
+                targets: vec![None, copied(0)],
+                paths: vec![0..2],
+            }),
+            entities: vec![field("y", "a1")],
+        };
+        merge_copies(&mut data, vec![first, second], &PossibleTypes::default());
+        assert_eq!(
+            sonic_rs::to_string(&data).unwrap(),
+            r#"{"a":[{"id":1,"x":"a0"},{"id":2,"y":"a1"}],"b":[{"id":3,"x":"b0"}]}"#
+        );
     }
 }

@@ -1,7 +1,12 @@
 use std::collections::BTreeSet;
 use std::fmt::Display;
+use std::sync::Arc;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::{borrow::Cow, ops::Range};
+
+use super::state::PathList;
+use crate::executor::utils::traverse::PathTrie;
 
 use crate::query_planner::ast::merge_path::{MergePath, Segment};
 
@@ -11,9 +16,10 @@ use super::FetchNodePathSegment;
 /// `{"Field": name}`, `{"TypeCondition": [..]}`, and a plain `"@"` for a list step.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PathSegment {
-    Field(Box<str>),
-    /// Boxing this keeps every path step small.
-    TypeCondition(Box<TypeCondition>),
+    /// Shared, so the tries built from a plan's paths point at the same names instead of copying them
+    Field(Arc<str>),
+    /// Behind a pointer, which keeps every path step small.
+    TypeCondition(Arc<TypeCondition>),
     #[serde(rename = "@")]
     List,
 }
@@ -62,6 +68,38 @@ impl FlattenNodePath {
     }
 }
 
+/// One copy of every field name and type condition, for all the paths of a plan. A big plan has
+/// thousands of paths over a few dozen names.
+#[derive(Default)]
+pub(crate) struct SharedSteps {
+    names: ahash::HashSet<Arc<str>>,
+    conditions: ahash::HashSet<Arc<TypeCondition>>,
+}
+
+impl SharedSteps {
+    /// `segment`, with the one copy of its name or type condition
+    pub(crate) fn step(&mut self, segment: &PathSegment) -> PathSegment {
+        match segment {
+            PathSegment::Field(name) => PathSegment::Field(share(&mut self.names, name)),
+            PathSegment::TypeCondition(condition) => {
+                PathSegment::TypeCondition(share(&mut self.conditions, condition))
+            }
+            PathSegment::List => PathSegment::List,
+        }
+    }
+}
+
+fn share<T: Eq + std::hash::Hash + ?Sized>(
+    shared: &mut ahash::HashSet<Arc<T>>,
+    item: &Arc<T>,
+) -> Arc<T> {
+    if let Some(existing) = shared.get(item) {
+        return Arc::clone(existing);
+    }
+    shared.insert(Arc::clone(item));
+    Arc::clone(item)
+}
+
 impl From<Vec<PathSegment>> for FlattenNodePath {
     fn from(segments: Vec<PathSegment>) -> Self {
         Self(segments.into_boxed_slice())
@@ -89,6 +127,118 @@ impl MergePaths {
 impl From<Vec<FlattenNodePath>> for MergePaths {
     fn from(paths: Vec<FlattenNodePath>) -> Self {
         Self(paths.into_boxed_slice())
+    }
+}
+
+impl PathList for MergePaths {
+    fn len(&self) -> usize {
+        MergePaths::len(self)
+    }
+
+    fn to_paths(&self) -> Cow<'_, [FlattenNodePath]> {
+        Cow::Borrowed(&self.0)
+    }
+}
+
+/// A flatten node's path in an executable plan, as the trie walks use. A trie of one path keeps
+/// just the path, with the plan's shared names.
+#[derive(Debug, Clone)]
+pub struct TriePath(PathTrie);
+
+impl TriePath {
+    pub(crate) fn new(path: &[PathSegment], shared: &mut SharedSteps) -> Self {
+        Self(PathTrie::sharing([path], shared))
+    }
+
+    pub fn trie(&self) -> &PathTrie {
+        &self.0
+    }
+
+    pub fn to_path(&self) -> FlattenNodePath {
+        self.0.path(0).into()
+    }
+}
+
+impl Display for TriePath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.to_path().fmt(f)
+    }
+}
+
+impl Serialize for TriePath {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.to_path().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for TriePath {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let path = FlattenNodePath::deserialize(deserializer)?;
+        Ok(Self(PathTrie::new([path.as_slice()])))
+    }
+}
+
+/// A batch alias's merge paths in an executable plan: its run of the paths of the trie the whole
+/// batch shares, see [`super::EntityBatch::trie`]
+#[derive(Debug, Clone)]
+pub struct TriePaths {
+    trie: Arc<PathTrie>,
+    start: u32,
+    len: u32,
+}
+
+impl TriePaths {
+    pub(crate) fn new(trie: Arc<PathTrie>, paths: Range<usize>) -> Self {
+        Self {
+            trie,
+            start: paths.start as u32,
+            len: paths.len() as u32,
+        }
+    }
+
+    pub fn trie(&self) -> &Arc<PathTrie> {
+        &self.trie
+    }
+
+    /// The alias's paths among the ones of [`Self::trie`]
+    pub fn range(&self) -> Range<usize> {
+        self.start as usize..(self.start + self.len) as usize
+    }
+
+    /// The alias's path `index`
+    pub fn path(&self, index: usize) -> FlattenNodePath {
+        self.trie.path(self.range().start + index).into()
+    }
+}
+
+impl PathList for TriePaths {
+    fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    fn to_paths(&self) -> Cow<'_, [FlattenNodePath]> {
+        Cow::Owned((0..self.len()).map(|index| self.path(index)).collect())
+    }
+}
+
+impl Serialize for TriePaths {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.to_paths().serialize(serializer)
+    }
+}
+
+impl From<Vec<FlattenNodePath>> for TriePaths {
+    /// A trie of their own. A plan's `into_executable` puts an alias's in the batch's trie.
+    fn from(paths: Vec<FlattenNodePath>) -> Self {
+        let trie = PathTrie::new(paths.iter().map(FlattenNodePath::as_slice));
+        Self::new(Arc::new(trie), 0..paths.len())
+    }
+}
+
+/// Gives the alias a trie of its own, see the `From` above
+impl<'de> Deserialize<'de> for TriePaths {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Vec::<FlattenNodePath>::deserialize(deserializer)?.into())
     }
 }
 
@@ -162,7 +312,7 @@ impl From<&MergePath> for FlattenNodePath {
         path.inner
             .iter()
             .map(|segment| match segment {
-                Segment::TypeCondition(type_names, _) => PathSegment::TypeCondition(Box::new(
+                Segment::TypeCondition(type_names, _) => PathSegment::TypeCondition(Arc::new(
                     TypeCondition::from_names(type_names.iter().map(String::as_str)),
                 )),
                 Segment::Field(field_seg, _args_hash, _) => {
@@ -246,7 +396,7 @@ mod type_condition_tests {
     fn a_path_round_trips_through_an_unordered_condition() {
         let expected: FlattenNodePath = vec![
             PathSegment::Field("media".into()),
-            PathSegment::TypeCondition(Box::new(TypeCondition::from_names(["Book", "User"]))),
+            PathSegment::TypeCondition(Arc::new(TypeCondition::from_names(["Book", "User"]))),
         ]
         .into();
 
