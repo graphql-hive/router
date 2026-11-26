@@ -150,7 +150,7 @@ impl<'graph> MoveRequirements<'graph> {
         target: &NavigationTarget<'_>,
         search: impl FnOnce() -> Result<Vec<OperationPath<'graph>>, WalkOperationError>,
     ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
-        if graph.has_context_arguments {
+        if graph.has_context_arguments() {
             return search();
         }
         let key = (path.tail(), field.name.as_str(), field.arguments());
