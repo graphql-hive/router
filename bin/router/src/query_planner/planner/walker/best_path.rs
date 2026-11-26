@@ -31,23 +31,24 @@ pub fn find_leaf_paths<'graph>(paths: Vec<OperationPath<'graph>>) -> Vec<Operati
         .collect()
 }
 
-pub fn find_best_paths<'graph>(paths: Vec<OperationPath<'graph>>) -> Vec<OperationPath<'graph>> {
-    let mut best_paths = Vec::new();
-    let mut best_cost = 0;
-
-    for path in paths {
-        if best_cost == 0 {
-            best_cost = path.cost;
-            best_paths = vec![path];
-        } else if best_cost == path.cost {
-            best_paths.push(path);
-        } else if best_cost > path.cost {
-            best_cost = path.cost;
-            best_paths = vec![path];
-        }
-    }
-
-    best_paths
+/// The cheapest paths to a requirement leaf of `from`, see `OperationPath::requirement_cost`.
+pub fn find_best_requirement_paths<'graph>(
+    graph: &Graph<'_>,
+    from: &OperationPath<'graph>,
+    entered: &[Option<u16>],
+    paths: Vec<OperationPath<'graph>>,
+) -> Vec<OperationPath<'graph>> {
+    let costs: Vec<u64> = paths
+        .iter()
+        .map(|path| path.requirement_cost(graph, from, entered))
+        .collect();
+    let cheapest = costs.iter().copied().min().unwrap_or(0);
+    paths
+        .into_iter()
+        .zip(costs)
+        .filter(|(_, cost)| *cost == cheapest)
+        .map(|(path, _)| path)
+        .collect()
 }
 
 /// One path per requirement leaf. Any of a leaf's tied best paths reaches it, so keeping them

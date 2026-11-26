@@ -8,7 +8,10 @@ use crate::query_planner::graph::node::UnionMembersData;
 use crate::query_planner::planner::walker::pathfinder::NavigationTarget;
 use crate::query_planner::{
     ast::arguments::ArgumentsMap,
-    graph::{edge::Edge, edge::EdgeReference, Graph},
+    graph::{
+        edge::{Edge, EdgeReference, NON_FIELD_MOVE_COST},
+        Graph,
+    },
     planner::tree::query_tree_node::QueryTreeNode,
 };
 
@@ -211,6 +214,123 @@ impl<'graph> OperationPath<'graph> {
         OperationPath::new(edge.source(), Some(arc_path_segment))
     }
 
+    /// The subgraphs the plan fetches the path's object from: the one it's in, and the ones it
+    /// went through, with their keys, since the field that got it. And the nodes it came from.
+    pub(crate) fn object_sources(&self, graph: &Graph<'_>) -> (Vec<Option<u16>>, Vec<NodeIndex>) {
+        let subgraph = |node| graph.node(node).ok().and_then(|node| node.subgraph_index());
+        let mut entered = vec![self
+            .last_segment
+            .as_ref()
+            .and_then(|s| subgraph(s.tail_node))];
+        let mut came_from = Vec::new();
+        for segment in self.segments_rev() {
+            if matches!(graph.edge(segment.edge_index), Ok(Edge::FieldMove(_))) {
+                break;
+            }
+            if let Some(key) = &segment.requirement_tree {
+                trips_in(graph, key, true, &mut entered);
+            }
+            if let Ok(head) = graph.get_edge_head(&segment.edge_index) {
+                entered.push(subgraph(head));
+                came_from.push(head);
+            }
+        }
+        (entered, came_from)
+    }
+
+    /// What a path found for a requirement of `from` costs, with its trips into a subgraph
+    /// `entered` has free: the fetch graph reads the field in the call it makes there anyway.
+    /// `entered` is `from`'s `object_sources`.
+    pub(crate) fn requirement_cost(
+        &self,
+        graph: &Graph<'_>,
+        from: &Self,
+        entered: &[Option<u16>],
+    ) -> u64 {
+        let start = from
+            .last_segment
+            .as_ref()
+            .map_or(0, |segment| segment.depth);
+        let mut entered = entered.to_vec();
+        let mut free = 0;
+        // from the start, while it's at the same object
+        let mut after: Vec<&PathSegment> = self
+            .segments_rev()
+            .take_while(|segment| segment.depth > start)
+            .collect();
+        while let Some(segment) = after.pop() {
+            // a move's key is read before it
+            if let Some(key) = &segment.requirement_tree {
+                trips_in(graph, key, true, &mut entered);
+            }
+            match graph.edge(segment.edge_index) {
+                Ok(Edge::EntityMove(_)) => {
+                    let subgraph = graph
+                        .node(segment.tail_node)
+                        .ok()
+                        .and_then(|node| node.subgraph_index());
+                    if entered.contains(&subgraph) {
+                        free += NON_FIELD_MOVE_COST;
+                    } else {
+                        entered.push(subgraph);
+                    }
+                }
+                Ok(Edge::FieldMove(_)) => break,
+                _ => {}
+            }
+        }
+        self.cost.saturating_sub(free)
+    }
+
+    /// What getting an edge's key or @requires costs on top of the edge, which only counts the
+    /// fields. When they come from another subgraph, that's a trip, and a wave the plan waits for.
+    ///
+    /// The fetch graph makes one entity call per subgraph per object, so a trip into a subgraph
+    /// the path already gets the object from is free. A @requires trip needs a key too, sent from
+    /// where the object came from. When only the field's own subgraph has it, that subgraph is
+    /// fetched for the key first and for the field after, a trip more.
+    fn requirement_trips(
+        &self,
+        graph: &Graph<'_>,
+        edge: &Edge<'_>,
+        requirement: &QueryTreeNode,
+    ) -> u64 {
+        // most keys are fields of the subgraph the path is in, nothing to work out
+        if !has_trip(graph, requirement) {
+            return 0;
+        }
+        let subgraph = |node| graph.node(node).ok().and_then(|node| node.subgraph_index());
+        let (mut entered, came_from) = self.object_sources(graph);
+        let before = entered.len();
+        let trips = trips_in(graph, requirement, true, &mut entered);
+        if !matches!(edge, Edge::FieldMove(_)) || entered.len() == before {
+            return trips;
+        }
+        // a trip the @requires opened, and no subgraph the object came from has its key
+        let refetch = requirement.children.iter().any(|trip| {
+            if !is_trip(graph, trip) || !entered[before..].contains(&subgraph(trip.node_index)) {
+                return false;
+            }
+            let key: Vec<&str> = trip
+                .requirements
+                .iter()
+                .flat_map(|key| &key.children)
+                .filter_map(|field| match graph.edge(field.edge_from_parent?) {
+                    Ok(Edge::FieldMove(field)) => Some(field.name),
+                    _ => None,
+                })
+                .collect();
+            !came_from.iter().any(|&node| {
+                key.iter().all(|name| {
+                    graph.edges_from(node).any(
+                        |edge| matches!(edge.weight(), Edge::FieldMove(field) if field.name == *name),
+                    )
+                })
+            })
+        });
+        trips + if refetch { NON_FIELD_MOVE_COST } else { 0 }
+    }
+
     pub fn advance(
         &self,
         graph: &'graph Graph<'graph>,
@@ -221,8 +341,12 @@ impl<'graph> OperationPath<'graph> {
     ) -> OperationPath<'graph> {
         let prev_cost = self.cost;
         let edge_cost = edge_ref.weight().cost();
+        let trips = requirement.as_deref().map_or(0, |requirement| {
+            self.requirement_trips(graph, edge_ref.weight(), requirement)
+        });
         let new_cost = prev_cost
             + edge_cost
+            + trips
             + context_requirements
                 .iter()
                 .map(|requirement| requirement.cost)
@@ -521,4 +645,61 @@ impl<'graph> OperationPath<'graph> {
         self.union_context = scope;
         self
     }
+}
+
+/// Whether `node` is an entity call into another subgraph.
+fn is_trip(graph: &Graph<'_>, node: &QueryTreeNode) -> bool {
+    node.edge_from_parent.is_some_and(|edge| {
+        matches!(
+            graph.edge(edge),
+            Ok(Edge::EntityMove(_) | Edge::InterfaceObjectTypeMove(_))
+        )
+    })
+}
+
+/// Whether a requirement tree goes to another subgraph anywhere.
+fn has_trip(graph: &Graph<'_>, node: &QueryTreeNode) -> bool {
+    is_trip(graph, node)
+        || node.requirements.iter().any(|node| has_trip(graph, node))
+        || node.children.iter().any(|node| has_trip(graph, node))
+}
+
+/// What the trips in a requirement tree cost, a call with its key each, the fields are counted
+/// by whoever needs the tree. `at_object` is whether the node is still at the object the tree
+/// starts from. There, a trip into a subgraph in `entered` is the same call, and free, a new one
+/// goes in `entered`. Below a field, it's another object, and every trip counts.
+fn trips_in(
+    graph: &Graph<'_>,
+    node: &QueryTreeNode,
+    at_object: bool,
+    entered: &mut Vec<Option<u16>>,
+) -> u64 {
+    let mut cost = 0;
+    let mut children_at_object = at_object;
+    if let Some(edge) = node.edge_from_parent.and_then(|edge| graph.edge(edge).ok()) {
+        match edge {
+            Edge::EntityMove(_) | Edge::InterfaceObjectTypeMove(_) => {
+                let subgraph = graph
+                    .node(node.node_index)
+                    .ok()
+                    .and_then(|node| node.subgraph_index());
+                if !at_object {
+                    cost += edge.cost();
+                } else if !entered.contains(&subgraph) {
+                    cost += edge.cost();
+                    entered.push(subgraph);
+                }
+            }
+            Edge::FieldMove(_) => children_at_object = false,
+            _ => {}
+        }
+    }
+    // a move's key is read before it, at the object it starts from
+    for requirement in &node.requirements {
+        cost += trips_in(graph, requirement, at_object, entered);
+    }
+    for child in &node.children {
+        cost += trips_in(graph, child, children_at_object, entered);
+    }
+    cost
 }

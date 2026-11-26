@@ -1986,11 +1986,10 @@ fn leaf_skips_requires_when_another_subgraph_has_it_plain() -> Result<(), Box<dy
     Ok(())
 }
 
-/// `reviews` needs `username` from `accounts` to resolve `reviewsUrl`, and the key of the seller
-/// (its `id`) comes from the `reviews` call for `Product`. `accounts` already hands `username`
-/// over next to `sellerRating`. Whichever fetch ends up giving `username`, the `reviews` call for
-/// `User` still has to run after the `reviews` call for `Product`: its key is in that response.
-/// In one request with it, the representations would go out without `id`.
+/// `reviews` needs `username` from `accounts` to resolve `reviewsUrl`. `accounts` hands `username`
+/// over next to `sellerRating`, and the seller's `id` with it, so the `reviews` call for `User`
+/// reads everything from `accounts` and can share a request with the `reviews` call for `Product`.
+/// The next test is the one where the key comes from that other `reviews` call.
 #[test]
 fn requires_waits_for_the_fetch_with_its_key() -> Result<(), Box<dyn Error>> {
     init_logger();
@@ -1999,6 +1998,99 @@ fn requires_waits_for_the_fetch_with_its_key() -> Result<(), Box<dyn Error>> {
     );
     let query_plan = build_query_plan_with_defaults(
         "fixture/tests/requirement-key-from-another-fetch.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            products {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "accounts") {
+            {
+              ... on Product {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                sellerRating
+                seller {
+                  __typename
+                  id
+                  username
+                }
+              }
+            }
+          },
+        },
+        BatchFetch(service: "reviews") {
+          {
+            _e0 {
+              paths: [
+                "products.@.seller"
+              ]
+              {
+                ... on User {
+                  __typename
+                  username
+                  id
+                }
+              }
+            }
+            _e1 {
+              paths: [
+                "products.@"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on User {
+                reviewsUrl
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Product {
+                reviewCount
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
+
+/// Same as the one above, but `accounts` can't take entity calls for `User`, so `username` for
+/// the `@requires` comes from `users` whichever way the seller is reached. Then the seller comes
+/// from `reviews`, with its `id`, and `accounts` still covers `username`. The `reviews` call for
+/// `User` has to wait for the `reviews` call for `Product`, its key is in that response. In one
+/// request with it, the representations would go out without `id`.
+#[test]
+fn requires_waits_for_the_fetch_with_its_key_from_the_same_subgraph() -> Result<(), Box<dyn Error>>
+{
+    init_logger();
+    let document = parse_operation(
+        r#"{ products { reviewCount sellerRating seller { reviewsUrl username } } }"#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requirement-key-from-another-fetch-no-entity-call.supergraph.graphql",
         document,
     )?;
 
@@ -2074,9 +2166,10 @@ fn requires_waits_for_the_fetch_with_its_key() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// `score` in `d` requires `p` and `q`. `p` is in `b` and `c`, `q` only in `c`, so `c` gives
-/// both. `top.related` gets to a `Product` through `b` and back, `topB` starts in `b`. What one
-/// of them picks for `p` mustn't change what the other picks, whichever field comes first.
+/// `score` in `d` requires `p` and `q`. `p` is in `b` and `c`, `q` only in `c`. `topB` starts in
+/// `b`, so `b` gives `p` with no trip of its own. `top.related` gets to a `Product` through `b`
+/// and back. What one of them picks for `p` mustn't change what the other picks, whichever field
+/// comes first.
 #[test]
 fn requires_provider_does_not_depend_on_an_earlier_field() -> Result<(), Box<dyn Error>> {
     init_logger();
@@ -2092,9 +2185,9 @@ fn requires_provider_does_not_depend_on_an_earlier_field() -> Result<(), Box<dyn
     let after = plan("{ top { related { score } } topB { score } }")?;
     let before = plan("{ topB { score } top { related { score } } }")?;
 
-    assert_eq!(providers_of_p(&alone, &["topB"]), ["c"]);
-    assert_eq!(providers_of_p(&after, &["topB"]), ["c"]);
-    assert_eq!(providers_of_p(&before, &["topB"]), ["c"]);
+    assert_eq!(providers_of_p(&alone, &["topB"]), ["b"]);
+    assert_eq!(providers_of_p(&after, &["topB"]), ["b"]);
+    assert_eq!(providers_of_p(&before, &["topB"]), ["b"]);
 
     Ok(())
 }
@@ -2191,4 +2284,79 @@ fn providers_of_p(plan: &serde_json::Value, path: &[&str]) -> Vec<String> {
     out.sort();
     out.dedup();
     out
+}
+
+/// `u4` requires `u3`, which only `a` has. Getting `u` from `b` means a trip to `a` for `u3`
+/// and another to `b` for `u4`. Getting it from `a` reads `u3` right there, a wave less.
+#[test]
+fn requires_from_subgraph_the_object_comes_from() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          t {
+            t1
+            u {
+              u4
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-from-fetched-subgraph.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "root") {
+          {
+            t {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "t") {
+          Fetch(service: "a") {
+            {
+              ... on T {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on T {
+                u {
+                  __typename
+                  id
+                  u3
+                }
+                t1
+              }
+            }
+          },
+        },
+        Flatten(path: "t.u") {
+          Fetch(service: "b") {
+            {
+              ... on U {
+                __typename
+                u3
+                id
+              }
+            } =>
+            {
+              ... on U {
+                u4
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
 }

@@ -24,7 +24,7 @@ use crate::query_planner::{
     },
     planner::{
         tree::query_tree_node::QueryTreeNode,
-        walker::best_path::{find_best_paths, pick_shared_paths, BestPathTracker},
+        walker::best_path::{find_best_requirement_paths, pick_shared_paths, BestPathTracker},
     },
     state::supergraph_state::{SupergraphDefinition, SupergraphState},
 };
@@ -996,6 +996,8 @@ impl<'graph> PathSearch<'graph> {
         let cancellation_token = self.cancellation_token;
         let mut requirements: VecDeque<MoveRequirement> = VecDeque::new();
         let mut tied_paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
+        // where `path`'s object is fetched from, for the leaves with more than one path
+        let mut entered: Option<Vec<Option<u16>>> = None;
 
         for selection in selection_set.items.iter() {
             // context selections can carry type conditions for other ancestor types,
@@ -1042,7 +1044,13 @@ impl<'graph> PathSearch<'graph> {
                             }
 
                             if selection_field_requirement.is_leaf() {
-                                let best_paths = find_best_paths(next_paths);
+                                let best_paths = if next_paths.len() < 2 {
+                                    next_paths
+                                } else {
+                                    let entered =
+                                        entered.get_or_insert_with(|| path.object_sources(graph).0);
+                                    find_best_requirement_paths(graph, path, entered, next_paths)
+                                };
                                 trace!(
                                     "Found {} best paths for this leaf requirement",
                                     best_paths.len()
