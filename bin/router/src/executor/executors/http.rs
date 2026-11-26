@@ -283,6 +283,8 @@ impl HttpClientProvider {
         let pool_config = H1PoolConfig {
             idle_timeout: pool_idle_timeout,
             max_read_buffer_size: http1_max_read_buffer_size,
+            max_connection_age: all.max_connection_age,
+            tcp_keepalive: all.tcp_keepalive,
         };
         let pools =
             (traffic_shaping.experimental_http1_pool && !http2_only).then(|| match traffic_shaping

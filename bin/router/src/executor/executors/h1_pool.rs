@@ -21,6 +21,9 @@
 //! Every connection also keeps its read buffer for good, and hyper grows it up to ~400KB while
 //! reading big responses. `traffic_shaping.all.http1_max_read_buffer_size` caps it, like it
 //! does for hyper's client.
+//!
+//! `max_connection_age` and `tcp_keepalive` work like they do for hyper's client: a connection
+//! past its age isn't put back after its request, nor handed out when it ages while idle.
 
 use std::{
     future::{poll_fn, Future},
@@ -46,7 +49,7 @@ use hyper_util::{client::legacy::connect::HttpConnector, rt::TokioIo};
 use tokio::net::TcpStream;
 use tower_service::Service;
 
-use crate::executor::executors::error::SubgraphExecutorError;
+use crate::executor::executors::{connection_age::retire_at, error::SubgraphExecutorError, tls};
 
 type Sender = SendRequest<Full<Bytes>>;
 
@@ -55,6 +58,8 @@ type Sender = SendRequest<Full<Bytes>>;
 pub struct H1PoolConfig {
     pub idle_timeout: Duration,
     pub max_read_buffer_size: usize,
+    pub max_connection_age: Option<Duration>,
+    pub tcp_keepalive: Option<Duration>,
 }
 /// hyper's side of the socket. Boxed once per connection so it can move in and out of the pool.
 type Conn = Pin<Box<Connection<TokioIo<TcpStream>, Full<Bytes>>>>;
@@ -65,6 +70,8 @@ struct Idle {
     conn: Conn,
     wakers: Arc<Wakers>,
     since: Instant,
+    /// When it stops taking requests, with `max_connection_age`
+    retire_at: Option<Instant>,
 }
 
 /// One side of [`drive`]: the request or the connection. Its waker notes that this side has
@@ -136,6 +143,7 @@ pub struct Lease<'a> {
     /// `None` once the connection is done (closed by the subgraph, or failed)
     conn: Option<Conn>,
     wakers: Arc<Wakers>,
+    retire_at: Option<Instant>,
 }
 
 impl Lease<'_> {
@@ -150,6 +158,9 @@ impl Lease<'_> {
         let Some(conn) = self.conn else {
             return;
         };
+        if is_retired(self.retire_at) {
+            return;
+        }
         let mut idle = self.pool.idle.lock().unwrap();
         let list = idle.entry(self.key).or_default();
         evict_expired(list, self.pool.config.idle_timeout);
@@ -158,6 +169,7 @@ impl Lease<'_> {
             conn,
             wakers: self.wakers,
             since: Instant::now(),
+            retire_at: self.retire_at,
         });
         // checked under the lock, so a sweep that just found the pool empty and stopped
         // can't miss this connection
@@ -169,11 +181,9 @@ impl Lease<'_> {
 
 impl H1Pool {
     pub fn new(config: H1PoolConfig) -> Arc<Self> {
-        let mut connector = HttpConnector::new();
-        connector.set_nodelay(true);
         Arc::new(Self {
             config,
-            connector,
+            connector: tls::tcp_connector(config.tcp_keepalive),
             sweeping: AtomicBool::new(false),
             idle: Mutex::new(AHashMap::new()),
         })
@@ -234,7 +244,7 @@ impl H1Pool {
         }
 
         loop {
-            let (mut sender, mut conn, wakers, reused) = self.checkout(&key).await?;
+            let (mut sender, mut conn, wakers, retire_at, reused) = self.checkout(&key).await?;
             match drive(&mut conn, &wakers, sender.try_send_request(req)).await {
                 Ok(response) => {
                     return Ok((
@@ -245,6 +255,7 @@ impl H1Pool {
                             sender,
                             conn,
                             wakers,
+                            retire_at,
                         },
                     ))
                 }
@@ -259,27 +270,35 @@ impl H1Pool {
         }
     }
 
-    /// A connection for `key`, and whether it was an idle one
+    /// A connection for `key`, when it retires, and whether it was an idle one
+    #[allow(clippy::type_complexity)]
     async fn checkout(
         &self,
         key: &Authority,
-    ) -> Result<(Sender, Option<Conn>, Arc<Wakers>, bool), SubgraphExecutorError> {
+    ) -> Result<(Sender, Option<Conn>, Arc<Wakers>, Option<Instant>, bool), SubgraphExecutorError>
+    {
         while let Some(Idle {
             mut sender,
             conn,
             wakers,
+            retire_at,
             ..
         }) = self.pop(key)
         {
+            // it aged while idle, dropping it closes it
+            if is_retired(retire_at) {
+                continue;
+            }
             // Polling the connection lets it finish up the last response and take the next
             // request. If the subgraph closed it meanwhile, it ends here and `ready` fails.
             let mut conn = Some(conn);
             if drive(&mut conn, &wakers, sender.ready()).await.is_ok() {
-                return Ok((sender, conn, wakers, true));
+                return Ok((sender, conn, wakers, retire_at, true));
             }
         }
         let (sender, conn) = self.connect(key).await?;
-        Ok((sender, Some(conn), Wakers::new(), false))
+        let retire_at = self.config.max_connection_age.map(retire_at);
+        Ok((sender, Some(conn), Wakers::new(), retire_at, false))
     }
 
     fn pop(&self, key: &Authority) -> Option<Idle> {
@@ -358,6 +377,10 @@ async fn drive<F: Future>(conn: &mut Option<Conn>, wakers: &Wakers, fut: F) -> F
     .await
 }
 
+fn is_retired(retire_at: Option<Instant>) -> bool {
+    retire_at.is_some_and(|at| Instant::now() >= at)
+}
+
 fn evict_expired(list: &mut Vec<Idle>, idle_timeout: Duration) {
     let now = Instant::now();
     let expired = list.partition_point(|idle| now - idle.since >= idle_timeout);
@@ -375,6 +398,59 @@ mod tests {
     };
 
     use super::*;
+
+    fn config(idle_timeout: Duration, max_connection_age: Option<Duration>) -> H1PoolConfig {
+        H1PoolConfig {
+            idle_timeout,
+            max_read_buffer_size: 64 * 1024,
+            max_connection_age,
+            tcp_keepalive: None,
+        }
+    }
+
+    /// Sends 6 requests 50ms apart and returns how many TCP connections the subgraph accepted.
+    async fn connections_used(max_connection_age: Option<Duration>) -> usize {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = Arc::clone(&accepted);
+        tokio::spawn(async move {
+            loop {
+                let (stream, _) = listener.accept().await.unwrap();
+                counter.fetch_add(1, Ordering::SeqCst);
+                let service = hyper::service::service_fn(|_| async {
+                    Ok::<_, hyper::Error>(Response::new(Full::new(Bytes::from("ok"))))
+                });
+                tokio::spawn(
+                    hyper::server::conn::http1::Builder::new()
+                        .serve_connection(TokioIo::new(stream), service),
+                );
+            }
+        });
+
+        let pool = H1Pool::new(config(Duration::from_secs(60), max_connection_age));
+        for _ in 0..6 {
+            let req = Request::get(format!("http://{addr}/graphql"))
+                .body(Full::new(Bytes::new()))
+                .unwrap();
+            let (res, mut lease) = pool.request(req).await.unwrap();
+            lease.drive(res.into_body().collect()).await.unwrap();
+            lease.release();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        accepted.load(Ordering::SeqCst)
+    }
+
+    #[tokio::test]
+    async fn keeps_one_connection_without_max_age() {
+        assert_eq!(connections_used(None).await, 1);
+    }
+
+    #[tokio::test]
+    async fn replaces_connections_past_max_age() {
+        // ~300ms of traffic with a ~100ms max age should go over at least two connections
+        assert!(connections_used(Some(Duration::from_millis(100))).await >= 2);
+    }
 
     // A pool that goes quiet still closes its idle sockets once they pass the idle timeout.
     #[tokio::test]
@@ -395,10 +471,7 @@ mod tests {
             replied.elapsed()
         });
 
-        let pool = H1Pool::new(H1PoolConfig {
-            idle_timeout: Duration::from_millis(200),
-            max_read_buffer_size: 64 * 1024,
-        });
+        let pool = H1Pool::new(config(Duration::from_millis(200), None));
         let req = Request::get(format!("http://{addr}/graphql"))
             .body(Full::new(Bytes::new()))
             .unwrap();

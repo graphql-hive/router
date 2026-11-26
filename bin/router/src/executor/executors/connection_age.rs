@@ -62,15 +62,16 @@ impl Service<Uri> for AgedConnector {
         let max_age = self.max_age;
         Box::pin(async move {
             let io = connecting.await?;
-            // up to 10% early, so connections opened together don't all expire together
-            let deadline = max_age.map(|age| {
-                ConnectionDeadline(
-                    Instant::now() + age.mul_f64(rand::rng().random_range(0.9..=1.0)),
-                )
-            });
+            let deadline = max_age.map(|age| ConnectionDeadline(retire_at(age)));
             Ok(AgedStream { io, deadline })
         })
     }
+}
+
+/// When a connection opened now should stop taking requests. Up to 10% early, so
+/// connections opened together don't all expire together.
+pub fn retire_at(max_age: Duration) -> Instant {
+    Instant::now() + max_age.mul_f64(rand::rng().random_range(0.9..=1.0))
 }
 
 /// Pass-through TCP stream that adds the deadline in `connected()`.

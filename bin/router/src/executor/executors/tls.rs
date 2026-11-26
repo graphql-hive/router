@@ -150,13 +150,9 @@ pub fn build_https_client_config(
     Ok(client_config)
 }
 
-pub fn build_https_connector(
-    tls_config: Option<&ClientTLSConfig>,
-    max_connection_age: Option<Duration>,
-    tcp_keepalive: Option<Duration>,
-) -> Result<HttpsConnector<AgedConnector>, SubgraphExecutorError> {
+/// The TCP connector every subgraph connection goes through, TLS or not.
+pub fn tcp_connector(tcp_keepalive: Option<Duration>) -> HttpConnector {
     let mut http = HttpConnector::new();
-    http.enforce_http(false);
     http.set_nodelay(true);
     if tcp_keepalive.is_some() {
         // probe after `tcp_keepalive` of silence, then every `tcp_keepalive`, give up after 3
@@ -164,6 +160,16 @@ pub fn build_https_connector(
         http.set_keepalive_interval(tcp_keepalive);
         http.set_keepalive_retries(Some(3));
     }
+    http
+}
+
+pub fn build_https_connector(
+    tls_config: Option<&ClientTLSConfig>,
+    max_connection_age: Option<Duration>,
+    tcp_keepalive: Option<Duration>,
+) -> Result<HttpsConnector<AgedConnector>, SubgraphExecutorError> {
+    let mut http = tcp_connector(tcp_keepalive);
+    http.enforce_http(false);
     Ok(HttpsConnectorBuilder::new()
         .with_tls_config(build_https_client_config(tls_config)?)
         .https_or_http()

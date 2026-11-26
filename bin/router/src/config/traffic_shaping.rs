@@ -46,7 +46,8 @@ pub struct TrafficShapingConfig {
     ///   less CPU. If a subgraph limits how many connections it accepts, count on up to one
     ///   pool per worker.
     ///
-    /// `max_connections_per_host` still caps the requests in flight. `https://` subgraphs,
+    /// `max_connections_per_host` still caps the requests in flight, and `max_connection_age`
+    /// and `tcp_keepalive` apply to pooled connections too. `https://` subgraphs,
     /// `allow_only_http2` and HTTP subscriptions keep hyper's client and `http_client_mode`.
     #[serde(default)]
     pub experimental_http1_pool: bool,
