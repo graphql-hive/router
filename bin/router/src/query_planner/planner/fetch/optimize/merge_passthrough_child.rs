@@ -8,11 +8,11 @@ use petgraph::{
 use tracing::{instrument, trace};
 
 use crate::query_planner::{
-    ast::selection_set::selection_items_are_subset_of,
+    ast::{merge_path::MergePath, selection_set::selection_items_are_subset_of},
     planner::fetch::{
         error::FetchGraphError,
         fetch_graph::FetchGraph,
-        fetch_step_data::{FetchStepData, FetchStepFlags},
+        fetch_step_data::{FetchStepData, FetchStepFlags, NestedPlace},
         optimize::utils::MergedSteps,
         state::MultiTypeFetchStep,
     },
@@ -203,9 +203,16 @@ fn perform_passthrough_child_merge(
     fetch_graph: &mut FetchGraph<MultiTypeFetchStep>,
 ) -> Result<(), FetchGraphError> {
     let (me, other) = fetch_graph.get_pair_of_steps_mut(self_index, other_index)?;
-    let (type_name, path) = me
+    let (type_name, path) = match me
         .place_of_nested(&other.response_path)
-        .ok_or(FetchGraphError::MismatchedResponsePath)?;
+        .ok_or(FetchGraphError::MismatchedResponsePath)?
+    {
+        NestedPlace::Type { type_name, rest } => (
+            Some(type_name.to_string()),
+            other.response_path.slice_from(rest),
+        ),
+        NestedPlace::EachType => (None, MergePath::default()),
+    };
 
     trace!(
         "merging fetch steps [{}] + [{}] at path {}",
