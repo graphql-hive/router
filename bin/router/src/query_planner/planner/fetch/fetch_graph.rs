@@ -794,15 +794,12 @@ fn ensure_fetch_step_for_subgraph(
     output_type_name: &str,
     response_path: &MergePath,
     key: Option<&TypeAwareSelection<'_>>,
-    requires: Option<&TypeAwareSelection<'_>>,
     conditions: Conditions<'_>,
     created_from_requires: bool,
     batchable: bool,
 ) -> Result<NodeIndex, FetchGraphError> {
     let condition = conditions.current;
-    let batched = batchable
-        && requires.is_none()
-        && joins_other_types(response_path, input_type_name, output_type_name);
+    let batched = batchable && joins_other_types(response_path, input_type_name, output_type_name);
     if batched {
         return ensure_batched_fetch_step(
             fetch_graph,
@@ -815,42 +812,37 @@ fn ensure_fetch_step_for_subgraph(
             created_from_requires,
         );
     }
-    let matching_child_index = if requires.is_some() {
-        None
-    } else {
-        fetch_graph
-            .same_entity_calls(
-                parent_fetch_step_index,
-                subgraph_name,
-                input_type_name,
-                response_path,
-                condition,
-            )
-            .find(|&child_index| {
-                fetch_graph.get_step_data(child_index).is_ok_and(|step| {
-                    step.matches_entity_call(
-                        subgraph_name,
-                        input_type_name,
-                        response_path,
-                        condition,
-                        conditions.from_root,
-                    )
-                        // the requested key fields have to be part of the input
-                        && key.is_none_or(|key| step.input.contains(key.type_name, &key.selection_set))
-                        // a step made for requirements is only reused for requirements, and
-                        // the other way around: the optimizations keep the two apart too
-                        && step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES)
-                            == created_from_requires
-                })
+    let matching_child_index = fetch_graph
+        .same_entity_calls(
+            parent_fetch_step_index,
+            subgraph_name,
+            input_type_name,
+            response_path,
+            condition,
+        )
+        .find(|&child_index| {
+            fetch_graph.get_step_data(child_index).is_ok_and(|step| {
+                step.matches_entity_call(
+                    subgraph_name,
+                    input_type_name,
+                    response_path,
+                    condition,
+                    conditions.from_root,
+                )
+                    // the requested key fields have to be part of the input
+                    && key.is_none_or(|key| step.input.contains(key.type_name, &key.selection_set))
+                    // a step made for requirements is only reused for requirements, and
+                    // the other way around: the optimizations keep the two apart too
+                    && step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES)
+                        == created_from_requires
             })
-    };
+        });
 
     match matching_child_index {
         Some(idx) => {
             trace!(
-                "found existing fetch step [{}] for entity move requirement({}) key({}) in children of {}",
+                "found existing fetch step [{}] for entity move key({}) in children of {}",
                 idx.index(),
-                requires.map(|r| r.to_string()).unwrap_or_default(),
                 key.map(|r| r.to_string()).unwrap_or_default(),
                 parent_fetch_step_index.index(),
             );
@@ -865,7 +857,7 @@ fn ensure_fetch_step_for_subgraph(
                 output_type_name,
                 response_path,
                 conditions,
-                created_from_requires || requires.is_some(),
+                created_from_requires,
             );
             if let Some(selection) = key {
                 let step = fetch_graph.get_step_data_mut(step_index)?;
@@ -873,11 +865,10 @@ fn ensure_fetch_step_for_subgraph(
             }
 
             trace!(
-                "created a new fetch step [{}] subgraph({}) type({}) requirement({}) key({}) in children of {}",
+                "created a new fetch step [{}] subgraph({}) type({}) key({}) in children of {}",
                 step_index.index(),
                 subgraph_name,
                 input_type_name,
-                requires.map(|r| r.to_string()).unwrap_or_default(),
                 key.map(|r| r.to_string()).unwrap_or_default(),
                 parent_fetch_step_index.index(),
             );
@@ -990,9 +981,7 @@ fn ensure_batched_fetch_step(
             );
         }
     }
-    if let Some(key) = key {
-        step.input.add_to(type_name, &key.selection_set)?;
-    }
+    // the caller adds the key to the input, see `process_entity_move_edge`
     Ok(step_index)
 }
 
@@ -1292,7 +1281,6 @@ fn process_entity_move_edge(
         output_type_name,
         response_path,
         Some(&requirement),
-        None,
         conditions,
         created_from_requires,
         !is_interface && !head_type.is_interface_object,
@@ -1437,7 +1425,6 @@ fn process_interface_object_type_move_edge(
         interface_type_name,
         response_path,
         Some(&requirement),
-        None,
         conditions,
         created_from_requires,
         false,
@@ -2860,12 +2847,10 @@ fn key_of_entity_call<'a>(
     step: NodeIndex,
     node: NodeIndex,
 ) -> Result<Option<&'a TypeAwareSelection<'a>>, FetchGraphError> {
+    // `entity_moves` only holds moves by their own tail, see `process_entity_move_edge`
     let Some(&edge_index) = fetch_graph.entity_moves.get(&(step, node)) else {
         return Ok(None);
     };
-    if graph.get_edge_tail(&edge_index)? != node {
-        return Ok(None);
-    }
     Ok(graph.edge(edge_index)?.requirements())
 }
 
