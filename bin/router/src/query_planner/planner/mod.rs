@@ -28,9 +28,17 @@ pub mod query_plan;
 pub mod tree;
 pub mod walker;
 
+/// Moves entity calls to a later wave, when that doesn't make the plan longer, so they go in
+/// one request with other calls to the same subgraph. Fewer requests, but a moved call can start
+/// later than it would have: a batch waits for what all its calls wait for. With entity reuse
+/// on, calls that could copy from each other aren't merged. Not in the router config.
+pub const MERGE_ACROSS_WAVES: bool = true;
+
 #[derive(Debug, Clone)]
 pub struct QueryPlannerOptions {
     pub experimental_abstract_type_folding: bool,
+    /// See `MERGE_ACROSS_WAVES`. The router always uses the const, tests can turn it off.
+    pub merge_across_waves: bool,
     /// Whether to turn hard-coded argument values into variables.
     /// It's done during normalization, not by the planner.
     pub arguments_to_variables: bool,
@@ -52,6 +60,7 @@ impl Default for QueryPlannerOptions {
     fn default() -> Self {
         Self {
             experimental_abstract_type_folding: false,
+            merge_across_waves: MERGE_ACROSS_WAVES,
             arguments_to_variables: true,
             entity_reuse: false,
             max_aliases_per_request: None,

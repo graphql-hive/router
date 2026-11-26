@@ -168,11 +168,11 @@ impl PathId {
 /// One bit per response key, see [`key_mask`]. Two fields with the same key always share the
 /// bit, others may too, so it only rules things out.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-struct KeyMask(u64);
+pub(super) struct KeyMask(u64);
 
 impl KeyMask {
     /// whether it has every bit of `other`, as a position has to for every field it's asked for
-    fn has_all(self, other: KeyMask) -> bool {
+    pub(super) fn has_all(self, other: KeyMask) -> bool {
         self.0 & other.0 == other.0
     }
 
@@ -741,7 +741,7 @@ fn find_in(
 }
 
 /// The type and fields an entity fetch could copy from the response, if it could copy at all
-fn wanted(step: &Step) -> Option<(&str, &SelectionSet)> {
+pub(super) fn wanted(step: &Step) -> Option<(&str, &SelectionSet)> {
     if !step.is_entity_call()
         || step.input_rewrites.is_some()
         || step.output_rewrites.is_some()
@@ -760,7 +760,10 @@ fn wanted(step: &Step) -> Option<(&str, &SelectionSet)> {
 
 /// One bit per response key of the fields in `selections` that pass `keep`. A position can only
 /// cover a selection if it has all of its bits, and only conflict with one if they share a bit.
-fn key_mask(selections: &SelectionSet, keep: impl Fn(&FieldSelection) -> bool + Copy) -> KeyMask {
+pub(super) fn key_mask(
+    selections: &SelectionSet,
+    keep: impl Fn(&FieldSelection) -> bool + Copy,
+) -> KeyMask {
     KeyMask(selections.items.iter().fold(0, |mask, item| match item {
         SelectionItem::Field(field) if keep(field) => {
             let key = field.selection_identifier();
@@ -777,7 +780,7 @@ fn key_mask(selections: &SelectionSet, keep: impl Fn(&FieldSelection) -> bool + 
 
 /// Does `source` ask for every field in `needed`, with the same response key and arguments?
 /// `__typename` always counts: the executor checks it's really there before copying.
-fn covers(source: &SelectionSet, needed: &SelectionSet) -> bool {
+pub(super) fn covers(source: &SelectionSet, needed: &SelectionSet) -> bool {
     needed.items.iter().all(|item| {
         let SelectionItem::Field(needed_field) = item else {
             return false;

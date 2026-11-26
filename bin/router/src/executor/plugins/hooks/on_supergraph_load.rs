@@ -9,7 +9,9 @@ use crate::config::{
     persisted_documents::PersistedDocumentsConfig, subscriptions::SupergraphSubscriptionsConfig,
     traffic_shaping::SupergraphTrafficShapingConfig, HiveRouterConfig,
 };
-use crate::query_planner::planner::{Planner, PlannerError, QueryPlannerOptions};
+use crate::query_planner::planner::{
+    Planner, PlannerError, QueryPlannerOptions, MERGE_ACROSS_WAVES,
+};
 use crate::query_planner::utils::parsing::safe_parse_schema;
 use crate::telemetry::{error::TelemetryError, utils::resolve_value_or_expression};
 use graphql_tools::static_graphql::schema::Document;
@@ -81,6 +83,7 @@ impl TryFrom<&HiveRouterConfig> for SupergraphOptions {
                 experimental_abstract_type_folding: config
                     .query_planner
                     .experimental_abstract_type_folding,
+                merge_across_waves: MERGE_ACROSS_WAVES,
                 arguments_to_variables: config.query_planner.arguments_to_variables,
                 entity_reuse: config.traffic_shaping.entity_reuse,
                 max_aliases_per_request: config.traffic_shaping.all.max_aliases_per_request,
