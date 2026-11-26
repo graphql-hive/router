@@ -362,15 +362,17 @@ impl<State> FetchGraph<State> {
         }
         let edge = self.graph.add_edge(parent_index, child_index, ());
         // only while the graph is built, see `children_by_entity_call`
-        if self.children_by_entity_call.is_some() {
-            if let Some(entity_call) = self.entity_call_hash_of(child_index) {
-                if let Some(index) = self.children_by_entity_call.as_mut() {
-                    index
-                        .entry((parent_index, entity_call))
-                        .or_default()
-                        .push(child_index);
-                }
-            }
+        let entity_call = self
+            .children_by_entity_call
+            .as_ref()
+            .and_then(|_| self.entity_call_hash_of(child_index));
+        if let (Some(index), Some(entity_call)) =
+            (self.children_by_entity_call.as_mut(), entity_call)
+        {
+            index
+                .entry((parent_index, entity_call))
+                .or_default()
+                .push(child_index);
         }
         edge
     }

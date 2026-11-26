@@ -158,9 +158,10 @@ impl<'graph> MoveRequirements<'graph> {
             searches
                 .iter()
                 .find(|search| {
+                    // the name and arguments are in the key already
                     search.union_context == path.union_context
                         && search.target_subgraph_ids.as_deref() == target_subgraph_ids
-                        && same_field(search.field, field)
+                        && same_selections(&search.field.selections, &field.selections)
                 })
                 .map(|search| Rc::clone(&search.found))
         });
@@ -171,7 +172,8 @@ impl<'graph> MoveRequirements<'graph> {
                 .collect());
         }
         let paths = search()?;
-        // only when every path goes on from ours, it always does
+        // kept only when every path found goes on from ours, so its steps can go on from the
+        // next path. Searches only ever extend the path they start from, this is a safety net
         if let Some(found) = paths
             .iter()
             .map(|found| found.steps_after(path))

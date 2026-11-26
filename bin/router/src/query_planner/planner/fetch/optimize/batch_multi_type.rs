@@ -779,14 +779,14 @@ fn outputs_differ_for_a_shared_type(
 mod tests {
     use std::rc::Rc;
 
-    use ahash::{HashMap, HashSet};
+    use ahash::HashSet;
 
     use crate::query_planner::{
         ast::merge_path::{Condition, FieldPathSegment, MergePath, Segment},
         planner::plan_nodes::FlattenNodePath,
     };
 
-    use super::{merge_batched_response_paths, normalized_path_hash};
+    use super::merge_batched_response_paths;
 
     fn path(type_name: &str) -> MergePath {
         path_with_condition(&[type_name], None)
@@ -839,15 +839,10 @@ mod tests {
         let condition = Some(Condition::Include("a".to_string()));
         let me = path_with_condition(&["Book"], condition.clone());
         let other = path_with_condition(&["User"], condition.clone());
-        let normalized_path_key = normalized_path_hash(&me);
         let possible_types = HashSet::from_iter(["Book".to_string(), "User".to_string()]);
-        let possible_types_by_position =
-            HashMap::from_iter([((normalized_path_key, 2), &possible_types)]);
 
         let merged = merge_batched_response_paths(&me, &other, &|position| {
-            possible_types_by_position
-                .get(&(normalized_path_key, position))
-                .copied()
+            (position == 2).then_some(&possible_types)
         });
 
         assert_eq!(merged, path_with_condition(&["Book", "User"], condition));
@@ -857,19 +852,14 @@ mod tests {
     fn keeps_non_exhaustive_type_list_in_flatten_path() {
         let me = path("Book");
         let other = path("User");
-        let normalized_path_key = normalized_path_hash(&me);
         let possible_types = HashSet::from_iter([
             "Book".to_string(),
             "User".to_string(),
             "Magazine".to_string(),
         ]);
-        let possible_types_by_position =
-            HashMap::from_iter([((normalized_path_key, 2), &possible_types)]);
 
         let merged = merge_batched_response_paths(&me, &other, &|position| {
-            possible_types_by_position
-                .get(&(normalized_path_key, position))
-                .copied()
+            (position == 2).then_some(&possible_types)
         });
 
         assert_eq!(
@@ -882,15 +872,10 @@ mod tests {
     fn strips_type_list_when_type_conditions_are_exhaustive() {
         let me = path("Book");
         let other = path("User");
-        let normalized_path_key = normalized_path_hash(&me);
         let possible_types = HashSet::from_iter(["Book".to_string(), "User".to_string()]);
-        let possible_types_by_position =
-            HashMap::from_iter([((normalized_path_key, 2), &possible_types)]);
 
         let merged = merge_batched_response_paths(&me, &other, &|position| {
-            possible_types_by_position
-                .get(&(normalized_path_key, position))
-                .copied()
+            (position == 2).then_some(&possible_types)
         });
 
         assert_eq!(
