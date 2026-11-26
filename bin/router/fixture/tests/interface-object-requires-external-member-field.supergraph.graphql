@@ -45,9 +45,9 @@ scalar join__DirectiveArguments
 scalar join__FieldSet
 
 enum join__Graph {
-  FIRST @join__graph(name: "first", url: "http://first.local/graphql")
-  FOURTH @join__graph(name: "fourth", url: "http://fourth.local/graphql")
-  THIRD @join__graph(name: "third", url: "http://third.local/graphql")
+  FIRST @join__graph(name: "first", url: "")
+  FOURTH @join__graph(name: "fourth", url: "")
+  THIRD @join__graph(name: "third", url: "")
 }
 
 scalar link__Import
