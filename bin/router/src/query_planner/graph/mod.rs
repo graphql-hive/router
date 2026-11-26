@@ -170,8 +170,9 @@ pub struct Graph<'graph> {
     /// The field and entity moves out of every node, see `EdgeIndexes`.
     edge_indexes: EdgeIndexes,
     /// Whether a field takes an argument from `@fromContext`. Resolving one looks up the path for
-    /// the ancestor that sets it, so a search from one spot can't be reused at another.
-    pub(crate) has_context_arguments: bool,
+    /// the ancestor that sets it, so a search from one spot can't be reused at another. Set
+    /// once the edges are indexed, read through `has_context_arguments`.
+    has_context_arguments: bool,
 }
 
 impl<'graph> Graph<'graph> {
@@ -244,8 +245,9 @@ impl<'graph> Graph<'graph> {
                     Edge::ReentryMove(reentry) => {
                         indexes.edges.push((name_hash(&reentry.name), edge.id()))
                     }
+                    // they have no name, see `EdgeIndexes::edges`
                     Edge::EntityMove(_) | Edge::InterfaceObjectTypeMove(_) => {
-                        entity_moves.push((0, edge.id()))
+                        entity_moves.push((NO_NAME, edge.id()))
                     }
                     _ => {}
                 }
@@ -315,8 +317,12 @@ impl<'graph> Graph<'graph> {
     pub fn entity_moves_from(&self, node: NodeIndex) -> impl Iterator<Item = EdgeReference<'_>> {
         self.edge_indexes
             .entity_moves(node)
-            .iter()
-            .map(|(_, index)| self.edge_reference(*index))
+            .map(|index| self.edge_reference(index))
+    }
+
+    /// Whether a field anywhere in the graph takes an argument from `@fromContext`.
+    pub(crate) fn has_context_arguments(&self) -> bool {
+        self.has_context_arguments
     }
 
     pub(crate) fn edge_reference(&self, index: EdgeIndex) -> EdgeReference<'_> {
@@ -1643,8 +1649,12 @@ struct EdgeIndexes {
     /// Per node, where its field moves and where its entity moves start in `edges`, and one more
     /// entry for the end.
     starts: Vec<(u32, u32)>,
+    /// The field name's hash and the edge. Entity moves have no name, theirs is `NO_NAME`, and
+    /// only `fields` looks at the hash.
     edges: Vec<(u64, EdgeIndex)>,
 }
+
+const NO_NAME: u64 = 0;
 
 impl EdgeIndexes {
     fn fields(&self, node: NodeIndex) -> &[(u64, EdgeIndex)] {
@@ -1654,8 +1664,8 @@ impl EdgeIndexes {
         }
     }
 
-    fn entity_moves(&self, node: NodeIndex) -> &[(u64, EdgeIndex)] {
-        match (
+    fn entity_moves(&self, node: NodeIndex) -> impl Iterator<Item = EdgeIndex> + '_ {
+        let moves = match (
             self.starts.get(node.index()),
             self.starts.get(node.index() + 1),
         ) {
@@ -1663,7 +1673,8 @@ impl EdgeIndexes {
                 &self.edges[entities as usize..next as usize]
             }
             _ => &[],
-        }
+        };
+        moves.iter().map(|(_, index)| *index)
     }
 }
 
