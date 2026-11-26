@@ -11,7 +11,7 @@ use tracing::{instrument, trace};
 
 use crate::query_planner::{
     ast::{
-        merge_path::{MergePath, Segment},
+        merge_path::{Condition, MergePath, Segment},
         selection_set::find_selection_set_by_path,
     },
     planner::fetch::{
@@ -108,6 +108,17 @@ pub(crate) fn perform_fetch_step_merge(
         source_index.index(),
     );
 
+    // the merged call only keeps the gates both had, so before they go, see which ones each
+    // side had on its own
+    let (target_gates, source_gates): (Vec<_>, Vec<_>) =
+        if target.is_entity_call() && source.is_entity_call() {
+            (
+                target.gates_not_shared_with(source).cloned().collect(),
+                source.gates_not_shared_with(target).cloned().collect(),
+            )
+        } else {
+            Default::default()
+        };
     target.merge_context_metadata(source);
     let source_id = source.id;
     let target_id = target.id;
@@ -126,6 +137,16 @@ pub(crate) fn perform_fetch_step_merge(
     let source_condition_merged = merge_source_condition_into_non_entity_target(target, source)?;
     if !source_condition_merged {
         target.scope_fetch_conditions_before_merge(source);
+    }
+    // A call counts on the step above for its outer gates: under `first @skip(if: $s) { .. }`
+    // no `first` comes in when `$s` is true, so there's nothing to call for. Merged with a call
+    // for the same objects that come in without `$s`, the objects are there anyway, so `$s`
+    // goes on the call's own fields. Innermost first, so the outer gate ends up outside.
+    for gate in target_gates.into_iter().rev() {
+        target.output.wrap_with_condition(gate);
+    }
+    for gate in source_gates.into_iter().rev() {
+        source.output.wrap_with_condition(gate);
     }
 
     let source_fetch_path = source.response_path.slice_from(target.response_path.len());
@@ -382,6 +403,24 @@ impl FetchStepData<MultiTypeFetchStep> {
         })
     }
 
+    /// The gates we count on a step above for: not our own `condition` and not the ones on our
+    /// path, the call has those itself.
+    fn outer_gates(&self) -> impl Iterator<Item = &Condition> {
+        self.gated_by.iter().filter(|&gate| {
+            self.condition.as_ref() != Some(gate)
+                && !self
+                    .response_path
+                    .conditions()
+                    .any(|on_path| on_path == gate)
+        })
+    }
+
+    /// Our outer gates that `other` doesn't have. The merged call doesn't count on them anymore.
+    fn gates_not_shared_with<'a>(&'a self, other: &'a Self) -> impl Iterator<Item = &'a Condition> {
+        self.outer_gates()
+            .filter(|gate| !other.gated_by.contains(gate))
+    }
+
     pub(crate) fn merge_context_metadata(&mut self, other: &mut Self) {
         // the merged step runs for both, so only what both were planned under still holds
         self.gated_by
@@ -534,8 +573,9 @@ impl FetchStepData<MultiTypeFetchStep> {
         !self.inputs_hold_when_merged(other)
     }
 
-    /// The two calls don't run under the same `@include`/`@skip`, on the call, its path or its
-    /// input.
+    /// The two calls don't run under the same `@include`/`@skip`, on the call, its path, its
+    /// input or the steps above it. An outer gate counts too: what was fetched for a call under
+    /// `first @skip(if: $s)` isn't there when `$s` is true, even when the other call runs.
     fn conditions_differ(&self, other: &Self) -> bool {
         self.condition != other.condition
             || !self
@@ -544,6 +584,8 @@ impl FetchStepData<MultiTypeFetchStep> {
                 .eq(other.response_path.conditions())
             || self.flags.contains(FetchStepFlags::CONDITIONAL_INPUT)
             || other.flags.contains(FetchStepFlags::CONDITIONAL_INPUT)
+            || self.gates_not_shared_with(other).next().is_some()
+            || other.gates_not_shared_with(self).next().is_some()
     }
 
     /// This call always runs and its input is always there.
@@ -551,6 +593,7 @@ impl FetchStepData<MultiTypeFetchStep> {
         self.condition.is_none()
             && self.response_path.conditions().next().is_none()
             && !self.flags.contains(FetchStepFlags::CONDITIONAL_INPUT)
+            && self.outer_gates().next().is_none()
     }
 
     /// Is our input there every time the merged call runs? Yes if we always run. Otherwise
