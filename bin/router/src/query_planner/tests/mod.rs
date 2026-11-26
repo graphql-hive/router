@@ -1,6 +1,8 @@
 mod alias;
 mod arguments;
 mod context;
+mod defer;
+mod defer_plans;
 mod dependencies;
 mod entity_reuse;
 mod fragments;

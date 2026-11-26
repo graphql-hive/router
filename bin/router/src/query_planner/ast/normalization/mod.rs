@@ -98,6 +98,7 @@ pub fn create_normalized_document<'a>(
 ) -> NormalizedDocument {
     let mut operation: ast::operation::OperationDefinition = operation_ast.into();
     inject_skipped_typename_for_empty_composites(&mut operation, supergraph);
+    ast::defer::number_defers(&mut operation);
 
     NormalizedDocument {
         operation,
@@ -2898,3 +2899,5 @@ mod tests {
         );
     }
 }
+#[cfg(test)]
+mod defer_tests;

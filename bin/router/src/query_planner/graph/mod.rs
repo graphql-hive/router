@@ -823,6 +823,7 @@ impl<'graph> Graph<'graph> {
                         selections: selection.selection_set.clone(),
                         skip_if: None,
                         include_if: None,
+                        defer: None,
                     })
                 })
                 .collect::<Vec<_>>();

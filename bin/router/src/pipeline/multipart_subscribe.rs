@@ -24,6 +24,16 @@ const INCREMENTAL_DELIVERY_BOUNDARY: &str = "-";
 pub const INCREMENTAL_DELIVERY_CONTENT_TYPE: &str =
     make_content_type!(INCREMENTAL_DELIVERY_BOUNDARY);
 
+/// `@defer` responses say which format the parts are in.
+pub const INCREMENTAL_DELIVERY_DEFER_CONTENT_TYPE: &str = concat!(
+    make_content_type!(INCREMENTAL_DELIVERY_BOUNDARY),
+    ";incrementalSpec=v0.2"
+);
+pub const INCREMENTAL_DELIVERY_LEGACY_DEFER_CONTENT_TYPE: &str = concat!(
+    make_content_type!(INCREMENTAL_DELIVERY_BOUNDARY),
+    ";deferSpec=20220824"
+);
+
 /// Create a multipart subscription stream following the Official GraphQL over HTTP Incremental Delivery RFC.
 ///
 /// Will use `-` as boundary.

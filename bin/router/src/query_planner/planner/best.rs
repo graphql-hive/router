@@ -1041,6 +1041,7 @@ mod tests {
             children,
             selection_attributes: None,
             condition: None,
+            defer: None,
             mutation_field_position: None,
         })
     }
@@ -1062,6 +1063,7 @@ mod tests {
             children: vec![target_shared],
             selection_attributes: None,
             condition: None,
+            defer: None,
             mutation_field_position: None,
         };
 
@@ -1089,6 +1091,7 @@ mod tests {
             children: vec![source_shared, node(6, vec![], vec![])],
             selection_attributes: None,
             condition: None,
+            defer: None,
             mutation_field_position: None,
         };
 

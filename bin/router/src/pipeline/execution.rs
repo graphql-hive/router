@@ -3,8 +3,8 @@ use crate::executor::execution::demand_control::DemandControlExecutionContext;
 use crate::executor::execution::jwt_forward::JwtAuthForwardingPlan;
 use crate::executor::execution::operation_name::OperationNameFactory;
 use crate::executor::execution::plan::{
-    execute_query_plan, CoerceVariablesPayload, ExecutionResultExtensions, PlanExecutionOutput,
-    QueryPlanExecutionOpts, QueryPlanExecutionResult,
+    execute_query_plan, CoerceVariablesPayload, DeferExecution, ExecutionResultExtensions,
+    PlanExecutionOutput, QueryPlanExecutionOpts, QueryPlanExecutionResult,
 };
 use crate::executor::executors::common::ConnectionFingerprint;
 use crate::executor::headers::response::ResponseHeaderSink;
@@ -41,6 +41,8 @@ pub struct PlannedRequest<'req> {
     pub demand_control_execution_context: Option<DemandControlExecutionContext>,
     pub plugin_req_state: Option<PluginRequestState<'req>>,
     pub connection_fingerprint: Option<ConnectionFingerprint>,
+    /// Set when the operation has an active `@defer`.
+    pub defer: Option<DeferExecution>,
 }
 
 #[inline]
@@ -89,6 +91,19 @@ pub async fn execute_plan<'exec>(
         }
 
         if matches!(expose_query_plan, ExposeQueryPlanMode::DryRun) {
+            // a deferred run shows its plan with `Defer` nodes, see `execute_deferred`
+            let display_plan = planned_request
+                .defer
+                .as_ref()
+                .map(DeferExecution::display_plan);
+            let extensions = ExecutionResultExtensions {
+                query_plan: Some(
+                    display_plan
+                        .as_ref()
+                        .unwrap_or(planned_request.query_plan_payload),
+                ),
+                extensions: extensions.extensions,
+            };
             let body = sonic_rs::to_vec(&json!({
                 "extensions": extensions,
             }))
@@ -161,6 +176,7 @@ pub async fn execute_plan<'exec>(
             response_header_sink,
             error_masking_runtime: supergraph.runtime.error_masking.clone(),
             connection_fingerprint: planned_request.connection_fingerprint,
+            defer: planned_request.defer,
         })
         .await?;
 

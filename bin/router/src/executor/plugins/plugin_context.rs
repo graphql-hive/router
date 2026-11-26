@@ -220,6 +220,58 @@ pub struct PluginRequestState<'req> {
     pub request_context: SharedRequestContext,
 }
 
+/// A `PluginRequestState` that owns its copy of the request, for work that outlives the
+/// request handler, like the deferred parts of a response.
+pub struct OwnedPluginRequestState {
+    plugins: Arc<Vec<RouterPluginBoxed>>,
+    context: Arc<PluginContext>,
+    request_context: SharedRequestContext,
+    uri: Url,
+    method: http::Method,
+    version: http::Version,
+    headers: HeaderMap,
+    path: String,
+    query_string: String,
+    match_info: Path<Url>,
+}
+
+impl From<&PluginRequestState<'_>> for OwnedPluginRequestState {
+    fn from(state: &PluginRequestState<'_>) -> Self {
+        let request = &state.router_http_request;
+        Self {
+            plugins: state.plugins.clone(),
+            context: state.context.clone(),
+            request_context: state.request_context.clone(),
+            uri: request.uri.clone(),
+            method: request.method.clone(),
+            version: request.version,
+            headers: request.headers.clone(),
+            path: request.path.to_string(),
+            query_string: request.query_string.to_string(),
+            match_info: request.match_info.clone(),
+        }
+    }
+}
+
+impl OwnedPluginRequestState {
+    pub fn borrow(&self) -> PluginRequestState<'_> {
+        PluginRequestState {
+            plugins: self.plugins.clone(),
+            router_http_request: RouterHttpRequest {
+                uri: &self.uri,
+                method: &self.method,
+                version: self.version,
+                headers: &self.headers,
+                path: &self.path,
+                query_string: &self.query_string,
+                match_info: &self.match_info,
+            },
+            context: self.context.clone(),
+            request_context: self.request_context.clone(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

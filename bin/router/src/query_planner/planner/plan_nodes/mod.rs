@@ -67,7 +67,9 @@ pub mod planning {
 mod path;
 pub use path::{FlattenNodePath, MergePaths, PathSegment, ResponsePathRef, TypeCondition};
 mod conditions;
+pub mod defer;
 mod typename;
+use crate::query_planner::ast::defer::{DeferId, DeferPart};
 pub use conditions::{display_run_if, ConditionGroup};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -99,6 +101,13 @@ impl QueryPlan<Planning> {
     pub fn new(node: Option<PlanNode<Planning>>) -> Result<Self, QueryPlanError> {
         let schedule = PlanSchedule::new(node.as_ref())?;
         Ok(Self::with_schedule(node, schedule))
+    }
+
+    /// The plan, checked against the `@defer` parts its fetches are for, see
+    /// [`dependencies::check_fetches_of_parts`]. The planner doesn't know how the parts nest.
+    pub fn with_defer_parts(self, parts: &[DeferPart]) -> Result<Self, QueryPlanError> {
+        dependencies::check_fetches_of_parts(self.node.as_ref(), parts)?;
+        Ok(self)
     }
 }
 
@@ -233,6 +242,7 @@ impl<S: PlanState> PlanNode<S> {
 #[serde(rename_all = "camelCase")]
 #[serde(bound = "")]
 pub struct FetchNode<S: PlanState = Executable> {
+    // shown in `Defer` nodes only, `depends` points at it, see `defer::WithIds`
     #[serde(skip_serializing)]
     pub id: FetchId,
     pub service_name: String,
@@ -258,6 +268,9 @@ pub struct FetchNode<S: PlanState = Executable> {
     /// nothing to ask for. Never empty, a fetch that can't ever run is left out of the plan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_if: Option<Vec<ConditionGroup>>,
+    /// The deferred part the fetch is for, missing for the primary part.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer: Option<DeferId>,
     /// The fetches whose data this fetch reads, from the planner's fetch graph. Empty for a fetch
     /// that reads nothing another fetch brings, a root fetch.
     #[serde(skip)]
@@ -346,6 +359,10 @@ pub struct BatchFetchNode<S: PlanState = Executable> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_scalar_paths: Option<CustomScalarPaths>,
     pub entity_batch: EntityBatch,
+    /// The deferred part the batch is for, missing for the primary part. Every alias is for it,
+    /// fetches of different parts aren't batched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer: Option<DeferId>,
     /// What the merged fetches waited for, without the merged fetches themselves.
     #[serde(skip)]
     pub depends_on: S::FetchIds,
@@ -668,7 +685,13 @@ pub struct DeferNode<S: PlanState = Executable> {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(bound = "")]
 pub struct DeferPrimary<S: PlanState = Executable> {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub subselection: Option<String>,
+    // with fetch ids, `depends` points at them
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "defer::with_ids"
+    )]
     pub node: Option<Box<PlanNode<S>>>,
 }
 
@@ -682,7 +705,11 @@ pub struct DeferredNode<S: PlanState = Executable> {
     pub query_path: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subselection: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // with fetch ids, `depends` points at them
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "defer::with_ids"
+    )]
     pub node: Option<Box<PlanNode<S>>>,
 }
 
@@ -864,6 +891,7 @@ impl FetchNode<Planning> {
                     output_rewrites: step.output_rewrites.clone(),
                     context,
                     run_if: None,
+                    defer: step.defer,
                     depends_on,
                     reuse_waits: FetchIdList::new(),
                     entity_reuse: None,
@@ -909,6 +937,7 @@ impl FetchNode<Planning> {
                         step.context_rewrites.clone(),
                     ),
                     run_if: None,
+                    defer: step.defer,
                     depends_on,
                     reuse_waits: FetchIdList::new(),
                     entity_reuse: None,
@@ -1023,17 +1052,47 @@ impl<S: PlanState> PrettyDisplay for QueryPlan<S> {
     }
 }
 
-impl<S: PlanState> PrettyDisplay for FetchNode<S> {
-    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+/// `pretty_fmt` with fetch ids when `ids` is set. A `Defer` node sets it for what's in it, its
+/// `depends` point at the ids.
+trait PlanFmt {
+    fn plan_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize, ids: bool) -> FmtResult;
+}
+
+/// Outside a `Defer` node, without fetch ids.
+macro_rules! pretty_without_ids {
+    ($($node:ident),*) => {$(
+        impl<S: PlanState> PrettyDisplay for $node<S> {
+            fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+                self.plan_fmt(f, depth, false)
+            }
+        }
+    )*};
+}
+
+pretty_without_ids!(
+    PlanNode,
+    FetchNode,
+    BatchFetchNode,
+    FlattenNode,
+    SequenceNode,
+    ParallelNode,
+    SubscriptionNode,
+    DeferNode
+);
+
+impl<S: PlanState> PlanFmt for FetchNode<S> {
+    fn plan_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize, ids: bool) -> FmtResult {
         let indent = get_indent(depth);
+        write!(f, "{indent}Fetch(service: \"{}\"", self.service_name)?;
+        if ids {
+            write!(f, ", id: {}", self.id)?;
+        }
+        if let Some(part) = self.defer {
+            write!(f, ", defer: {part}")?;
+        }
         match &self.run_if {
-            None => writeln!(f, "{indent}Fetch(service: \"{}\") {{", self.service_name)?,
-            Some(run_if) => writeln!(
-                f,
-                "{indent}Fetch(service: \"{}\", if: {}) {{",
-                self.service_name,
-                display_run_if(run_if)
-            )?,
+            None => writeln!(f, ") {{")?,
+            Some(run_if) => writeln!(f, ", if: {}) {{", display_run_if(run_if))?,
         }
         if let Some(requires) = &self.requires {
             writeln!(f, "{indent}  {{")?;
@@ -1047,14 +1106,17 @@ impl<S: PlanState> PrettyDisplay for FetchNode<S> {
     }
 }
 
-impl<S: PlanState> PrettyDisplay for BatchFetchNode<S> {
-    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+impl<S: PlanState> PlanFmt for BatchFetchNode<S> {
+    fn plan_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize, ids: bool) -> FmtResult {
         let indent = get_indent(depth);
-        writeln!(
-            f,
-            "{indent}BatchFetch(service: \"{}\") {{",
-            self.service_name
-        )?;
+        write!(f, "{indent}BatchFetch(service: \"{}\"", self.service_name)?;
+        if ids {
+            write!(f, ", id: {}", self.id)?;
+        }
+        if let Some(part) = self.defer {
+            write!(f, ", defer: {part}")?;
+        }
+        writeln!(f, ") {{")?;
         writeln!(f, "{indent}  {{")?;
         for alias in &self.entity_batch.aliases {
             match &alias.run_if {
@@ -1084,62 +1146,62 @@ impl<S: PlanState> PrettyDisplay for BatchFetchNode<S> {
     }
 }
 
-impl<S: PlanState> PrettyDisplay for FlattenNode<S> {
-    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+impl<S: PlanState> PlanFmt for FlattenNode<S> {
+    fn plan_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize, ids: bool) -> FmtResult {
         let indent = get_indent(depth);
 
         writeln!(f, "{indent}Flatten(path: \"{}\") {{", self.path)?;
-        self.node.pretty_fmt(f, depth + 1)?;
+        self.node.plan_fmt(f, depth + 1, ids)?;
         writeln!(f, "{indent}}},")?;
 
         Ok(())
     }
 }
 
-impl<S: PlanState> PrettyDisplay for SequenceNode<S> {
-    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+impl<S: PlanState> PlanFmt for SequenceNode<S> {
+    fn plan_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize, ids: bool) -> FmtResult {
         let indent = get_indent(depth);
         writeln!(f, "{indent}Sequence {{")?;
         for node in &self.nodes {
-            node.pretty_fmt(f, depth + 1)?;
+            node.plan_fmt(f, depth + 1, ids)?;
         }
         writeln!(f, "{indent}}},")?;
         Ok(())
     }
 }
 
-impl<S: PlanState> PrettyDisplay for ParallelNode<S> {
-    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+impl<S: PlanState> PlanFmt for ParallelNode<S> {
+    fn plan_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize, ids: bool) -> FmtResult {
         let indent = get_indent(depth);
         writeln!(f, "{indent}Parallel {{")?;
         for node in &self.nodes {
-            node.pretty_fmt(f, depth + 1)?;
+            node.plan_fmt(f, depth + 1, ids)?;
         }
         writeln!(f, "{indent}}},")?;
         Ok(())
     }
 }
 
-impl<S: PlanState> PrettyDisplay for SubscriptionNode<S> {
-    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+impl<S: PlanState> PlanFmt for SubscriptionNode<S> {
+    fn plan_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize, ids: bool) -> FmtResult {
         let indent = get_indent(depth);
         writeln!(f, "{indent}Subscription {{")?;
-        self.primary.pretty_fmt(f, depth + 1)?;
+        self.primary.plan_fmt(f, depth + 1, ids)?;
         writeln!(f, "{indent}}},")?;
         Ok(())
     }
 }
 
-impl<S: PlanState> PrettyDisplay for PlanNode<S> {
-    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+impl<S: PlanState> PlanFmt for PlanNode<S> {
+    fn plan_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize, ids: bool) -> FmtResult {
         match self {
-            PlanNode::Fetch(node) => node.pretty_fmt(f, depth),
-            PlanNode::BatchFetch(node) => node.pretty_fmt(f, depth),
-            PlanNode::Flatten(node) => node.pretty_fmt(f, depth),
-            PlanNode::Sequence(node) => node.pretty_fmt(f, depth),
-            PlanNode::Parallel(node) => node.pretty_fmt(f, depth),
-            PlanNode::Subscription(node) => node.pretty_fmt(f, depth),
-            _ => Ok(()),
+            PlanNode::Fetch(node) => node.plan_fmt(f, depth, ids),
+            PlanNode::BatchFetch(node) => node.plan_fmt(f, depth, ids),
+            PlanNode::Flatten(node) => node.plan_fmt(f, depth, ids),
+            PlanNode::Sequence(node) => node.plan_fmt(f, depth, ids),
+            PlanNode::Parallel(node) => node.plan_fmt(f, depth, ids),
+            PlanNode::Subscription(node) => node.plan_fmt(f, depth, ids),
+            PlanNode::Defer(node) => node.plan_fmt(f, depth, ids),
         }
     }
 }
@@ -1224,10 +1286,11 @@ mod stored_size_tests {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 32),
             // `run_if` is an `Option<Vec<_>>`, `entity_reuse` an `Option<Arc<_>>`. Executable nodes
-            // keep no dependency ids, the plan's schedule has them by position
+            // keep no dependency ids, the plan's schedule has them by position. `defer` is an
+            // `Option<DeferId>`
             // +16 B for the operation's cached APQ hash
-            ("FetchNode", size_of::<FetchNode>(), 288),
-            ("BatchFetchNode", size_of::<BatchFetchNode>(), 184),
+            ("FetchNode", size_of::<FetchNode>(), 296),
+            ("BatchFetchNode", size_of::<BatchFetchNode>(), 192),
             (
                 "SubgraphFetchOperation",
                 size_of::<crate::query_planner::ast::operation::SubgraphFetchOperation>(),
@@ -1240,5 +1303,43 @@ mod stored_size_tests {
                  node or per fetch, so this changes the plan cache's memory use"
             );
         }
+    }
+}
+
+impl<S: PlanState> PlanFmt for DeferNode<S> {
+    fn plan_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize, _ids: bool) -> FmtResult {
+        let indent = get_indent(depth);
+        writeln!(f, "{indent}Defer {{")?;
+        writeln!(f, "{indent}  Primary {{")?;
+        if let Some(subselection) = &self.primary.subselection {
+            writeln!(f, "{indent}    {subselection}:")?;
+        }
+        if let Some(node) = &self.primary.node {
+            node.plan_fmt(f, depth + 2, true)?;
+        }
+        writeln!(f, "{indent}  }}, [")?;
+        for deferred in &self.deferred {
+            let depends: Vec<&str> = deferred.depends.iter().map(|d| d.id.as_str()).collect();
+            write!(
+                f,
+                "{indent}    Deferred(depends: [{}], path: \"{}\"",
+                depends.join(", "),
+                deferred.query_path.join(".")
+            )?;
+            if let Some(label) = &deferred.label {
+                write!(f, ", label: \"{label}\"")?;
+            }
+            writeln!(f, ") {{")?;
+            if let Some(subselection) = &deferred.subselection {
+                writeln!(f, "{indent}      {subselection}:")?;
+            }
+            if let Some(node) = &deferred.node {
+                node.plan_fmt(f, depth + 3, true)?;
+            }
+            writeln!(f, "{indent}    }},")?;
+        }
+        writeln!(f, "{indent}  ]")?;
+        writeln!(f, "{indent}}},")?;
+        Ok(())
     }
 }

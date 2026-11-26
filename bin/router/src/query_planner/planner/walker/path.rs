@@ -1,3 +1,4 @@
+use crate::query_planner::ast::defer::DeferId;
 use std::rc::Rc;
 use std::{cmp, fmt::Debug};
 
@@ -54,7 +55,7 @@ pub struct PathSegment {
     prev: Option<Rc<PathSegment>>,
     /// How many segments the path has up to and including this one.
     /// Lets the getters below allocate once, with the right size.
-    depth: usize,
+    depth: u32,
     pub edge_index: EdgeIndex,
     tail_node: NodeIndex,
     cumulative_cost: u64,
@@ -64,6 +65,8 @@ pub struct PathSegment {
     /// Shared by every path into the same field, built once with its navigation target
     pub selection_attributes: Option<Rc<SelectionAttributes>>,
     pub condition: Option<Condition>,
+    /// Set where the path enters a deferred fragment.
+    pub defer: Option<DeferId>,
 }
 
 impl PathSegment {
@@ -152,6 +155,7 @@ impl PathSegment {
             context_requirements: None,
             selection_attributes: None,
             condition: None,
+            defer: None,
         }
     }
 }
@@ -237,11 +241,15 @@ impl<'graph> OperationPath<'graph> {
                 .then(|| context_requirements.into()),
             selection_attributes: match target {
                 NavigationTarget::Field { attributes, .. } => Some(Rc::clone(attributes)),
-                NavigationTarget::ConcreteType(_, _) => None,
+                NavigationTarget::ConcreteType(..) => None,
             },
             condition: match target {
                 NavigationTarget::Field { field, .. } => (*field).into(),
-                NavigationTarget::ConcreteType(_, condition) => condition.clone(),
+                NavigationTarget::ConcreteType(_, condition, _) => condition.clone(),
+            },
+            defer: match target {
+                NavigationTarget::Field { .. } => None,
+                NavigationTarget::ConcreteType(_, _, defer) => *defer,
             },
         };
         let new_segment = Rc::new(new_segment_data);
@@ -332,7 +340,8 @@ impl<'graph> OperationPath<'graph> {
 
     /// Walks the segments from the tail by reference, into one exactly-sized Vec, and flips it.
     fn collect_from_root<'a, T>(&'a self, map: impl Fn(&'a PathSegment) -> T) -> Vec<T> {
-        let mut items = Vec::with_capacity(self.last_segment.as_ref().map_or(0, |s| s.depth));
+        let mut items =
+            Vec::with_capacity(self.last_segment.as_ref().map_or(0, |s| s.depth as usize));
         let mut current = self.last_segment.as_deref();
 
         while let Some(segment) = current {
@@ -424,6 +433,7 @@ impl<'graph> OperationPath<'graph> {
                 tail_node: original_segment.tail_node,
                 selection_attributes: original_segment.selection_attributes.clone(),
                 condition: original_segment.condition.clone(),
+                defer: original_segment.defer,
             };
 
             previous_new_segment = Some(Rc::new(new_segment_data));

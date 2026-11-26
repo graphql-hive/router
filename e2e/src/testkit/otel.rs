@@ -203,6 +203,19 @@ pub struct CollectedSpan {
     pub status: Option<Status>,
     pub attributes: BTreeMap<String, String>,
     pub events: Vec<CollectedEvent>,
+    pub start_time_unix_nano: u64,
+    pub end_time_unix_nano: u64,
+}
+
+/// The spans with this hive.kind attribute value.
+pub fn spans_by_hive_kind<'a>(
+    spans: &'a [CollectedSpan],
+    hive_kind: &str,
+) -> Vec<&'a CollectedSpan> {
+    spans
+        .iter()
+        .filter(|span| span.attributes.get(HIVE_KIND).map(String::as_str) == Some(hive_kind))
+        .collect()
 }
 
 #[derive(Clone, Debug)]
@@ -750,6 +763,29 @@ impl OtlpCollector {
         })
     }
 
+    /// Every collected span, whatever trace it's in, once `done` says they're all there.
+    pub async fn wait_for_spans(
+        &self,
+        done: impl Fn(&[CollectedSpan]) -> bool,
+    ) -> Vec<CollectedSpan> {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let spans: Vec<CollectedSpan> = self
+                    .traces()
+                    .await
+                    .into_iter()
+                    .flat_map(|trace| trace.spans)
+                    .collect();
+                if done(&spans) {
+                    return spans;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("waiting for spans timed out")
+    }
+
     pub async fn wait_for_span_by_hive_kind_one(&self, hive_kind: &str) -> CollectedSpan {
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
@@ -1160,6 +1196,8 @@ impl From<&Span> for CollectedSpan {
             status: span.status.clone(),
             attributes,
             events,
+            start_time_unix_nano: span.start_time_unix_nano,
+            end_time_unix_nano: span.end_time_unix_nano,
         }
     }
 }

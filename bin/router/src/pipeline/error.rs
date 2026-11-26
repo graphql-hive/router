@@ -153,6 +153,10 @@ pub enum ClientPipelineError {
     #[strum(serialize = "SUBSCRIPTIONS_TRANSPORT_NOT_SUPPORTED")]
     SubscriptionsTransportNotSupported,
 
+    #[error("The operation uses @defer, but the client doesn't accept an incremental response. Accept multipart/mixed or text/event-stream.")]
+    #[strum(serialize = "DEFER_TRANSPORT_NOT_SUPPORTED")]
+    DeferTransportNotSupported,
+
     #[error(transparent)]
     #[strum(serialize = "READ_BODY_STREAM_ERROR")]
     ReadBodyStreamError(ReadBodyStreamError),
@@ -416,6 +420,7 @@ impl ClientPipelineError {
             (Self::IntrospectionDisabled, _) => StatusCode::FORBIDDEN,
             (Self::SubscriptionsNotSupported, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
+            (Self::DeferTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
             (Self::ReadBodyStreamError(err), _) => err.status_code(),
             (Self::TimeoutError, _) => StatusCode::GATEWAY_TIMEOUT,
         }
@@ -583,7 +588,7 @@ pub fn handle_pipeline_error(
         ResponseMode::SingleOnly(content_type) | ResponseMode::Dual(content_type, _) => res
             .header(header::CONTENT_TYPE, content_type.as_ref())
             .body(data),
-        ResponseMode::StreamOnly(StreamContentType::IncrementalDelivery) => res
+        ResponseMode::StreamOnly(StreamContentType::IncrementalDelivery(_)) => res
             .header(
                 header::CONTENT_TYPE,
                 http::HeaderValue::from_static(INCREMENTAL_DELIVERY_CONTENT_TYPE),
@@ -598,7 +603,7 @@ pub fn handle_pipeline_error(
             )
             .streaming(sse::create_stream(
                 Box::pin(stream::once(async move { data })),
-                std::time::Duration::from_secs(10),
+                sse::HEARTBEAT_INTERVAL,
             )),
         ResponseMode::StreamOnly(StreamContentType::ApolloMultipartHTTP) => res
             .header(
@@ -607,7 +612,7 @@ pub fn handle_pipeline_error(
             )
             .streaming(multipart_subscribe::create_apollo_multipart_http_stream(
                 Box::pin(stream::once(async move { data })),
-                std::time::Duration::from_secs(10),
+                sse::HEARTBEAT_INTERVAL,
             )),
         ResponseMode::Laboratory => {
             unreachable!(

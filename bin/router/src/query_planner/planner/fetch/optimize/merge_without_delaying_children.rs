@@ -20,7 +20,7 @@ use crate::query_planner::{
 
 impl FetchStepData<MultiTypeFetchStep> {
     pub fn can_merge_at_same_spot(&self, other: &Self) -> bool {
-        if !self.can_merge_context(other) {
+        if !self.can_share_a_request(other) {
             return false;
         }
 

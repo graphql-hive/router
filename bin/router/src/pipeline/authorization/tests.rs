@@ -162,6 +162,7 @@ impl SupergraphTestData {
             root_type_name,
             operation_kind,
             projection_plan: Arc::new(projection_plan),
+            defer_plans: None,
             operation_for_plan,
             operation_for_plan_hash: hashes.operation_for_plan_hash,
             operation_for_introspection,
@@ -180,7 +181,7 @@ impl SupergraphTestData {
 fn build_supergraph_data(supergraph_sdl: &str) -> SupergraphTestData {
     let parsed_schema = parse_schema(&build_supergraph_sdl(supergraph_sdl));
     let supergraph_state = SupergraphState::new(&parsed_schema);
-    let consumer_schema = ConsumerSchema::new_from_supergraph(&parsed_schema);
+    let consumer_schema = ConsumerSchema::new_from_supergraph(&parsed_schema, false);
     let schema_metadata = consumer_schema.schema_metadata();
     let auth_metadata = AuthorizationMetadata::build(&supergraph_state, &schema_metadata).unwrap();
 

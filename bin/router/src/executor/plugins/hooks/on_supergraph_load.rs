@@ -86,6 +86,8 @@ impl TryFrom<&HiveRouterConfig> for SupergraphOptions {
                 merge_across_waves: MERGE_ACROSS_WAVES,
                 arguments_to_variables: config.query_planner.arguments_to_variables,
                 entity_reuse: config.traffic_shaping.entity_reuse,
+                defer: config.defer.enabled,
+                allow_expose: config.query_planner.allow_expose,
                 max_aliases_per_request: config.traffic_shaping.all.max_aliases_per_request,
                 subgraph_max_aliases_per_request: config
                     .traffic_shaping

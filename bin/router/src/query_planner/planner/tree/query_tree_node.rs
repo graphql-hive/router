@@ -1,3 +1,4 @@
+use crate::query_planner::ast::defer::DeferId;
 use petgraph::graph::{EdgeIndex, NodeIndex};
 use std::rc::Rc;
 use tracing::{instrument, trace};
@@ -29,6 +30,8 @@ pub struct QueryTreeNode {
     pub children: Vec<Rc<QueryTreeNode>>,
     pub selection_attributes: Option<Rc<SelectionAttributes>>,
     pub condition: Option<Condition>,
+    /// The deferred part that starts here, see `PathSegment::defer`.
+    pub defer: Option<DeferId>,
     /// Distinguishes nodes originating from different top-level mutation fields.
     pub mutation_field_position: MutationFieldPosition,
 }
@@ -54,6 +57,7 @@ pub(crate) struct MergeIdentity<'a> {
     condition: Option<&'a Condition>,
     context_coordinate: Option<(EdgeIndex, usize)>,
     selection_attributes: &'a Option<Rc<SelectionAttributes>>,
+    defer: Option<DeferId>,
 }
 
 impl<'a> MergeIdentity<'a> {
@@ -66,6 +70,7 @@ impl<'a> MergeIdentity<'a> {
             && self.condition == node.condition.as_ref()
             && self.context_coordinate == node.context_coordinate()
             && same_attributes(self.selection_attributes, &node.selection_attributes)
+            && self.defer == node.defer
     }
 
     /// The node `QueryTreeNode::from_path_segment_sequences` makes of `segment`, with `position`
@@ -82,6 +87,7 @@ impl<'a> MergeIdentity<'a> {
             condition: segment.condition.as_ref(),
             context_coordinate: None,
             selection_attributes: &segment.selection_attributes,
+            defer: segment.defer,
         }
     }
 }
@@ -135,6 +141,7 @@ impl QueryTreeNode {
             selection_attributes: selection_attributes.cloned(),
             mutation_field_position: None,
             condition: condition.cloned(),
+            defer: None,
         }
     }
 
@@ -158,6 +165,7 @@ impl QueryTreeNode {
             condition: self.condition.as_ref(),
             context_coordinate: self.context_coordinate(),
             selection_attributes: &self.selection_attributes,
+            defer: self.defer,
         }
     }
 
@@ -260,6 +268,7 @@ impl QueryTreeNode {
             (*selection_attributes_at_index).as_ref(),
             segment_at_index.condition.as_ref(),
         );
+        tree_node.defer = segment_at_index.defer;
 
         // Only apply the position to the first node created from the segments
         if current_index == 0 {

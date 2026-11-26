@@ -22,7 +22,7 @@ use petgraph::{
 };
 
 use crate::query_planner::{
-    ast::selection_set::SelectionSet,
+    ast::{defer::DeferId, selection_set::SelectionSet},
     planner::{
         error::QueryPlanError,
         fetch::{fetch_graph::FetchGraph, state::MultiTypeFetchStep},
@@ -91,8 +91,9 @@ struct SchedulingInput<'a> {
     root: NodeIndex,
     /// every step but the root, parents first
     topological_order: Vec<NodeIndex>,
-    /// the calls that can move, per subgraph, in `topological_order`. The subgraphs with the most
-    /// calls come first, they have the most to share.
+    /// the calls that can move, per subgraph and `@defer` part, in `topological_order`. Calls of
+    /// different parts never share a request, so a move across parts would only delay one. The
+    /// groups with the most calls come first, they have the most to share.
     movable_by_subgraph: Vec<Vec<NodeIndex>>,
 }
 
@@ -111,19 +112,22 @@ impl<'a> SchedulingInput<'a> {
                 && step.context_producers.is_empty()
                 && step.context_rewrites.is_none()
         };
-        let mut movable_by_subgraph: Vec<(&str, Vec<NodeIndex>)> = Vec::new();
+        // calls to one subgraph for one part
+        type Group<'a> = (&'a str, Option<DeferId>);
+        let mut movable_by_subgraph: Vec<(Group, Vec<NodeIndex>)> = Vec::new();
         for index in topological_order
             .iter()
             .copied()
             .filter(|&index| movable(index))
         {
-            let name = graph.graph[index].service_name.0.as_str();
+            let step = &graph.graph[index];
+            let key = (step.service_name.0.as_str(), step.defer);
             match movable_by_subgraph
                 .iter_mut()
-                .find(|(subgraph, _)| *subgraph == name)
+                .find(|(group, _)| *group == key)
             {
                 Some((_, steps)) => steps.push(index),
-                None => movable_by_subgraph.push((name, vec![index])),
+                None => movable_by_subgraph.push((key, vec![index])),
             }
         }
         movable_by_subgraph.sort_by_key(|(_, steps)| Reverse(steps.len()));
@@ -539,7 +543,7 @@ mod tests {
 
     use super::{
         greedy_batch_schedule, schedule_entity_batches, CancellationError, CancellationToken,
-        MultiTypeFetchGraph, QueryPlanError, Schedule, SchedulingInput,
+        DeferId, MultiTypeFetchGraph, QueryPlanError, Schedule, SchedulingInput,
     };
 
     /// Builds a fetch graph from named entity calls.
@@ -547,6 +551,7 @@ mod tests {
     /// One call per line: `name {fields} after parent, parent`. The subgraph is the name without
     /// its number, so `a1` and `a2` are calls to `a`. Every call is for type `T`, the fields are
     /// what it asks for, used with entity reuse. A call without `after` runs right after the root.
+    /// A name ending in `*`, like `a2*`, is a call of a `@defer` part.
     fn call_graph(
         calls: &str,
         operation_kind: OperationKind,
@@ -567,8 +572,14 @@ mod tests {
                 ),
                 None => (call, Vec::new()),
             };
-            let subgraph = name.trim_end_matches(|c: char| c.is_ascii_digit());
+            let deferred = name.ends_with('*');
+            let subgraph = name
+                .trim_end_matches('*')
+                .trim_end_matches(|c: char| c.is_ascii_digit());
             let step = add_step(&mut graph, subgraph, FetchStepKind::Entity, &fields);
+            if deferred {
+                graph.graph[step].defer = Some(DeferId::try_from(1).unwrap());
+            }
             if after.is_empty() {
                 graph.connect(root, step);
             }
@@ -726,7 +737,23 @@ mod tests {
             context_rewrites: None,
             context_variable_definitions: Vec::new(),
             context_producers: BTreeSet::new(),
+            defer: None,
         })
+    }
+
+    /// `c1` joins `c2` in wave 1 to save a `c` request. When `c2` is in a `@defer` part, the two
+    /// never share a request, so `c1` stays where it is.
+    #[test]
+    fn calls_of_different_defer_parts_dont_move_together() {
+        insta::assert_snapshot!(schedule("c1\nx\nc2 after x", false), @r"
+        x
+        c1 c2   after x
+        ");
+        insta::assert_snapshot!(schedule("c1\nx\nc2* after x", false), @r"
+        c1
+        x
+        c2*   after x
+        ");
     }
 
     /// Without moves it's 6 requests: `c` in waves 0 and 1, `a` and `b` in wave 1,

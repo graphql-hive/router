@@ -142,6 +142,8 @@ impl HttpServerRequestSpan {
             "user_agent.original" = header_user_agent.as_ref().and_then(|v| v.to_str().ok()),
             "http.response.status_code" = Empty,
             "http.response.body.size" = Empty,
+            // how a `@defer` response ended: `completed` or `client_disconnect`
+            "hive.defer.end_reason" = Empty,
             "http.route" = request.route_pattern(),
             // Client
             "client.address" = client_address,
@@ -156,6 +158,23 @@ impl HttpServerRequestSpan {
     pub fn record_body_size(&self, body_size: usize) {
         self.span
             .record(attributes::HTTP_REQUEST_BODY_SIZE, otel_int(body_size));
+    }
+
+    /// A `@defer` response is done: its last part went out (`completed`) or the client left
+    /// first. `body_size` is every part that went out.
+    pub fn record_deferred_end(&self, body_size: u64, completed: bool, has_errors: bool) {
+        record_all!(
+            self.span,
+            "http.response.body.size" = otel_int(body_size),
+            "hive.defer.end_reason" = if completed {
+                "completed"
+            } else {
+                "client_disconnect"
+            },
+        );
+        if has_errors {
+            self.record_error();
+        }
     }
 
     pub fn record_request_id(&self, req_id: &str) {

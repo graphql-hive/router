@@ -231,3 +231,29 @@ fn an_alias_outside_the_fragment_rules_out_its_objects() -> Result<(), Box<dyn E
 
     Ok(())
 }
+
+#[test]
+fn never_waits_for_a_deferred_fetch_from_another_part() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // the deep `inStock` asks `inventory` what the deferred call at `topProducts` asks. Waiting
+    // for it would hold the primary part back for a deferred one, so it doesn't
+    let document = parse_operation(
+        r#"{
+          topProducts {
+            upc
+            ... @defer { inStock }
+            reviews { author { reviews { product { inStock } } } }
+          }
+        }"#,
+    );
+    let query_plan = plan_with_reuse("../../bench/supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(describe(&query_plan), @r"
+    [2] products at root <- - after []
+    [4] reviews at topProducts.@ <- - after [2]
+    [3] inventory at topProducts.@ <- - after [2]
+    [5] inventory at topProducts.@.reviews.@.author.reviews.@.product <- - after [4]
+    ");
+
+    Ok(())
+}

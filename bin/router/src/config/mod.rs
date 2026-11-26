@@ -3,6 +3,7 @@ pub mod cache;
 pub mod coprocessor;
 pub mod cors;
 pub mod csrf;
+pub mod defer;
 pub mod demand_control;
 mod env_overrides;
 pub mod error_masking;
@@ -155,6 +156,10 @@ pub struct HiveRouterConfig {
     /// Configuration for subscriptions.
     #[serde(default)]
     pub subscriptions: subscriptions::SubscriptionsConfig,
+
+    /// Configuration for the `@defer` directive.
+    #[serde(default)]
+    pub defer: defer::DeferConfig,
 
     /// Configuration of router's WebSocket server.
     #[serde(default)]

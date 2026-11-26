@@ -525,7 +525,7 @@ fn has_stacked_type_conditions(path: &MergePath) -> bool {
 
 impl FetchStepData<MultiTypeFetchStep> {
     pub fn can_be_batched_with(&self, other: &Self, supergraph: &SupergraphState) -> bool {
-        if !self.can_merge_context(other) {
+        if !self.can_share_a_request(other) {
             return false;
         }
 

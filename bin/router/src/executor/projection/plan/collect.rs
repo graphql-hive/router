@@ -48,13 +48,23 @@ impl<'arena> Collector<'arena> {
                 }
                 SelectionItem::InlineFragment(fragment) => {
                     let fragment_scope = self.type_set(&fragment.type_condition);
-                    let frag_cond = parent_cond
+                    let mut frag_cond = parent_cond
                         .and(Condition::ParentType(fragment_scope), self.arena)
                         .with_directives(
                             fragment.include_if.as_deref(),
                             fragment.skip_if.as_deref(),
                             self.arena,
                         );
+                    // A deferred fragment goes out later, with its own plan.
+                    // With `@defer(if: $v)` it's here too, for when `$v` is false.
+                    if let Some(defer) = &fragment.defer {
+                        match defer.if_var.as_deref() {
+                            None => continue,
+                            Some(var) => {
+                                frag_cond = frag_cond.and(Condition::SkipIf(var), self.arena)
+                            }
+                        }
+                    }
                     let frag_fields = self.collect_selection_set(
                         &fragment.selections,
                         &fragment.type_condition,

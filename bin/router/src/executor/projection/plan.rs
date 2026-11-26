@@ -14,6 +14,7 @@ use crate::executor::projection::plan::collect::Collector;
 use crate::executor::projection::plan::encode::Encoder;
 use crate::executor::projection::plan::merge::Merger;
 use crate::query_planner::ast::operation::OperationDefinition;
+use crate::query_planner::ast::selection_set::SelectionSet;
 use crate::query_planner::state::supergraph_state::OperationKind;
 use bumpalo::Bump;
 
@@ -28,16 +29,25 @@ impl ProjectionPlan {
             Some(OperationKind::Subscription) => schema.subscription_type_name.as_ref(),
         }
         .expect("validated operation has a root type");
-        let arena = Bump::new();
-        let collected = Collector::collect_fields(
-            &operation.selection_set,
-            schema,
+        (
             root,
-            ir::Condition::Always,
-            &arena,
-        );
+            Self::from_selection_set(&operation.selection_set, schema, root),
+        )
+    }
+
+    /// The plan for `selection_set` on an object of type `root`.
+    /// Fragments marked with `@defer` are left out (or kept behind their `if` variable),
+    /// they're projected from their own plan, see `projection::defer`.
+    pub fn from_selection_set(
+        selection_set: &SelectionSet,
+        schema: &crate::executor::introspection::schema::SchemaMetadata,
+        root: &str,
+    ) -> ProjectionPlan {
+        let arena = Bump::new();
+        let collected =
+            Collector::collect_fields(selection_set, schema, root, ir::Condition::Always, &arena);
         let merged = Merger::merge_fields(collected, schema, root, &arena);
-        (root, Encoder::encode(&merged))
+        Encoder::encode(&merged)
     }
 }
 

@@ -65,6 +65,7 @@ fn authorization_benchmark(c: &mut Criterion) {
             root_type_name,
             operation_kind,
             projection_plan: Arc::new(projection_plan),
+            defer_plans: None,
             operation_for_plan: Arc::new(partitioned_operation.downstream_operation),
             operation_for_introspection: partitioned_operation
                 .introspection_operation

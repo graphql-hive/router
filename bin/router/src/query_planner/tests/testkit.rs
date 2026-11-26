@@ -8,11 +8,13 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 use graphql_tools::parser::query as query_ast;
 
+use crate::query_planner::ast::defer::{has_defer, prepare_for_planning, DeferredOperation};
 use crate::query_planner::ast::normalization::normalize_operation;
 use crate::query_planner::graph::edge::PlannerOverrideContext;
 use crate::query_planner::graph::Graph;
 use crate::query_planner::planner::best::find_best_combination;
 use crate::query_planner::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
+use crate::query_planner::planner::plan_nodes::defer::defer_display_plan;
 use crate::query_planner::planner::plan_nodes::planning::QueryPlan;
 use crate::query_planner::planner::query_plan::build_query_plan_from_fetch_graph;
 use crate::query_planner::planner::walker::walk_operation;
@@ -78,12 +80,45 @@ pub fn build_query_plan_from_sdl(
     override_context: PlannerOverrideContext,
     options: QueryPlannerOptions,
 ) -> Result<QueryPlan, Box<dyn Error>> {
+    Ok(plan_with_defer(supergraph_sdl, query, override_context, options)?.0)
+}
+
+/// The plan of an operation with `@defer` as it's shown when exposed, with `Defer` nodes.
+pub fn build_defer_display_plan(
+    fixture_path: &str,
+    query: query_ast::Document<'static, String>,
+) -> Result<crate::query_planner::planner::plan_nodes::QueryPlan, Box<dyn Error>> {
+    let (plan, deferred) = plan_with_defer(
+        &read_supergraph(fixture_path),
+        query,
+        PlannerOverrideContext::default(),
+        Default::default(),
+    )?;
+    let deferred = deferred.ok_or("the operation has no @defer")?;
+    let supergraph = read_supergraph_state(fixture_path);
+    Ok(defer_display_plan(
+        &plan.into_executable(&supergraph),
+        &deferred.layout,
+    ))
+}
+
+pub fn plan_with_defer(
+    supergraph_sdl: &str,
+    query: query_ast::Document<'static, String>,
+    override_context: PlannerOverrideContext,
+    options: QueryPlannerOptions,
+) -> Result<(QueryPlan, Option<DeferredOperation>), Box<dyn Error>> {
     let cancellation_token = CancellationToken::new();
     let schema = parse_schema(supergraph_sdl);
     let supergraph_state = SupergraphState::new(&schema);
     let graph = Graph::graph_from_supergraph_state(&supergraph_state)?;
     let document = normalize_operation(&supergraph_state, &query, None)?;
-    let operation = document.executable_operation();
+    // `@defer` is planned the way the router does it
+    let deferred = has_defer(&document.executable_operation().selection_set)
+        .then(|| prepare_for_planning(document.executable_operation(), &supergraph_state, true));
+    let operation = deferred
+        .as_ref()
+        .map_or(document.executable_operation(), |d| &d.operation);
     let best_paths_per_leaf = walk_operation(
         &graph,
         &supergraph_state,
@@ -109,8 +144,13 @@ pub fn build_query_plan_from_sdl(
         &options,
         &cancellation_token,
     )?;
+    // the router schedules the fetches with the parts they're for, see `with_defer_parts`
+    let plan = match deferred.as_ref().filter(|d| !d.layout.parts.is_empty()) {
+        Some(deferred) => plan.with_defer_parts(&deferred.layout.parts)?,
+        None => plan,
+    };
 
-    Ok(plan)
+    Ok((plan, deferred))
 }
 
 pub fn build_query_plan_with_defaults(

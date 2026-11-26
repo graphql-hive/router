@@ -207,6 +207,10 @@ pub struct OnExecuteEndHookPayload<'exec> {
     // kept private so plugins only go through the accessor methods below. stored into the
     // shared response after all end callbacks so deduped joiners get the same headers
     pub(crate) response_headers: ResponseHeaderAggregator,
+    /// `true` for an operation with `@defer` that sends more parts after this one.
+    /// The hook then runs once, before the primary part, with the data fetched for it so far.
+    /// What it changes in `data` shows in the later parts too.
+    pub has_next: bool,
 }
 
 impl<'exec> OnExecuteEndHookPayload<'exec> {

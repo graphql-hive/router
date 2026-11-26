@@ -136,6 +136,7 @@ fn partition_selection_set(
                 let mut type_condition = Some(inline_fragment.type_condition);
                 let mut skip_if = inline_fragment.skip_if;
                 let mut include_if = inline_fragment.include_if;
+                let mut defer = inline_fragment.defer;
                 let (downstream_selections, introspection_selections) = partition_selection_set(
                     inline_fragment.selections,
                     level.clone(),
@@ -154,6 +155,7 @@ fn partition_selection_set(
                             .expect("type_condition is required"),
                         skip_if: take_or_clone(&mut skip_if, need_intro),
                         include_if: take_or_clone(&mut include_if, need_intro),
+                        defer: take_or_clone(&mut defer, need_intro),
                         selections: downstream_selections,
                     };
                     downstream_items.push(SelectionItem::InlineFragment(downstream_frag));
@@ -164,6 +166,7 @@ fn partition_selection_set(
                         type_condition: type_condition.take().expect("type_condition is required"),
                         skip_if: skip_if.take(),
                         include_if: include_if.take(),
+                        defer: defer.take(),
                         selections: introspection_selections,
                     };
                     introspection_items.push(SelectionItem::InlineFragment(introspection_frag));

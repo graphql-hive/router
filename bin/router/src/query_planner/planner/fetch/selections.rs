@@ -74,6 +74,7 @@ impl FetchStepSelections<MultiTypeFetchStep> {
                             include_if: None,
                             skip_if: None,
                             selections: selections.clone(),
+                            defer: None,
                         });
                     };
 
@@ -82,6 +83,7 @@ impl FetchStepSelections<MultiTypeFetchStep> {
                         include_if: condition.to_include_if(),
                         skip_if: condition.to_skip_if(),
                         selections: selections_for_wrapper,
+                        defer: None,
                     })
                 })
                 .collect(),
@@ -388,6 +390,7 @@ impl FetchStepSelections<MultiTypeFetchStep> {
                         selections: prev,
                         skip_if: None,
                         include_if: Some(var_name.clone()),
+                        defer: None,
                     })];
             }
             Condition::Skip(var_name) => {
@@ -397,6 +400,7 @@ impl FetchStepSelections<MultiTypeFetchStep> {
                         selections: prev,
                         skip_if: Some(var_name.clone()),
                         include_if: None,
+                        defer: None,
                     })];
             }
             Condition::SkipAndInclude { skip, include } => {
@@ -406,6 +410,7 @@ impl FetchStepSelections<MultiTypeFetchStep> {
                         selections: prev,
                         skip_if: Some(skip.clone()),
                         include_if: Some(include.clone()),
+                        defer: None,
                     })];
             }
         }
@@ -474,7 +479,12 @@ impl FetchStepSelections<MultiTypeFetchStep> {
     ) -> Result<(), FetchStepSelectionsError> {
         let maybe_merge_into = self.try_as_single().map(|str| str.to_string());
 
-        for (definition_name, selection_set) in other.iter_selections() {
+        // a type with nothing selected has nothing to move, `self` may not even have it, like a
+        // root fetch whose fields all went to a deferred part's own root fetch
+        for (definition_name, selection_set) in other
+            .iter_selections()
+            .filter(|(_, selection_set)| !selection_set.is_empty())
+        {
             let target_type = maybe_merge_into.as_ref().unwrap_or(definition_name);
             self.add_at_path_inner(target_type, fetch_path, selection_set.clone(), false)?;
         }

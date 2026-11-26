@@ -727,7 +727,8 @@ impl Display for OperationDefinition {
             && self.variable_definitions.as_ref().is_none_or(Vec::is_empty)
         {
             // Short form for anonymous query
-            return self.selection_set.fmt(f);
+            // REVIEW: why not `return self.selection_set.fmt(f);` as before?
+            return fmt_root_selection_set(&self.selection_set, f);
         }
         if let Some(operation_kind) = &self.operation_kind {
             write!(f, "{}", operation_kind)?;
@@ -751,8 +752,37 @@ impl Display for OperationDefinition {
             }
         }
 
-        self.selection_set.fmt(f)
+        fmt_root_selection_set(&self.selection_set, f)
     }
+}
+
+/// Fragments right at the root can only be on the root type, so they go out without a type
+/// condition. A subgraph can name its root type something other than `Query`, and the
+/// supergraph doesn't say what, so `... on Query @include(if: $x)` could fail there.
+fn fmt_root_selection_set(set: &SelectionSet, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    if set.items.is_empty() {
+        return Ok(());
+    }
+    f.write_str("{")?;
+    for (i, item) in set.items.iter().enumerate() {
+        if i > 0 {
+            f.write_str(" ")?;
+        }
+        match item {
+            SelectionItem::InlineFragment(fragment) => {
+                f.write_str("...")?;
+                if let Some(skip_if) = &fragment.skip_if {
+                    write!(f, " @skip(if: ${})", skip_if)?;
+                }
+                if let Some(include_if) = &fragment.include_if {
+                    write!(f, " @include(if: ${})", include_if)?;
+                }
+                fmt_root_selection_set(&fragment.selections, f)?;
+            }
+            item => item.fmt(f)?,
+        }
+    }
+    f.write_str("}")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
