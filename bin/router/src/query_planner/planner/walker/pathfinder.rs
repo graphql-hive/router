@@ -316,7 +316,8 @@ impl<'graph> PathSearch<'graph> {
             // only the first item is the path the search started from
             let first_step_moves = moves.take();
 
-            if !seen.insert((path.tail(), target_key)) {
+            // a field found at an interface depends on the type the path got down to too
+            if !seen.insert((path.tail(), target_key, path.narrowed_to(graph))) {
                 trace!(
                     "Ignoring. Already searched this path tail for this target: {}",
                     path.pretty_print(graph)
@@ -633,7 +634,15 @@ where
             Box::new(std::iter::empty())
         }
         NavigationTarget::Field { field, .. } => {
-            Box::new(graph.field_edges_from(path_tail_index, &field.name))
+            let edges = graph.field_edges_from(path_tail_index, &field.name);
+            // A path that knows its object type, but is at an interface again, after `🔎 T` and
+            // a key move, can only read a field there that `T` resolves in that subgraph.
+            match path.narrowed_to(graph) {
+                Some(type_name) => Box::new(edges.filter(move |_| {
+                    graph.field_resolvable_for(path_tail_index, type_name, &field.name)
+                })),
+                None => Box::new(edges),
+            }
         }
         NavigationTarget::ConcreteType(type_name, _condition) => Box::new(
             graph

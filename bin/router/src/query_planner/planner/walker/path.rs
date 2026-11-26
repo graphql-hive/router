@@ -310,6 +310,23 @@ impl<'graph> OperationPath<'graph> {
         prefix
     }
 
+    /// The object type the path got down to since its last field, with `🔮 T` or `🔎 T`. Entity
+    /// moves keep it, they're the same object in another subgraph. Most paths end with a field,
+    /// so this usually looks at one segment.
+    pub fn narrowed_to(&self, graph: &'graph Graph<'graph>) -> Option<&'graph str> {
+        for segment in self.segments_rev() {
+            match graph.edge(segment.edge_index).ok()? {
+                Edge::AbstractMove(type_name) => return Some(type_name),
+                Edge::InterfaceObjectTypeMove(type_move) => {
+                    return Some(type_move.object_type_name)
+                }
+                Edge::EntityMove(_) | Edge::Selfie(_) => continue,
+                _ => return None,
+            }
+        }
+        None
+    }
+
     /// The segments from the last one back to the first, without collecting them.
     pub fn segments_rev(&self) -> impl Iterator<Item = &PathSegment> {
         std::iter::successors(self.last_segment.as_deref(), |segment| {
