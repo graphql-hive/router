@@ -234,9 +234,10 @@ impl H1Pool {
         };
         *req.uri_mut() = origin_form;
         if !req.headers().contains_key(HOST) {
+            // host and port only, the authority can carry `user:password@` too
             let host = match key.port_u16() {
                 Some(80) | None => HeaderValue::from_str(key.host()),
-                Some(_) => HeaderValue::from_str(key.as_str()),
+                Some(port) => HeaderValue::try_from(format!("{}:{port}", key.host())),
             };
             if let Ok(host) = host {
                 req.headers_mut().insert(HOST, host);
@@ -439,6 +440,34 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         accepted.load(Ordering::SeqCst)
+    }
+
+    // user info in the subgraph URL never ends up in the Host header
+    #[tokio::test]
+    async fn host_header_leaves_out_user_info() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let n = socket.read(&mut buf).await.unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok")
+                .await
+                .unwrap();
+            String::from_utf8_lossy(&buf[..n]).to_lowercase()
+        });
+
+        let pool = H1Pool::new(config(Duration::from_secs(60), None));
+        let req = Request::get(format!("http://user:secret@{addr}/graphql"))
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        let (res, mut lease) = pool.request(req).await.unwrap();
+        lease.drive(res.into_body().collect()).await.unwrap();
+
+        let head = server.await.unwrap();
+        assert!(head.contains(&format!("\r\nhost: {addr}\r\n")), "{head}");
+        assert!(!head.contains("secret"), "{head}");
     }
 
     #[tokio::test]
