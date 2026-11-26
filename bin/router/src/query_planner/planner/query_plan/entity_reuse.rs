@@ -168,11 +168,11 @@ impl PathId {
 /// One bit per response key, see [`key_mask`]. Two fields with the same key always share the
 /// bit, others may too, so it only rules things out.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-struct KeyMask(u64);
+pub(super) struct KeyMask(u64);
 
 impl KeyMask {
     /// whether it has every bit of `other`, as a position has to for every field it's asked for
-    fn has_all(self, other: KeyMask) -> bool {
+    pub(super) fn has_all(self, other: KeyMask) -> bool {
         self.0 & other.0 == other.0
     }
 
@@ -760,7 +760,10 @@ pub(super) fn wanted(step: &Step) -> Option<(&str, &SelectionSet)> {
 
 /// One bit per response key of the fields in `selections` that pass `keep`. A position can only
 /// cover a selection if it has all of its bits, and only conflict with one if they share a bit.
-fn key_mask(selections: &SelectionSet, keep: impl Fn(&FieldSelection) -> bool + Copy) -> KeyMask {
+pub(super) fn key_mask(
+    selections: &SelectionSet,
+    keep: impl Fn(&FieldSelection) -> bool + Copy,
+) -> KeyMask {
     KeyMask(selections.items.iter().fold(0, |mask, item| match item {
         SelectionItem::Field(field) if keep(field) => {
             let key = field.selection_identifier();

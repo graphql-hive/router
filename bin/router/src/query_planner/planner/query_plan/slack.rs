@@ -31,7 +31,7 @@ use crate::query_planner::{
     utils::cancellation::{CancelTick, CancellationError, CancellationToken},
 };
 
-use super::entity_reuse::{covers, wanted};
+use super::entity_reuse::{covers, key_mask, wanted, KeyMask};
 
 type MultiTypeFetchGraph = FetchGraph<MultiTypeFetchStep>;
 
@@ -243,6 +243,9 @@ type SelectionGroupId = usize;
 /// come up.
 struct ReuseIndex<'a> {
     selections: Vec<(&'a str, &'a SelectionSet)>,
+    /// by selection group, the response keys it asks for, `__typename` left out like `covers`
+    /// does
+    keys: Vec<KeyMask>,
     /// by step index, `None` for a call that can't copy, or with entity reuse off
     group_of_step: Vec<Option<SelectionGroupId>>,
     covers: HashMap<(SelectionGroupId, SelectionGroupId), bool>,
@@ -252,6 +255,7 @@ impl<'a> ReuseIndex<'a> {
     fn new(input: &SchedulingInput<'a>, entity_reuse: bool) -> Self {
         let mut reuse = Self {
             selections: Vec::new(),
+            keys: Vec::new(),
             group_of_step: vec![None; input.bound()],
             covers: HashMap::new(),
         };
@@ -265,6 +269,9 @@ impl<'a> ReuseIndex<'a> {
             };
             let id = *ids.entry(selection).or_insert_with(|| {
                 reuse.selections.push(selection);
+                reuse
+                    .keys
+                    .push(key_mask(selection.1, |field| field.name != "__typename"));
                 reuse.selections.len() - 1
             });
             reuse.group_of_step[step.index()] = Some(id);
@@ -274,6 +281,11 @@ impl<'a> ReuseIndex<'a> {
 
     /// Could a call asking for `copier` copy from one asking for `source`?
     fn covers(&mut self, source: SelectionGroupId, copier: SelectionGroupId) -> bool {
+        // a source has every response key of what it covers, so most pairs end here, without
+        // comparing the selections or keeping the answer
+        if !self.keys[source].has_all(self.keys[copier]) {
+            return false;
+        }
         let selections = &self.selections;
         *self.covers.entry((source, copier)).or_insert_with(|| {
             let ((source_type, source_fields), (copier_type, copier_fields)) =
