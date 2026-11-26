@@ -136,6 +136,17 @@ impl<State> FetchStepData<State> {
 }
 
 impl<State> FetchStepData<State> {
+    /// Where the type condition that picks one of our types sits in a path at or under ours:
+    /// our last segment when we end with one, like `search.@|[Book|Movie]`, or the segment right
+    /// after our path once that's every type, like `search.@`. With where the rest starts.
+    fn type_slot(&self) -> (usize, usize) {
+        let ours = self.response_path.len();
+        match self.response_path.last() {
+            Some(Segment::TypeCondition(..)) => (ours - 1, ours),
+            _ => (ours, ours + 1),
+        }
+    }
+
     pub fn is_fetching_multiple_types(&self) -> bool {
         self.input.is_fetching_multiple_types() || self.output.is_fetching_multiple_types()
     }
@@ -159,40 +170,45 @@ pub(crate) fn type_condition_types_from_response_path(
     }
 }
 
+/// Where the output of a step deeper in the response goes in ours, see `place_of_nested`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NestedPlace<'a> {
+    /// In `type_name`'s selections, at the nested path from `rest` on.
+    Type { type_name: &'a str, rest: usize },
+    /// At our own spot, each type in its own selections.
+    EachType,
+}
+
 impl FetchStepData<MultiTypeFetchStep> {
-    /// Where the output of a step deeper in the response, at `nested_path`, goes in ours: the
-    /// type it's under and the path in that type. With one type that's ours. With several, like
-    /// `search.@|[Book|Movie]` or `search.@` once that's every type, the nested path says which:
-    /// `search.@|[Movie].director` goes in `Movie`, at `director`. At our own spot each type
-    /// goes in its own, that's the `None` type. `None` when the path doesn't say.
-    pub(crate) fn place_of_nested(
-        &self,
-        nested_path: &MergePath,
-    ) -> Option<(Option<String>, MergePath)> {
+    /// Where the output of a step deeper in the response, at `nested_path`, goes in ours. With
+    /// one type, in ours. With several, like `search.@|[Book|Movie]` or `search.@` once that's
+    /// every type, the nested path says which: `search.@|[Movie].director` goes in `Movie`, at
+    /// `director`. At our own spot each type goes in its own. `None` when the path doesn't say,
+    /// or isn't under ours.
+    pub(crate) fn place_of_nested<'a>(
+        &'a self,
+        nested_path: &'a MergePath,
+    ) -> Option<NestedPlace<'a>> {
         let ours = self.response_path.len();
+        if nested_path.len() < ours {
+            return None;
+        }
         if let Some(type_name) = self.output.try_as_single() {
-            return Some((
-                Some(type_name.to_string()),
-                nested_path.slice_from(ours.min(nested_path.len())),
-            ));
+            return Some(NestedPlace::Type {
+                type_name,
+                rest: ours,
+            });
         }
         if nested_path.len() == ours {
-            return Some((None, MergePath::default()));
+            return Some(NestedPlace::EachType);
         }
-        // the type condition we end with, or the one right after our path
-        let (slot, rest) = match self.response_path.last() {
-            Some(Segment::TypeCondition(..)) => (ours.checked_sub(1)?, ours),
-            _ => (ours, ours + 1),
-        };
+        let (slot, rest) = self.type_slot();
         match nested_path.inner.get(slot) {
             Some(Segment::TypeCondition(type_names, _)) if type_names.len() == 1 => {
                 let type_name = type_names.first()?;
-                self.output.is_selecting_definition(type_name).then(|| {
-                    (
-                        Some(type_name.clone()),
-                        nested_path.slice_from(rest.min(nested_path.len())),
-                    )
-                })
+                self.output
+                    .is_selecting_definition(type_name)
+                    .then_some(NestedPlace::Type { type_name, rest })
             }
             _ => None,
         }
@@ -290,10 +306,8 @@ impl FetchStepData<SingleTypeFetchStep> {
         if !self.output.is_fetching_multiple_types() {
             return Ok(None);
         }
-        match response_path
-            .inner
-            .get(self.response_path.len().wrapping_sub(1))
-        {
+        let (slot, _) = self.type_slot();
+        match response_path.inner.get(slot) {
             Some(Segment::TypeCondition(type_names, _)) if type_names.len() == 1 => {
                 Ok(type_names.first().map(String::as_str))
             }
