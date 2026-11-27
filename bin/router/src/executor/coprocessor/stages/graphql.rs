@@ -8,7 +8,6 @@ use crate::config::coprocessor::{
 use crate::vrl::expressions::url_to_vrl_value;
 use crate::vrl::expressions::BooleanOrProgram;
 use ntex::http::body::{Body, ResponseBody};
-use ntex::http::HeaderMap;
 use ntex::web;
 
 use crate::executor::coprocessor::error::CoprocessorError;
@@ -38,8 +37,7 @@ pub struct GraphqlAnalysisStage {
 }
 
 pub struct GraphqlRequestInput<'a> {
-    request: &'a web::HttpRequest,
-    request_headers: &'a mut HeaderMap,
+    request: MutableRequestState<'a>,
     graphql_params: &'a mut GraphQLParams,
     sdl: Option<&'a str>,
 }
@@ -103,14 +101,12 @@ impl GraphqlAnalysisStage {
 
 impl<'a> GraphqlRequestInput<'a> {
     pub fn new(
-        request: &'a web::HttpRequest,
-        request_headers: &'a mut HeaderMap,
+        request: MutableRequestState<'a>,
         graphql_params: &'a mut GraphQLParams,
         sdl: Option<&'a str>,
     ) -> Self {
         Self {
             request,
-            request_headers,
             graphql_params,
             sdl,
         }
@@ -154,11 +150,11 @@ impl Stage for GraphqlRequestStage {
         evaluate_condition(self.condition.as_ref(), |hints| {
             hints.context_builder(|root| {
                 root.insert_object("request", |req| {
-                    req.insert_lazy("method", || input.request.method().as_str().into())
+                    req.insert_lazy("method", || input.request.method.as_str().into())
                         .insert_lazy("headers", || {
-                            ntex_header_map_to_vrl_value(input.request.headers())
+                            ntex_header_map_to_vrl_value(input.request.headers)
                         })
-                        .insert_lazy("url", || url_to_vrl_value(input.request.uri()))
+                        .insert_lazy("url", || url_to_vrl_value(input.request.uri))
                         .insert_object("operation", |op| {
                             op.insert_lazy("name", || {
                                 input.graphql_params.operation_name.clone().into()
@@ -189,12 +185,15 @@ impl Stage for GraphqlRequestStage {
             method: self
                 .include
                 .method
-                .then(|| input.request.method().as_str().into()),
-            path: self.include.path.then(|| input.request.path().into()),
+                .then(|| input.request.method.as_str().into()),
+            path: self
+                .include
+                .path
+                .then(|| input.request.uri.path().as_str().into()),
             headers: self
                 .include
                 .headers
-                .then_some(HeaderMapJsonRef(input.request_headers)),
+                .then_some(HeaderMapJsonRef(input.request.headers)),
             body: build_graphql_body_payload_ref(self.include.body, input.graphql_params),
             context: context_snapshot
                 .as_ref()
@@ -215,7 +214,7 @@ impl Stage for GraphqlRequestStage {
     ) -> Result<(), CoprocessorError> {
         // GraphQL request stage mutates headers and body. Method/path stay read-only.
         if let Some(headers) = parsed.headers {
-            headers.replace_into(input.request_headers)?;
+            headers.replace_into(input.request.headers)?;
         }
 
         if let Some(body) = parsed.body {

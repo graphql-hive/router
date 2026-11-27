@@ -6,6 +6,7 @@ use hive_router::config::coprocessor::{
     CoprocessorRouterRequestIncludeConfig, CoprocessorRouterResponseIncludeConfig,
     GraphqlBodySelection,
 };
+use hive_router::executor::coprocessor::runtime::MutableRequestState;
 use hive_router::executor::coprocessor::stage::Stage;
 use hive_router::executor::coprocessor::stages::graphql::{
     GraphqlRequestInput, GraphqlRequestStage, GraphqlResponseInput, GraphqlResponseStage,
@@ -355,8 +356,15 @@ fn bench_graphql_request_stage(c: &mut Criterion) {
             let mut request_headers = request.headers().clone();
             let mut graphql_params = GraphQLParams::default();
             let context = SharedRequestContext::default();
-            let input =
-                GraphqlRequestInput::new(&request, &mut request_headers, &mut graphql_params, None);
+            let input = GraphqlRequestInput::new(
+                MutableRequestState {
+                    method: request.method(),
+                    uri: request.uri(),
+                    headers: &mut request_headers,
+                },
+                &mut graphql_params,
+                None,
+            );
 
             let response_bytes = HyperBytes::from_static(MINIMAL_CONTINUE_RESPONSE_JSON);
             let id = "id";
@@ -377,8 +385,15 @@ fn bench_graphql_request_stage(c: &mut Criterion) {
             let mut request_headers = request.headers().clone();
             let mut graphql_params = make_graphql_params();
             let context = SharedRequestContext::default();
-            let input =
-                GraphqlRequestInput::new(&request, &mut request_headers, &mut graphql_params, None);
+            let input = GraphqlRequestInput::new(
+                MutableRequestState {
+                    method: request.method(),
+                    uri: request.uri(),
+                    headers: &mut request_headers,
+                },
+                &mut graphql_params,
+                None,
+            );
 
             let response_bytes = HyperBytes::from_static(GRAPHQL_CONTINUE_RESPONSE_JSON);
             let id = "id";
@@ -399,8 +414,15 @@ fn bench_graphql_request_stage(c: &mut Criterion) {
             let mut request_headers = request.headers().clone();
             let mut graphql_params = GraphQLParams::default();
             let context = SharedRequestContext::default();
-            let input =
-                GraphqlRequestInput::new(&request, &mut request_headers, &mut graphql_params, None);
+            let input = GraphqlRequestInput::new(
+                MutableRequestState {
+                    method: request.method(),
+                    uri: request.uri(),
+                    headers: &mut request_headers,
+                },
+                &mut graphql_params,
+                None,
+            );
 
             let response_bytes = HyperBytes::from_static(MINIMAL_BREAK_RESPONSE_JSON);
             let id = "id";
@@ -421,8 +443,15 @@ fn bench_graphql_request_stage(c: &mut Criterion) {
             let mut request_headers = request.headers().clone();
             let mut graphql_params = make_graphql_params();
             let context = SharedRequestContext::default();
-            let input =
-                GraphqlRequestInput::new(&request, &mut request_headers, &mut graphql_params, None);
+            let input = GraphqlRequestInput::new(
+                MutableRequestState {
+                    method: request.method(),
+                    uri: request.uri(),
+                    headers: &mut request_headers,
+                },
+                &mut graphql_params,
+                None,
+            );
 
             let response_bytes = HyperBytes::from_static(GRAPHQL_BREAK_RESPONSE_JSON);
             let id = "id";
