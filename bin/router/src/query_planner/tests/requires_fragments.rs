@@ -567,3 +567,138 @@ fn merged_conditional_inputs_stay_out_of_an_unconditional_call() -> Result<(), B
 
     Ok(())
 }
+
+/// `computed` requires fields of both union members. An `A` gets its key for `x` from `y`, a
+/// `B` gets its key for `y` from `x`. One call per subgraph for both types would wait on itself.
+#[test]
+fn requires_over_union_members_with_crossed_keys() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          holder {
+            computed
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-union-crossed-keys.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "r") {
+          {
+            holder {
+              __typename
+              id
+              u {
+                __typename
+                ... on B {
+                  __typename
+                  id
+                }
+                ... on A {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+        },
+        Parallel {
+          Flatten(path: "holder.u.@|[B]") {
+            Fetch(service: "x") {
+              {
+                ... on B {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on B {
+                  yk
+                }
+              }
+            },
+          },
+          Flatten(path: "holder.u.@|[A]") {
+            Fetch(service: "y") {
+              {
+                ... on A {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on A {
+                  xk
+                }
+              }
+            },
+          },
+        },
+        Parallel {
+          Flatten(path: "holder.u.@|[B]") {
+            Fetch(service: "y") {
+              {
+                ... on B {
+                  __typename
+                  yk
+                }
+              } =>
+              {
+                ... on B {
+                  bField
+                }
+              }
+            },
+          },
+          Flatten(path: "holder.u.@|[A]") {
+            Fetch(service: "x") {
+              {
+                ... on A {
+                  __typename
+                  xk
+                }
+              } =>
+              {
+                ... on A {
+                  aField
+                }
+              }
+            },
+          },
+        },
+        Flatten(path: "holder") {
+          Fetch(service: "z") {
+            {
+              ... on Holder {
+                __typename
+                u {
+                  ... on A {
+                    aField
+                  }
+                  ... on B {
+                    bField
+                  }
+                }
+                id
+              }
+            } =>
+            {
+              ... on Holder {
+                computed
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}

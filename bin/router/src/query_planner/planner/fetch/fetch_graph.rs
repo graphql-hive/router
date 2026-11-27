@@ -775,6 +775,22 @@ fn joins_other_types(
         && !matches!(rest.last(), Some(Segment::TypeCondition(..)))
 }
 
+/// Whether reading `nodes` takes a fetch of its own: an entity call or a reentry somewhere in
+/// them, or a requirement.
+fn takes_another_fetch(graph: &Graph<'_>, nodes: &[Rc<QueryTreeNode>]) -> bool {
+    nodes.iter().any(|node| {
+        !node.requirements.is_empty()
+            || node.context.is_some()
+            || node.edge_from_parent.is_some_and(|edge| {
+                !matches!(
+                    graph.edge(edge),
+                    Ok(Edge::FieldMove(_) | Edge::AbstractMove(_) | Edge::Selfie(_))
+                )
+            })
+            || takes_another_fetch(graph, &node.children)
+    })
+}
+
 /// Whether two paths are the same but for the types of the type condition at their end.
 fn same_but_last_types(left: &MergePath, right: &MergePath) -> bool {
     match (left.inner.split_last(), right.inner.split_last()) {
@@ -1286,7 +1302,11 @@ fn process_entity_move_edge(
         Some(&requirement),
         conditions,
         created_from_requires,
-        !is_interface && !head_type.is_interface_object,
+        // a key that takes another fetch first makes this call wait, and a call it joins
+        // would wait with it. The batching pass after the build knows where they all run
+        !is_interface
+            && !head_type.is_interface_object
+            && !takes_another_fetch(graph, &query_node.requirements),
     )?;
     fetch_graph
         .entity_sources

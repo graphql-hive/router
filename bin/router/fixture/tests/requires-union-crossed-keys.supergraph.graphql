@@ -1,0 +1,93 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION)
+{
+  query: Query
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(graph: join__Graph, requires: join__FieldSet, provides: join__FieldSet, type: String, external: Boolean, override: String, usedOverridden: Boolean) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(graph: join__Graph!, interface: String!) repeatable on OBJECT | INTERFACE
+
+directive @join__type(graph: join__Graph!, key: join__FieldSet, extension: Boolean! = false, resolvable: Boolean! = true, isInterfaceObject: Boolean! = false) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(graph: join__Graph!, member: String!) repeatable on UNION
+
+directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+
+type A
+  @join__type(graph: R, key: "id")
+  @join__type(graph: X, key: "xk")
+  @join__type(graph: Y, key: "id")
+  @join__type(graph: Z, key: "id", resolvable: false)
+{
+  id: ID! @join__field(graph: R) @join__field(graph: Y) @join__field(graph: Z)
+  xk: ID! @join__field(graph: X) @join__field(graph: Y)
+  aField: String @join__field(graph: X) @join__field(graph: Z, external: true)
+}
+
+type B
+  @join__type(graph: R, key: "id")
+  @join__type(graph: X, key: "id")
+  @join__type(graph: Y, key: "yk")
+  @join__type(graph: Z, key: "id", resolvable: false)
+{
+  id: ID! @join__field(graph: R) @join__field(graph: X) @join__field(graph: Z)
+  yk: ID! @join__field(graph: X) @join__field(graph: Y)
+  bField: String @join__field(graph: Y) @join__field(graph: Z, external: true)
+}
+
+type Holder
+  @join__type(graph: R, key: "id")
+  @join__type(graph: Z, key: "id")
+{
+  id: ID!
+  u: [U] @join__field(graph: R) @join__field(graph: Z, external: true)
+  computed: String @join__field(graph: Z, requires: "u { ... on A { aField } ... on B { bField } }")
+}
+
+scalar join__FieldSet
+
+enum join__Graph {
+  R @join__graph(name: "r", url: "http://r")
+  X @join__graph(name: "x", url: "http://x")
+  Y @join__graph(name: "y", url: "http://y")
+  Z @join__graph(name: "z", url: "http://z")
+}
+
+scalar link__Import
+
+enum link__Purpose {
+  """
+  `SECURITY` features provide metadata necessary to securely resolve fields.
+  """
+  SECURITY
+
+  """
+  `EXECUTION` features provide metadata necessary for operation execution.
+  """
+  EXECUTION
+}
+
+type Query
+  @join__type(graph: R)
+  @join__type(graph: X)
+  @join__type(graph: Y)
+  @join__type(graph: Z)
+{
+  u: [U] @join__field(graph: R)
+  holder: Holder @join__field(graph: R)
+}
+
+union U
+  @join__type(graph: R)
+  @join__type(graph: Z)
+  @join__unionMember(graph: R, member: "A")
+  @join__unionMember(graph: Z, member: "A")
+  @join__unionMember(graph: R, member: "B")
+  @join__unionMember(graph: Z, member: "B")
+ = A | B
