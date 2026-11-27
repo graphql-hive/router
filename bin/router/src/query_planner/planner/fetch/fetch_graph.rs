@@ -2974,17 +2974,26 @@ fn leave_right_away(
             return Ok(false);
         };
         let edge_ref = graph.edge_reference(edge_index);
-        if !matches!(edge_ref.weight(), Edge::EntityMove(_))
-            || !satisfiable_from(
-                graph,
-                fetch_graph,
-                supergraph,
-                override_context,
-                &edge_ref,
-                holder,
-            )?
-        {
+        if !matches!(edge_ref.weight(), Edge::EntityMove(_)) {
             return Ok(false);
+        }
+        // only a question of whether a shortcut works, asked from another subgraph than the
+        // move's own: when the search can't answer it, the requirements go the usual way, and
+        // anything really wrong shows up there
+        match satisfiable_from(
+            graph,
+            fetch_graph,
+            supergraph,
+            override_context,
+            &edge_ref,
+            holder,
+        ) {
+            Ok(true) => {}
+            Ok(false) => return Ok(false),
+            Err(error) => {
+                trace!("requirements don't leave from the holder: {}", error);
+                return Ok(false);
+            }
         }
     }
     Ok(true)
