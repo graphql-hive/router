@@ -371,13 +371,13 @@ impl FetchGraph<SingleTypeFetchStep> {
     }
 
     /// Whether the steps `step` waits for, directly or not, return every field of its input at
-    /// its spot. An abstract `__typename` only counts from its own subgraph, like in
-    /// `covering_step`.
+    /// its spot, for every type it reads, and run whenever it does. An abstract `__typename` only
+    /// counts from its own subgraph, like in `covering_step`.
     fn input_is_ready(&self, supergraph: &SupergraphState, step: NodeIndex) -> bool {
         let data = &self.graph[step];
-        let Some((type_name, input)) = data.input.iter().next() else {
+        if data.input.iter().next().is_none() {
             return true;
-        };
+        }
         let mut ancestors = Vec::new();
         let mut seen = vec![false; self.graph.node_bound()];
         let mut stack = vec![step];
@@ -389,22 +389,47 @@ impl FetchGraph<SingleTypeFetchStep> {
                 }
             }
         }
-        let path = &data.response_path.inner;
-        input.items.iter().all(|item| {
-            let wanted = SelectionSet {
-                items: vec![item.clone()],
+        // a step counts only when it runs whenever this one does, like in `covering_step`: one
+        // under a `@skip`/`@include` this one doesn't have may not run at all
+        let runs_whenever = |other: &FetchStepData<SingleTypeFetchStep>| {
+            other
+                .gated_by
+                .iter()
+                .chain(other.condition.as_ref())
+                .all(|condition| {
+                    data.gated_by.contains(condition) || data.condition.as_ref() == Some(condition)
+                })
+        };
+        let last = data.response_path.len().checked_sub(1);
+        // every type the step reads, each at its own path: a step for several types, like
+        // `search.@|[Book|Movie]`, reads each type's input under that type's own condition
+        data.input.iter().all(|(type_name, input)| {
+            let typed = match (last, data.response_path.last()) {
+                (Some(last), Some(Segment::TypeCondition(type_names, _)))
+                    if type_names.len() > 1 =>
+                {
+                    Some(data.response_path.with_only_type_at(last, type_name))
+                }
+                _ => None,
             };
-            let same_subgraph = abstract_typename(supergraph, type_name, &wanted);
-            ancestors.iter().any(|&ancestor| {
-                let other = &self.graph[ancestor];
-                let len = other.response_path.inner.len();
-                len <= path.len()
-                    && *other.response_path.inner == path[..len]
-                    && (!same_subgraph || other.service_name == data.service_name)
-                    && other.output.iter().any(|(_, selections)| {
-                        find_selection_set_by_segments(selections, &path[len..])
-                            .is_some_and(|found| found.contains(&wanted))
-                    })
+            let path = &typed.as_ref().unwrap_or(&data.response_path).inner;
+            input.items.iter().all(|item| {
+                let wanted = SelectionSet {
+                    items: vec![item.clone()],
+                };
+                let same_subgraph = abstract_typename(supergraph, type_name, &wanted);
+                ancestors.iter().any(|&ancestor| {
+                    let other = &self.graph[ancestor];
+                    let len = other.response_path.inner.len();
+                    len <= path.len()
+                        && *other.response_path.inner == path[..len]
+                        && (!same_subgraph || other.service_name == data.service_name)
+                        && runs_whenever(other)
+                        && other.output.iter().any(|(_, selections)| {
+                            find_selection_set_by_segments(selections, &path[len..])
+                                .is_some_and(|found| found.contains(&wanted))
+                        })
+                })
             })
         })
     }
@@ -3475,6 +3500,214 @@ mod tests {
     }
 
     use super::*;
+
+    /// A selection set written as a query, like `{ id }`.
+    fn parse(query: &str) -> SelectionSet {
+        use graphql_tools::parser::query::{Definition, OperationDefinition};
+        match crate::query_planner::utils::parsing::parse_operation(query)
+            .definitions
+            .first()
+        {
+            Some(Definition::Operation(OperationDefinition::SelectionSet(set))) => {
+                set.clone().into()
+            }
+            _ => panic!("expected a selection set"),
+        }
+    }
+
+    /// `media.@|[types]`
+    fn media_path(types: &[&str]) -> MergePath {
+        MergePath::new(vec![
+            Segment::Field(
+                Rc::new(FieldPathSegment::named("media".to_string())),
+                0,
+                None,
+            ),
+            Segment::List,
+            Segment::TypeCondition(
+                Rc::new(types.iter().map(|name| name.to_string()).collect()),
+                None,
+            ),
+        ])
+    }
+
+    /// A step to `service` at `response_path`, reading and returning a selection set per type.
+    fn step(
+        fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+        service: &str,
+        response_path: MergePath,
+        input: &[(&str, &str)],
+        output: &[(&str, &str)],
+        gated_by: Vec<Condition>,
+    ) -> NodeIndex {
+        let selections = |types: &[(&str, &str)]| {
+            let mut selections = FetchStepSelections::<SingleTypeFetchStep>::new_empty();
+            for (type_name, query) in types {
+                selections.add_definition(type_name);
+                selections.add_to(type_name, &parse(query)).unwrap();
+            }
+            selections
+        };
+        let id = fetch_graph.create_fetch_id();
+        fetch_graph.add_step(FetchStepData {
+            id,
+            service_name: SubgraphName(service.to_string()),
+            response_path,
+            input: selections(input),
+            output: selections(output),
+            flags: FetchStepFlags::empty(),
+            condition: None,
+            gated_by,
+            kind: if input.is_empty() {
+                FetchStepKind::Root
+            } else {
+                FetchStepKind::Entity
+            },
+            operation_kind: OperationKind::Query,
+            input_rewrites: None,
+            output_rewrites: None,
+            variable_usages: None,
+            variable_definitions: None,
+            mutation_field_position: None,
+            context_rewrites: None,
+            context_variable_definitions: Vec::new(),
+            context_producers: BTreeSet::new(),
+        })
+    }
+
+    fn book_and_movie() -> SupergraphState {
+        crate::query_planner::tests::testkit::read_supergraph_state(
+            "fixture/tests/group-key-resolvable.supergraph.graphql",
+        )
+    }
+
+    /// A step for `Book` and `Movie` reads each one's key under its own type: Book's key in a
+    /// step before it doesn't make Movie's ready, not even with the same `id` field.
+    #[test]
+    fn input_is_ready_only_with_the_key_of_every_type() {
+        let supergraph = book_and_movie();
+        let ready = |parent_output: &str| {
+            let mut fetch_graph = FetchGraph::new(OperationKind::Query);
+            let parent = step(
+                &mut fetch_graph,
+                "a",
+                MergePath::default(),
+                &[],
+                &[("Query", parent_output)],
+                Vec::new(),
+            );
+            let child = step(
+                &mut fetch_graph,
+                "b",
+                media_path(&["Book", "Movie"]),
+                &[
+                    ("Book", "{ __typename id }"),
+                    ("Movie", "{ __typename id }"),
+                ],
+                &[("Book", "{ title }"), ("Movie", "{ title }")],
+                Vec::new(),
+            );
+            fetch_graph.connect(parent, child);
+            fetch_graph.input_is_ready(&supergraph, child)
+        };
+        assert!(!ready("{ media { ... on Book { __typename id } } }"));
+        assert!(ready(
+            "{ media { ... on Book { __typename id } ... on Movie { __typename id } } }"
+        ));
+    }
+
+    /// A step before it counts only when it runs whenever the step does: one under
+    /// `@skip(if: $s)` covers a step under the same, not one without it. One without any
+    /// covers both.
+    #[test]
+    fn input_is_ready_only_from_a_step_that_runs_whenever_it_does() {
+        let supergraph = book_and_movie();
+        let skip = || vec![Condition::Skip("s".to_string())];
+        let ready = |parent_gates: Vec<Condition>, child_gates: Vec<Condition>| {
+            let mut fetch_graph = FetchGraph::new(OperationKind::Query);
+            let parent = step(
+                &mut fetch_graph,
+                "a",
+                MergePath::default(),
+                &[],
+                &[("Query", "{ media { ... on Book { __typename id } } }")],
+                parent_gates,
+            );
+            let child = step(
+                &mut fetch_graph,
+                "b",
+                media_path(&["Book"]),
+                &[("Book", "{ __typename id }")],
+                &[("Book", "{ title }")],
+                child_gates,
+            );
+            fetch_graph.connect(parent, child);
+            fetch_graph.input_is_ready(&supergraph, child)
+        };
+        assert!(!ready(skip(), Vec::new()), "guarded covers unguarded");
+        assert!(ready(skip(), skip()), "guarded covers the same guard");
+        assert!(ready(Vec::new(), Vec::new()), "unguarded covers unguarded");
+        assert!(ready(Vec::new(), skip()), "unguarded covers guarded");
+    }
+
+    /// The pass drops a requirement fetch another step already makes, and the step after it
+    /// waits for that one instead. When that one doesn't return the key the step after reads,
+    /// the step keeps waiting for the dropped fetch's parent, which does.
+    #[test]
+    fn dropped_requirement_fetch_keeps_the_parent_with_the_key() {
+        let supergraph = book_and_movie();
+        let mut fetch_graph = FetchGraph::new(OperationKind::Query);
+        let root = create_noop_fetch_step(&mut fetch_graph, false);
+        let with_key = step(
+            &mut fetch_graph,
+            "a",
+            MergePath::default(),
+            &[],
+            &[("Query", "{ media { ... on Book { __typename id } } }")],
+            Vec::new(),
+        );
+        // returns `title` too, but not the key
+        let cover = step(
+            &mut fetch_graph,
+            "c",
+            MergePath::default(),
+            &[],
+            &[("Query", "{ media { ... on Book { title } } }")],
+            Vec::new(),
+        );
+        let requirement = step(
+            &mut fetch_graph,
+            "b",
+            media_path(&["Book"]),
+            &[("Book", "{ __typename id }")],
+            &[("Book", "{ title }")],
+            Vec::new(),
+        );
+        fetch_graph.get_step_data_mut(requirement).unwrap().flags |=
+            FetchStepFlags::FETCHES_REQUIREMENTS;
+        let requires = step(
+            &mut fetch_graph,
+            "d",
+            media_path(&["Book"]),
+            &[("Book", "{ __typename id title }")],
+            &[("Book", "{ summary }")],
+            Vec::new(),
+        );
+        fetch_graph.connect(root, with_key);
+        fetch_graph.connect(root, cover);
+        fetch_graph.connect(with_key, requirement);
+        fetch_graph.connect(requirement, requires);
+
+        fetch_graph.drop_covered_requirement_steps(&supergraph);
+
+        assert!(!fetch_graph.graph.contains_node(requirement), "dropped");
+        let parents: Vec<NodeIndex> = fetch_graph
+            .parents_of(requires)
+            .map(|edge| edge.source())
+            .collect();
+        assert!(parents.contains(&cover), "waits for the cover");
+        assert!(parents.contains(&with_key), "keeps waiting for the key");
+    }
 
     /// A step added after a removal still gets an id no other step has.
     #[test]
