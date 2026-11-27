@@ -23,7 +23,7 @@ pub fn merge_inline_fragments(ctx: &mut NormalizationContext) -> Result<(), Norm
                                 type_name: query_type_name.to_string(),
                             }
                         })?;
-                    handle_selection_set(supergraph, selection_set, root_def, false)?;
+                    handle_selection_set(supergraph, selection_set, root_def, Merge::Anywhere)?;
                 }
                 OperationDefinition::Query(Query { selection_set, .. }) => {
                     let root_def =
@@ -32,7 +32,7 @@ pub fn merge_inline_fragments(ctx: &mut NormalizationContext) -> Result<(), Norm
                                 type_name: query_type_name.to_string(),
                             }
                         })?;
-                    handle_selection_set(supergraph, selection_set, root_def, false)?;
+                    handle_selection_set(supergraph, selection_set, root_def, Merge::Anywhere)?;
                 }
                 OperationDefinition::Mutation(Mutation { selection_set, .. }) => {
                     let mutation_type_name =
@@ -48,8 +48,8 @@ pub fn merge_inline_fragments(ctx: &mut NormalizationContext) -> Result<(), Norm
                             .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
                                 type_name: mutation_type_name.to_string(),
                             })?;
-                    // mutation fields run in order, see `handle_selection_set`
-                    handle_selection_set(supergraph, selection_set, root_def, true)?;
+                    // mutation fields run in order
+                    handle_selection_set(supergraph, selection_set, root_def, Merge::IntoPrevious)?;
                 }
                 OperationDefinition::Subscription(Subscription { selection_set, .. }) => {
                     let subscription_type_name = ctx
@@ -64,7 +64,7 @@ pub fn merge_inline_fragments(ctx: &mut NormalizationContext) -> Result<(), Norm
                         .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
                             type_name: subscription_type_name.to_string(),
                         })?;
-                    handle_selection_set(supergraph, selection_set, root_def, false)?;
+                    handle_selection_set(supergraph, selection_set, root_def, Merge::Anywhere)?;
                 }
             },
             Definition::Fragment(_) => {
@@ -76,17 +76,25 @@ pub fn merge_inline_fragments(ctx: &mut NormalizationContext) -> Result<(), Norm
     Ok(())
 }
 
-/// Merges equal inline fragments of `selection_set` into the first of them. With `in_order`, only
-/// into the item right before, for the root of a mutation: its fields run in order, and merging
-/// `... @include(if: $a) { x } y ... @include(if: $a) { z }` into the first would run `z`
-/// before `y`. Fragments in there are still the root, so it carries into them, and only stops
-/// at a field's selections.
+/// Which earlier item an inline fragment can merge into, when it's equal to it.
+#[derive(Clone, Copy)]
+enum Merge {
+    /// Any of them, the first one.
+    Anywhere,
+    /// Only the one right before, for the root of a mutation: its fields run in order, and
+    /// merging `... @include(if: $a) { x } y ... @include(if: $a) { z }` into the first would run
+    /// `z` before `y`. Fragments in there are still the root, so it carries into them, and only
+    /// stops at a field's selections.
+    IntoPrevious,
+}
+
+/// Merges equal inline fragments of `selection_set`, see `Merge`.
 #[inline]
 fn handle_selection_set<'a>(
     state: &SupergraphState,
     selection_set: &mut SelectionSet<'a, String>,
     parent_type_def: &SupergraphDefinition,
-    in_order: bool,
+    merge: Merge,
 ) -> Result<(), NormalizationError> {
     let old_items = std::mem::take(&mut selection_set.items);
     let mut new_items: Vec<Selection<'a, String>> = Vec::new();
@@ -118,7 +126,12 @@ fn handle_selection_set<'a>(
                             }
                         })?;
 
-                    handle_selection_set(state, &mut field.selection_set, field_type_def, false)?;
+                    handle_selection_set(
+                        state,
+                        &mut field.selection_set,
+                        field_type_def,
+                        Merge::Anywhere,
+                    )?;
                 }
                 new_items.push(Selection::Field(field));
             }
@@ -138,15 +151,14 @@ fn handle_selection_set<'a>(
                     state,
                     &mut current_fragment.selection_set,
                     child_parent_type,
-                    in_order,
+                    merge,
                 )?;
                 flatten_redundant_nested_inline_fragments(&mut current_fragment);
 
                 let mut merged_into_existing = false;
-                let candidates = if in_order {
-                    new_items.len().saturating_sub(1)
-                } else {
-                    0
+                let candidates = match merge {
+                    Merge::Anywhere => 0,
+                    Merge::IntoPrevious => new_items.len().saturating_sub(1),
                 };
                 for (index, new_item_selection) in new_items.iter_mut().enumerate().skip(candidates)
                 {
@@ -182,7 +194,7 @@ fn handle_selection_set<'a>(
     }
     for (index, parent_type) in merged {
         if let Selection::InlineFragment(fragment) = &mut new_items[index] {
-            handle_selection_set(state, &mut fragment.selection_set, parent_type, in_order)?;
+            handle_selection_set(state, &mut fragment.selection_set, parent_type, merge)?;
         }
     }
     selection_set.items = new_items;
