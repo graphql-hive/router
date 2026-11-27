@@ -121,6 +121,15 @@ impl<State> FetchStepData<State> {
         self.kind == FetchStepKind::Entity
     }
 
+    /// Whether we run whenever `other` does: every condition we're under, `other` is under too.
+    /// One under a `@skip`/`@include` that `other` doesn't have may not run at all.
+    pub fn runs_whenever(&self, other: &Self) -> bool {
+        self.gated_by
+            .iter()
+            .chain(self.condition.as_ref())
+            .all(|condition| other.gated_by.contains(condition))
+    }
+
     pub fn add_input_rewrite(&mut self, rewrite: FetchRewrite) {
         let rewrites = self.input_rewrites.get_or_insert_default();
 

@@ -335,12 +335,7 @@ impl FetchGraph<SingleTypeFetchStep> {
                     || (same_subgraph && other_step.service_name != step.service_name)
                     || other_step.output_rewrites.is_some()
                     || other_step.mutation_field_position != step.mutation_field_position
-                    // it runs whenever the candidate does
-                    || !other_step
-                        .gated_by
-                        .iter()
-                        .chain(other_step.condition.as_ref())
-                        .all(|condition| step.gated_by.contains(condition))
+                    || !other_step.runs_whenever(step)
                 {
                     continue;
                 }
@@ -380,17 +375,6 @@ impl FetchGraph<SingleTypeFetchStep> {
                 }
             }
         }
-        // a step counts only when it runs whenever this one does, like in `covering_step`: one
-        // under a `@skip`/`@include` this one doesn't have may not run at all
-        let runs_whenever = |other: &FetchStepData<SingleTypeFetchStep>| {
-            other
-                .gated_by
-                .iter()
-                .chain(other.condition.as_ref())
-                .all(|condition| {
-                    data.gated_by.contains(condition) || data.condition.as_ref() == Some(condition)
-                })
-        };
         let last = data.response_path.len().checked_sub(1);
         // every type the step reads, each at its own path: a step for several types, like
         // `search.@|[Book|Movie]`, reads each type's input under that type's own condition
@@ -415,7 +399,7 @@ impl FetchGraph<SingleTypeFetchStep> {
                     len <= path.len()
                         && *other.response_path.inner == path[..len]
                         && (!same_subgraph || other.service_name == data.service_name)
-                        && runs_whenever(other)
+                        && other.runs_whenever(data)
                         && other.output.iter().any(|(_, selections)| {
                             find_selection_set_by_segments(selections, &path[len..])
                                 .is_some_and(|found| found.contains(&wanted))
