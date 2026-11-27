@@ -1334,3 +1334,170 @@ fn union_members_ask_only_for_their_own_entity_fields() -> Result<(), Box<dyn Er
 
     Ok(())
 }
+
+/// Book and Movie have the same key and `title`, but `b` only resolves Book by key and `c`
+/// only Movie. The fragments can't be planned once for both: each type goes to its own.
+#[test]
+fn fragments_on_types_resolvable_in_other_subgraphs_stay_apart() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation("{ media { ... on Book { title } ... on Movie { title } } }");
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/group-key-resolvable.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            media {
+              __typename
+              ... on Book {
+                __typename
+                id
+              }
+              ... on Movie {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Parallel {
+          Flatten(path: "media.@|[Movie]") {
+            Fetch(service: "c") {
+              {
+                ... on Movie {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Movie {
+                  title
+                }
+              }
+            },
+          },
+          Flatten(path: "media.@|[Book]") {
+            Fetch(service: "b") {
+              {
+                ... on Book {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Book {
+                  title
+                }
+              }
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Book and Movie are both keyed by `details { code }`, but `s` hands over `code` only
+/// through `Book.details`. A Movie's `code` comes from `o`, with or without the Book
+/// fragment next to it.
+#[test]
+fn fragments_on_types_that_get_their_key_another_way_stay_apart() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation("{ media { ... on Book { title } ... on Movie { title } } }");
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/group-key-route.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "s") {
+          {
+            media {
+              __typename
+              ... on Book {
+                __typename
+                details {
+                  code
+                }
+              }
+              ... on Movie {
+                __typename
+                details {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "media.@|[Movie].details") {
+          Fetch(service: "o") {
+            {
+              ... on Details {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Details {
+                code
+              }
+            }
+          },
+        },
+        BatchFetch(service: "t") {
+          {
+            _e0 {
+              paths: [
+                "media.@|[Movie]"
+              ]
+              {
+                ... on Movie {
+                  __typename
+                  details {
+                    code
+                  }
+                }
+              }
+            }
+            _e1 {
+              paths: [
+                "media.@|[Book]"
+              ]
+              {
+                ... on Book {
+                  __typename
+                  details {
+                    code
+                  }
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Movie {
+                title
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Book {
+                title
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}

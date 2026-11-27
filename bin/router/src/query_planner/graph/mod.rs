@@ -276,19 +276,22 @@ impl<'graph> Graph<'graph> {
         let (Some(a), Some(b)) = (self.type_profiles.get(a), self.type_profiles.get(b)) else {
             return false;
         };
+        let same_field = |field: &str| {
+            field == "__typename"
+                || matches!((a.fields.get(field), b.fields.get(field)), (Some(a), Some(b)) if a == b)
+        };
         a.key == b.key
-            && a.subgraphs.iter().all(|(subgraph, memberships)| {
+            // the key gets read the same way for both, so the objects leave a subgraph the same
+            && a.key.is_none_or(|key| key_field_names(key).all(same_field))
+            && a.subgraphs.iter().all(|(subgraph, profile)| {
                 b.subgraphs
                     .get(subgraph)
-                    .is_none_or(|theirs| theirs == memberships)
+                    .is_none_or(|theirs| theirs == profile)
             })
             && subgraphs.all(|subgraph| {
                 a.subgraphs.contains_key(subgraph) && b.subgraphs.contains_key(subgraph)
             })
-            && fields.all(|field| {
-                field == "__typename"
-                    || matches!((a.fields.get(field), b.fields.get(field)), (Some(a), Some(b)) if a == b)
-            })
+            && fields.all(same_field)
     }
 
     /// Fills `edge_indexes`, keeping the order `edges_from` gives.
@@ -1847,7 +1850,8 @@ fn interchangeable_types(
     (groups, profiles)
 }
 
-/// What `interchangeable_for` compares of `object`. `None` when it has no single key.
+/// What `interchangeable_for` compares of `object`. `None` when it has no single key made of
+/// plain fields.
 fn type_profile<'a>(
     name: &str,
     object: &'a SupergraphObjectType,
@@ -1856,11 +1860,25 @@ fn type_profile<'a>(
     field_ids: &mut FieldProfileIds<'a>,
     membership_ids: &mut HashMap<Vec<&'a str>, u32>,
 ) -> Option<TypeProfile<'a>> {
-    // a subgraph that can't resolve it is never gone into, it's only where objects come from,
-    // and they leave with the same key
+    // A path between two subgraphs takes the key, so it's the same for both types only when the
+    // key is: the same plain fields everywhere, which `interchangeable_for` compares like any
+    // other field. A key like `details { code }` reads fields of another type, and those can
+    // come from other places per type, through an `@override` or a `@provides` on one of them,
+    // so the planner would send one type's objects the way the other's go.
     let mut keys = object.join_type.iter().map(|join| join.key.as_deref());
     let key = keys.next().flatten();
     if key.is_none() || !keys.all(|other| other == key) {
+        return None;
+    }
+    // A plain key is field names and nothing else, no `{`, `(`, `:` or `@`. Its names are
+    // then the key's text split up, nothing to parse or keep, see `key_field_names`.
+    let key = key?;
+    if !key
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || key_separator(byte))
+        || key_field_names(key).next().is_none()
+        || !key_field_names(key).all(|name| object.fields.contains_key(name))
+    {
         return None;
     }
     let subgraphs = object
@@ -1883,7 +1901,12 @@ fn type_profile<'a>(
             let next = membership_ids.len() as u32;
             (
                 join.graph_id.as_str(),
-                *membership_ids.entry(memberships).or_insert(next),
+                SubgraphProfile {
+                    memberships: *membership_ids.entry(memberships).or_insert(next),
+                    // with `resolvable: false` the objects can come from there, but no entity
+                    // call goes in
+                    resolvable: join.resolvable,
+                },
             )
         })
         .collect();
@@ -1902,10 +1925,20 @@ fn type_profile<'a>(
         })
         .collect();
     Some(TypeProfile {
-        key,
+        key: Some(key),
         subgraphs,
         fields,
     })
+}
+
+fn key_separator(byte: u8) -> bool {
+    byte.is_ascii_whitespace() || byte == b','
+}
+
+/// The field names of a plain key like `id sku`, see `type_profile`.
+fn key_field_names(key: &str) -> impl Iterator<Item = &str> {
+    key.split(|c: char| c.is_ascii() && key_separator(c as u8))
+        .filter(|name| !name.is_empty())
 }
 
 /// See `Graph::required_fields`.
@@ -2188,14 +2221,22 @@ impl<'a> FieldProfile<'a> {
 /// that aren't the same everywhere, see `Graph::interchangeable_for`.
 #[derive(Debug, Default)]
 pub(crate) struct TypeProfile<'graph> {
-    /// Its key, when every subgraph that has it keys it with the same fields. A path between
-    /// two subgraphs then never needs a third one.
+    /// Its key, when every subgraph that has it keys it with the same plain list of fields, like
+    /// `id` or `id sku`. A path between two subgraphs then never needs a third one.
     key: Option<&'graph str>,
-    /// The subgraphs that have it, with the interfaces and unions it's in there: the same id
-    /// for the same ones.
-    subgraphs: HashMap<&'graph str, u32>,
+    /// The subgraphs that have it, with what decides how the planner goes in and out there.
+    subgraphs: HashMap<&'graph str, SubgraphProfile>,
     /// Each field that doesn't name the type, with the id of its `FieldProfile`.
     fields: HashMap<&'graph str, u32>,
+}
+
+/// An object type in one subgraph, see `TypeProfile::subgraphs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SubgraphProfile {
+    /// The interfaces and unions it's in there, the same id for the same ones.
+    memberships: u32,
+    /// Whether an entity call can go in, so not `resolvable: false`.
+    resolvable: bool,
 }
 
 /// Gives each distinct `FieldProfile` an id, see `TypeProfile::fields`.

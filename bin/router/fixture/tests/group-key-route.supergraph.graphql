@@ -1,0 +1,81 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION)
+{
+  query: Query
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(graph: join__Graph, requires: join__FieldSet, provides: join__FieldSet, type: String, external: Boolean, override: String, usedOverridden: Boolean) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(graph: join__Graph!, interface: String!) repeatable on OBJECT | INTERFACE
+
+directive @join__type(graph: join__Graph!, key: join__FieldSet, extension: Boolean! = false, resolvable: Boolean! = true, isInterfaceObject: Boolean! = false) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(graph: join__Graph!, member: String!) repeatable on UNION
+
+directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+
+type Book
+  @join__type(graph: S, key: "details { code }", resolvable: false)
+  @join__type(graph: T, key: "details { code }")
+{
+  details: Details! @join__field(graph: S, provides: "code") @join__field(graph: T)
+  title: String @join__field(graph: T)
+}
+
+type Details
+  @join__type(graph: O, key: "id")
+  @join__type(graph: S, key: "id")
+  @join__type(graph: T)
+{
+  id: ID! @join__field(graph: O) @join__field(graph: S)
+  code: ID! @join__field(graph: O) @join__field(graph: S, external: true) @join__field(graph: T)
+}
+
+scalar join__FieldSet
+
+enum join__Graph {
+  O @join__graph(name: "o", url: "http://o")
+  S @join__graph(name: "s", url: "http://s")
+  T @join__graph(name: "t", url: "http://t")
+}
+
+scalar link__Import
+
+enum link__Purpose {
+  """
+  `SECURITY` features provide metadata necessary to securely resolve fields.
+  """
+  SECURITY
+
+  """
+  `EXECUTION` features provide metadata necessary for operation execution.
+  """
+  EXECUTION
+}
+
+union Media
+  @join__type(graph: S)
+  @join__unionMember(graph: S, member: "Book")
+  @join__unionMember(graph: S, member: "Movie")
+ = Book | Movie
+
+type Movie
+  @join__type(graph: S, key: "details { code }", resolvable: false)
+  @join__type(graph: T, key: "details { code }")
+{
+  details: Details!
+  title: String @join__field(graph: T)
+}
+
+type Query
+  @join__type(graph: O)
+  @join__type(graph: S)
+  @join__type(graph: T)
+{
+  media: [Media] @join__field(graph: S)
+}
