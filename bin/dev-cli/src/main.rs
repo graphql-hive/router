@@ -87,6 +87,29 @@ fn main() {
                     println!("    {}", path.pretty_print(&graph));
                 }
             }
+
+            // a mutation or subscription field more than one subgraph can run has an empty spot
+            // above, the planner picks one of these
+            for (root_field, choices) in &best_paths_per_leaf.entrypoint_choices {
+                println!(
+                    "Root field at index {} can start in {} subgraphs:",
+                    root_field,
+                    choices.len(),
+                );
+                for (choice, paths_per_leaf) in choices.iter().enumerate() {
+                    println!("  Choice {}:", choice);
+                    for (index, best_path) in paths_per_leaf.iter().enumerate() {
+                        println!(
+                            "    Path at index {} has total of {} best paths:",
+                            index,
+                            best_path.len(),
+                        );
+                        for path in best_path {
+                            println!("        {}", path.pretty_print(&graph));
+                        }
+                    }
+                }
+            }
         }
         "fetch_graph" => {
             let fetch_graph = process_fetch_graph(&args[2], &args[3]);
