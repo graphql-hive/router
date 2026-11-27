@@ -1,4 +1,26 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.59 (2026-11-27)
+
+### Fixes
+
+#### Merged entity calls keep the outer `@skip`/`@include`
+
+When two entity calls to the same subgraph merged, the merged call only kept the `@skip`/`@include` conditions both had. In `first { price { price } } first @skip(if: $skip) { price @include(if: $include) { a: price } }` the `$skip` was dropped, so with `$skip: true` the subgraph was still asked for `a`. Each side's own conditions now stay on its fields.
+
+Two calls for the same objects under different outer conditions only share a request when the one that runs less often reads nothing the other doesn't. Otherwise a field fetched only under the outer condition, like one a `@requires` needs, would go out as `null` when that condition is false.
+
+#### `@override` is followed when a field returns a root type
+
+A field that returns `Query` lets a query go back to the root in any subgraph, like `admin { scope { version } }`. When that field was moved to another subgraph with `@override`, the plan still asked the old subgraph for it, on its way back to `Query`. Now it asks the subgraph the field was moved to, and for a progressive `@override(label: ...)` the one the request goes to.
+
+#### Required fields come from a subgraph that resolves them for that type
+
+An `@interfaceObject` field with `@requires` needs the required fields for each type of the interface. When the interface's subgraph has the field but one of its types marks it `@external` there, the plan still asked that subgraph for it, for objects of that type too, and got nothing back. Now those objects get the field from a subgraph that resolves it for their type, like a query asking for the field on the interface does.
+
+#### Required fields follow `@override` on the interface's types
+
+An `@interfaceObject` field with `@requires` needs the required fields for each type of the interface. When one of those types has the field moved to another subgraph with `@override`, the plan still read it from the interface in the old subgraph for objects of that type. Now it follows the override. A progressive `@override(label: ...)` on a type of an interface was also ignored when a query read the field through the interface, `{ accounts { title } }` or `... on Admin { title }`. Now the field comes from whichever subgraph the request goes to.
+
 ## 0.0.58 (2026-11-26)
 
 ### Fixes
