@@ -488,6 +488,20 @@ impl<'graph> OperationPath<'graph> {
         same_start.then_some(steps)
     }
 
+    /// The edges this path takes after `start`, the path it went on from. Last one first.
+    pub(crate) fn edges_after(
+        &self,
+        start: &OperationPath<'graph>,
+    ) -> impl Iterator<Item = EdgeIndex> + '_ {
+        let start_depth = start
+            .last_segment
+            .as_ref()
+            .map_or(0, |segment| segment.depth);
+        self.segments_rev()
+            .take_while(move |segment| segment.depth > start_depth)
+            .map(|segment| segment.edge_index)
+    }
+
     /// This path, going on with `steps` taken from another path, see `steps_after`.
     pub(crate) fn replay(
         &self,

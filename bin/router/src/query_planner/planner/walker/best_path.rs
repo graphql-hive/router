@@ -53,16 +53,20 @@ pub fn find_best_paths<'graph>(paths: Vec<OperationPath<'graph>>) -> Vec<Operati
 /// all fetches the same value more than once. Picking one per leaf on its own can still send
 /// the leaves down different routes, like `whiskers` through `Animal`'s key and `tricks`
 /// through `Dog`'s. So each leaf takes the path whose edges the most leaves could use too,
-/// the first one on a tie.
-pub fn pick_shared_paths<'graph>(
+/// the first one on a tie. Only the edges after `from`, where the paths start: the ones before
+/// are how `from` got there, and counting them would make the pick depend on that.
+pub fn pick_shared_paths<'graph, 'from>(
+    from: &'from OperationPath<'graph>,
     tied_paths_per_leaf: Vec<Vec<OperationPath<'graph>>>,
-) -> impl Iterator<Item = OperationPath<'graph>> {
+) -> impl Iterator<Item = OperationPath<'graph>> + 'from {
     // Nothing to pick from when no leaf has a tie, and that's almost always.
     let mut leaves_per_edge: HashMap<EdgeIndex, usize> = HashMap::new();
     if tied_paths_per_leaf.iter().any(|paths| paths.len() > 1) {
         for paths in &tied_paths_per_leaf {
-            let edges: HashSet<EdgeIndex> =
-                paths.iter().flat_map(|path| path.get_edges()).collect();
+            let edges: HashSet<EdgeIndex> = paths
+                .iter()
+                .flat_map(|path| path.edges_after(from))
+                .collect();
             for edge in edges {
                 *leaves_per_edge.entry(edge).or_default() += 1;
             }
@@ -75,9 +79,8 @@ pub fn pick_shared_paths<'graph>(
         }
         // `rev` so that `max_by_key`, which keeps the last maximum, keeps the first.
         paths.into_iter().rev().max_by_key(|path| {
-            path.get_edges()
-                .iter()
-                .map(|edge| leaves_per_edge[edge])
+            path.edges_after(from)
+                .map(|edge| leaves_per_edge[&edge])
                 .sum::<usize>()
         })
     })

@@ -2079,3 +2079,122 @@ fn requires_waits_for_the_fetch_with_its_key() -> Result<(), Box<dyn Error>> {
     "#);
     Ok(())
 }
+
+/// `score` in `d` requires `p` and `q`. `p` is in `b` and `c`, `q` only in `c`, so `c` gives
+/// both. `top.related` gets to a `Product` through `b` and back, `topB` starts in `b`. What one
+/// of them picks for `p` mustn't change what the other picks, whichever field comes first.
+#[test]
+fn requires_provider_does_not_depend_on_an_earlier_field() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let plan = |query: &str| -> Result<serde_json::Value, Box<dyn Error>> {
+        let plan = build_query_plan_with_defaults(
+            "fixture/tests/requires-provider-after-revisit.supergraph.graphql",
+            parse_operation(query),
+        )?;
+        Ok(serde_json::to_value(&plan)?)
+    };
+
+    let alone = plan("{ topB { score } }")?;
+    let after = plan("{ top { related { score } } topB { score } }")?;
+    let before = plan("{ topB { score } top { related { score } } }")?;
+
+    assert_eq!(providers_of_p(&alone, &["topB"]), ["c"]);
+    assert_eq!(providers_of_p(&after, &["topB"]), ["c"]);
+    assert_eq!(providers_of_p(&before, &["topB"]), ["c"]);
+
+    Ok(())
+}
+
+/// The services a fetch reads `p` from for the objects at `path`.
+fn providers_of_p(plan: &serde_json::Value, path: &[&str]) -> Vec<String> {
+    use serde_json::Value;
+
+    // the selection set right after `marker`, braces included
+    fn block_after<'a>(text: &'a str, marker: &str) -> Option<&'a str> {
+        let start = text.find(marker)? + marker.len();
+        let open = start + text[start..].find('{')?;
+        let mut depth = 0;
+        for (index, char) in text[open..].char_indices() {
+            match char {
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                _ => continue,
+            }
+            if depth == 0 {
+                return Some(&text[open..=open + index]);
+            }
+        }
+        None
+    }
+    fn reads_p(selections: Option<&str>) -> bool {
+        selections.is_some_and(|selections| {
+            selections
+                .split(|char: char| !char.is_alphanumeric() && char != '_')
+                .any(|word| word == "p")
+        })
+    }
+    fn keys(path: &Value) -> Vec<String> {
+        path.as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|segment| segment.get("Field").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect()
+    }
+    fn walk(node: &Value, at: &[String], want: &[String], out: &mut Vec<String>) {
+        match node {
+            Value::Object(map) => {
+                let service = || map["serviceName"].as_str().unwrap_or_default().to_string();
+                let operation = map
+                    .get("operation")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                match map.get("kind").and_then(Value::as_str) {
+                    Some("Flatten") => walk(&map["node"], &keys(&map["path"]), want, out),
+                    Some("Fetch") => {
+                        let selections = if at.is_empty() {
+                            // a root fetch, `p` sits under the root field
+                            let marker = want.first().map(String::as_str).unwrap_or_default();
+                            block_after(operation, marker)
+                        } else if at == want {
+                            block_after(operation, "_entities")
+                        } else {
+                            None
+                        };
+                        if reads_p(selections) {
+                            out.push(service());
+                        }
+                    }
+                    Some("BatchFetch") => {
+                        for alias in map["entityBatch"]["aliases"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                        {
+                            let at_path = alias["paths"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .any(|path| keys(path) == want);
+                            let name = alias["alias"].as_str().unwrap_or_default();
+                            let marker = format!("{name}: _entities");
+                            if at_path && reads_p(block_after(operation, &marker)) {
+                                out.push(service());
+                            }
+                        }
+                    }
+                    _ => map.values().for_each(|value| walk(value, at, want, out)),
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|item| walk(item, at, want, out)),
+            _ => {}
+        }
+    }
+
+    let want: Vec<String> = path.iter().map(|key| key.to_string()).collect();
+    let mut out = Vec::new();
+    walk(plan, &[], &want, &mut out);
+    out.sort();
+    out.dedup();
+    out
+}

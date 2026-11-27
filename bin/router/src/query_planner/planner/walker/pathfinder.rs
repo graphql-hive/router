@@ -1118,7 +1118,7 @@ impl<'graph> PathSearch<'graph> {
         }
 
         let paths_to_requirements: Vec<OperationPath<'graph>> =
-            pick_shared_paths(tied_paths_per_leaf)
+            pick_shared_paths(path, tied_paths_per_leaf)
                 .map(|best_path| path.build_requirement_continuation_path(&best_path))
                 .collect();
 
