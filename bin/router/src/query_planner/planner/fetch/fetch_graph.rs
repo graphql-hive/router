@@ -108,10 +108,10 @@ pub struct FetchGraph<State> {
     /// Only needed while the graph is built.
     pub(crate) context_variables: HashMap<ContextVariableKey, String>,
     pub(crate) context_variable_counter: usize,
-    /// Whether any step has `context_producers`. Merges only rename producers when one does,
-    /// as going through every step on each merge was most of what a merge cost. Only the
-    /// multi-type graph reads it, and `to_multi_type` works it out from the steps. Merges don't
-    /// add producers, they only combine or rename them.
+    /// Whether any step has `context_producers`, set wherever a step gets one. Renaming a
+    /// producer only goes through the steps when one does, as going through every step on each
+    /// merge was most of what a merge cost. Merges don't add producers, they only combine or
+    /// rename them.
     pub(crate) uses_context: bool,
     pub(crate) operation_variables: HashSet<String>,
     /// Each step's children by the entity call they make, see `entity_call_hash`, newest last. So
@@ -137,10 +137,6 @@ impl FetchGraph<SingleTypeFetchStep> {
         let new_graph = self
             .graph
             .map_owned(|_, step| step.into_multi_type(), |_, _| ());
-        let uses_context = new_graph
-            .node_weights()
-            .any(|step| !step.context_producers.is_empty());
-
         FetchGraph {
             graph: new_graph,
             root_index: self.root_index,
@@ -153,7 +149,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             context_producers: HashMap::new(),
             context_variables: HashMap::new(),
             context_variable_counter: 0,
-            uses_context,
+            uses_context: self.uses_context,
             operation_variables: HashSet::new(),
             children_by_entity_call: None,
             planned_requires: HashMap::new(),
@@ -261,11 +257,6 @@ impl FetchGraph<SingleTypeFetchStep> {
             by_length[length].push(index);
         }
         let mut depths = vec![0; self.graph.node_bound()];
-        // the single-type graph doesn't keep it up to date as producers get added
-        self.uses_context = self
-            .graph
-            .node_weights()
-            .any(|step| !step.context_producers.is_empty());
         for candidate in candidates {
             let Some(cover) = self.covering_step(supergraph, candidate, &by_length, &mut depths)
             else {
@@ -2658,6 +2649,7 @@ fn add_context_arguments(
             .get(&(ancestor_path.clone(), (edge_index, requirement.argument)))
             .cloned()
             .ok_or(FetchGraphError::UnsupportedContextInRequirement)?;
+        fetch_graph.uses_context |= !producers.is_empty();
         for producer in producers {
             let id = fetch_graph.get_step_data(producer)?.id;
             fetch_graph.connect(producer, field_fetch);
