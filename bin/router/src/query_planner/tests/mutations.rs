@@ -1213,3 +1213,186 @@ fn mutation_field_waits_for_entity_fetch_of_the_field_before() -> Result<(), Box
 
     Ok(())
 }
+
+/// `create` is selected twice under one response key, so GraphQL runs it once, with both
+/// selections. With both conditions on, `a` gets one request that has both.
+#[test]
+fn field_selected_twice_in_a_conditional_fragment_runs_once() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation ($a: Boolean!, $b: Boolean!) {
+          ... on Mutation @include(if: $a) {
+            create: addProduct(input: { name: "new", price: 1 }) @include(if: $b) { isExpensive }
+            create: addProduct(input: { name: "new", price: 1 }) { id }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a", if: $a) {
+          mutation ($a:Boolean!,$b:Boolean!) {
+            ... on Mutation @include(if: $a) {
+              create: addProduct(input: {name: "new", price: 1}) @include(if: $b) {
+                __typename
+                id
+                price
+              }
+              create: addProduct(input: {name: "new", price: 1}) {
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "|[Mutation].create") {
+          Fetch(service: "b", if: $a && $b) {
+            {
+              ... on Product {
+                __typename
+                price
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                isExpensive
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Same, with each selection in a root fragment of its own condition.
+#[test]
+fn field_selected_in_two_conditional_fragments_runs_once() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation ($a: Boolean!, $b: Boolean!) {
+          ... on Mutation @include(if: $a) {
+            create: addProduct(input: { name: "new", price: 1 }) { isExpensive }
+          }
+          ... on Mutation @include(if: $b) {
+            create: addProduct(input: { name: "new", price: 1 }) { id }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a", if: $a || $b) {
+          mutation ($a:Boolean!,$b:Boolean!) {
+            ... on Mutation @include(if: $a) {
+              create: addProduct(input: {name: "new", price: 1}) {
+                __typename
+                id
+                ... on Product @include(if: $a) {
+                  __typename
+                  price
+                  id
+                }
+              }
+            }
+            ... on Mutation @include(if: $b) {
+              create: addProduct(input: {name: "new", price: 1}) {
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "|[Mutation].create") {
+          Fetch(service: "b", if: $a) {
+            {
+              ... on Product {
+                __typename
+                price
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                isExpensive
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// The field runs at its first selection's spot, with what the later one selects too, and
+/// `count` after it.
+#[test]
+fn field_selected_twice_with_another_between_runs_once_first() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation ($b: Boolean!) {
+          create: addProduct(input: { name: "new", price: 1 }) @include(if: $b) { isExpensive }
+          count: add(num: 1)
+          create: addProduct(input: { name: "new", price: 1 }) { id }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          mutation ($b:Boolean!) {
+            create: addProduct(input: {name: "new", price: 1}) @include(if: $b) {
+              __typename
+              id
+              price
+            }
+            create: addProduct(input: {name: "new", price: 1}) {
+              id
+            }
+          }
+        },
+        Flatten(path: "create") {
+          Fetch(service: "b", if: $b) {
+            {
+              ... on Product {
+                __typename
+                price
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                isExpensive
+              }
+            }
+          },
+        },
+        Fetch(service: "c") {
+          mutation {
+            count: add(num: 1)
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}

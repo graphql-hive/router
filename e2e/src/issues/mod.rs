@@ -4259,6 +4259,68 @@ mod issues_e2e_tests {
     }
 
     #[ntex::test]
+    /// A mutation field selected twice under one response key runs once, like GraphQL collects
+    /// it into one field. Here one selection is behind `@include` and needs an entity fetch,
+    /// the other isn't, and with both on `a` still gets one request.
+    async fn mutation_selected_twice_under_one_key_runs_once() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+        use std::sync::{Arc, Mutex};
+
+        let mocks = mock_subgraphs(json!({
+            "a": {
+                "mutation": {
+                    "addProduct": { "__typename": "Product", "id": "1", "price": 599.99 }
+                }
+            },
+            "b": {
+                "entities": [
+                    { "__typename": "Product", "id": "1", "price": 599.99, "isExpensive": true }
+                ]
+            }
+        }));
+        let answered = Arc::new(Mutex::new(Vec::new()));
+        let answered_by_mocks = answered.clone();
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(move |request| {
+                answered_by_mocks.lock().unwrap().push(request.path.clone());
+                mocks(request)
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.mutation-order.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let response = router
+            .send_graphql_request(
+                r#"mutation ($run: Boolean!, $withPrice: Boolean!) {
+                  ... on Mutation @include(if: $run) {
+                    create: addProduct(input: { name: "new", price: 599.99 }) @include(if: $withPrice) { isExpensive }
+                    create: addProduct(input: { name: "new", price: 599.99 }) { id }
+                  }
+                }"#,
+                Some(sonic_rs::json!({ "run": true, "withPrice": true })),
+                None,
+            )
+            .await;
+
+        insta::assert_snapshot!(response.string_body().await, @r#"{"data":{"create":{"isExpensive":true,"id":"1"}}}"#);
+        assert_eq!(*answered.lock().unwrap(), vec!["/a", "/b"]);
+    }
+
+    #[ntex::test]
     /// https://github.com/graphql-hive/router/issues/1189
     ///
     /// When every field of a query or a mutation is skipped, there's nothing to plan, and the

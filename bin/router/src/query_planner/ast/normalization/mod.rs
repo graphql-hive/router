@@ -103,9 +103,15 @@ pub fn create_normalized_document<'a>(
         Some(crate::query_planner::state::supergraph_state::OperationKind::Mutation)
     ) {
         let items = std::mem::take(&mut operation.selection_set.items);
+        let mut split = Vec::with_capacity(items.len());
         for item in items {
-            split_root_fragment_per_field(item, &mut operation.selection_set.items);
+            split_root_fragment_per_field(item, &mut split);
         }
+        let root_type = supergraph
+            .mutation_type
+            .as_deref()
+            .expect("mutation root type should exist");
+        operation.selection_set.items = group_by_response_key(split, root_type);
     }
 
     NormalizedDocument {
@@ -151,6 +157,65 @@ fn split_root_fragment_per_field(
             })
         }));
     }
+}
+
+/// A mutation field runs once per response key, however many times it's selected: GraphQL
+/// collects every selection of `create` into one, at the spot of the first. So the root
+/// selections of one response key go together, in one fragment without a condition at the
+/// first one's spot, each keeping its own @skip/@include. Apart, the planner would see a
+/// mutation field per selection and run `create` twice when two of them are on.
+fn group_by_response_key(
+    items: Vec<ast::selection_item::SelectionItem>,
+    root_type: &str,
+) -> Vec<ast::selection_item::SelectionItem> {
+    use ast::selection_item::SelectionItem;
+    use ast::selection_set::{InlineFragmentSelection, SelectionSet};
+
+    // the response key of a root selection, through the fragments around its field
+    fn response_key(item: &SelectionItem) -> Option<&str> {
+        match item {
+            SelectionItem::Field(field) => Some(field.selection_identifier()),
+            SelectionItem::InlineFragment(fragment) => match fragment.selections.items.as_slice() {
+                [only] => response_key(only),
+                _ => None,
+            },
+            SelectionItem::FragmentSpread(_) => None,
+        }
+    }
+
+    let mut groups: Vec<Vec<SelectionItem>> = Vec::with_capacity(items.len());
+    let mut by_key: Vec<(String, usize)> = Vec::new();
+    for item in items {
+        let found = response_key(&item).and_then(|key| {
+            by_key
+                .iter()
+                .find(|(seen, _)| seen == key)
+                .map(|(_, group)| *group)
+        });
+        match found {
+            Some(group) => groups[group].push(item),
+            None => {
+                if let Some(key) = response_key(&item) {
+                    by_key.push((key.to_string(), groups.len()));
+                }
+                groups.push(vec![item]);
+            }
+        }
+    }
+    groups
+        .into_iter()
+        .map(|mut group| {
+            if group.len() == 1 {
+                return group.pop().expect("one item");
+            }
+            SelectionItem::InlineFragment(InlineFragmentSelection {
+                type_condition: root_type.to_string(),
+                selections: SelectionSet { items: group },
+                skip_if: None,
+                include_if: None,
+            })
+        })
+        .collect()
 }
 
 fn inject_skipped_typename_for_empty_composites(
