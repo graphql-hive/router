@@ -5,9 +5,10 @@
 //! `search.@|[Book|Movie]`:
 //! - a batched call: the calls for each type there go to one step, see `joins_other_types`.
 //!   Found again with `batched_call_hash`, as every type there gets the same one.
-//! - a step for a field with `@requires`, or for what such a field needs, planned once for the
-//!   types planned with its own, see `planned_with` and `SelectionAttributes::also`. Found again
-//!   like any other step, by the type it was made for, see `SeveralTypes::made_for`.
+//! - any other step that takes the types planned with its own, see `planned_with` and
+//!   `SelectionAttributes::also`: one for a field with `@requires`, for what such a field needs,
+//!   or an entity call whose key takes another fetch and so isn't batched. Found again like any
+//!   other step, by the type it was made for, see `SeveralTypes::made_for`.
 //!
 //! Such a step has an input and an output for each of its types, see `take_type`, and whatever
 //! goes in its output says which type it's for, see `FetchStepData::add_output_at`. The single
@@ -35,8 +36,8 @@ use super::{create_fetch_step_for_entity_call, hash_without_types, EntityCall, F
 pub(crate) struct SeveralTypes {
     /// Found by `batched_call_hash`.
     batched: HashSet<NodeIndex>,
-    /// For `@requires`, found like any other step.
-    for_requires: HashSet<NodeIndex>,
+    /// Found like any other step.
+    others: HashSet<NodeIndex>,
     /// The type a step was made for, once it takes others too, see `take_type`. Lookups pass
     /// that type, and it's not always the one that sorts first.
     made_for: HashMap<NodeIndex, String>,
@@ -49,8 +50,10 @@ impl SeveralTypes {
         self.batched.insert(step);
     }
 
-    pub(super) fn add_for_requires(&mut self, step: NodeIndex) {
-        self.for_requires.insert(step);
+    fn add_other(&mut self, step: NodeIndex) {
+        if !self.batched.contains(&step) {
+            self.others.insert(step);
+        }
     }
 
     pub(super) fn made_for(&self, step: NodeIndex) -> Option<&str> {
@@ -62,12 +65,12 @@ impl SeveralTypes {
     }
 
     pub(super) fn contains(&self, step: NodeIndex) -> bool {
-        self.batched.contains(&step) || self.for_requires.contains(&step)
+        self.batched.contains(&step) || self.others.contains(&step)
     }
 
     /// All of them, to finish once the graph is built.
     pub(super) fn into_steps(self) -> impl Iterator<Item = NodeIndex> {
-        self.batched.into_iter().chain(self.for_requires)
+        self.batched.into_iter().chain(self.others)
     }
 }
 
@@ -138,7 +141,8 @@ pub(super) fn planned_with<'a>(
 }
 
 /// Adds `selection_set` to what `step` reads of `type_name`, and of the types planned with it,
-/// see `planned_with`. The step takes those types too.
+/// see `planned_with`. The step takes those types too, and becomes one of the steps for several
+/// types, finished like them once the graph is built.
 pub(super) fn add_input_for_types(
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     step: NodeIndex,
@@ -148,6 +152,7 @@ pub(super) fn add_input_for_types(
 ) -> Result<(), FetchGraphError> {
     match planned_with(response_path, type_name) {
         Some(type_names) => {
+            fetch_graph.several_types.add_other(step);
             for type_name in type_names {
                 take_type(fetch_graph, step, type_name)?;
                 fetch_graph.add_input(step, type_name, selection_set)?;

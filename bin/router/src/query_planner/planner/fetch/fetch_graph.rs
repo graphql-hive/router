@@ -2394,7 +2394,6 @@ fn process_requires_field_edge(
         for type_name in type_names {
             take_type(fetch_graph, field_fetch, type_name)?;
         }
-        fetch_graph.several_types.add_for_requires(field_fetch);
     }
     if let Some(holder_node) = reentry.holder {
         fetch_graph
@@ -2797,11 +2796,6 @@ fn add_requirements_fetch(
         type_name,
         &key_input.selection_set,
     )?;
-    if planned_with(response_path, type_name).is_some() {
-        fetch_graph
-            .several_types
-            .add_for_requires(requirements_fetch);
-    }
     fetch_graph.connect(reentry.from, requirements_fetch);
     for &step in &reentry.key_fetched_by {
         fetch_graph.connect(step, requirements_fetch);
@@ -3796,5 +3790,35 @@ mod tests {
             .collect();
         assert_eq!(found, vec![step]);
         assert!(!fetch_graph.is_entity_call_for(step, "Book"));
+    }
+
+    /// A step that takes the types planned with its own, like an entity call whose key takes
+    /// another fetch and so isn't batched, is one of the steps for several types, and gets
+    /// finished like them once the graph is built.
+    #[test]
+    fn step_given_the_types_planned_with_its_own_is_tracked() {
+        let mut fetch_graph = FetchGraph::new(OperationKind::Query);
+        let subgraph = SubgraphName("a".to_string());
+        let path = media_path(&["Book", "Movie"]);
+        let parent = create_noop_fetch_step(&mut fetch_graph, false);
+        let step = create_fetch_step_for_entity_call(
+            &mut fetch_graph,
+            parent,
+            &subgraph,
+            "Movie",
+            "Movie",
+            &path,
+            Conditions::default(),
+            false,
+        );
+        several_types::add_input_for_types(
+            &mut fetch_graph,
+            step,
+            &path,
+            "Movie",
+            &parse("{ id }"),
+        )
+        .unwrap();
+        assert!(fetch_graph.several_types.contains(step));
     }
 }
