@@ -1,0 +1,73 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION)
+{
+  query: Query
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(graph: join__Graph, requires: join__FieldSet, provides: join__FieldSet, type: String, external: Boolean, override: String, usedOverridden: Boolean) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(graph: join__Graph!, interface: String!) repeatable on OBJECT | INTERFACE
+
+directive @join__type(graph: join__Graph!, key: join__FieldSet, extension: Boolean! = false, resolvable: Boolean! = true, isInterfaceObject: Boolean! = false) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(graph: join__Graph!, member: String!) repeatable on UNION
+
+directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+
+type Book
+  @join__type(graph: CATALOG, key: "id")
+  @join__type(graph: SHELF, key: "id")
+{
+  id: ID!
+  title: String @join__field(graph: CATALOG) @join__field(graph: SHELF, external: true)
+}
+
+scalar join__FieldSet
+
+enum join__Graph {
+  ARCHIVE @join__graph(name: "archive", url: "http://archive")
+  CATALOG @join__graph(name: "catalog", url: "http://catalog")
+  SHELF @join__graph(name: "shelf", url: "http://shelf")
+}
+
+scalar link__Import
+
+enum link__Purpose {
+  """
+  `SECURITY` features provide metadata necessary to securely resolve fields.
+  """
+  SECURITY
+
+  """
+  `EXECUTION` features provide metadata necessary for operation execution.
+  """
+  EXECUTION
+}
+
+union Media
+  @join__type(graph: SHELF)
+  @join__unionMember(graph: SHELF, member: "Book")
+  @join__unionMember(graph: SHELF, member: "Movie")
+ = Book | Movie
+
+type Movie
+  @join__type(graph: ARCHIVE, key: "id")
+  @join__type(graph: CATALOG, key: "id")
+  @join__type(graph: SHELF, key: "id")
+{
+  id: ID!
+  title: String @join__field(graph: ARCHIVE, type: "String") @join__field(graph: CATALOG, type: "String!")
+}
+
+type Query
+  @join__type(graph: ARCHIVE)
+  @join__type(graph: CATALOG)
+  @join__type(graph: SHELF)
+{
+  media: [Media] @join__field(graph: SHELF, provides: "... on Book { title } ... on Movie { title }")
+}

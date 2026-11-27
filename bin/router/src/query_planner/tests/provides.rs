@@ -636,3 +636,80 @@ fn provides_on_interface_2_test() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+/// `shelf` provides `title` of `Book` (`String`) and `Movie` (`String!`) through `media`. The
+/// fixture is the one Apollo composes, minus `shelf`'s `external: true` entry on `Movie.title`,
+/// so the planner only has the supergraph's `Movie.title: String` to go on. That type says
+/// nothing about what `shelf` declares: the second `title` gets an alias, so the operation stays
+/// valid in `shelf`, and the client still gets `title`.
+#[test]
+fn provided_field_missing_from_the_subgraph_gets_an_alias() -> Result<(), Box<dyn Error>> {
+    use graphql_tools::validation::{rules::default_rules_validation_plan, validate::validate};
+
+    init_logger();
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/provides-missing-external-entry.supergraph.graphql",
+        parse_operation("{ media { ... on Book { title } ... on Movie { title } } }"),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "shelf") {
+        {
+          media {
+            __typename
+            ... on Book {
+              title
+            }
+            ... on Movie {
+              _internal_qp_alias_0: title
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    // `Movie`'s alias goes back to `title` in the client's response
+    let plan = serde_json::to_value(&query_plan)?;
+    insta::assert_snapshot!(serde_json::to_string_pretty(&plan["node"]["outputRewrites"])?, @r#"
+    [
+      {
+        "KeyRenamer": {
+          "path": [
+            {
+              "Key": "media"
+            },
+            {
+              "TypenameEquals": [
+                "Movie"
+              ]
+            },
+            {
+              "Key": "_internal_qp_alias_0"
+            }
+          ],
+          "renameKeyTo": "title"
+        }
+      }
+    ]
+    "#);
+
+    let operation = plan["node"]["operation"].as_str().expect("one fetch");
+    let shelf = crate::query_planner::utils::parsing::parse_schema(
+        r#"
+        type Query { media: [Media] }
+        union Media = Book | Movie
+        type Book { id: ID! title: String }
+        type Movie { id: ID! title: String! }
+        "#,
+    );
+    let errors = validate(
+        &shelf,
+        &parse_operation(operation),
+        &default_rules_validation_plan(),
+    );
+    assert!(errors.is_empty(), "{errors:?}\n{operation}");
+
+    Ok(())
+}

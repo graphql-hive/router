@@ -82,7 +82,9 @@ fn handle_selection_set<'field, 'schema>(
     // A HashMap of "field_name" to "field_return_type". When we encounter a field in a given selection-set level,
     // we update the HashMap with the field's name and return type.
     // We use this to monitor and find mismatches later.
-    let mut encountered_field_to_type: HashMap<&'field str, &'schema TypeNode> = HashMap::new();
+    // `false` when the type is the supergraph's, see `handle_field`
+    let mut encountered_field_to_type: HashMap<&'field str, (&'schema TypeNode, bool)> =
+        HashMap::new();
 
     // A queue for traversing the selection set. In case of an inline fragment, we "flatten" the selections and update the path.
     // Values are: (ParentType, Path, Selections)
@@ -164,7 +166,7 @@ fn handle_field<'field, 'schema>(
     parent_def: &'schema SubgraphDefinition,
     field: &'field FieldSelection,
     field_path: &MergePath,
-    encountered_field_to_type: &mut HashMap<&'field str, &'schema TypeNode>,
+    encountered_field_to_type: &mut HashMap<&'field str, (&'schema TypeNode, bool)>,
     mismatches_found: &mut MismatchesFound,
 ) -> Option<&'schema str> {
     let field_name = field.name.as_str();
@@ -179,14 +181,20 @@ fn handle_field<'field, 'schema>(
     });
     // a supergraph can leave out the `external: true` entry of a provided field, so the
     // subgraph's type doesn't list it even though the subgraph serves it. Its supergraph type
-    // does the job then.
+    // is good enough to walk into, but it says nothing about what the subgraph declares, so a
+    // field like that never counts as matching another one under its response key. The later
+    // one gets an alias then.
+    let known = in_subgraph.is_some();
     let field_type = in_subgraph.or_else(|| {
         let definition = state.definitions.get(parent_def.name())?;
         Some(&definition.fields().get(field_name)?.field_type)
     })?;
 
-    if let Some(maybe_conflicting_type) = encountered_field_to_type.get(field_identifier) {
-        if !same_response_shape(state, maybe_conflicting_type, field_type) {
+    if let Some(&(maybe_conflicting_type, seen_known)) =
+        encountered_field_to_type.get(field_identifier)
+    {
+        if !(known && seen_known && same_response_shape(state, maybe_conflicting_type, field_type))
+        {
             trace!(
               "found a conflicting type for a selection field '{}', conflict is: '{}' <-> '{}', path: {}",
               field_identifier,
@@ -198,7 +206,7 @@ fn handle_field<'field, 'schema>(
             mismatches_found.push((root_def_type_name.to_string(), field_path.clone()));
         }
     } else {
-        encountered_field_to_type.insert(field_identifier, field_type);
+        encountered_field_to_type.insert(field_identifier, (field_type, known));
     }
 
     if field.is_leaf() {
