@@ -644,8 +644,6 @@ fn provides_on_interface_2_test() -> Result<(), Box<dyn Error>> {
 /// valid in `shelf`, and the client still gets `title`.
 #[test]
 fn provided_field_missing_from_the_subgraph_gets_an_alias() -> Result<(), Box<dyn Error>> {
-    use graphql_tools::validation::{rules::default_rules_validation_plan, validate::validate};
-
     init_logger();
     let query_plan = build_query_plan_with_defaults(
         "fixture/tests/provides-missing-external-entry.supergraph.graphql",
@@ -695,13 +693,121 @@ fn provided_field_missing_from_the_subgraph_gets_an_alias() -> Result<(), Box<dy
     ]
     "#);
 
+    shelf_accepts(&query_plan)?;
+
+    Ok(())
+}
+
+/// The same field selected twice on one type is one field in the subgraph's response, even when
+/// the subgraph's type doesn't list it, so both stay under one key and their selections merge.
+/// Next to another field under that key they share one alias.
+#[test]
+fn provided_field_missing_from_the_subgraph_stays_one_field() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let supergraph = "fixture/tests/provides-missing-external-entry.supergraph.graphql";
+    let query_plan = build_query_plan_with_defaults(
+        supergraph,
+        parse_operation(
+            "query ($show: Boolean!) { media { ... on Movie { details { x } details @include(if: $show) { y } } } }",
+        ),
+    )?;
+    shelf_accepts(&query_plan)?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "shelf") {
+        query ($show:Boolean!) {
+          media {
+            __typename
+            ... on Movie {
+              details {
+                x
+              }
+              details @include(if: $show) {
+                y
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    let query_plan = build_query_plan_with_defaults(
+        supergraph,
+        parse_operation(
+            "query ($show: Boolean!) { media { ... on Book { details { x } } ... on Movie { details { x } details @include(if: $show) { y } } } }",
+        ),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "shelf") {
+        query ($show:Boolean!) {
+          media {
+            __typename
+            ... on Book {
+              details {
+                ...a
+              }
+            }
+            ... on Movie {
+              _internal_qp_alias_0: details {
+                ...a
+              }
+              _internal_qp_alias_0: details @include(if: $show) {
+                y
+              }
+            }
+          }
+        }
+        fragment a on Details {
+          x
+        }
+      },
+    },
+    "#);
+    let plan = serde_json::to_value(&query_plan)?;
+    shelf_accepts(&query_plan)?;
+    insta::assert_snapshot!(serde_json::to_string_pretty(&plan["node"]["outputRewrites"])?, @r#"
+    [
+      {
+        "KeyRenamer": {
+          "path": [
+            {
+              "Key": "media"
+            },
+            {
+              "TypenameEquals": [
+                "Movie"
+              ]
+            },
+            {
+              "Key": "_internal_qp_alias_0"
+            }
+          ],
+          "renameKeyTo": "details"
+        }
+      }
+    ]
+    "#);
+
+    Ok(())
+}
+
+/// The plan's one fetch is a valid operation for shelf's own schema.
+fn shelf_accepts(query_plan: &impl serde::Serialize) -> Result<(), Box<dyn Error>> {
+    use graphql_tools::validation::{rules::default_rules_validation_plan, validate::validate};
+
+    let plan = serde_json::to_value(query_plan)?;
     let operation = plan["node"]["operation"].as_str().expect("one fetch");
     let shelf = crate::query_planner::utils::parsing::parse_schema(
         r#"
         type Query { media: [Media] }
         union Media = Book | Movie
-        type Book { id: ID! title: String }
-        type Movie { id: ID! title: String! }
+        type Book { id: ID! title: String details: Details }
+        type Movie { id: ID! title: String! details: Details }
+        type Details { x: String y: String }
+        scalar Boolean
+        directive @include(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
         "#,
     );
     let errors = validate(
@@ -710,6 +816,5 @@ fn provided_field_missing_from_the_subgraph_gets_an_alias() -> Result<(), Box<dy
         &default_rules_validation_plan(),
     );
     assert!(errors.is_empty(), "{errors:?}\n{operation}");
-
     Ok(())
 }

@@ -5090,4 +5090,114 @@ mod issues_e2e_tests {
             serde_json::from_slice(requests.last().unwrap().body.as_deref().unwrap()).unwrap();
         assert_eq!(body["query"], json!("{t{x}}"));
     }
+
+    #[ntex::test]
+    /// A provided field the subgraph's type doesn't list, selected twice on one type: both
+    /// selections are one field in the subgraph's response, so with `$show` the client gets both
+    /// children in one object. Next to `Book.details` the two `Movie.details` share one alias.
+    async fn provided_field_missing_from_the_subgraph_keeps_its_selections_together() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: ../bin/router/fixture/tests/provides-missing-external-entry.supergraph.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      shelf:
+                        url: "http://{host}/shelf"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        // what shelf answers, matched by the shape of the query it gets
+        let _same_key = server
+            .mock("POST", "/shelf")
+            .match_body(mockito::Matcher::Regex(
+                r"on Movie\{details\{x\} details @include".to_string(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"media":[{"__typename":"Movie","details":{"x":"mx","y":"my"}}]}}"#,
+            )
+            .create();
+        let _shared_alias = server
+            .mock("POST", "/shelf")
+            .match_body(mockito::Matcher::Regex(
+                r"on Movie\{_internal_qp_alias_0: details\{\.\.\.a\} _internal_qp_alias_0: details @include".to_string(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"media":[
+                    {"__typename":"Book","details":{"x":"bx"}},
+                    {"__typename":"Movie","_internal_qp_alias_0":{"x":"mx","y":"my"}}
+                ]}}"#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"query ($show: Boolean!) {
+                  media { ... on Movie { details { x } details @include(if: $show) { y } } }
+                }"#,
+                Some(sonic_rs::json!({ "show": true })),
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "media": [
+              {
+                "details": {
+                  "x": "mx",
+                  "y": "my"
+                }
+              }
+            ]
+          }
+        }
+        "#);
+
+        let res = router
+            .send_graphql_request(
+                r#"query ($show: Boolean!) {
+                  media {
+                    ... on Book { details { x } }
+                    ... on Movie { details { x } details @include(if: $show) { y } }
+                  }
+                }"#,
+                Some(sonic_rs::json!({ "show": true })),
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "media": [
+              {
+                "details": {
+                  "x": "bx"
+                }
+              },
+              {
+                "details": {
+                  "x": "mx",
+                  "y": "my"
+                }
+              }
+            ]
+          }
+        }
+        "#);
+    }
 }

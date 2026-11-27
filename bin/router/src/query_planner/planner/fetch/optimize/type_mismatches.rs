@@ -1,4 +1,4 @@
-use ahash::HashSet;
+use ahash::{HashMap, HashSet};
 
 use petgraph::graph::NodeIndex;
 use tracing::{instrument, trace};
@@ -26,7 +26,7 @@ impl FetchGraph<MultiTypeFetchStep> {
         &mut self,
         supergraph: &SupergraphState,
     ) -> Result<(), FetchGraphError> {
-        let mut pending_patches = Vec::<(NodeIndex, Vec<(String, MergePath)>)>::new();
+        let mut pending_patches = Vec::<(NodeIndex, Vec<(String, MergePath, usize)>)>::new();
 
         for (node_index, node) in self.all_nodes() {
             if self.root_index.is_some_and(|v| v == node_index) {
@@ -57,7 +57,9 @@ impl FetchGraph<MultiTypeFetchStep> {
                 node_index.index()
             );
 
-            for (root_def_name, mismatch_path) in mismatches_paths {
+            // a group's fields are one field in the response, so they share an alias
+            let mut aliases: HashMap<usize, String> = HashMap::default();
+            for (root_def_name, mismatch_path, group) in mismatches_paths {
                 if let Some(Segment::Field(field_seg, args_hash_lookup, condition)) =
                     mismatch_path.last()
                 {
@@ -68,7 +70,10 @@ impl FetchGraph<MultiTypeFetchStep> {
                         .selections_for_definition_mut(&root_def_name)
                         .expect("missing definition in step");
 
-                    let next_alias = free_alias(root_def_selections, lookup_path);
+                    let next_alias = aliases
+                        .entry(group)
+                        .or_insert_with(|| free_alias(root_def_selections, lookup_path))
+                        .clone();
                     if let Some(selection_set) =
                         find_selection_set_by_path_mut(root_def_selections, lookup_path)
                     {
