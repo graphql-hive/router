@@ -1706,3 +1706,28 @@ fn equal_root_fragments_of_one_fetch_keep_their_order() -> Result<(), Box<dyn Er
 
     Ok(())
 }
+
+/// A field under `@include(if: $b) @skip(if: $b)` never runs. With nothing else, the planner
+/// has nothing to fetch, and that's a plan, not an error: callers of the planner, like the Node
+/// addon, don't check for an empty operation first.
+#[test]
+fn mutation_with_every_field_skipped_has_an_empty_plan() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation ($b: Boolean!) {
+          add(num: 1) @include(if: $b) @skip(if: $b)
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    QueryPlan {
+      None,
+    },
+    ");
+
+    Ok(())
+}

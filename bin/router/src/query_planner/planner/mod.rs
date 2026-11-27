@@ -144,6 +144,11 @@ impl Planner {
         override_context: PlannerOverrideContext,
         cancellation_token: &CancellationToken,
     ) -> Result<QueryPlan<Planning>, PlannerError> {
+        // normalization drops what never runs, like a mutation field under
+        // `@include(if: $b) @skip(if: $b)`, and that can be everything: nothing to fetch then
+        if normalized_operation.selection_set.is_empty() {
+            return Ok(QueryPlan::empty());
+        }
         // fragments planned once for several types, on a copy of the operation, see
         // `fragment_groups`
         let grouped = group_fragments(&self.graph, &self.supergraph, normalized_operation);
