@@ -282,7 +282,7 @@ impl<'graph> Graph<'graph> {
         };
         a.key == b.key
             // the key gets read the same way for both, so the objects leave a subgraph the same
-            && a.key.is_none_or(|key| key_field_names(key).all(same_field))
+            && key_field_names(a.key).all(same_field)
             && a.subgraphs.iter().all(|(subgraph, profile)| {
                 b.subgraphs
                     .get(subgraph)
@@ -1866,16 +1866,13 @@ fn type_profile<'a>(
     // come from other places per type, through an `@override` or a `@provides` on one of them,
     // so the planner would send one type's objects the way the other's go.
     let mut keys = object.join_type.iter().map(|join| join.key.as_deref());
-    let key = keys.next().flatten();
-    if key.is_none() || !keys.all(|other| other == key) {
-        return None;
-    }
+    let key = keys.next().flatten()?;
     // A plain key is field names and nothing else, no `{`, `(`, `:` or `@`. Its names are
     // then the key's text split up, nothing to parse or keep, see `key_field_names`.
-    let key = key?;
-    if !key
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || key_separator(byte))
+    if !keys.all(|other| other == Some(key))
+        || !key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || key_separator(byte))
         || key_field_names(key).next().is_none()
         || !key_field_names(key).all(|name| object.fields.contains_key(name))
     {
@@ -1925,7 +1922,7 @@ fn type_profile<'a>(
         })
         .collect();
     Some(TypeProfile {
-        key: Some(key),
+        key,
         subgraphs,
         fields,
     })
@@ -2219,11 +2216,11 @@ impl<'a> FieldProfile<'a> {
 
 /// What decides how the planner plans the fields of an object type, field by field, for types
 /// that aren't the same everywhere, see `Graph::interchangeable_for`.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct TypeProfile<'graph> {
-    /// Its key, when every subgraph that has it keys it with the same plain list of fields, like
-    /// `id` or `id sku`. A path between two subgraphs then never needs a third one.
-    key: Option<&'graph str>,
+    /// Its key, the same plain list of fields in every subgraph that has it, like `id` or
+    /// `id sku`. A path between two subgraphs then never needs a third one.
+    key: &'graph str,
     /// The subgraphs that have it, with what decides how the planner goes in and out there.
     subgraphs: HashMap<&'graph str, SubgraphProfile>,
     /// Each field that doesn't name the type, with the id of its `FieldProfile`.
