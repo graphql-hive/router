@@ -40,7 +40,9 @@ use crate::pipeline::active_subscriptions::SubscriptionEvent;
 use crate::pipeline::error::{ClientPipelineError, PipelineError};
 use crate::pipeline::execution_request::{OperationPreparation, OperationPreparationResult};
 use crate::pipeline::header::{ResponseMode, SingleContentType, StreamContentType};
-use crate::pipeline::operation::{execute_operation, OperationOutcome, OperationRequest};
+use crate::pipeline::operation::{
+    execute_operation, OperationOutcome, OperationRequest, Transport,
+};
 use crate::schema_state::SchemaState;
 use crate::shared_state::{RouterSharedState, SharedRouterResponse};
 use crate::telemetry::logging::request_id::WithRequestIdentifiers;
@@ -574,12 +576,10 @@ async fn handle_text_frame(
                           operation_span,
                           started_at,
                           usage_request_details,
-                          // the websocket server limits connections, not operations
-                          reserve_long_lived_client: false,
+                          transport: Transport::WebSocket,
                       },
                       shared_state,
                       schema_state,
-                      &(),
                   )
                   .await;
 

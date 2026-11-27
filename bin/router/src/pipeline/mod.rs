@@ -68,7 +68,7 @@ use crate::{
         header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
         introspection_policy::handle_introspection_policy,
         normalize::{FilterOutputExt, GraphQLNormalizationPayload},
-        operation::{execute_operation, OperationOutcome, OperationRequest},
+        operation::{execute_operation, OperationOutcome, OperationRequest, Transport},
         progressive_override::RequestOverrideContext,
         query_plan::{plan_operation_with_cache, QueryPlanResult},
         request_extensions::write_graphql_response_metric_status,
@@ -290,7 +290,6 @@ pub async fn graphql_request_handler(
             .hive_usage_agent
             .is_some()
             .then(|| usage_reporting::request_details_from_ntex_request(req));
-        let req: &HttpRequest = req;
 
         let outcome = execute_operation(
             OperationRequest {
@@ -310,11 +309,10 @@ pub async fn graphql_request_handler(
                 operation_span,
                 started_at,
                 usage_request_details,
-                reserve_long_lived_client: true,
+                transport: Transport::Http(req),
             },
             shared_state,
             schema_state,
-            req,
         )
         .await?;
 
