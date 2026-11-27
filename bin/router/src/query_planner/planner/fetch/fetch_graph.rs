@@ -261,11 +261,20 @@ impl FetchGraph<SingleTypeFetchStep> {
             by_length[length].push(index);
         }
         let mut depths = vec![0; self.graph.node_bound()];
+        // the single-type graph doesn't keep it up to date as producers get added
+        self.uses_context = self
+            .graph
+            .node_weights()
+            .any(|step| !step.context_producers.is_empty());
         for candidate in candidates {
             let Some(cover) = self.covering_step(supergraph, candidate, &by_length, &mut depths)
             else {
                 continue;
             };
+            // what read context from the candidate reads it from the cover, which returns the
+            // same fields at the same spot
+            let (dropped, kept) = (self.graph[candidate].id, self.graph[cover].id);
+            self.replace_context_producer(dropped, kept);
             let children: Vec<NodeIndex> = self
                 .children_of(candidate)
                 .map(|edge| edge.target())

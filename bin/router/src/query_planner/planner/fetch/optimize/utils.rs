@@ -287,8 +287,9 @@ pub fn is_reachable_via_alternative_upstream_path(
     Ok(false)
 }
 
-impl FetchGraph<MultiTypeFetchStep> {
-    /// Steps that got context from `from` get it from `to` now, as `from` was merged into it.
+impl<State> FetchGraph<State> {
+    /// Steps that got context from `from` get it from `to` now, as `from` was merged into it,
+    /// or dropped for it. Only when `uses_context` says some step has producers.
     pub(crate) fn replace_context_producer(&mut self, from: FetchId, to: FetchId) {
         if !self.uses_context {
             return;
@@ -299,7 +300,9 @@ impl FetchGraph<MultiTypeFetchStep> {
             }
         }
     }
+}
 
+impl FetchGraph<MultiTypeFetchStep> {
     pub(crate) fn merge_context_producers(&mut self) -> Result<(), FetchGraphError> {
         if !self.operation_kind.is_query() {
             return Ok(());

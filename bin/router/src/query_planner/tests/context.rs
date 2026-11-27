@@ -952,6 +952,56 @@ fn interface_context() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// The client selects `prop` too, so its own fetch from `b` returns what the context needs, and
+/// the fetch made only for the context is dropped. The consumer then reads its context from
+/// the client's fetch, and lists that one as its producer: the merges go by that list.
+#[test]
+fn context_producer_dropped_for_the_clients_fetch_is_replaced() -> Result<(), Box<dyn Error>> {
+    use crate::query_planner::{
+        ast::normalization::normalize_operation,
+        graph::{edge::PlannerOverrideContext, Graph},
+        planner::{
+            best::find_best_combination, fetch::fetch_graph::build_fetch_graph_from_query_tree,
+            walker::walk_operation, QueryPlannerOptions,
+        },
+        utils::cancellation::CancellationToken,
+    };
+
+    let schema = parse_schema(&read_supergraph(
+        "fixture/tests/context-remote-producer.supergraph.graphql",
+    ));
+    let state = SupergraphState::new(&schema);
+    let graph = Graph::graph_from_supergraph_state(&state)?;
+    for query in ["{ t { u { id field } } }", "{ t { prop u { id field } } }"] {
+        let operation = normalize_operation(&state, &parse_operation(query), None)?.operation;
+        let overrides = PlannerOverrideContext::default();
+        let token = CancellationToken::new();
+        let paths = walk_operation(&graph, &state, &overrides, &operation, &token, None)?;
+        let tree = find_best_combination(&graph, paths, &token)?;
+        let fetch_graph = build_fetch_graph_from_query_tree(
+            &graph,
+            &state,
+            &overrides,
+            tree,
+            &operation,
+            &QueryPlannerOptions::default(),
+            &token,
+        )?;
+        let ids: Vec<_> = fetch_graph.all_nodes().map(|(_, step)| step.id).collect();
+        let producers: Vec<_> = fetch_graph
+            .all_nodes()
+            .flat_map(|(_, step)| step.context_producers.iter().copied())
+            .collect();
+        assert_eq!(producers.len(), 1, "{query}: one producer");
+        assert!(
+            producers.iter().all(|id| ids.contains(id)),
+            "{query}: producers {producers:?} not all in {ids:?}"
+        );
+    }
+
+    Ok(())
+}
+
 #[test]
 fn remote_context_producer_precedes_consumer() -> Result<(), Box<dyn Error>> {
     let plan = build_query_plan_with_defaults(
