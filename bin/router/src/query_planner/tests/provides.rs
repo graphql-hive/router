@@ -921,3 +921,113 @@ fn provided_field_missing_from_the_subgraph_and_a_field_under_it_get_aliases(
 
     Ok(())
 }
+
+/// `Book` and `Movie` plan the same way in b, which owns `Shelf.items`. a serves `items` too,
+/// through `@provides`, but has no `Movie`, so the fragments can't be planned together there:
+/// a fetch to a with `... on Movie` is one a rejects.
+#[test]
+fn fragments_under_a_provided_field_stay_apart_for_a_subgraph_without_one_type(
+) -> Result<(), Box<dyn Error>> {
+    use graphql_tools::validation::{rules::default_rules_validation_plan, validate::validate};
+
+    init_logger();
+    let supergraph = r#"
+        enum join__Graph {
+            A @join__graph(name: "a", url: "")
+            B @join__graph(name: "b", url: "")
+        }
+        type Query @join__type(graph: A) @join__type(graph: B) {
+            shelf: Shelf @join__field(graph: A, provides: "items { id }")
+        }
+        type Shelf @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
+            id: ID!
+            items: [Media] @join__field(graph: A, external: true) @join__field(graph: B)
+        }
+        interface Media @join__type(graph: A) @join__type(graph: B) {
+            id: ID!
+        }
+        type Book implements Media @join__implements(graph: A, interface: "Media") @join__implements(graph: B, interface: "Media") @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
+            id: ID!
+            title: String
+        }
+        type Movie implements Media @join__implements(graph: B, interface: "Media") @join__type(graph: B, key: "id") {
+            id: ID!
+            title: String
+        }
+    "#;
+    let query_plan = crate::query_planner::tests::testkit::build_query_plan_from_sdl(
+        supergraph,
+        parse_operation("{ shelf { items { ... on Book { title } ... on Movie { title } } } }"),
+        Default::default(),
+        Default::default(),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            shelf {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "shelf") {
+          Fetch(service: "b") {
+            {
+              ... on Shelf {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Shelf {
+                items {
+                  __typename
+                  ... on Movie {
+                    title
+                  }
+                  ... on Book {
+                    title
+                  }
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    // every fetch to a is one a's own schema takes
+    let a = crate::query_planner::utils::parsing::parse_schema(
+        r#"
+        type Query { shelf: Shelf }
+        type Shelf { id: ID! items: [Media] }
+        interface Media { id: ID! }
+        type Book implements Media { id: ID! title: String }
+        "#,
+    );
+    let plan = serde_json::to_value(&query_plan)?;
+    let mut fetches = vec![&plan["node"]];
+    while let Some(node) = fetches.pop() {
+        if node["serviceName"] == "a" {
+            let operation = node["operation"].as_str().expect("an operation");
+            let errors = validate(
+                &a,
+                &parse_operation(operation),
+                &default_rules_validation_plan(),
+            );
+            assert!(errors.is_empty(), "{errors:?}\n{operation}");
+        }
+        for key in ["nodes", "node"] {
+            match &node[key] {
+                serde_json::Value::Array(nodes) => fetches.extend(nodes),
+                serde_json::Value::Object(_) => fetches.push(&node[key]),
+                _ => {}
+            }
+        }
+    }
+
+    Ok(())
+}

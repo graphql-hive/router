@@ -270,7 +270,9 @@ impl<'a> Splitter<'a> {
         }
     }
 
-    /// The subgraphs that resolve `field` on `type_name`, where the objects it returns are.
+    /// The subgraphs that resolve `field` on `type_name`, where the objects it returns are. One
+    /// that has it as `external` counts too: it serves the field where a `@provides` hands it
+    /// over, and the objects come from there then.
     fn resolving(&self, type_name: &str, field: &FieldSelection) -> Vec<&'a str> {
         let Some(definition) = self.supergraph.definitions.get(type_name) else {
             return Vec::new();
@@ -297,7 +299,6 @@ impl<'a> Splitter<'a> {
         } else {
             joins
                 .iter()
-                .filter(|join| !join.external)
                 .filter_map(|join| join.graph_id.as_deref())
                 .collect()
         };
