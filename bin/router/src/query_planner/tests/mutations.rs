@@ -1337,10 +1337,11 @@ fn field_selected_in_two_conditional_fragments_runs_once() -> Result<(), Box<dyn
     Ok(())
 }
 
-/// The field runs at its first selection's spot, with what the later one selects too, and
-/// `count` after it.
+/// The field runs at its first selection that's on, with what every selection that's on asks
+/// for. With `$b` that's before `count`, without it after: two calls to `a` that never both run.
 #[test]
-fn field_selected_twice_with_another_between_runs_once_first() -> Result<(), Box<dyn Error>> {
+fn field_selected_twice_with_another_between_runs_at_its_first_selection_that_is_on(
+) -> Result<(), Box<dyn Error>> {
     init_logger();
     let document = parse_operation(
         r#"
@@ -1357,19 +1358,22 @@ fn field_selected_twice_with_another_between_runs_once_first() -> Result<(), Box
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
-        Fetch(service: "a") {
+        Fetch(service: "a", if: $b) {
           mutation ($b:Boolean!) {
-            create: addProduct(input: {name: "new", price: 1}) @include(if: $b) {
-              __typename
-              id
-              price
-            }
-            create: addProduct(input: {name: "new", price: 1}) {
-              id
+            ... on Mutation @include(if: $b) {
+              create: addProduct(input: {name: "new", price: 1}) {
+                __typename
+                id
+                ... on Product @include(if: $b) {
+                  __typename
+                  price
+                  id
+                }
+              }
             }
           }
         },
-        Flatten(path: "create") {
+        Flatten(path: "|[Mutation].create") {
           Fetch(service: "b", if: $b) {
             {
               ... on Product {
@@ -1384,6 +1388,259 @@ fn field_selected_twice_with_another_between_runs_once_first() -> Result<(), Box
               }
             }
           },
+        },
+        Fetch(service: "c") {
+          mutation {
+            count: add(num: 1)
+          }
+        },
+        Fetch(service: "a", if: !$b) {
+          mutation ($b:Boolean!) {
+            ... on Mutation @skip(if: $b) {
+              create: addProduct(input: {name: "new", price: 1}) {
+                id
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Each selection of `create` here has two conditions and another field after it. Saying
+/// "every one before is off" for the last one takes 2^20 copies, so the operation is turned
+/// down before any get made.
+#[test]
+fn field_selected_under_too_many_conditions_is_turned_down() {
+    init_logger();
+    let mut variables = Vec::new();
+    let mut selections = String::new();
+    for index in 0..20 {
+        variables.push(format!("$a{index}: Boolean!, $b{index}: Boolean!"));
+        selections.push_str(&format!(
+            r#"create: addProduct(input: {{ name: "new", price: 1 }}) @include(if: $a{index}) @skip(if: $b{index}) {{ id }}
+            count{index}: add(num: {index})
+            "#
+        ));
+    }
+    selections.push_str(r#"create: addProduct(input: { name: "new", price: 1 }) { id }"#);
+    let document = parse_operation(&format!(
+        "mutation ({}) {{ {selections} }}",
+        variables.join(", ")
+    ));
+
+    let started = std::time::Instant::now();
+    let error =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)
+            .expect_err("too many conditional copies");
+    assert!(
+        error
+            .to_string()
+            .contains("too many different @skip/@include conditions"),
+        "{error}"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+}
+
+/// The two `create`s sit in root fragments with the same condition, `count` between them.
+/// Merging the fragments into the first would run the second `create` before `count`, so they
+/// stay apart, and `create` runs before `count` only when its first selection is on.
+#[test]
+fn equal_root_fragments_around_another_field_keep_their_order() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation ($outer: Boolean!, $b: Boolean!) {
+          ... on Mutation @include(if: $outer) {
+            create: addProduct(input: { name: "new", price: 1 }) @include(if: $b) { isExpensive }
+          }
+          count: add(num: 1)
+          ... on Mutation @include(if: $outer) {
+            create: addProduct(input: { name: "new", price: 1 }) { id }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a", if: $b && $outer) {
+          mutation ($b:Boolean!,$outer:Boolean!) {
+            ... on Mutation @include(if: $b) {
+              ... on Mutation @include(if: $outer) {
+                create: addProduct(input: {name: "new", price: 1}) {
+                  __typename
+                  id
+                  ... on Product @include(if: $b) {
+                    __typename
+                    price
+                    id
+                  }
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "|[Mutation]|[Mutation].create") {
+          Fetch(service: "b", if: $b && $outer) {
+            {
+              ... on Product {
+                __typename
+                price
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                isExpensive
+              }
+            }
+          },
+        },
+        Fetch(service: "c") {
+          mutation {
+            count: add(num: 1)
+          }
+        },
+        Fetch(service: "a", if: $outer && !$b) {
+          mutation ($b:Boolean!,$outer:Boolean!) {
+            ... on Mutation @skip(if: $b) {
+              ... on Mutation @include(if: $outer) {
+                create: addProduct(input: {name: "new", price: 1}) {
+                  id
+                }
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// The same, with both fragments inside another conditional one: a fragment is still the
+/// root, so they don't merge across `count` either.
+#[test]
+fn equal_nested_root_fragments_around_another_field_keep_their_order() -> Result<(), Box<dyn Error>>
+{
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation ($wrap: Boolean!, $outer: Boolean!, $b: Boolean!) {
+          ... on Mutation @include(if: $wrap) {
+            ... on Mutation @include(if: $outer) {
+              create: addProduct(input: { name: "new", price: 1 }) @include(if: $b) { isExpensive }
+            }
+            count: add(num: 1)
+            ... on Mutation @include(if: $outer) {
+              create: addProduct(input: { name: "new", price: 1 }) { id }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a", if: $b && $outer && $wrap) {
+          mutation ($b:Boolean!,$outer:Boolean!,$wrap:Boolean!) {
+            ... on Mutation @include(if: $b) {
+              ... on Mutation @include(if: $wrap) {
+                ... on Mutation @include(if: $outer) {
+                  create: addProduct(input: {name: "new", price: 1}) {
+                    __typename
+                    id
+                    ... on Product @include(if: $b) {
+                      __typename
+                      price
+                      id
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "|[Mutation]|[Mutation]|[Mutation].create") {
+          Fetch(service: "b", if: $b && $outer && $wrap) {
+            {
+              ... on Product {
+                __typename
+                price
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                isExpensive
+              }
+            }
+          },
+        },
+        Fetch(service: "c", if: $wrap) {
+          mutation ($wrap:Boolean!) {
+            ... on Mutation @include(if: $wrap) {
+              count: add(num: 1)
+            }
+          }
+        },
+        Fetch(service: "a", if: $outer && $wrap && !$b) {
+          mutation ($b:Boolean!,$outer:Boolean!,$wrap:Boolean!) {
+            ... on Mutation @skip(if: $b) {
+              ... on Mutation @include(if: $wrap) {
+                ... on Mutation @include(if: $outer) {
+                  create: addProduct(input: {name: "new", price: 1}) {
+                    id
+                  }
+                }
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// A selection that `@include(if: $b) @skip(if: $b)` never lets run has no spot to take, and
+/// the rest of the mutation plans as without it.
+#[test]
+fn selection_that_never_runs_is_left_out() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation ($a: Boolean!, $b: Boolean!) {
+          create: addProduct(input: { name: "new", price: 1 }) @include(if: $a) { id }
+          count: add(num: 1)
+          create: addProduct(input: { name: "new", price: 1 }) @include(if: $b) @skip(if: $b) { id }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a", if: $a) {
+          mutation ($a:Boolean!) {
+            create: addProduct(input: {name: "new", price: 1}) @include(if: $a) {
+              id
+            }
+          }
         },
         Fetch(service: "c") {
           mutation {

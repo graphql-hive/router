@@ -4321,6 +4321,232 @@ mod issues_e2e_tests {
     }
 
     #[ntex::test]
+    /// GraphQL drops a skipped selection before it collects the fields, so a mutation field
+    /// selected twice runs at its first selection that's on. With `$b`, `create` runs before
+    /// `count`, without it after. Once either way.
+    async fn mutation_selected_twice_runs_at_its_first_selection_that_is_on() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+        use std::sync::{Arc, Mutex};
+
+        let mocks = mock_subgraphs(json!({
+            "a": {
+                "mutation": {
+                    "addProduct": { "__typename": "Product", "id": "1", "price": 599.99 }
+                }
+            },
+            "b": {
+                "entities": [
+                    { "__typename": "Product", "id": "1", "price": 599.99, "isExpensive": true }
+                ]
+            },
+            "c": {
+                "mutation": { "add": 1 }
+            }
+        }));
+        let answered = Arc::new(Mutex::new(Vec::new()));
+        let answered_by_mocks = answered.clone();
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(move |request| {
+                answered_by_mocks.lock().unwrap().push(request.path.clone());
+                mocks(request)
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.mutation-order.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"mutation ($b: Boolean!) {
+          create: addProduct(input: { name: "new", price: 599.99 }) @include(if: $b) { isExpensive }
+          count: add(num: 1)
+          create: addProduct(input: { name: "new", price: 599.99 }) { id }
+        }"#;
+
+        let response = router
+            .send_graphql_request(query, Some(sonic_rs::json!({ "b": true })), None)
+            .await;
+        insta::assert_snapshot!(response.string_body().await, @r#"{"data":{"create":{"isExpensive":true,"id":"1"},"count":1}}"#);
+        assert_eq!(
+            std::mem::take(&mut *answered.lock().unwrap()),
+            vec!["/a", "/b", "/c"]
+        );
+
+        let response = router
+            .send_graphql_request(query, Some(sonic_rs::json!({ "b": false })), None)
+            .await;
+        insta::assert_snapshot!(response.string_body().await, @r#"{"data":{"create":{"id":"1"},"count":1}}"#);
+        assert_eq!(*answered.lock().unwrap(), vec!["/c", "/a"]);
+    }
+
+    #[ntex::test]
+    /// The selections of `create` are in two root fragments with the same condition, `count`
+    /// between them. They can't be merged into the first fragment, or the second `create` would
+    /// run before `count` when the first one is off.
+    async fn mutation_fragments_with_one_condition_keep_their_order() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+        use std::sync::{Arc, Mutex};
+
+        let mocks = mock_subgraphs(json!({
+            "a": {
+                "mutation": {
+                    "addProduct": { "__typename": "Product", "id": "1", "price": 599.99 }
+                }
+            },
+            "b": {
+                "entities": [
+                    { "__typename": "Product", "id": "1", "price": 599.99, "isExpensive": true }
+                ]
+            },
+            "c": {
+                "mutation": { "add": 1 }
+            }
+        }));
+        let answered = Arc::new(Mutex::new(Vec::new()));
+        let answered_by_mocks = answered.clone();
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(move |request| {
+                answered_by_mocks.lock().unwrap().push(request.path.clone());
+                mocks(request)
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.mutation-order.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"mutation ($outer: Boolean!, $b: Boolean!) {
+          ... on Mutation @include(if: $outer) {
+            create: addProduct(input: { name: "new", price: 599.99 }) @include(if: $b) { isExpensive }
+          }
+          count: add(num: 1)
+          ... on Mutation @include(if: $outer) {
+            create: addProduct(input: { name: "new", price: 599.99 }) { id }
+          }
+        }"#;
+
+        let response = router
+            .send_graphql_request(
+                query,
+                Some(sonic_rs::json!({ "outer": true, "b": true })),
+                None,
+            )
+            .await;
+        insta::assert_snapshot!(response.string_body().await, @r#"{"data":{"create":{"isExpensive":true,"id":"1"},"count":1}}"#);
+        assert_eq!(
+            std::mem::take(&mut *answered.lock().unwrap()),
+            vec!["/a", "/b", "/c"]
+        );
+
+        let response = router
+            .send_graphql_request(
+                query,
+                Some(sonic_rs::json!({ "outer": true, "b": false })),
+                None,
+            )
+            .await;
+        insta::assert_snapshot!(response.string_body().await, @r#"{"data":{"create":{"id":"1"},"count":1}}"#);
+        assert_eq!(
+            std::mem::take(&mut *answered.lock().unwrap()),
+            vec!["/c", "/a"]
+        );
+
+        // the same inside another conditional fragment, which is still the root
+        let nested = r#"mutation ($wrap: Boolean!, $outer: Boolean!, $b: Boolean!) {
+          ... on Mutation @include(if: $wrap) {
+            ... on Mutation @include(if: $outer) {
+              create: addProduct(input: { name: "new", price: 599.99 }) @include(if: $b) { isExpensive }
+            }
+            count: add(num: 1)
+            ... on Mutation @include(if: $outer) {
+              create: addProduct(input: { name: "new", price: 599.99 }) { id }
+            }
+          }
+        }"#;
+        for (b, expected) in [(true, vec!["/a", "/b", "/c"]), (false, vec!["/c", "/a"])] {
+            let response = router
+                .send_graphql_request(
+                    nested,
+                    Some(sonic_rs::json!({ "wrap": true, "outer": true, "b": b })),
+                    None,
+                )
+                .await;
+            assert!(response.string_body().await.contains(r#""count":1"#));
+            assert_eq!(
+                std::mem::take(&mut *answered.lock().unwrap()),
+                expected,
+                "b: {b}"
+            );
+        }
+    }
+
+    #[ntex::test]
+    /// A mutation whose only selection `@include(if: $b) @skip(if: $b)` never lets run has
+    /// nothing to do, like one whose every field is skipped.
+    async fn mutation_selection_that_never_runs_sends_nothing() {
+        use std::sync::{Arc, Mutex};
+
+        let answered = Arc::new(Mutex::new(Vec::new()));
+        let answered_by_mocks = answered.clone();
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(move |request| {
+                answered_by_mocks.lock().unwrap().push(request.path.clone());
+                None
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.mutation-order.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let response = router
+            .send_graphql_request(
+                r#"mutation ($b: Boolean!) {
+                  create: addProduct(input: { name: "new", price: 599.99 }) @include(if: $b) @skip(if: $b) { id }
+                }"#,
+                Some(sonic_rs::json!({ "b": true })),
+                None,
+            )
+            .await;
+        insta::assert_snapshot!(response.string_body().await, @r#"{"data":{}}"#);
+        assert!(answered.lock().unwrap().is_empty());
+    }
+
+    #[ntex::test]
     /// https://github.com/graphql-hive/router/issues/1189
     ///
     /// When every field of a query or a mutation is skipped, there's nothing to plan, and the

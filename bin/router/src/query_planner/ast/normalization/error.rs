@@ -32,4 +32,7 @@ pub enum NormalizationError {
 
     #[error("Cyclic fragment spread detected for '{fragment_name}'.")]
     CyclicFragmentSpread { fragment_name: String },
+
+    #[error("Mutation field '{response_key}' is selected under too many different @skip/@include conditions to know where it runs.")]
+    TooManyConditionalSelections { response_key: String },
 }

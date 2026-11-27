@@ -83,11 +83,7 @@ pub fn normalize_operation(
         })
         .map(|n| n.to_string());
 
-    Ok(create_normalized_document(
-        supergraph,
-        op_def,
-        operation_name,
-    ))
+    create_normalized_document(supergraph, op_def, operation_name)
 }
 
 #[inline]
@@ -95,7 +91,7 @@ pub fn create_normalized_document<'a>(
     supergraph: &SupergraphState,
     operation_ast: query_ast::OperationDefinition<'a, String>,
     operation_name: Option<String>,
-) -> NormalizedDocument {
+) -> Result<NormalizedDocument, NormalizationError> {
     let mut operation: ast::operation::OperationDefinition = operation_ast.into();
     inject_skipped_typename_for_empty_composites(&mut operation, supergraph);
     if matches!(
@@ -111,14 +107,24 @@ pub fn create_normalized_document<'a>(
             .mutation_type
             .as_deref()
             .expect("mutation root type should exist");
-        operation.selection_set.items = group_by_response_key(split, root_type);
+        operation.selection_set.items = group_by_response_key(split, root_type)?;
     }
 
-    NormalizedDocument {
+    Ok(NormalizedDocument {
         operation,
         operation_name,
-    }
+    })
 }
+
+/// How many conditions the conditional copies of mutation fields in one operation may hold, see
+/// `group_by_response_key`. Saying "every selection before this one is off" splits a copy per
+/// condition of each of them that it doesn't settle already, and with independent variables
+/// those multiply, so an operation that would need more is turned down before it gets built.
+const MAX_CONDITIONS: usize = 1024;
+
+/// How many selections the conditional copies of mutation fields in one operation may hold,
+/// counting everything under each copied field, so a big selection can't be copied over and over.
+const MAX_COPIED_SELECTIONS: usize = 10_000;
 
 /// The planner picks one subgraph per root selection, and each mutation field needs its own,
 /// as it runs once and in order. A root fragment that kept its @skip/@include can hold a few
@@ -159,15 +165,24 @@ fn split_root_fragment_per_field(
     }
 }
 
-/// A mutation field runs once per response key, however many times it's selected: GraphQL
-/// collects every selection of `create` into one, at the spot of the first. So the root
-/// selections of one response key go together, in one fragment without a condition at the
-/// first one's spot, each keeping its own @skip/@include. Apart, the planner would see a
-/// mutation field per selection and run `create` twice when two of them are on.
+/// A mutation field runs once per response key, however many times it's selected: GraphQL drops
+/// the selections a `@skip`/`@include` turns off, then collects the rest of `create` into one
+/// field, run at the spot of the first one that's left. The planner plans a mutation field per
+/// root selection, so the selections of one response key get put together here.
+///
+/// With nothing but other selections of the same key between them, the spot is the same
+/// whichever is on, so they go in one fragment without a condition at the first one's spot,
+/// each keeping its own `@skip`/`@include`. The same when the first one is always on.
+///
+/// Otherwise the spot depends on the variables: in `create @include(if: $b) count create`,
+/// `create` runs before `count` with `$b`, after it without. So the field goes at each spot
+/// where it can be first, under the condition that a selection there is on and every one
+/// before it is off, with the selections from there on. The conditions don't overlap, so it
+/// still runs once.
 fn group_by_response_key(
     items: Vec<ast::selection_item::SelectionItem>,
     root_type: &str,
-) -> Vec<ast::selection_item::SelectionItem> {
+) -> Result<Vec<ast::selection_item::SelectionItem>, NormalizationError> {
     use ast::selection_item::SelectionItem;
     use ast::selection_set::{InlineFragmentSelection, SelectionSet};
 
@@ -183,39 +198,279 @@ fn group_by_response_key(
         }
     }
 
-    let mut groups: Vec<Vec<SelectionItem>> = Vec::with_capacity(items.len());
-    let mut by_key: Vec<(String, usize)> = Vec::new();
-    for item in items {
-        let found = response_key(&item).and_then(|key| {
-            by_key
-                .iter()
-                .find(|(seen, _)| seen == key)
-                .map(|(_, group)| *group)
-        });
-        match found {
-            Some(group) => groups[group].push(item),
-            None => {
-                if let Some(key) = response_key(&item) {
-                    by_key.push((key.to_string(), groups.len()));
+    // what has to hold for a root selection to be on: every `@include` variable true and every
+    // `@skip` variable false, on the fragments around its field and on the field
+    fn conditions<'a>(item: &'a SelectionItem, out: &mut Vec<(&'a str, bool)>) {
+        let (include_if, skip_if) = match item {
+            SelectionItem::Field(field) => (&field.include_if, &field.skip_if),
+            SelectionItem::InlineFragment(fragment) => {
+                if let [only] = fragment.selections.items.as_slice() {
+                    conditions(only, out);
                 }
-                groups.push(vec![item]);
+                (&fragment.include_if, &fragment.skip_if)
+            }
+            SelectionItem::FragmentSpread(_) => return,
+        };
+        let literals = include_if
+            .as_deref()
+            .map(|variable| (variable, true))
+            .into_iter()
+            .chain(skip_if.as_deref().map(|variable| (variable, false)));
+        for literal in literals {
+            if !out.contains(&literal) {
+                out.push(literal);
             }
         }
     }
-    groups
-        .into_iter()
-        .map(|mut group| {
-            if group.len() == 1 {
-                return group.pop().expect("one item");
-            }
-            SelectionItem::InlineFragment(InlineFragmentSelection {
+
+    // `items` in a fragment on the root type under `conditions`, a fragment per condition
+    fn wrap(
+        root_type: &str,
+        conditions: &[(&str, bool)],
+        items: Vec<SelectionItem>,
+    ) -> SelectionItem {
+        let mut item = SelectionItem::InlineFragment(InlineFragmentSelection {
+            type_condition: root_type.to_string(),
+            selections: SelectionSet { items },
+            skip_if: None,
+            include_if: None,
+        });
+        for &(variable, on) in conditions.iter().rev() {
+            item = SelectionItem::InlineFragment(InlineFragmentSelection {
                 type_condition: root_type.to_string(),
-                selections: SelectionSet { items: group },
-                skip_if: None,
-                include_if: None,
-            })
+                selections: SelectionSet { items: vec![item] },
+                skip_if: (!on).then(|| variable.to_string()),
+                include_if: on.then(|| variable.to_string()),
+            });
+        }
+        item
+    }
+
+    // what goes at a spot: selections moved there, they go nowhere else, or a fragment made
+    // of copies, as one selection can be in several
+    enum Placed {
+        Together(Vec<usize>),
+        Branch(SelectionItem),
+    }
+
+    // a selection whose conditions contradict each other, like `@include(if: $x) @skip(if: $x)`,
+    // never runs, and it has no spot to take. Filtered in place, nothing new gets allocated
+    let items: Vec<SelectionItem> = items
+        .into_iter()
+        .filter(|item| {
+            let mut literals = Vec::new();
+            conditions(item, &mut literals);
+            !contradicts(&literals, &literals)
         })
-        .collect()
+        .collect();
+
+    // nearly always every key is there once, and nothing changes
+    let repeated = |index: usize| {
+        response_key(&items[index]).is_some_and(|key| {
+            items
+                .iter()
+                .enumerate()
+                .any(|(other, item)| other != index && response_key(item) == Some(key))
+        })
+    };
+    if !(0..items.len()).any(repeated) {
+        return Ok(items);
+    }
+    let mut conditions_left = MAX_CONDITIONS;
+    let mut selections_left = MAX_COPIED_SELECTIONS;
+    let too_many = |key: Option<&str>| NormalizationError::TooManyConditionalSelections {
+        response_key: key.unwrap_or_default().to_string(),
+    };
+
+    // for each spot, the fragments that go there, and the selections that only go in those
+    let mut at_spot: Vec<Vec<Placed>> = (0..items.len()).map(|_| Vec::new()).collect();
+    let mut placed = vec![false; items.len()];
+    for first in 0..items.len() {
+        if placed[first] || !repeated(first) {
+            continue;
+        }
+        let key = response_key(&items[first]);
+        let occurrences: Vec<usize> = (first..items.len())
+            .filter(|&index| response_key(&items[index]) == key)
+            .collect();
+        for &index in &occurrences {
+            placed[index] = true;
+        }
+        let selection_conditions: Vec<Vec<(&str, bool)>> = occurrences
+            .iter()
+            .map(|&index| {
+                let mut out = Vec::new();
+                conditions(&items[index], &mut out);
+                out
+            })
+            .collect();
+        let sizes: Vec<usize> = occurrences
+            .iter()
+            .map(|&index| selection_count(&items[index]))
+            .collect();
+        // where each one would run when first: its own spot, or the first one's when only
+        // the same key sits in between
+        let spots: Vec<usize> = occurrences
+            .iter()
+            .scan(first, |spot, &index| {
+                if index > first && !occurrences.contains(&(index - 1)) {
+                    *spot = index;
+                }
+                Some(*spot)
+            })
+            .collect();
+        let one_spot = spots.iter().all(|&spot| spot == first)
+            || occurrences
+                .iter()
+                .zip(&spots)
+                .zip(&selection_conditions)
+                .any(|((_, &spot), conditions)| spot == first && conditions.is_empty());
+        if one_spot {
+            at_spot[first].push(Placed::Together(occurrences));
+            continue;
+        }
+        for (position, conditions) in selection_conditions.iter().enumerate() {
+            let branches = first_on_branches(
+                &selection_conditions[..position],
+                conditions,
+                conditions_left,
+            )
+            .ok_or_else(|| too_many(key))?;
+            for branch in &branches {
+                // the ones after it that this branch doesn't turn off, they merge into it
+                let merged: Vec<usize> = (position..occurrences.len())
+                    .filter(|&later| !contradicts(branch, &selection_conditions[later]))
+                    .collect();
+                if merged.is_empty() {
+                    continue;
+                }
+                // what the copies hold, every selection under them, not only the root ones
+                let copied: usize = merged.iter().map(|&later| sizes[later]).sum();
+                conditions_left = conditions_left
+                    .checked_sub(branch.len())
+                    .ok_or_else(|| too_many(key))?;
+                selections_left = selections_left
+                    .checked_sub(copied)
+                    .ok_or_else(|| too_many(key))?;
+                // a condition every copied selection needs anyway doesn't have to be said again
+                let wrapper: Vec<(&str, bool)> = branch
+                    .iter()
+                    .copied()
+                    .filter(|condition| {
+                        !merged
+                            .iter()
+                            .all(|&later| selection_conditions[later].contains(condition))
+                    })
+                    .collect();
+                at_spot[spots[position]].push(Placed::Branch(wrap(
+                    root_type,
+                    &wrapper,
+                    merged
+                        .iter()
+                        .map(|&later| items[occurrences[later]].clone())
+                        .collect(),
+                )));
+            }
+            // a selection that's always on is first whenever the ones before are off
+            if conditions.is_empty() {
+                break;
+            }
+        }
+    }
+
+    // an `Option` per selection, so the ones that go together can be moved out of order
+    let mut items: Vec<Option<SelectionItem>> = items.into_iter().map(Some).collect();
+    let mut out = Vec::with_capacity(items.len());
+    for (index, at_spot) in at_spot.into_iter().enumerate() {
+        if !placed[index] {
+            out.extend(items[index].take());
+        }
+        for placed in at_spot {
+            out.push(match placed {
+                Placed::Together(occurrences) => wrap(
+                    root_type,
+                    &[],
+                    occurrences
+                        .iter()
+                        .filter_map(|&index| items[index].take())
+                        .collect(),
+                ),
+                Placed::Branch(item) => item,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// How many selections `item` is, with everything under it.
+fn selection_count(item: &ast::selection_item::SelectionItem) -> usize {
+    use ast::selection_item::SelectionItem;
+    1 + match item {
+        SelectionItem::Field(field) => field.selections.items.iter().map(selection_count).sum(),
+        SelectionItem::InlineFragment(fragment) => {
+            fragment.selections.items.iter().map(selection_count).sum()
+        }
+        SelectionItem::FragmentSpread(_) => 0,
+    }
+}
+
+/// Whether `branch` turns off a selection that needs `conditions`.
+fn contradicts(branch: &[(&str, bool)], conditions: &[(&str, bool)]) -> bool {
+    conditions
+        .iter()
+        .any(|&(variable, on)| branch.contains(&(variable, !on)))
+}
+
+/// The ways a selection that needs `own` is the first one on: it's on and every selection in
+/// `before` is off. Each way is a list of variables and the value they need, and no two can hold
+/// at once, so the field runs once. `None` when they'd hold more than `budget` conditions.
+///
+/// Settled cases cost nothing: a selection before that a way already turns off adds nothing, and
+/// a way that already turns it on is dropped. Otherwise it's off when one of its other conditions
+/// fails, so the way splits: the first of them off, or it on and the second off, and so on.
+fn first_on_branches<'a>(
+    before: &[Vec<(&'a str, bool)>],
+    own: &[(&'a str, bool)],
+    budget: usize,
+) -> Option<Vec<Vec<(&'a str, bool)>>> {
+    let mut branches = vec![own.to_vec()];
+    for earlier in before {
+        let mut next = Vec::with_capacity(branches.len());
+        let mut size = 0usize;
+        for branch in branches {
+            if contradicts(&branch, earlier) {
+                size += branch.len();
+                next.push(branch);
+                continue;
+            }
+            let mut prefix = branch;
+            let rest: Vec<(&str, bool)> = earlier
+                .iter()
+                .copied()
+                .filter(|condition| !prefix.contains(condition))
+                .collect();
+            for (variable, on) in rest {
+                // checked before each one gets made, so nothing past the cap gets built
+                size += prefix.len() + 1;
+                if size > budget {
+                    return None;
+                }
+                let mut split = prefix.clone();
+                split.push((variable, !on));
+                next.push(split);
+                prefix.push((variable, on));
+            }
+            // with nothing left, `earlier` is on whenever this way holds, it never gets here
+        }
+        if size > budget {
+            return None;
+        }
+        branches = next;
+        if branches.is_empty() {
+            break;
+        }
+    }
+    Some(branches)
 }
 
 fn inject_skipped_typename_for_empty_composites(
