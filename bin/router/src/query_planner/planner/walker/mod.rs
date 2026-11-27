@@ -208,6 +208,11 @@ impl<'graph> Walk<'graph> {
     }
 }
 
+/// The other types `item` is planned for, when it's a fragment planned for several.
+fn also_of(walk: &Walk<'_>, item: &SelectionItem) -> Option<Rc<[String]>> {
+    walk.groups?.of(item)?.also.clone()
+}
+
 fn process_selection<'graph, 'op: 'graph>(
     walk: &Walk<'graph>,
     selection_item: &'op SelectionItem,
@@ -792,13 +797,16 @@ fn process_field<'graph, 'op: 'graph>(
 
             if output_type.is_interface_type()
                 && field_def.is_shared
-                // if there's one fragment, the query planner can decide which subgraph to use, based on the fragment's type condition
+                // if there's one type, the query planner can decide which subgraph to use, based
+                // on the fragment's type condition. A fragment planned for several types stands
+                // for all of them.
                 && field
                     .selections
                     .items
                     .iter()
                     .filter(|item| matches!(item, SelectionItem::InlineFragment(_)))
-                    .count()
+                    .map(|item| 1 + also_of(walk, item).map_or(0, |also| also.len()))
+                    .sum::<usize>()
                     > 1
             {
                 fields_to_resolve_locally = output_type
@@ -825,7 +833,7 @@ fn process_field<'graph, 'op: 'graph>(
                 let finding = process_selection(
                     walk,
                     child_selection,
-                    None,
+                    walk.groups.and_then(|groups| groups.of(child_selection)),
                     std::slice::from_ref(candidate_path),
                     &fields_to_resolve_locally,
                 );
