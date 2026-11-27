@@ -208,6 +208,62 @@ impl<'graph> Walk<'graph> {
     }
 }
 
+/// The types planned with a fragment's own, see `SelectionAttributes::also`, that can be where
+/// `path` is. A field that returns a union or an interface leads to a node per type it can be,
+/// each with its own `🔮` move, and a field one subgraph narrows, like `media: [Book]` where
+/// it's `[Media]` elsewhere, has the one for `Book` only there: `Movie` objects don't come from
+/// it.
+fn also_from(
+    graph: &Graph<'_>,
+    path: &OperationPath<'_>,
+    attributes: Option<&Rc<SelectionAttributes>>,
+) -> Option<Rc<SelectionAttributes>> {
+    let attributes = attributes?;
+    let also = attributes.also.as_ref()?;
+    let tail = path.tail();
+    // the nodes the path's last field leads to, its tail among them
+    let field_targets: Vec<petgraph::graph::NodeIndex> = path
+        .last_segment
+        .as_ref()
+        .and_then(|segment| {
+            let Ok(Edge::FieldMove(field)) = graph.edge(segment.edge_index) else {
+                return None;
+            };
+            let head = graph.get_edge_head(&segment.edge_index).ok()?;
+            Some(
+                graph
+                    .edges_from(head)
+                    .filter(|edge| {
+                        matches!(edge.weight(), Edge::FieldMove(other) if other.name == field.name)
+                    })
+                    .map(|edge| edge.target())
+                    .collect(),
+            )
+        })
+        .unwrap_or_else(|| vec![tail]);
+    let reachable = |type_name: &String| {
+        field_targets.iter().any(|&node| {
+            graph
+                .edges_from(node)
+                .any(|edge| matches!(edge.weight(), Edge::AbstractMove(name) if name == type_name))
+        })
+    };
+    if also.iter().all(reachable) {
+        return Some(Rc::clone(attributes));
+    }
+    let also: Rc<[String]> = also
+        .iter()
+        .filter(|name| reachable(name))
+        .cloned()
+        .collect();
+    (!also.is_empty()).then(|| {
+        Rc::new(SelectionAttributes {
+            also: Some(also),
+            ..(**attributes).clone()
+        })
+    })
+}
+
 /// The other types `item` is planned for, when it's a fragment planned for several.
 fn also_of(walk: &Walk<'_>, item: &SelectionItem) -> Option<Rc<[String]>> {
     walk.groups?.of(item)?.also.clone()
@@ -336,10 +392,44 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
         _ => panic!("Expected a subgraph type when resolving fragments"),
     };
 
+    // whether a path is at the fragment's type already: only the first path's tail was checked
+    // above. One at an interface object that got to the type with `🔎 Type` has no selfie edge,
+    // its tail is still the interface object, so it takes that type condition again.
+    let at_the_type = |path: &OperationPath<'graph>| -> Result<bool, WalkOperationError> {
+        Ok(matches!(
+            graph.node(path.tail())?,
+            Node::SubgraphType(t) if t.name == fragment.type_condition
+        ))
+    };
+    let condition: Option<Condition> = fragment.into();
+    // A path at the type has nothing to look for: without a condition it goes straight to the
+    // fragment's selections, with one it keeps the fragment through a selfie edge. Its objects
+    // are all of the type, so the ones planned with it, see `SelectionAttributes::also`, aren't
+    // there.
+    let stay_at_the_type =
+        |path: &OperationPath<'graph>| -> Result<OperationPath<'graph>, WalkOperationError> {
+            match &condition {
+                None => Ok(path.clone()),
+                Some(condition) => find_self_referencing_direct_path(
+                    graph,
+                    supergraph,
+                    override_context,
+                    path,
+                    &fragment.type_condition,
+                    condition,
+                    cancellation_token,
+                ),
+            }
+        };
+
     if tail_type_name == &fragment.type_condition {
         // It's the same type and no conditions are applied, we can skip the fragment processing
         // and go directly to its selections.
-        if fragment.include_if.is_none() && fragment.skip_if.is_none() {
+        if condition.is_none()
+            && paths.iter().skip(1).try_fold(true, |all, path| {
+                Ok::<_, WalkOperationError>(all && at_the_type(path)?)
+            })?
+        {
             return process_selection_set(
                 walk,
                 &fragment.selections,
@@ -348,11 +438,8 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             );
         }
 
-        // Looks like the fragment has conditions, we need to process them differently.
-        // We aim to preserve the inline fragment due to conditions, instead of eliminating it,
-        // and jumping straight to its selections.
-        let condition: Option<Condition> = fragment.into();
-
+        // Otherwise each path on its own: one at the type stays there, any other takes the type
+        // condition, with the types planned with it.
         let mut next_paths: Vec<OperationPath<'graph>> = Vec::with_capacity(paths.len());
         for path in paths {
             let path_span = span!(
@@ -362,24 +449,8 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             );
             let _enter = path_span.enter();
 
-            // Only the first path's tail was checked above, so check this one's. A path at the
-            // type keeps the fragment through a selfie edge. One at an interface object that got
-            // to the type with `🔎 Type` has no selfie edge, its tail is still the interface
-            // object, so it takes that type condition again, with the fragment's condition on it.
-            let path_tail_is_the_type = matches!(
-                graph.node(path.tail())?,
-                Node::SubgraphType(t) if t.name == fragment.type_condition
-            );
-            let direct_path = if path_tail_is_the_type {
-                Some(find_self_referencing_direct_path(
-                    graph,
-                    supergraph,
-                    override_context,
-                    path,
-                    &fragment.type_condition,
-                    condition.as_ref().expect("Condition should be present"),
-                    cancellation_token,
-                )?)
+            let direct_path = if at_the_type(path)? {
+                Some(stay_at_the_type(path)?)
             } else {
                 find_direct_path(
                     graph,
@@ -389,7 +460,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
                     &NavigationTarget::ConcreteType(
                         &fragment.type_condition,
                         condition.clone(),
-                        None,
+                        also.clone(),
                     ),
                     cancellation_token,
                 )?
@@ -431,6 +502,13 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
         );
         let _enter = path_span.enter();
 
+        // the types planned with this one aren't where its objects are all of it already
+        if also.is_some() && at_the_type(path)? {
+            next_paths.push(stay_at_the_type(path)?);
+            continue;
+        }
+
+        let also = also_from(graph, path, also.as_ref());
         let direct_path = find_direct_path(
             graph,
             supergraph,

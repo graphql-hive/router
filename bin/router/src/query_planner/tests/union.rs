@@ -1501,3 +1501,78 @@ fn fragments_on_types_that_get_their_key_another_way_stay_apart() -> Result<(), 
 
     Ok(())
 }
+
+/// `media` returns `[Book]` in a and `[Media]` in b. `Book` and `Movie` plan the same way, so
+/// their fragments are planned once, for `Book` with `Movie` too. A path that's at `Book`
+/// already, through a, goes straight to `title`, but one through b is at `Media` and still
+/// takes `... on Book`, and `Movie` with it: `Movie`'s `title` has nowhere else to go.
+#[test]
+fn fragment_planned_for_several_types_keeps_them_on_a_path_at_its_type(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let supergraph = r#"
+        enum join__Graph {
+            A @join__graph(name: "a", url: "")
+            B @join__graph(name: "b", url: "")
+        }
+        type Query @join__type(graph: A) @join__type(graph: B) {
+            media: [Media] @join__field(graph: A, type: "[Book]") @join__field(graph: B, type: "[Media]")
+        }
+        union Media @join__type(graph: B) @join__unionMember(graph: B, member: "Book") @join__unionMember(graph: B, member: "Movie") = Book | Movie
+        type Book @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
+            id: ID!
+            title: String
+        }
+        type Movie @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
+            id: ID!
+            title: String
+        }
+    "#;
+    let query_plan = crate::query_planner::tests::testkit::build_query_plan_from_sdl(
+        supergraph,
+        parse_operation("{ media { ... on Book { title } ... on Movie { title } } }"),
+        Default::default(),
+        Default::default(),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          media {
+            __typename
+            ... on Book {
+              title
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    // the same with one object, not a list: a's `media` is a `Book`
+    let query_plan = crate::query_planner::tests::testkit::build_query_plan_from_sdl(
+        &supergraph
+            .replace(r#"type: "[Book]""#, r#"type: "Book""#)
+            .replace(r#"type: "[Media]""#, r#"type: "Media""#)
+            .replace("media: [Media]", "media: Media"),
+        parse_operation("{ media { ... on Book { title } ... on Movie { title } } }"),
+        Default::default(),
+        Default::default(),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          media {
+            __typename
+            ... on Book {
+              title
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
