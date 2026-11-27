@@ -2185,20 +2185,28 @@ fn requires_provider_does_not_depend_on_an_earlier_field() -> Result<(), Box<dyn
     let after = plan("{ top { related { score } } topB { score } }")?;
     let before = plan("{ topB { score } top { related { score } } }")?;
 
-    assert_eq!(providers_of_p(&alone, &["topB"]), ["b"]);
-    assert_eq!(providers_of_p(&after, &["topB"]), ["b"]);
-    assert_eq!(providers_of_p(&before, &["topB"]), ["b"]);
+    assert_eq!(providers_of(&alone, &["topB"], "p"), ["b"]);
+    assert_eq!(providers_of(&after, &["topB"], "p"), ["b"]);
+    assert_eq!(providers_of(&before, &["topB"], "p"), ["b"]);
 
     Ok(())
 }
 
-/// The services a fetch reads `p` from for the objects at `path`.
-fn providers_of_p(plan: &serde_json::Value, path: &[&str]) -> Vec<String> {
+/// The services a fetch reads `field` from for the objects at `path`.
+fn providers_of(plan: &serde_json::Value, path: &[&str], field: &str) -> Vec<String> {
     use serde_json::Value;
 
-    // the selection set right after `marker`, braces included
+    fn is_word(char: char) -> bool {
+        char.is_alphanumeric() || char == '_'
+    }
+    // the selection set right after the word `marker`, braces included
     fn block_after<'a>(text: &'a str, marker: &str) -> Option<&'a str> {
-        let start = text.find(marker)? + marker.len();
+        let start = text.match_indices(marker).find_map(|(index, _)| {
+            let end = index + marker.len();
+            let before = text[..index].chars().next_back().is_some_and(is_word);
+            let after = text[end..].chars().next().is_some_and(is_word);
+            (!before && !after).then_some(end)
+        })?;
         let open = start + text[start..].find('{')?;
         let mut depth = 0;
         for (index, char) in text[open..].char_indices() {
@@ -2213,11 +2221,11 @@ fn providers_of_p(plan: &serde_json::Value, path: &[&str]) -> Vec<String> {
         }
         None
     }
-    fn reads_p(selections: Option<&str>) -> bool {
+    fn reads(selections: Option<&str>, field: &str) -> bool {
         selections.is_some_and(|selections| {
             selections
-                .split(|char: char| !char.is_alphanumeric() && char != '_')
-                .any(|word| word == "p")
+                .split(|char| !is_word(char))
+                .any(|word| word == field)
         })
     }
     fn keys(path: &Value) -> Vec<String> {
@@ -2228,7 +2236,7 @@ fn providers_of_p(plan: &serde_json::Value, path: &[&str]) -> Vec<String> {
             .map(str::to_string)
             .collect()
     }
-    fn walk(node: &Value, at: &[String], want: &[String], out: &mut Vec<String>) {
+    fn walk(node: &Value, at: &[String], want: &[String], field: &str, out: &mut Vec<String>) {
         match node {
             Value::Object(map) => {
                 let service = || map["serviceName"].as_str().unwrap_or_default().to_string();
@@ -2237,10 +2245,10 @@ fn providers_of_p(plan: &serde_json::Value, path: &[&str]) -> Vec<String> {
                     .and_then(Value::as_str)
                     .unwrap_or_default();
                 match map.get("kind").and_then(Value::as_str) {
-                    Some("Flatten") => walk(&map["node"], &keys(&map["path"]), want, out),
+                    Some("Flatten") => walk(&map["node"], &keys(&map["path"]), want, field, out),
                     Some("Fetch") => {
                         let selections = if at.is_empty() {
-                            // a root fetch, `p` sits under the root field
+                            // a root fetch, the field sits under the root field
                             let marker = want.first().map(String::as_str).unwrap_or_default();
                             block_after(operation, marker)
                         } else if at == want {
@@ -2248,7 +2256,7 @@ fn providers_of_p(plan: &serde_json::Value, path: &[&str]) -> Vec<String> {
                         } else {
                             None
                         };
-                        if reads_p(selections) {
+                        if reads(selections, field) {
                             out.push(service());
                         }
                     }
@@ -2265,22 +2273,26 @@ fn providers_of_p(plan: &serde_json::Value, path: &[&str]) -> Vec<String> {
                                 .any(|path| keys(path) == want);
                             let name = alias["alias"].as_str().unwrap_or_default();
                             let marker = format!("{name}: _entities");
-                            if at_path && reads_p(block_after(operation, &marker)) {
+                            if at_path && reads(block_after(operation, &marker), field) {
                                 out.push(service());
                             }
                         }
                     }
-                    _ => map.values().for_each(|value| walk(value, at, want, out)),
+                    _ => map
+                        .values()
+                        .for_each(|value| walk(value, at, want, field, out)),
                 }
             }
-            Value::Array(items) => items.iter().for_each(|item| walk(item, at, want, out)),
+            Value::Array(items) => items
+                .iter()
+                .for_each(|item| walk(item, at, want, field, out)),
             _ => {}
         }
     }
 
     let want: Vec<String> = path.iter().map(|key| key.to_string()).collect();
     let mut out = Vec::new();
-    walk(plan, &[], &want, &mut out);
+    walk(plan, &[], &want, field, &mut out);
     out.sort();
     out.dedup();
     out
@@ -2358,5 +2370,49 @@ fn requires_from_subgraph_the_object_comes_from() -> Result<(), Box<dyn Error>> 
       },
     },
     "#);
+    Ok(())
+}
+
+/// `score` on the `@interfaceObject` in `scoring` requires `tag`, which `objects` and `extra`
+/// both have. `objectAccounts` gets to an `Admin` through `objects`, so reading `tag` there is
+/// no extra trip, `accounts` doesn't go through either. Both get to the same node, and what one
+/// picks mustn't go to the other, whichever field comes first. Composed with Apollo's composer:
+/// the Guild one doesn't take a field shared by two `@interfaceObject`s.
+#[test]
+fn requires_provider_follows_where_the_object_came_from() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let plan = |query: &str| -> Result<serde_json::Value, Box<dyn Error>> {
+        let plan = build_query_plan_with_defaults(
+            "fixture/tests/requires-provider-by-object-sources.supergraph.graphql",
+            parse_operation(query),
+        )?;
+        Ok(serde_json::to_value(&plan)?)
+    };
+    let accounts = "accounts { ... on Admin { score } }";
+    let object_accounts = "objectAccounts { ... on Admin { score } }";
+
+    for query in [
+        format!("{{ {accounts} }}"),
+        format!("{{ {accounts} {object_accounts} }}"),
+        format!("{{ {object_accounts} {accounts} }}"),
+    ] {
+        assert_eq!(
+            providers_of(&plan(&query)?, &["accounts"], "tag"),
+            ["extra"],
+            "{query}"
+        );
+    }
+    for query in [
+        format!("{{ {object_accounts} }}"),
+        format!("{{ {accounts} {object_accounts} }}"),
+        format!("{{ {object_accounts} {accounts} }}"),
+    ] {
+        assert_eq!(
+            providers_of(&plan(&query)?, &["objectAccounts"], "tag"),
+            ["objects"],
+            "{query}"
+        );
+    }
+
     Ok(())
 }

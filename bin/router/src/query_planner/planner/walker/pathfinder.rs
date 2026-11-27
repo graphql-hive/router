@@ -117,8 +117,10 @@ pub struct SearchCache<'graph> {
     /// gets searched for from the same node many times in one operation, like under every type
     /// of a union. What a search finds doesn't depend on how the path got to that node: the
     /// requirements are resolved from there on. Only on the type it got down to, see
-    /// `OperationPath::narrowed_to`, so that's in the key too. So the steps it found go on from
-    /// the next path too, without searching again.
+    /// `OperationPath::narrowed_to`, so that's in the key too, and on the subgraphs the object
+    /// came through since its field, see `OperationPath::object_sources`: a trip into one of
+    /// those is free. So the steps it found go on from the next path too, without searching
+    /// again.
     searches: RefCell<SearchesByStart<'graph>>,
 }
 
@@ -132,8 +134,12 @@ type SearchesByStart<'graph> = HashMap<
     Vec<IndirectSearch<'graph>>,
 >;
 
+type ObjectSources = (Vec<Option<u16>>, Vec<NodeIndex>);
+
 struct IndirectSearch<'graph> {
     union_context: Option<UnionContext<'graph>>,
+    /// The path's `object_sources`, sorted, without repeats
+    sources: ObjectSources,
     field: &'graph FieldSelection,
     target_subgraph_ids: Option<Box<[u16]>>,
     found: Rc<[Vec<PathStep>]>,
@@ -174,12 +180,21 @@ impl<'graph> SearchCache<'graph> {
             field.name.as_str(),
             field.arguments(),
         );
+        let sources = {
+            let (mut entered, mut came_from) = path.object_sources(graph);
+            entered.sort_unstable();
+            entered.dedup();
+            came_from.sort_unstable();
+            came_from.dedup();
+            (entered, came_from)
+        };
         let found = self.searches.borrow().get(&key).and_then(|searches| {
             searches
                 .iter()
                 .find(|search| {
                     // the name and arguments are in the key already
                     search.union_context == path.union_context
+                        && search.sources == sources
                         && search.target_subgraph_ids.as_deref() == target_subgraph_ids
                         && same_selections(&search.field.selections, &field.selections)
                 })
@@ -205,6 +220,7 @@ impl<'graph> SearchCache<'graph> {
                 .or_default()
                 .push(IndirectSearch {
                     union_context: path.union_context.clone(),
+                    sources,
                     field,
                     target_subgraph_ids: target_subgraph_ids.map(Box::from),
                     found: found.into(),
