@@ -826,9 +826,9 @@ fn resolves_every_field(
 /// The field, if `subgraph` resolves it itself. Where the field is `@external` in `subgraph`,
 /// it only has it through `@provides`: another subgraph's data, as `subgraph` last saw it.
 ///
-/// `resolvable_in` leaves out the subgraphs of a labelled `@override` too, since which of them
-/// answers depends on the request. Within one plan it's always the same one, so a value one of
-/// them put in the response is what a fetch to it would give again.
+/// Both sides of a labelled `@override` count, see `SupergraphField::resolvable_in`: which of them
+/// answers depends on the request, but within one plan it's always the same one, so a value one
+/// of them put in the response is what a fetch to it would give again.
 fn resolved_by<'s>(
     supergraph: &'s SupergraphState,
     type_name: &str,
@@ -840,19 +840,10 @@ fn resolved_by<'s>(
         .get(type_name)?
         .fields()
         .get(field_name)?;
-    let labelled_in_subgraph = || {
-        field.join_field.iter().any(|join_field| {
-            join_field.override_label.is_some()
-                && !join_field.external
-                && join_field
-                    .graph_id
-                    .as_deref()
-                    .and_then(|graph_id| supergraph.known_subgraphs.get(graph_id))
-                    .and_then(|name| supergraph.subgraph_index(name))
-                    == Some(subgraph)
-        })
-    };
-    (field.resolvable_in.binary_search(&subgraph).is_ok() || labelled_in_subgraph())
+    field
+        .resolvable_in
+        .binary_search(&subgraph)
+        .is_ok()
         .then_some(field)
 }
 

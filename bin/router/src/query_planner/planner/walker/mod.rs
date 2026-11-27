@@ -702,7 +702,7 @@ impl<'graph> OperationWalk<'graph> {
                     .ok_or_else(|| WalkOperationError::TypeNotFound(tail.name_str().to_string()))?;
 
                 if output_type.is_interface_type()
-                && field_def.resolvable_in.len() > 1
+                && field_def.is_shared
                 // if there's one fragment, the query planner can decide which subgraph to use, based on the fragment's type condition
                 && field
                     .selections

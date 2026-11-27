@@ -619,6 +619,7 @@ pub fn find_direct_path<'graph>(
 /// scope rules the target type out.
 fn direct_edges<'graph, 't>(
     graph: &'graph Graph<'graph>,
+    override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
     target: &'t NavigationTarget<'_>,
 ) -> Box<dyn Iterator<Item = EdgeReference<'graph>> + 't>
@@ -639,7 +640,12 @@ where
             // a key move, can only read a field there that `T` resolves in that subgraph.
             match path.narrowed_to(graph) {
                 Some(type_name) => Box::new(edges.filter(move |_| {
-                    graph.field_resolvable_for(path_tail_index, type_name, &field.name)
+                    graph.field_resolvable_for(
+                        path_tail_index,
+                        type_name,
+                        &field.name,
+                        override_context,
+                    )
                 })),
                 None => Box::new(edges),
             }
@@ -662,7 +668,7 @@ impl<'graph> PathSearch<'graph> {
         path: &OperationPath<'graph>,
         target: &NavigationTarget<'_>,
     ) -> Result<Option<OperationPath<'graph>>, WalkOperationError> {
-        for edge_ref in direct_edges(self.graph, path, target) {
+        for edge_ref in direct_edges(self.graph, self.override_context, path, target) {
             if let Some(next_path) = self.try_advance_direct_path(path, &edge_ref, target)? {
                 trace!("Finished finding direct path, found one");
                 return Ok(Some(next_path));
@@ -680,7 +686,7 @@ impl<'graph> PathSearch<'graph> {
     ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
         let mut result: Vec<OperationPath<'graph>> = vec![];
 
-        for edge_ref in direct_edges(self.graph, path, target) {
+        for edge_ref in direct_edges(self.graph, self.override_context, path, target) {
             if let Some(new_path) = self.try_advance_direct_path(path, &edge_ref, target)? {
                 result.push(new_path);
             }
@@ -755,12 +761,8 @@ impl<'graph> PathSearch<'graph> {
         let override_context = self.override_context;
         let edge = edge_ref.weight();
 
-        if let Edge::FieldMove(field_move) = edge {
-            // TODO: This should be passed from the executor,
-            //       I will work on it next.
-            if !field_move.satisfies_override_rules(override_context) {
-                return Ok(None);
-            }
+        if !edge.satisfies_override_rules(override_context) {
+            return Ok(None);
         }
 
         let paths = if let Some(selections) = edge.requirements() {

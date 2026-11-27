@@ -1,5 +1,6 @@
 use crate::query_planner::{
-    tests::testkit::{build_query_plan_with_defaults, init_logger},
+    graph::PlannerOverrideContext,
+    tests::testkit::{build_query_plan, build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -970,6 +971,394 @@ fn interface_object_requires_field_external_in_one_member() -> Result<(), Box<dy
               ... on Moderator {
                 title
               }
+            }
+          }
+        },
+        Flatten(path: "accounts.@|[Admin]") {
+          Fetch(service: "third") {
+            {
+              ... on Admin {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Admin {
+                title
+              }
+            }
+          },
+        },
+        Flatten(path: "accounts.@") {
+          Fetch(service: "fourth") {
+            {
+              ... on Account {
+                __typename
+                id
+                ... on Admin {
+                  title
+                }
+                ... on Moderator {
+                  title
+                }
+              }
+            } =>
+            {
+              ... on Account {
+                fullTitle
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Like `interface_object_requires_field_external_in_one_member`, with `Admin.title` moved from
+/// `first` to `third` by `@override`. `first` still has the field on the interface, but not for an
+/// `Admin`.
+#[test]
+fn interface_object_requires_field_overridden_in_one_member() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation("{ accounts { fullTitle } }");
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-object-requires-overridden-member-field.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "first") {
+          {
+            accounts {
+              __typename
+              id
+              ... on Admin {
+                __typename
+                id
+              }
+              ... on Moderator {
+                title
+              }
+            }
+          }
+        },
+        Flatten(path: "accounts.@|[Admin]") {
+          Fetch(service: "third") {
+            {
+              ... on Admin {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Admin {
+                title
+              }
+            }
+          },
+        },
+        Flatten(path: "accounts.@") {
+          Fetch(service: "fourth") {
+            {
+              ... on Account {
+                __typename
+                id
+                ... on Admin {
+                  title
+                }
+                ... on Moderator {
+                  title
+                }
+              }
+            } =>
+            {
+              ... on Account {
+                fullTitle
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// The same with `@override(label: "percent(50)")`: `Admin.title` comes from `third` for a
+/// request in the 50%, and from `first` for the rest.
+#[test]
+fn interface_object_requires_field_progressively_overridden_in_one_member(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let fixture =
+        "fixture/tests/interface-object-requires-progressively-overridden-member-field.supergraph.graphql";
+    let document = parse_operation("{ accounts { fullTitle } }");
+
+    let in_range = build_query_plan(
+        fixture,
+        document.clone(),
+        PlannerOverrideContext::from_percentage(0.0),
+        Default::default(),
+    )?;
+    insta::assert_snapshot!(format!("{}", in_range), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "first") {
+          {
+            accounts {
+              __typename
+              id
+              ... on Admin {
+                __typename
+                id
+              }
+              ... on Moderator {
+                title
+              }
+            }
+          }
+        },
+        Flatten(path: "accounts.@|[Admin]") {
+          Fetch(service: "third") {
+            {
+              ... on Admin {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Admin {
+                title
+              }
+            }
+          },
+        },
+        Flatten(path: "accounts.@") {
+          Fetch(service: "fourth") {
+            {
+              ... on Account {
+                __typename
+                id
+                ... on Admin {
+                  title
+                }
+                ... on Moderator {
+                  title
+                }
+              }
+            } =>
+            {
+              ... on Account {
+                fullTitle
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    let out_of_range = build_query_plan(
+        fixture,
+        document,
+        PlannerOverrideContext::from_percentage(90.0),
+        Default::default(),
+    )?;
+    insta::assert_snapshot!(format!("{}", out_of_range), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "first") {
+          {
+            accounts {
+              __typename
+              id
+              title
+            }
+          }
+        },
+        Flatten(path: "accounts.@") {
+          Fetch(service: "fourth") {
+            {
+              ... on Account {
+                __typename
+                ... on Admin {
+                  title
+                }
+                ... on Moderator {
+                  title
+                }
+                id
+              }
+            } =>
+            {
+              ... on Account {
+                fullTitle
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// The same with `@override(label: "beta")`: `Admin.title` comes from `third` when the flag is on,
+/// and from `first` when it's off.
+#[test]
+fn interface_object_requires_field_overridden_by_flag_in_one_member() -> Result<(), Box<dyn Error>>
+{
+    init_logger();
+    let fixture =
+        "fixture/tests/interface-object-requires-flag-overridden-member-field.supergraph.graphql";
+    let document = parse_operation("{ accounts { fullTitle } }");
+
+    let on = build_query_plan(
+        fixture,
+        document.clone(),
+        PlannerOverrideContext::from_flag("beta".to_string()),
+        Default::default(),
+    )?;
+    insta::assert_snapshot!(format!("{}", on), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "first") {
+          {
+            accounts {
+              __typename
+              id
+              ... on Admin {
+                __typename
+                id
+              }
+              ... on Moderator {
+                title
+              }
+            }
+          }
+        },
+        Flatten(path: "accounts.@|[Admin]") {
+          Fetch(service: "third") {
+            {
+              ... on Admin {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Admin {
+                title
+              }
+            }
+          },
+        },
+        Flatten(path: "accounts.@") {
+          Fetch(service: "fourth") {
+            {
+              ... on Account {
+                __typename
+                id
+                ... on Admin {
+                  title
+                }
+                ... on Moderator {
+                  title
+                }
+              }
+            } =>
+            {
+              ... on Account {
+                fullTitle
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    let off = build_query_plan(
+        fixture,
+        document,
+        PlannerOverrideContext::default(),
+        Default::default(),
+    )?;
+    insta::assert_snapshot!(format!("{}", off), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "first") {
+          {
+            accounts {
+              __typename
+              id
+              title
+            }
+          }
+        },
+        Flatten(path: "accounts.@") {
+          Fetch(service: "fourth") {
+            {
+              ... on Account {
+                __typename
+                ... on Admin {
+                  title
+                }
+                ... on Moderator {
+                  title
+                }
+                id
+              }
+            } =>
+            {
+              ... on Account {
+                fullTitle
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Asking for the field next to the one that requires it: `fourth` gets an `Admin`'s from `third`,
+/// like the client does.
+#[test]
+fn interface_object_requires_field_progressively_overridden_and_selected(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation("{ accounts { title fullTitle } }");
+    let query_plan = build_query_plan(
+        "fixture/tests/interface-object-requires-progressively-overridden-member-field.supergraph.graphql",
+        document,
+        PlannerOverrideContext::from_percentage(0.0),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "first") {
+          {
+            accounts {
+              __typename
+              ... on Admin {
+                __typename
+                id
+              }
+              ... on Moderator {
+                title
+              }
+              id
             }
           }
         },
