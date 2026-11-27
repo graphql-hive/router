@@ -5200,4 +5200,83 @@ mod issues_e2e_tests {
         }
         "#);
     }
+
+    #[ntex::test]
+    /// A provided field the subgraph's type doesn't list gets an alias next to `Book.extras`,
+    /// and `Film.x` under it gets one too, as `Print.x` has another type. The client gets both
+    /// keys back.
+    async fn provided_field_missing_from_the_subgraph_and_a_field_under_it_get_aliases() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: ../bin/router/fixture/tests/provides-missing-external-entry.supergraph.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      shelf:
+                        url: "http://{host}/shelf"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        // what shelf answers, matched by the shape of the query it gets
+        let _shelf = server
+            .mock("POST", "/shelf")
+            .match_body(mockito::Matcher::Regex(
+                r"on Movie\{_internal_qp_alias_0: extras\{__typename \.\.\.on Print\{\.\.\.a\} \.\.\.on Film\{_internal_qp_alias_0: x\}".to_string(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"media":[
+                    {"__typename":"Book","extras":{"__typename":"Print","x":"bp"}},
+                    {"__typename":"Movie","_internal_qp_alias_0":{"__typename":"Film","_internal_qp_alias_0":"mf"}},
+                    {"__typename":"Movie","_internal_qp_alias_0":{"__typename":"Print","x":"mp"}}
+                ]}}"#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"{
+                  media {
+                    ... on Book { extras { ... on Print { x } } }
+                    ... on Movie { extras { ... on Print { x } ... on Film { x } } }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "media": [
+              {
+                "extras": {
+                  "x": "bp"
+                }
+              },
+              {
+                "extras": {
+                  "x": "mf"
+                }
+              },
+              {
+                "extras": {
+                  "x": "mp"
+                }
+              }
+            ]
+          }
+        }
+        "#);
+    }
 }

@@ -803,9 +803,12 @@ fn shelf_accepts(query_plan: &impl serde::Serialize) -> Result<(), Box<dyn Error
         r#"
         type Query { media: [Media] }
         union Media = Book | Movie
-        type Book { id: ID! title: String details: Details }
-        type Movie { id: ID! title: String! details: Details }
+        type Book { id: ID! title: String details: Details extras: Extra }
+        type Movie { id: ID! title: String! details: Details extras: Extra }
         type Details { x: String y: String }
+        union Extra = Print | Film
+        type Print { x: String }
+        type Film { x: String! }
         scalar Boolean
         directive @include(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
         "#,
@@ -816,5 +819,105 @@ fn shelf_accepts(query_plan: &impl serde::Serialize) -> Result<(), Box<dyn Error
         &default_rules_validation_plan(),
     );
     assert!(errors.is_empty(), "{errors:?}\n{operation}");
+    Ok(())
+}
+
+/// A provided field missing from the subgraph's type gets an alias, and so does a field under
+/// it: `Print.x` and `Film.x` can't share a key. Both have to make it into the fetch, and the
+/// client's keys have to come back for both, the outer one first.
+#[test]
+fn provided_field_missing_from_the_subgraph_and_a_field_under_it_get_aliases(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/provides-missing-external-entry.supergraph.graphql",
+        parse_operation(
+            "{ media { ... on Book { extras { ... on Print { x } } } ... on Movie { extras { ... on Print { x } ... on Film { x } } } } }",
+        ),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "shelf") {
+        {
+          media {
+            __typename
+            ... on Book {
+              extras {
+                __typename
+                ... on Print {
+                  ...a
+                }
+              }
+            }
+            ... on Movie {
+              _internal_qp_alias_0: extras {
+                __typename
+                ... on Print {
+                  ...a
+                }
+                ... on Film {
+                  _internal_qp_alias_0: x
+                }
+              }
+            }
+          }
+        }
+        fragment a on Print {
+          x
+        }
+      },
+    },
+    "#);
+    let plan = serde_json::to_value(&query_plan)?;
+    insta::assert_snapshot!(serde_json::to_string_pretty(&plan["node"]["outputRewrites"])?, @r#"
+    [
+      {
+        "KeyRenamer": {
+          "path": [
+            {
+              "Key": "media"
+            },
+            {
+              "TypenameEquals": [
+                "Movie"
+              ]
+            },
+            {
+              "Key": "_internal_qp_alias_0"
+            }
+          ],
+          "renameKeyTo": "extras"
+        }
+      },
+      {
+        "KeyRenamer": {
+          "path": [
+            {
+              "Key": "media"
+            },
+            {
+              "TypenameEquals": [
+                "Movie"
+              ]
+            },
+            {
+              "Key": "extras"
+            },
+            {
+              "TypenameEquals": [
+                "Film"
+              ]
+            },
+            {
+              "Key": "_internal_qp_alias_0"
+            }
+          ],
+          "renameKeyTo": "x"
+        }
+      }
+    ]
+    "#);
+    shelf_accepts(&query_plan)?;
+
     Ok(())
 }

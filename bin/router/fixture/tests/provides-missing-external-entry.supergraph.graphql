@@ -26,6 +26,7 @@ type Book
   id: ID!
   title: String @join__field(graph: CATALOG) @join__field(graph: SHELF, external: true)
   details: Details @join__field(graph: CATALOG) @join__field(graph: SHELF, external: true)
+  extras: Extra @join__field(graph: CATALOG) @join__field(graph: SHELF, external: true)
 }
 
 type Details
@@ -34,6 +35,22 @@ type Details
 {
   x: String
   y: String
+}
+
+union Extra
+  @join__type(graph: CATALOG)
+  @join__type(graph: SHELF)
+  @join__unionMember(graph: CATALOG, member: "Print")
+  @join__unionMember(graph: SHELF, member: "Print")
+  @join__unionMember(graph: CATALOG, member: "Film")
+  @join__unionMember(graph: SHELF, member: "Film")
+ = Print | Film
+
+type Film
+  @join__type(graph: CATALOG)
+  @join__type(graph: SHELF)
+{
+  x: String @join__field(graph: CATALOG, type: "String") @join__field(graph: SHELF, type: "String!")
 }
 
 scalar join__FieldSet
@@ -72,6 +89,14 @@ type Movie
   id: ID!
   title: String @join__field(graph: ARCHIVE, type: "String") @join__field(graph: CATALOG, type: "String!")
   details: Details @join__field(graph: CATALOG)
+  extras: Extra @join__field(graph: CATALOG)
+}
+
+type Print
+  @join__type(graph: CATALOG)
+  @join__type(graph: SHELF)
+{
+  x: String
 }
 
 type Query
@@ -79,5 +104,5 @@ type Query
   @join__type(graph: CATALOG)
   @join__type(graph: SHELF)
 {
-  media: [Media] @join__field(graph: SHELF, provides: "... on Book { title details { x y } } ... on Movie { title details { x y } }")
+  media: [Media] @join__field(graph: SHELF, provides: "... on Book { title details { x y } extras { ... on Print { x } ... on Film { x } } } ... on Movie { title details { x y } extras { ... on Print { x } ... on Film { x } } }")
 }

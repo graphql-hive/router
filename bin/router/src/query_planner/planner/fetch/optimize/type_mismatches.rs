@@ -59,7 +59,25 @@ impl FetchGraph<MultiTypeFetchStep> {
 
             // a group's fields are one field in the response, so they share an alias
             let mut aliases: HashMap<usize, String> = HashMap::default();
-            for (root_def_name, mismatch_path, group) in mismatches_paths {
+            // a path reads the fields above it by their keys in the fetch, so the deepest fields
+            // get their aliases first, before a field above them gets one. The client's keys
+            // come back the other way around, top first, as the finder lists them: each
+            // rewrite's path then reads the fields above it by the keys they have by then.
+            // Fields at one depth keep their order, and the aliases they had.
+            let mut order: Vec<usize> = (0..mismatches_paths.len()).collect();
+            order.sort_by_key(|&index| {
+                let path = &mismatches_paths[index].1;
+                std::cmp::Reverse(
+                    path.inner
+                        .iter()
+                        .filter(|segment| matches!(segment, Segment::Field(..)))
+                        .count(),
+                )
+            });
+            let mut rewrites: Vec<Option<FetchRewrite>> =
+                (0..mismatches_paths.len()).map(|_| None).collect();
+            for index in order {
+                let (root_def_name, mismatch_path, group) = &mismatches_paths[index];
                 if let Some(Segment::Field(field_seg, args_hash_lookup, condition)) =
                     mismatch_path.last()
                 {
@@ -67,11 +85,11 @@ impl FetchGraph<MultiTypeFetchStep> {
                     let lookup_path = &mismatch_path.without_last();
                     let root_def_selections = node
                         .output
-                        .selections_for_definition_mut(&root_def_name)
+                        .selections_for_definition_mut(root_def_name)
                         .expect("missing definition in step");
 
                     let next_alias = aliases
-                        .entry(group)
+                        .entry(*group)
                         .or_insert_with(|| free_alias(root_def_selections, lookup_path))
                         .clone();
                     if let Some(selection_set) =
@@ -97,19 +115,22 @@ impl FetchGraph<MultiTypeFetchStep> {
                                 lookup_path.into();
                             output_rewrite_path.push(FetchNodePathSegment::Key(next_alias.clone()));
 
-                            pending_output_rewrites.push((
-                                node_index,
-                                FetchRewrite::KeyRenamer(KeyRenamer {
-                                    rename_key_to: original_response_key,
-                                    path: output_rewrite_path,
-                                }),
-                            ));
+                            rewrites[index] = Some(FetchRewrite::KeyRenamer(KeyRenamer {
+                                rename_key_to: original_response_key,
+                                path: output_rewrite_path,
+                            }));
 
                             field_to_alias.alias = Some(next_alias);
                         }
                     }
                 }
             }
+            pending_output_rewrites.extend(
+                rewrites
+                    .into_iter()
+                    .flatten()
+                    .map(|rewrite| (node_index, rewrite)),
+            );
         }
 
         for (node_index, output_rewrite) in pending_output_rewrites {
