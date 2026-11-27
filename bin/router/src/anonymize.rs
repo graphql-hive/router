@@ -1182,7 +1182,8 @@ mod tests {
             let mut leaked: Vec<_> = user_names
                 .iter()
                 .filter(|name| {
-                    // `https` and `graphql` come from the `https://....invalid/graphql` we write,
+                    // `https`, `s`, `invalid` and `graphql` come from the
+                    // `https://s-....invalid/graphql` we write,
                     // the rest are SDL keywords
                     // numbers like the `0` in `127.0.0.1` aren't names
                     !name.starts_with(|c: char| c.is_ascii_digit())
@@ -1195,6 +1196,8 @@ mod tests {
                             "mutation",
                             "subscription",
                             "https",
+                            "s",
+                            "invalid",
                             "input",
                             "type",
                             "enum",
