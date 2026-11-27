@@ -10,9 +10,10 @@ use crate::query_planner::{
         merge_path::{Condition, MergePath, Segment},
         selection_item::SelectionItem,
         selection_set::{
-            find_selection_set_by_path_mut, find_selection_sets_by_path_mut, merge_selection_set,
-            merge_selection_set_owned, response_keys_conflict, selection_items_are_subset_of,
-            FieldSelection, InlineFragmentSelection, ResponseKeyConflict, SelectionSet,
+            find_selection_set_by_path_mut, find_selection_sets_by_path_mut, merge_mutation_root,
+            merge_selection_set, merge_selection_set_owned, response_keys_conflict,
+            selection_items_are_subset_of, FieldSelection, InlineFragmentSelection,
+            ResponseKeyConflict, SelectionSet,
         },
     },
     planner::fetch::state::{MultiTypeFetchStep, SingleTypeFetchStep},
@@ -526,6 +527,19 @@ impl FetchStepSelections<MultiTypeFetchStep> {
                     )
                 })?;
             add_at_each_path(current, &path, selection_set, false, definition_name)?;
+        }
+        Ok(())
+    }
+
+    /// Adds `other` after ours at a mutation's root, see `merge_mutation_root`.
+    pub fn migrate_mutation_root(&mut self, other: Self) -> Result<(), FetchStepSelectionsError> {
+        for (definition_name, selection_set) in other.selections {
+            let current = self
+                .selections_for_definition_mut(&definition_name)
+                .ok_or_else(|| {
+                    FetchStepSelectionsError::UnexpectedMissingDefinition(definition_name.clone())
+                })?;
+            merge_mutation_root(current, selection_set)?;
         }
         Ok(())
     }

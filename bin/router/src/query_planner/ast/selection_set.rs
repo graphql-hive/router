@@ -596,6 +596,45 @@ pub fn merge_selection_set_owned(
     Ok(())
 }
 
+/// Merges `source` into a mutation's root, `target`. Its fields run in order, so a fragment only
+/// merges into the item right before it, and the rest goes after. Fragments in there are still
+/// the root, so it carries into them; a field's selections merge as usual.
+pub fn merge_mutation_root(
+    target: &mut SelectionSet,
+    source: SelectionSet,
+) -> Result<(), ResponseKeyConflict> {
+    for source_item in source.items {
+        match (source_item, target.items.last_mut()) {
+            (
+                SelectionItem::InlineFragment(source_fragment),
+                Some(SelectionItem::InlineFragment(last)),
+            ) if source_fragment.type_condition == last.type_condition
+                && fragment_condition_equal(&Option::<Condition>::from(&source_fragment), last) =>
+            {
+                merge_mutation_root(&mut last.selections, source_fragment.selections)?;
+            }
+            (SelectionItem::Field(mut source_field), _) => {
+                // the same field under the same condition runs once, at its first spot
+                match merge_target(&target.items, &SelectionItem::Field(source_field.clone()))? {
+                    Some(index) => {
+                        if let SelectionItem::Field(target_field) = &mut target.items[index] {
+                            merge_field_omit_from_response(target_field, &source_field);
+                            merge_selection_set_owned(
+                                &mut target_field.selections,
+                                std::mem::take(&mut source_field.selections),
+                                false,
+                            )?;
+                        }
+                    }
+                    None => target.items.push(SelectionItem::Field(source_field)),
+                }
+            }
+            (source_item, _) => target.items.push(source_item),
+        }
+    }
+    Ok(())
+}
+
 /// The item of `target_items` that `source_item` merges into: the same field with the same
 /// condition, or a fragment on the same type with the same condition. An error when a field
 /// there has its response key but is another field.

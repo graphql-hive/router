@@ -21,6 +21,7 @@ use crate::query_planner::{
         response_keys::read_as_written,
         state::MultiTypeFetchStep,
     },
+    state::supergraph_state::OperationKind,
 };
 
 /// Where merged-away steps went, kept for a whole pass. Passes queue steps and pick merge pairs
@@ -168,9 +169,14 @@ pub(crate) fn perform_fetch_step_merge(
             }
         }
     }
-    target
-        .output
-        .migrate(source.output.take(), &source_fetch_path, None)?;
+    // a mutation's fields run in the order they're in, so at its root nothing moves ahead
+    if source_fetch_path.is_empty() && target.operation_kind == OperationKind::Mutation {
+        target.output.migrate_mutation_root(source.output.take())?;
+    } else {
+        target
+            .output
+            .migrate(source.output.take(), &source_fetch_path, None)?;
+    }
 
     if let Some(input_rewrites) = source.input_rewrites.take() {
         if !input_rewrites.is_empty() {

@@ -1653,3 +1653,56 @@ fn selection_that_never_runs_is_left_out() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+/// `a` and `c` each run under `$on` at their first selection, with `b` and `d` always on. The
+/// fetch for them all has two equal `@include(if: $on)` fragments, for `a` and for `c`, and
+/// merging the second into the first would run `c` before `b`.
+#[test]
+fn equal_root_fragments_of_one_fetch_keep_their_order() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation ($on: Boolean!) {
+          a: multiply(by: 1) @include(if: $on)
+          b: multiply(by: 2)
+          a: multiply(by: 1)
+          c: multiply(by: 3) @include(if: $on)
+          d: multiply(by: 4)
+          c: multiply(by: 3)
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        mutation ($on:Boolean!) {
+          ... on Mutation @include(if: $on) {
+            ...a
+          }
+          b: multiply(by: 2)
+          ... on Mutation @skip(if: $on) {
+            ...a
+          }
+          ... on Mutation @include(if: $on) {
+            ...b
+          }
+          d: multiply(by: 4)
+          ... on Mutation @skip(if: $on) {
+            ...b
+          }
+        }
+        fragment a on Mutation {
+          a: multiply(by: 1)
+        }
+        fragment b on Mutation {
+          c: multiply(by: 3)
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
