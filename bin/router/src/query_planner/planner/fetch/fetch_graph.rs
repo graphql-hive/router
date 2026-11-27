@@ -513,10 +513,22 @@ impl<State> FetchGraph<State> {
         }
         Some(entity_call_hash(
             &step.service_name,
-            step.input.first_definition_name()?,
+            self.entity_call_type(index)?,
             &step.response_path,
             step.condition.as_ref(),
         ))
+    }
+
+    /// The type a step's entity call is for: the one it was made for, also when it takes other
+    /// types planned with it, see `SeveralTypes::made_for`.
+    fn entity_call_type(&self, index: NodeIndex) -> Option<&str> {
+        self.several_types
+            .made_for(index)
+            .or_else(|| self.graph.node_weight(index)?.input.first_definition_name())
+    }
+
+    fn is_entity_call_for(&self, index: NodeIndex, type_name: &str) -> bool {
+        self.entity_call_type(index) == Some(type_name)
     }
 
     pub fn all_nodes(&self) -> NodeReferences<'_, FetchStepData<State>> {
@@ -1037,10 +1049,10 @@ fn ensure_fetch_step_for_subgraph(
             condition,
         )
         .find(|&child_index| {
-            fetch_graph.get_step_data(child_index).is_ok_and(|step| {
-                step.matches_entity_call(
+            fetch_graph.is_entity_call_for(child_index, input_type_name)
+                && fetch_graph.get_step_data(child_index).is_ok_and(|step| {
+                    step.matches_entity_call(
                     subgraph_name,
-                    input_type_name,
                     response_path,
                     condition,
                     conditions.from_root,
@@ -1051,7 +1063,7 @@ fn ensure_fetch_step_for_subgraph(
                     // other way around: the optimizations keep the two apart too
                     && step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES)
                         == created_from_requires
-            })
+                })
         });
 
     match matching_child_index {
@@ -1114,18 +1126,18 @@ fn ensure_fetch_step_for_requirement(
             condition,
         )
         .find(|&child_index| {
-            fetch_graph.get_step_data(child_index).is_ok_and(|step| {
-                step.matches_entity_call(
-                    subgraph_name,
-                    type_name,
-                    response_path,
-                    condition,
-                    conditions.from_root,
-                ) && step.context_rewrites.is_none()
-                    && step
-                        .input
-                        .contains(requirement.type_name, &requirement.selection_set)
-            })
+            fetch_graph.is_entity_call_for(child_index, type_name)
+                && fetch_graph.get_step_data(child_index).is_ok_and(|step| {
+                    step.matches_entity_call(
+                        subgraph_name,
+                        response_path,
+                        condition,
+                        conditions.from_root,
+                    ) && step.context_rewrites.is_none()
+                        && step
+                            .input
+                            .contains(requirement.type_name, &requirement.selection_set)
+                })
         });
 
     match matching_child_index {
@@ -3745,5 +3757,35 @@ mod tests {
             1
         );
         assert_eq!(found(&fetch_graph, parent), vec![newer, older]);
+    }
+
+    /// A step made for `Movie` that takes `Book` too, as the two are planned together, is still
+    /// the entity call for `Movie`: that's the type the lookups pass. `Book` sorts first, and
+    /// filing the step under it would make the next call for `Movie` a second step.
+    #[test]
+    fn step_for_several_types_is_found_by_the_type_it_was_made_for() {
+        let mut fetch_graph = FetchGraph::new(OperationKind::Query);
+        let subgraph = SubgraphName("a".to_string());
+        let path = media_path(&["Book", "Movie"]);
+        let parent = create_noop_fetch_step(&mut fetch_graph, false);
+        let step = create_fetch_step_for_entity_call(
+            &mut fetch_graph,
+            parent,
+            &subgraph,
+            "Movie",
+            "Movie",
+            &path,
+            Conditions::default(),
+            true,
+        );
+        several_types::take_type(&mut fetch_graph, step, "Book").unwrap();
+        fetch_graph.connect(parent, step);
+
+        let found: Vec<NodeIndex> = fetch_graph
+            .same_entity_calls(parent, &subgraph, "Movie", &path, None)
+            .filter(|&child| fetch_graph.is_entity_call_for(child, "Movie"))
+            .collect();
+        assert_eq!(found, vec![step]);
+        assert!(!fetch_graph.is_entity_call_for(step, "Book"));
     }
 }

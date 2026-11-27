@@ -7,7 +7,7 @@
 //!   Found again with `batched_call_hash`, as every type there gets the same one.
 //! - a step for a field with `@requires`, or for what such a field needs, planned once for the
 //!   types planned with its own, see `planned_with` and `SelectionAttributes::also`. Found again
-//!   like any other step, by its first type.
+//!   like any other step, by the type it was made for, see `SeveralTypes::made_for`.
 //!
 //! Such a step has an input and an output for each of its types, see `take_type`, and whatever
 //! goes in its output says which type it's for, see `FetchStepData::add_output_at`. The single
@@ -25,7 +25,7 @@ use crate::query_planner::planner::fetch::fetch_step_data::FetchStepFlags;
 use crate::query_planner::planner::fetch::state::SingleTypeFetchStep;
 use crate::query_planner::state::supergraph_state::SubgraphName;
 use petgraph::stable_graph::NodeIndex;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use tracing::trace;
 
 use super::{create_fetch_step_for_entity_call, hash_without_types, EntityCall, FetchGraph};
@@ -37,6 +37,9 @@ pub(crate) struct SeveralTypes {
     batched: HashSet<NodeIndex>,
     /// For `@requires`, found like any other step.
     for_requires: HashSet<NodeIndex>,
+    /// The type a step was made for, once it takes others too, see `take_type`. Lookups pass
+    /// that type, and it's not always the one that sorts first.
+    made_for: HashMap<NodeIndex, String>,
 }
 
 impl SeveralTypes {
@@ -48,6 +51,10 @@ impl SeveralTypes {
 
     pub(super) fn add_for_requires(&mut self, step: NodeIndex) {
         self.for_requires.insert(step);
+    }
+
+    pub(super) fn made_for(&self, step: NodeIndex) -> Option<&str> {
+        self.made_for.get(&step).map(String::as_str)
     }
 
     pub(super) fn is_batched(&self, step: NodeIndex) -> bool {
@@ -91,6 +98,15 @@ pub(super) fn take_type(
     let step = fetch_graph.get_step_data(step_index)?;
     if step.input.selections_for_definition(type_name).is_some() {
         return Ok(());
+    }
+    if !step.input.is_fetching_multiple_types() {
+        if let Some(made_for) = step.input.first_definition_name() {
+            let made_for = made_for.to_string();
+            fetch_graph
+                .several_types
+                .made_for
+                .insert(step_index, made_for);
+        }
     }
     let step = fetch_graph.get_step_data_mut(step_index)?;
     step.input.add_definition(type_name);

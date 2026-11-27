@@ -289,19 +289,18 @@ impl FetchStepData<MultiTypeFetchStep> {
 }
 
 impl FetchStepData<SingleTypeFetchStep> {
-    /// Whether an entity call to this subgraph, type, path and condition could reuse this step.
+    /// Whether an entity call to this subgraph, path and condition could reuse this step. The type
+    /// is checked by the graph, see `FetchGraph::is_entity_call_for`.
     /// It also has to be planned under the same gates: the step counts on the steps above for
     /// them, and when calls under different gates merge, the merge works out where they go.
     pub fn matches_entity_call(
         &self,
         subgraph_name: &SubgraphName,
-        input_type_name: &str,
         response_path: &MergePath,
         condition: Option<&Condition>,
         gated_by: &[Condition],
     ) -> bool {
         self.service_name == *subgraph_name
-            && self.input.first_definition_name() == Some(input_type_name)
             && self.response_path == *response_path
             && self.condition.as_ref() == condition
             && self.gated_by == gated_by
