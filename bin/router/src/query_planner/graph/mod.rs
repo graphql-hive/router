@@ -1814,6 +1814,7 @@ fn interchangeable_types(
         let signature = TypeSignature::of(object, unions);
 
         if let Some(profile) = type_profile(
+            state,
             name,
             object,
             unions,
@@ -1853,6 +1854,7 @@ fn interchangeable_types(
 /// What `interchangeable_for` compares of `object`. `None` when it has no single key made of
 /// plain fields.
 fn type_profile<'a>(
+    state: &SupergraphState,
     name: &str,
     object: &'a SupergraphObjectType,
     unions: &[(&'a str, &'a str)],
@@ -1914,8 +1916,12 @@ fn type_profile<'a>(
         .map(|field| {
             let mut field = field.clone();
             // in every subgraph that has the type, so in the one the objects are in, and a path
-            // there beats any other: which subgraphs those are doesn't matter
-            if field.join_fields.is_empty() {
+            // there beats any other: which subgraphs those are doesn't matter. Only for a leaf:
+            // under a field with selections a path through another subgraph can win for a field
+            // below, and that subgraph has to have both types.
+            if field.join_fields.is_empty()
+                && Graph::is_leaf_output_type(state, field.field_type.inner_type())
+            {
                 field.resolvable_in = None;
             }
             (field.name, field_ids.id(field))

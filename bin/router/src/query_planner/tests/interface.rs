@@ -1064,3 +1064,87 @@ fn nested_interface_field_with_redundant_inline_fragments_other_type_order(
 
     Ok(())
 }
+
+/// `Book` and `Movie` plan the same way, but only `Book` is in books, which has `Person.name`.
+/// `author` has selections, so a path through books can win for `name`, and `Movie`s can't go
+/// there: the two aren't planned together, and only `Book`s are sent to books as `Book`s.
+#[test]
+fn types_grouped_only_where_both_are_for_a_field_with_selections() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        "{ media { ... on Book { author { name } } ... on Movie { author { name } } } }",
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/grouped-types-field-with-selections.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "catalog") {
+          {
+            media {
+              __typename
+              ... on Movie {
+                author {
+                  __typename
+                  id
+                }
+              }
+              ... on Book {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        BatchFetch(service: "books") {
+          {
+            _e0 {
+              paths: [
+                "media.@|[Book]"
+              ]
+              {
+                ... on Book {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1 {
+              paths: [
+                "media.@|[Movie].author"
+              ]
+              {
+                ... on Person {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Book {
+                author {
+                  ...a
+                }
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Person {
+                ...a
+              }
+            }
+          }
+          fragment a on Person {
+            name
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
