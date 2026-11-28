@@ -1207,10 +1207,128 @@ fn interface_field_narrowed_in_a_subgraph_gets_no_other_types_there() -> Result<
         {
           media {
             __typename
-            id
             ... on Movie {
               length
             }
+            id
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `Shelf.media` is `[Book]` in a and `[Media]` in b. A field of the interface itself, or `Book`'s
+/// own, is in a, where the shelf comes from: one fetch, with `... on Book` kept, the field's type
+/// is `Media`. With `Movie` written first, planned with `Book`, a's objects can only be `Book`s,
+/// so a's path stays in, like with `Book` first, though b's covers both.
+#[test]
+fn interface_field_narrowed_under_an_entity_reads_its_fields_there() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-field-narrowed-under-entity.supergraph.graphql",
+        parse_operation("{ shelf { media { id } } }"),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          shelf {
+            media {
+              id
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-field-narrowed-under-entity.supergraph.graphql",
+        parse_operation("{ shelf { media { id ... on Book { title } } } }"),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          shelf {
+            media {
+              __typename
+              id
+              ... on Book {
+                title
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-field-narrowed-under-entity.supergraph.graphql",
+        parse_operation("{ shelf { media { ... on Movie { title } ... on Book { title } } } }"),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          shelf {
+            media {
+              __typename
+              ... on Book {
+                title
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `media` is `[Readable]` in a, an interface `Book` implements, and `[Media]` in b. a's
+/// `media` leads to `Readable`, with the move to `Book`.
+#[test]
+fn interface_field_narrowed_to_another_interface() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-field-narrowed-to-interface.supergraph.graphql",
+        parse_operation("{ media { ... on Book { pages } } }"),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          media {
+            __typename
+            ... on Book {
+              pages
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-field-narrowed-to-interface.supergraph.graphql",
+        parse_operation("{ media { id ... on Movie { length } } }"),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "b") {
+        {
+          media {
+            __typename
+            ... on Movie {
+              length
+            }
+            id
           }
         }
       },
