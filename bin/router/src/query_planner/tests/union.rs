@@ -1096,6 +1096,83 @@ fn conditional_union_type_condition_on_its_own_field_include_mixed_members(
     Ok(())
 }
 
+/// The same with the members asking for the same fields, so `ComponentA` and `ComponentC` are
+/// planned once, for `ComponentA` with `ComponentC` too. The wrapper's selfie edge comes after
+/// the `components` field, and every member still gets its `product`.
+#[test]
+fn conditional_union_type_condition_on_its_own_field_include_grouped_members(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($v: Boolean!) {
+          card {
+            components {
+              ... on Component @include(if: $v) {
+                __typename
+                ... on ComponentA { product { id a } }
+                ... on ComponentC { product { id a } }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/union-member-entity-fields.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "card") {
+          query ($v:Boolean!) {
+            card {
+              components {
+                ... on Component @include(if: $v) {
+                  __typename
+                  ... on ComponentA {
+                    product {
+                      ...a
+                    }
+                  }
+                  ... on ComponentC {
+                    product {
+                      ...a
+                    }
+                  }
+                }
+              }
+            }
+          }
+          fragment a on Product {
+            __typename
+            id
+          }
+        },
+        Flatten(path: "card.components.@|[Component]|[ComponentA|ComponentC].product") {
+          Fetch(service: "product", if: $v) {
+            {
+              ... on Product {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                a
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
 /// The review's operation: conditions on the union and on a member inside it.
 #[test]
 fn conditional_member_inside_a_conditional_union_type_condition() -> Result<(), Box<dyn Error>> {
@@ -1522,10 +1599,12 @@ fn fragment_planned_for_several_types_keeps_them_on_a_path_at_its_type(
         type Book @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
             id: ID!
             title: String
+            pages: Int
         }
         type Movie @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
             id: ID!
             title: String
+            length: Int
         }
     "#;
     let query_plan = crate::query_planner::tests::testkit::build_query_plan_from_sdl(
@@ -1567,6 +1646,51 @@ fn fragment_planned_for_several_types_keeps_them_on_a_path_at_its_type(
             __typename
             ... on Book {
               title
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    // `Movie` written first: the fragment is planned for `Movie`, with `Book` too, and no
+    // path leads to `Movie`. Each still takes `Book`, a's is at it already.
+    let query_plan = crate::query_planner::tests::testkit::build_query_plan_from_sdl(
+        supergraph,
+        parse_operation("{ media { ... on Movie { title } ... on Book { title } } }"),
+        Default::default(),
+        Default::default(),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          media {
+            __typename
+            ... on Book {
+              title
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    let query_plan = crate::query_planner::tests::testkit::build_query_plan_from_sdl(
+        supergraph,
+        parse_operation("{ media { ... on Movie { title length } ... on Book { title pages } } }"),
+        Default::default(),
+        Default::default(),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          media {
+            __typename
+            ... on Book {
+              title
+              pages
             }
           }
         }
