@@ -1860,40 +1860,30 @@ fn process_selfie_edge(
         parent_fetch_step_index.index(),
         target_type_name,
     );
-    let fragment = SelectionItem::InlineFragment(InlineFragmentSelection {
-        type_condition: target_type_name.clone(),
-        selections: SelectionSet::default(),
-        skip_if: condition.and_then(|c| {
-            if condition_on_step {
-                None
-            } else {
-                c.to_skip_if()
-            }
-        }),
-        include_if: condition.and_then(|c| {
-            if condition_on_step {
-                None
-            } else {
-                c.to_include_if()
-            }
-        }),
-    });
-    // Without a condition it's a field one subgraph narrows, like `media: [Book]` where it's
-    // `[Media]` elsewhere: the fragment is there for the type, and like any other type condition
-    // under an abstract type it needs the `__typename`.
-    let items = if condition.is_none() {
-        vec![
-            SelectionItem::Field(FieldSelection::new_typename()),
-            fragment,
-        ]
-    } else {
-        vec![fragment]
-    };
     fetch_graph.add_output(
         parent_fetch_step_index,
         response_path,
         fetch_path,
-        SelectionSet { items },
+        SelectionSet {
+            items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+                type_condition: target_type_name.clone(),
+                selections: SelectionSet::default(),
+                skip_if: condition.and_then(|c| {
+                    if condition_on_step {
+                        None
+                    } else {
+                        c.to_skip_if()
+                    }
+                }),
+                include_if: condition.and_then(|c| {
+                    if condition_on_step {
+                        None
+                    } else {
+                        c.to_include_if()
+                    }
+                }),
+            })],
+        },
     )?;
 
     let segment_condition = if condition_on_step {

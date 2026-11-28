@@ -36,12 +36,28 @@ pub enum SubgraphTypeSpecialization<'graph> {
     /// per-member specialized nodes and then abstract-move edges from those tails
     /// to the concrete member types.
     UnionMembers(UnionMembersData<'graph>),
+    /// The tail of a field that returns an interface but another type in this subgraph,
+    /// `@join__field(graph: A, type: "[Book]")`: named after the interface, with its fields, and
+    /// the moves to the types the field can be there only.
+    Narrowed(NarrowedFieldData<'graph>),
+}
+
+/// See `SubgraphTypeSpecialization::Narrowed`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct NarrowedFieldData<'graph> {
+    /// The type owning the field
+    pub type_name: &'graph str,
+    pub field_name: &'graph str,
+    /// The type the field returns in this subgraph
+    pub to: &'graph str,
 }
 
 impl<'graph> SubgraphTypeSpecialization<'graph> {
     pub fn union_members_data(&self) -> Option<&UnionMembersData<'graph>> {
-        let SubgraphTypeSpecialization::UnionMembers(data) = self;
-        Some(data)
+        match self {
+            SubgraphTypeSpecialization::UnionMembers(data) => Some(data),
+            SubgraphTypeSpecialization::Narrowed(_) => None,
+        }
     }
 }
 
@@ -86,6 +102,10 @@ impl<'graph> Node<'graph> {
                     Some(SubgraphTypeSpecialization::UnionMembers(u)) => format!(
                         "{}/{} for {}.{}:{}",
                         st.name, st.subgraph.0, u.type_name, u.field_name, u.object_type_name
+                    ),
+                    Some(SubgraphTypeSpecialization::Narrowed(n)) => format!(
+                        "{}/{} for {}.{} as {}",
+                        st.name, st.subgraph.0, n.type_name, n.field_name, n.to
                     ),
                     None => st.plain_display_name(),
                 };
@@ -185,6 +205,15 @@ impl<'graph> Node<'graph> {
         self.subgraph_type()
             .and_then(|st| st.specialization.as_ref())
             .and_then(|s| s.union_members_data())
+    }
+
+    /// The type a narrowed field returns in this subgraph, on its tail, see
+    /// `SubgraphTypeSpecialization::Narrowed`.
+    pub fn narrowed_field_type(&self) -> Option<&str> {
+        match self.subgraph_type()?.specialization.as_ref()? {
+            SubgraphTypeSpecialization::Narrowed(data) => Some(data.to),
+            SubgraphTypeSpecialization::UnionMembers(_) => None,
+        }
     }
 }
 

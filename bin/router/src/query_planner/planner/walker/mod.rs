@@ -286,29 +286,6 @@ fn keep(
     })
 }
 
-/// Whether `path` got to its node through a field one subgraph narrows, like `media: [Book]`
-/// where it's `[Media]` elsewhere. Its node is `Book`'s, but the field's type in the operation
-/// is `Media`, so `... on Book` has to stay in the fetch.
-fn through_narrowed_field(
-    graph: &Graph<'_>,
-    supergraph: &SupergraphState,
-    path: &OperationPath<'_>,
-) -> bool {
-    let Some(segment) = path.last_segment.as_ref() else {
-        return false;
-    };
-    let Ok(Edge::FieldMove(field)) = graph.edge(segment.edge_index) else {
-        return false;
-    };
-    field
-        .join_field
-        .and_then(|join_field| join_field.type_in_graph.as_ref())
-        .is_some_and(|type_in_graph| {
-            supergraph.field_return_type_name(field.type_name, field.name)
-                != Some(type_in_graph.inner_type())
-        })
-}
-
 /// The other types `item` is planned for, when it's a fragment planned for several.
 fn also_of(walk: &Walk<'_>, item: &SelectionItem) -> Option<Rc<[String]>> {
     walk.groups?.of(item)?.also.clone()
@@ -460,26 +437,38 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
                     .is_some_and(|names| names.iter().any(|name| name == t.name));
             Ok(planned.then_some(t.name))
         };
+    // the type planned with this one a narrowed field's tail can only be, see
+    // `SubgraphTypeSpecialization::Narrowed`
+    let narrowed_to_a_planned_type =
+        |path: &OperationPath<'graph>| -> Result<Option<&'graph str>, WalkOperationError> {
+            let Some(to) = graph.node(path.tail())?.narrowed_field_type() else {
+                return Ok(None);
+            };
+            let planned = also
+                .as_ref()
+                .and_then(|attributes| attributes.also.as_ref())
+                .is_some_and(|names| names.iter().any(|name| name == to));
+            Ok(planned.then_some(to))
+        };
     let condition: Option<Condition> = fragment.into();
     // A path at the type has nothing to look for: without a condition it goes straight to the
-    // fragment's selections, with one it keeps the fragment through a selfie edge. So does one
-    // that got there through a narrowed field: the field's type is still the interface. Its
-    // objects are all of the type, so the other types planned with it aren't there.
+    // fragment's selections, with one it keeps the fragment through a selfie edge. Its objects
+    // are all of the type, so the other types planned with it aren't there.
     let stay_at = |path: &OperationPath<'graph>,
                    type_name: &'graph str|
      -> Result<OperationPath<'graph>, WalkOperationError> {
-        if condition.is_none() && !through_narrowed_field(graph, supergraph, path) {
-            return Ok(path.clone());
+        match &condition {
+            None => Ok(path.clone()),
+            Some(condition) => find_self_referencing_direct_path(
+                graph,
+                supergraph,
+                override_context,
+                path,
+                type_name,
+                condition,
+                cancellation_token,
+            ),
         }
-        find_self_referencing_direct_path(
-            graph,
-            supergraph,
-            override_context,
-            path,
-            type_name,
-            condition.as_ref(),
-            cancellation_token,
-        )
     };
 
     if tail_type_name == &fragment.type_condition {
@@ -489,9 +478,6 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             && paths.iter().skip(1).try_fold(true, |all, path| {
                 Ok::<_, WalkOperationError>(all && at_the_type(path)?)
             })?
-            && !paths
-                .iter()
-                .any(|path| through_narrowed_field(graph, supergraph, path))
         {
             return process_selection_set(
                 walk,
@@ -626,13 +612,12 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             continue;
         }
 
-        // At a type planned with it through a field narrowed in that subgraph, like `Book`
-        // under a `media` one subgraph has as `[Book]`, its objects can only be that type: it
-        // doesn't leave out any type the other paths take, the others aren't there.
-        if also.is_some() && through_narrowed_field(graph, supergraph, path) {
-            if let Some(type_name) = at_a_planned_type(path)? {
-                next_paths.push(stay_at(path, type_name)?);
-                covered.push(type_name);
+        // At the tail of a field narrowed in that subgraph to a type planned with it, like a
+        // `media` one subgraph has as `[Book]`, its objects can only be that type: it takes it
+        // and doesn't leave out any type the other paths take, the others aren't there.
+        if let Some(to) = narrowed_to_a_planned_type(path)? {
+            if advance(&mut next_paths, path, to, None)? {
+                covered.push(to);
                 continue;
             }
         }

@@ -675,7 +675,7 @@ pub fn find_self_referencing_direct_path<'graph>(
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
     type_name: &'graph str,
-    condition: Option<&Condition>,
+    condition: &Condition,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<OperationPath<'graph>, WalkOperationError> {
     let path_tail_index = path.tail();
@@ -691,7 +691,7 @@ pub fn find_self_referencing_direct_path<'graph>(
         if let Some(new_path) = path_search.try_advance_direct_path(
             path,
             &edge_ref,
-            &NavigationTarget::ConcreteType(type_name, condition.cloned(), None),
+            &NavigationTarget::ConcreteType(type_name, Some(condition.clone()), None),
         )? {
             trace!("Finished finding direct path, found one",);
             return Ok(new_path);

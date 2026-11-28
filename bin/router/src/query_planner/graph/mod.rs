@@ -35,7 +35,7 @@ use crate::query_planner::{
         },
         CachedFederationRules, FederationRules,
     },
-    graph::node::{SubgraphTypeSpecialization, UnionMembersData},
+    graph::node::{NarrowedFieldData, SubgraphTypeSpecialization, UnionMembersData},
     state::supergraph_state::{
         OperationKind, SubgraphName as ResolvedSubgraphName, SupergraphDefinition, SupergraphField,
         SupergraphObjectType, SupergraphState, SupergraphStateError, TypeNode,
@@ -73,6 +73,9 @@ struct SubgraphNodeKey<'state> {
 struct GraphBuildContext<'state> {
     resolved_graph_ids: HashMap<&'state str, ResolvedSubgraphName>,
     subgraph_nodes: HashMap<SubgraphNodeKey<'state>, NodeIndex>,
+    /// The tails of narrowed fields, the interface's own node in that subgraph and the type the
+    /// field returns there, see `Graph::copy_narrowed_edges`.
+    narrowed: Vec<(NodeIndex, NodeIndex, &'state str)>,
 }
 
 impl<'state> GraphBuildContext<'state> {
@@ -440,9 +443,45 @@ impl<'graph> Graph<'graph> {
         let provides = self.build_field_edges(state, &mut build_context, &mut cached_rules)?;
         self.build_interface_implementation_edges(state, &mut build_context)?;
         self.build_entity_reference_edges(state, &mut build_context, &mut cached_rules)?;
+        self.copy_narrowed_edges(state, std::mem::take(&mut build_context.narrowed));
         self.build_provides_edges(state, provides)?;
 
         Ok(())
+    }
+
+    /// Gives each narrowed field's tail the edges of the interface's own node in that subgraph,
+    /// once they're all built: its fields, entity moves and selfie. Of its moves to the types
+    /// that implement it, only the one to the type the field returns there, or to those that
+    /// type takes in when it's an interface too.
+    fn copy_narrowed_edges(
+        &mut self,
+        state: &'graph SupergraphState,
+        narrowed: Vec<(NodeIndex, NodeIndex, &'graph str)>,
+    ) {
+        for (tail, plain, to) in narrowed {
+            let possible = state.all_possible_types(to);
+            let edges: Vec<(NodeIndex, Edge<'graph>)> = self
+                .graph
+                .edges(plain)
+                .filter(|edge| match edge.weight() {
+                    Edge::AbstractMove(name) => {
+                        name == to || possible.is_some_and(|types| types.contains(name))
+                    }
+                    _ => true,
+                })
+                .map(|edge| {
+                    let target = if edge.target() == plain {
+                        tail
+                    } else {
+                        edge.target()
+                    };
+                    (target, edge.weight().clone())
+                })
+                .collect();
+            for (target, edge) in edges {
+                self.push_edge(tail, target, edge);
+            }
+        }
     }
 
     pub fn pretty_print_node(&self, node_index: &NodeIndex) -> String {
@@ -1282,15 +1321,6 @@ impl<'graph> Graph<'graph> {
                         continue;
                     }
 
-                    // A field that returns an interface but another type in this subgraph,
-                    // `@join__field(graph: A, type: "[Book]")`, leads to that type's node there:
-                    // it has the interface's fields, and no move to a type A's schema doesn't
-                    // have there. The walker keeps `... on Book` for it, see
-                    // `through_narrowed_field`.
-                    let target_type = maybe_join_field
-                        .and_then(|join_field| join_field.type_in_graph.as_ref())
-                        .map_or(target_type, |type_in_graph| type_in_graph.inner_type());
-
                     trace!(
                         "[x] Creating field move edge '{}.{}/{}' (type: {})",
                         def_name,
@@ -1299,13 +1329,47 @@ impl<'graph> Graph<'graph> {
                         target_type
                     );
 
-                    let tail = self.upsert_subgraph_node(
-                        build_context,
-                        state,
-                        target_type,
-                        graph_id,
-                        state.is_interface_object_in_subgraph(target_type, graph_id),
-                    )?;
+                    let is_interface_object =
+                        state.is_interface_object_in_subgraph(target_type, graph_id);
+                    // A field that returns an interface but another type in this subgraph,
+                    // `@join__field(graph: A, type: "[Book]")`, leads to a node of its own: named
+                    // after the interface, the type the operation has there, with its fields, and
+                    // without the moves to the types A's schema has no fragment for there. Its
+                    // edges are copied once the interface's are built, see `copy_narrowed_edges`.
+                    let narrowed_to = maybe_join_field
+                        .and_then(|join_field| join_field.type_in_graph.as_ref())
+                        .map(|type_in_graph| type_in_graph.inner_type())
+                        .filter(|type_in_graph| *type_in_graph != target_type);
+                    let tail = match narrowed_to {
+                        Some(to) => {
+                            let tail = self.upsert_node(Node::new_specialized_node(
+                                target_type,
+                                build_context.resolve_graph_id(state, graph_id)?.clone(),
+                                is_interface_object,
+                                SubgraphTypeSpecialization::Narrowed(NarrowedFieldData {
+                                    type_name: def_name,
+                                    field_name,
+                                    to,
+                                }),
+                            ));
+                            let plain = self.upsert_subgraph_node(
+                                build_context,
+                                state,
+                                target_type,
+                                graph_id,
+                                is_interface_object,
+                            )?;
+                            build_context.narrowed.push((tail, plain, to));
+                            tail
+                        }
+                        None => self.upsert_subgraph_node(
+                            build_context,
+                            state,
+                            target_type,
+                            graph_id,
+                            is_interface_object,
+                        )?,
+                    };
 
                     let edge = self.push_edge(
                         head,

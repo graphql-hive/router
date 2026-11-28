@@ -1337,3 +1337,278 @@ fn interface_field_narrowed_to_another_interface() -> Result<(), Box<dyn Error>>
 
     Ok(())
 }
+
+fn narrowed_plans(supergraph: &str, operations: &[&str]) -> Result<Vec<String>, Box<dyn Error>> {
+    operations
+        .iter()
+        .map(|operation| {
+            let query_plan = build_query_plan_with_defaults(
+                &format!("fixture/tests/{supergraph}.supergraph.graphql"),
+                parse_operation(operation),
+            )?;
+            Ok(format!("{operation}\n{query_plan}"))
+        })
+        .collect()
+}
+
+/// A conditional `... on Media` around fields of a field one subgraph narrows: the narrowed
+/// field's node is still named after the interface, so the wrapper stays, with its condition.
+#[test]
+fn conditional_interface_wrapper_under_a_narrowed_field() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let mut plans = narrowed_plans(
+        "interface-field-narrowed",
+        &[
+            "query($v: Boolean!) { media { ... on Media @include(if: $v) { id } } }",
+            "query($v: Boolean!) { media { ... on Media @include(if: $v) { id ... on Movie { length } } } }",
+        ],
+    )?;
+    plans.extend(narrowed_plans(
+        "interface-field-narrowed-under-entity",
+        &["query($v: Boolean!) { shelf { media { ... on Media @include(if: $v) { id } } } }"],
+    )?);
+    plans.extend(narrowed_plans(
+        "interface-field-narrowed-to-interface",
+        &["query($v: Boolean!) { media { ... on Media @include(if: $v) { id } } }"],
+    )?);
+    insta::assert_snapshot!(plans.join("\n"), @r#"
+    query($v: Boolean!) { media { ... on Media @include(if: $v) { id } } }
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($v:Boolean!) {
+          media {
+            ... on Media @include(if: $v) {
+              id
+            }
+          }
+        }
+      },
+    },
+
+    query($v: Boolean!) { media { ... on Media @include(if: $v) { id ... on Movie { length } } } }
+    QueryPlan {
+      Fetch(service: "b") {
+        query ($v:Boolean!) {
+          media {
+            ... on Media @include(if: $v) {
+              __typename
+              ... on Movie {
+                length
+              }
+              id
+            }
+          }
+        }
+      },
+    },
+
+    query($v: Boolean!) { shelf { media { ... on Media @include(if: $v) { id } } } }
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($v:Boolean!) {
+          shelf {
+            media {
+              ... on Media @include(if: $v) {
+                id
+              }
+            }
+          }
+        }
+      },
+    },
+
+    query($v: Boolean!) { media { ... on Media @include(if: $v) { id } } }
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($v:Boolean!) {
+          media {
+            ... on Media @include(if: $v) {
+              id
+            }
+          }
+        }
+      },
+    },
+    "#);
+    Ok(())
+}
+
+/// A fragment with a condition under a narrowed field, or under a conditional field, still gets
+/// the `__typename` the response needs to tell what the objects are.
+#[test]
+fn conditional_fragment_under_a_narrowed_field_gets_its_typename() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let mut plans = narrowed_plans(
+        "interface-field-narrowed",
+        &[
+            "query($v: Boolean!) { media { ... on Book @include(if: $v) { title } } }",
+            "query($x: Boolean!) { media @include(if: $x) { ... on Book { title } } }",
+        ],
+    )?;
+    plans.extend(narrowed_plans(
+        "interface-field-narrowed-under-entity",
+        &["query($v: Boolean!) { shelf { media { ... on Book @include(if: $v) { title } } } }"],
+    )?);
+    insta::assert_snapshot!(plans.join("\n"), @r#"
+    query($v: Boolean!) { media { ... on Book @include(if: $v) { title } } }
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($v:Boolean!) {
+          media {
+            __typename
+            ... on Book {
+              title @include(if: $v)
+            }
+          }
+        }
+      },
+    },
+
+    query($x: Boolean!) { media @include(if: $x) { ... on Book { title } } }
+    QueryPlan {
+      Fetch(service: "a", if: $x) {
+        query ($x:Boolean!) {
+          media @include(if: $x) {
+            __typename
+            ... on Book {
+              title
+            }
+          }
+        }
+      },
+    },
+
+    query($v: Boolean!) { shelf { media { ... on Book @include(if: $v) { title } } } }
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($v:Boolean!) {
+          shelf {
+            media {
+              __typename
+              ... on Book {
+                title @include(if: $v)
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+    Ok(())
+}
+
+/// The subgraph that narrows the field sorts after the wide one: `... on Book` still goes
+/// through it, `isbn` is only there, and under an entity it takes one fetch.
+#[test]
+fn narrowed_field_in_a_subgraph_that_sorts_last() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let mut plans = narrowed_plans(
+        "interface-field-narrowed-wide-first",
+        &["{ media { ... on Book { isbn } } }"],
+    )?;
+    plans.extend(narrowed_plans(
+        "interface-field-narrowed-under-entity-z",
+        &[
+            "{ shelf { media { ... on Book { title } } } }",
+            "{ shelf { media { ... on Movie { title } ... on Book { title } } } }",
+        ],
+    )?);
+    insta::assert_snapshot!(plans.join("\n"), @r#"
+    { media { ... on Book { isbn } } }
+    QueryPlan {
+      Fetch(service: "b") {
+        {
+          media {
+            __typename
+            ... on Book {
+              isbn
+            }
+          }
+        }
+      },
+    },
+
+    { shelf { media { ... on Book { title } } } }
+    QueryPlan {
+      Fetch(service: "z") {
+        {
+          shelf {
+            media {
+              __typename
+              ... on Book {
+                title
+              }
+            }
+          }
+        }
+      },
+    },
+
+    { shelf { media { ... on Movie { title } ... on Book { title } } } }
+    QueryPlan {
+      Fetch(service: "z") {
+        {
+          shelf {
+            media {
+              __typename
+              ... on Book {
+                title
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+    Ok(())
+}
+
+/// c requires `media { ... on Book { title } }`, and a, where the shelf comes from, narrows
+/// `media` to `[Book]`.
+#[test]
+fn requires_with_a_fragment_through_a_narrowed_field() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let plans = narrowed_plans("interface-field-narrowed-requires", &["{ shelf { x } }"])?;
+    insta::assert_snapshot!(plans.join("\n"), @r#"
+    { shelf { x } }
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            shelf {
+              __typename
+              id
+              media {
+                __typename
+                ... on Book {
+                  title
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "shelf") {
+          Fetch(service: "c") {
+            {
+              ... on Shelf {
+                __typename
+                media {
+                  ... on Book {
+                    title
+                  }
+                }
+                id
+              }
+            } =>
+            {
+              ... on Shelf {
+                x
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
