@@ -138,7 +138,8 @@ impl<'a> UnionDefinitions<'a> {
         self.registry.get(type_name).and_then(|r| r.get(graph))
     }
 
-    /// Produces the union members visible from a field resolved in a subgraph
+    /// The union members, or the one type an interface field is narrowed to, a field resolved
+    /// in a subgraph can return there
     pub fn members_for_field_in_graph(
         &self,
         field_def: &'a SupergraphField,
@@ -155,7 +156,7 @@ impl<'a> UnionDefinitions<'a> {
                 .is_some_and(|field_graph_id| field_graph_id == graph_id)
         }) {
             if let Some(type_in_graph) = join_field.type_in_graph.as_ref().map(|t| t.inner_type()) {
-                // join__field(type:) can narrow a union-returning field to one concrete member.
+                // join__field(type:) can narrow a union or interface field to one object type
                 if type_in_graph != field_type {
                     return UnionMemberTypes::from_iter([type_in_graph]);
                 }
@@ -1173,8 +1174,15 @@ impl<'graph> Graph<'graph> {
                     // We do it by creating a new Node for each edge's tail,
                     // and from the tail we create abstract-move edges to the object types.
                     //
-                    let target_type_is_union = unions.contains(target_type);
-                    if target_type_is_union {
+                    // A field that returns an interface but one type in this subgraph,
+                    // `@join__field(graph: A, type: "[Book]")`, is built the same way: A's schema
+                    // has no other type there, so its node has the move to `Book` only, not the
+                    // interface's node with the moves to every type.
+                    let narrowed_from_interface = !unions.contains(target_type)
+                        && maybe_join_field
+                            .and_then(|join_field| join_field.type_in_graph.as_ref())
+                            .is_some_and(|type_in_graph| type_in_graph.inner_type() != target_type);
+                    if unions.contains(target_type) || narrowed_from_interface {
                         // Build union-member edges for the current subgraph only. Doing a global
                         // intersection here strips valid members from pinned paths such as
                         // Query.getResponse -> Response/A -> actions, where A knows the full union.

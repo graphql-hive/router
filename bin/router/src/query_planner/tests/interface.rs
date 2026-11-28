@@ -1148,3 +1148,74 @@ fn types_grouped_only_where_both_are_for_a_field_with_selections() -> Result<(),
 
     Ok(())
 }
+
+/// `media` is `[Book]` in a and `[Media]` in b. a can't take `... on Movie` under it, its schema
+/// has no `Movie` there, so a `Movie` goes to b, the one that has both. Only `Book` still goes to
+/// a, and a field of the interface itself goes to b, a's `media` has none.
+#[test]
+fn interface_field_narrowed_in_a_subgraph_gets_no_other_types_there() -> Result<(), Box<dyn Error>>
+{
+    init_logger();
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-field-narrowed.supergraph.graphql",
+        parse_operation("{ media { ... on Movie { length } ... on Book { title } } }"),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "b") {
+        {
+          media {
+            __typename
+            ... on Movie {
+              length
+            }
+            ... on Book {
+              title
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-field-narrowed.supergraph.graphql",
+        parse_operation("{ media { ... on Book { title } } }"),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          media {
+            __typename
+            ... on Book {
+              title
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-field-narrowed.supergraph.graphql",
+        parse_operation("{ media { id ... on Movie { length } } }"),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "b") {
+        {
+          media {
+            __typename
+            id
+            ... on Movie {
+              length
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
