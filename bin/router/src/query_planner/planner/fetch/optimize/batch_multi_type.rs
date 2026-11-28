@@ -400,12 +400,19 @@ fn possible_types_at<'a>(
             }
             Segment::List => slot += 1,
             Segment::Field(field, _, _) => {
-                let parent_type = type_condition
-                    .and_then(|type_names| type_names.first().map(String::as_str))
-                    .or(current_type);
-                current_type = parent_type.and_then(|parent_type| {
+                let field_type = |parent_type: &str| {
                     supergraph.field_return_type_name(parent_type, field.field_name())
-                });
+                };
+                current_type = match type_condition {
+                    // under `[T1|T2]` the field can return another type on each, like `[XY]` on
+                    // `T1` and `[XYZ]` on `T2`: only one they all agree on is known
+                    Some(type_names) => {
+                        let mut types = type_names.iter().map(|name| field_type(name));
+                        let first = types.next().flatten();
+                        first.filter(|_| types.all(|other| other == first))
+                    }
+                    None => current_type.and_then(field_type),
+                };
                 type_condition = None;
                 slot += 1;
             }

@@ -1,0 +1,114 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION)
+{
+  query: Query
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(graph: join__Graph, requires: join__FieldSet, provides: join__FieldSet, type: String, external: Boolean, override: String, usedOverridden: Boolean) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(graph: join__Graph!, interface: String!) repeatable on OBJECT | INTERFACE
+
+directive @join__type(graph: join__Graph!, key: join__FieldSet, extension: Boolean! = false, resolvable: Boolean! = true, isInterfaceObject: Boolean! = false) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(graph: join__Graph!, member: String!) repeatable on UNION
+
+directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+
+type Child
+  @join__type(graph: A, key: "id")
+  @join__type(graph: B, key: "id")
+{
+  id: ID!
+  price(currency: String): Int @join__field(graph: B)
+}
+
+union Holder
+  @join__type(graph: A)
+  @join__unionMember(graph: A, member: "T1")
+  @join__unionMember(graph: A, member: "T2")
+  @join__unionMember(graph: A, member: "T3")
+ = T1 | T2 | T3
+
+scalar join__FieldSet
+
+enum join__Graph {
+  A @join__graph(name: "a", url: "http://a")
+  B @join__graph(name: "b", url: "http://b")
+}
+
+scalar link__Import
+
+enum link__Purpose {
+  """
+  `SECURITY` features provide metadata necessary to securely resolve fields.
+  """
+  SECURITY
+
+  """
+  `EXECUTION` features provide metadata necessary for operation execution.
+  """
+  EXECUTION
+}
+
+type Query
+  @join__type(graph: A)
+  @join__type(graph: B)
+{
+  a: [Holder] @join__field(graph: A)
+}
+
+type T1
+  @join__type(graph: A)
+{
+  r: [XY]
+}
+
+type T2
+  @join__type(graph: A)
+{
+  r: [XYZ]
+}
+
+type T3
+  @join__type(graph: A)
+{
+  n: Int
+}
+
+type X
+  @join__type(graph: A, key: "id")
+{
+  id: ID!
+  child: Child
+}
+
+union XY
+  @join__type(graph: A)
+  @join__unionMember(graph: A, member: "X")
+  @join__unionMember(graph: A, member: "Y")
+ = X | Y
+
+union XYZ
+  @join__type(graph: A)
+  @join__unionMember(graph: A, member: "X")
+  @join__unionMember(graph: A, member: "Y")
+  @join__unionMember(graph: A, member: "Z")
+ = X | Y | Z
+
+type Y
+  @join__type(graph: A, key: "id")
+{
+  id: ID!
+  child: Child
+}
+
+type Z
+  @join__type(graph: A)
+{
+  child: Child
+}

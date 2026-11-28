@@ -1700,3 +1700,132 @@ fn fragment_planned_for_several_types_keeps_them_on_a_path_at_its_type(
 
     Ok(())
 }
+
+/// `r` is `[XY]` on `T1` and `[XYZ]` on `T2`. The calls for the `child` under `X` and `Y` are
+/// batched for `T1` and `T2`, and `X` and `Y` are every type of `T1`'s `r`, not of `T2`'s: the
+/// `[X|Y]` stays, or the call for them would also take a `Z`'s `child`, with the other currency.
+#[test]
+fn several_type_condition_kept_when_the_field_type_differs_per_type() -> Result<(), Box<dyn Error>>
+{
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          a {
+            ... on T1 {
+              r {
+                ... on X { child { price(currency: "USD") } }
+                ... on Y { child { price(currency: "USD") } }
+              }
+            }
+            ... on T2 {
+              r {
+                ... on X { child { price(currency: "USD") } }
+                ... on Y { child { price(currency: "USD") } }
+                ... on Z { child { price(currency: "EUR") } }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/several-type-parent-field-types.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            a {
+              __typename
+              ... on T1 {
+                r {
+                  __typename
+                  ... on X {
+                    ...a
+                  }
+                  ... on Y {
+                    ...c
+                  }
+                }
+              }
+              ... on T2 {
+                r {
+                  __typename
+                  ... on X {
+                    ...a
+                  }
+                  ... on Y {
+                    ...c
+                  }
+                  ... on Z {
+                    child {
+                      ...b
+                    }
+                  }
+                }
+              }
+            }
+          }
+          fragment a on X {
+            child {
+              ...b
+            }
+          }
+          fragment b on Child {
+            __typename
+            id
+          }
+          fragment c on Y {
+            child {
+              ...b
+            }
+          }
+        },
+        BatchFetch(service: "b") {
+          {
+            _e0 {
+              paths: [
+                "a.@|[T2].r.@|[Z].child"
+              ]
+              {
+                ... on Child {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1 {
+              paths: [
+                "a.@|[T1|T2].r.@|[X|Y].child"
+              ]
+              {
+                ... on Child {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Child {
+                price(currency: "EUR")
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Child {
+                price(currency: "USD")
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
