@@ -8,10 +8,11 @@ use crate::query_planner::{
     ast::{
         merge_path::{Condition, MergePath, Segment},
         operation::VariableDefinition,
+        selection_set::SelectionSet,
     },
     planner::{
         fetch::{
-            selections::FetchStepSelections,
+            selections::{FetchStepSelections, FetchStepSelectionsError},
             state::{MultiTypeFetchStep, SingleTypeFetchStep},
         },
         plan_nodes::{FetchRewrite, KeyRenamer},
@@ -30,6 +31,9 @@ bitflags! {
         /// Part of this call's input is only fetched under an `@include`/`@skip`. Set when calls
         /// with different conditions get merged, as the merged `condition` no longer shows it.
         const CONDITIONAL_INPUT = 1 << 2;
+        /// Made to fetch what a `@requires` field needs, not the field itself. The steps
+        /// `drop_covered_requirement_steps` looks at.
+        const FETCHES_REQUIREMENTS = 1 << 3;
     }
 }
 
@@ -117,6 +121,15 @@ impl<State> FetchStepData<State> {
         self.kind == FetchStepKind::Entity
     }
 
+    /// Whether we run whenever `other` does: every condition we're under, `other` is under too.
+    /// One under a `@skip`/`@include` that `other` doesn't have may not run at all.
+    pub fn runs_whenever(&self, other: &Self) -> bool {
+        self.gated_by
+            .iter()
+            .chain(self.condition.as_ref())
+            .all(|condition| other.gated_by.contains(condition))
+    }
+
     pub fn add_input_rewrite(&mut self, rewrite: FetchRewrite) {
         let rewrites = self.input_rewrites.get_or_insert_default();
 
@@ -135,6 +148,17 @@ impl<State> FetchStepData<State> {
 }
 
 impl<State> FetchStepData<State> {
+    /// Where the type condition that picks one of our types sits in a path at or under ours:
+    /// our last segment when we end with one, like `search.@|[Book|Movie]`, or the segment right
+    /// after our path once that's every type, like `search.@`. With where the rest starts.
+    fn type_slot(&self) -> (usize, usize) {
+        let ours = self.response_path.len();
+        match self.response_path.last() {
+            Some(Segment::TypeCondition(..)) => (ours - 1, ours),
+            _ => (ours, ours + 1),
+        }
+    }
+
     pub fn is_fetching_multiple_types(&self) -> bool {
         self.input.is_fetching_multiple_types() || self.output.is_fetching_multiple_types()
     }
@@ -158,7 +182,50 @@ pub(crate) fn type_condition_types_from_response_path(
     }
 }
 
+/// Where the output of a step deeper in the response goes in ours, see `place_of_nested`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NestedPlace<'a> {
+    /// In `type_name`'s selections, at the nested path from `rest` on.
+    Type { type_name: &'a str, rest: usize },
+    /// At our own spot, each type in its own selections.
+    EachType,
+}
+
 impl FetchStepData<MultiTypeFetchStep> {
+    /// Where the output of a step deeper in the response, at `nested_path`, goes in ours. With
+    /// one type, in ours. With several, like `search.@|[Book|Movie]` or `search.@` once that's
+    /// every type, the nested path says which: `search.@|[Movie].director` goes in `Movie`, at
+    /// `director`. At our own spot each type goes in its own. `None` when the path doesn't say,
+    /// or isn't under ours.
+    pub(crate) fn place_of_nested<'a>(
+        &'a self,
+        nested_path: &'a MergePath,
+    ) -> Option<NestedPlace<'a>> {
+        let ours = self.response_path.len();
+        if nested_path.len() < ours {
+            return None;
+        }
+        if let Some(type_name) = self.output.try_as_single() {
+            return Some(NestedPlace::Type {
+                type_name,
+                rest: ours,
+            });
+        }
+        if nested_path.len() == ours {
+            return Some(NestedPlace::EachType);
+        }
+        let (slot, rest) = self.type_slot();
+        match nested_path.inner.get(slot) {
+            Some(Segment::TypeCondition(type_names, _)) if type_names.len() == 1 => {
+                let type_name = type_names.first()?;
+                self.output
+                    .is_selecting_definition(type_name)
+                    .then_some(NestedPlace::Type { type_name, rest })
+            }
+            _ => None,
+        }
+    }
+
     // Moves a fetch-level condition down into this step's output selections.
     // A fetch-level condition means "the whole HTTP request can be skipped".
     // That is only correct while every output selection in the fetch has the same condition.
@@ -222,22 +289,92 @@ impl FetchStepData<MultiTypeFetchStep> {
 }
 
 impl FetchStepData<SingleTypeFetchStep> {
-    /// Whether an entity call to this subgraph, type, path and condition could reuse this step.
+    /// Whether an entity call to this subgraph, path and condition could reuse this step. The type
+    /// is checked by the graph, see `FetchGraph::is_entity_call_for`.
     /// It also has to be planned under the same gates: the step counts on the steps above for
     /// them, and when calls under different gates merge, the merge works out where they go.
     pub fn matches_entity_call(
         &self,
         subgraph_name: &SubgraphName,
-        input_type_name: &str,
         response_path: &MergePath,
         condition: Option<&Condition>,
         gated_by: &[Condition],
     ) -> bool {
         self.service_name == *subgraph_name
-            && self.input.definition_name() == input_type_name
             && self.response_path == *response_path
             && self.condition.as_ref() == condition
             && self.gated_by == gated_by
+    }
+
+    /// The types the objects at `response_path` have in our output, so which selection sets what
+    /// goes there lands in. A step fetches one type, except an entity call that takes the
+    /// objects of several types at one spot, like `search.@|[Book|Movie]`. There it's the types
+    /// `response_path` has at the end of our path: one, or several planned together, see
+    /// `SelectionAttributes::also`. Empty for the only type.
+    fn output_types_at<'a>(
+        &self,
+        response_path: &'a MergePath,
+    ) -> Result<Option<&'a BTreeSet<String>>, FetchStepSelectionsError> {
+        if !self.output.is_fetching_multiple_types() {
+            return Ok(None);
+        }
+        let (slot, _) = self.type_slot();
+        match response_path.inner.get(slot) {
+            Some(Segment::TypeCondition(type_names, _)) => Ok(Some(type_names)),
+            _ => Err(FetchStepSelectionsError::UnexpectedMissingDefinition(
+                format!(
+                    "no type at {response_path} in a step at {}",
+                    self.response_path
+                ),
+            )),
+        }
+    }
+
+    /// Adds `selection_set` at `fetch_path` of our output, for the objects at `response_path`.
+    pub fn add_output_at(
+        &mut self,
+        response_path: &MergePath,
+        fetch_path: &MergePath,
+        selection_set: SelectionSet,
+    ) -> Result<(), FetchStepSelectionsError> {
+        match self.output_types_at(response_path)? {
+            None => self.output.add_at_path(None, fetch_path, selection_set),
+            Some(type_names) => {
+                // the last type takes `selection_set` itself, the others a copy
+                let mut type_names = type_names.iter().peekable();
+                let mut selection_set = Some(selection_set);
+                while let Some(type_name) = type_names.next() {
+                    let selection_set = match type_names.peek() {
+                        Some(_) => selection_set.clone(),
+                        None => selection_set.take(),
+                    };
+                    self.output.add_at_path(
+                        Some(type_name),
+                        fetch_path,
+                        selection_set.unwrap_or_default(),
+                    )?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Adds `__typename` at `fetch_path` of our output, for the objects at `response_path`.
+    pub fn add_output_typename_at(
+        &mut self,
+        response_path: &MergePath,
+        fetch_path: &MergePath,
+    ) -> Result<(), FetchStepSelectionsError> {
+        match self.output_types_at(response_path)? {
+            None => self.output.add_selection_typename(None, fetch_path),
+            Some(type_names) => {
+                for type_name in type_names {
+                    self.output
+                        .add_selection_typename(Some(type_name), fetch_path)?;
+                }
+                Ok(())
+            }
+        }
     }
 
     pub fn into_multi_type(self) -> FetchStepData<MultiTypeFetchStep> {

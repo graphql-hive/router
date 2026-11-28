@@ -662,10 +662,8 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
             }
           }
           fragment a on DeliveryEstimates {
-            ... on DeliveryEstimates {
-              fastestDelivery
-              estimatedDelivery
-            }
+            fastestDelivery
+            estimatedDelivery
           }
         },
       },
@@ -748,21 +746,6 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
           },
         },
         Parallel {
-          Flatten(path: "products.@.reviews.@.product|[Book]") {
-            Fetch(service: "books", if: $title) {
-              {
-                ... on Book {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Book {
-                  title
-                }
-              }
-            },
-          },
           Flatten(path: "products.@.reviews.@.product|[Magazine]") {
             Fetch(service: "products") {
               {
@@ -774,6 +757,21 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
               {
                 ... on Magazine {
                   sku
+                }
+              }
+            },
+          },
+          Flatten(path: "products.@.reviews.@.product|[Book]") {
+            Fetch(service: "books", if: $title) {
+              {
+                ... on Book {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Book {
+                  title
                 }
               }
             },
@@ -862,6 +860,44 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
           },
         },
         Parallel {
+          BatchFetch(service: "products") {
+            {
+              _e0 {
+                paths: [
+                  "products.@.reviews.@.product|[Magazine]"
+                ]
+                {
+                  ... on Magazine {
+                    __typename
+                    id
+                  }
+                }
+              }
+              _e1(if: $title) {
+                paths: [
+                  "products.@.reviews.@.product|[Book]"
+                ]
+                {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                }
+              }
+            }
+            {
+              _e0: _entities(representations: $__batch_reps_0) {
+                ... on Magazine {
+                  sku
+                }
+              }
+              _e1: _entities(representations: $__batch_reps_1) {
+                ... on Book {
+                  sku
+                }
+              }
+            }
+          },
           Flatten(path: "products.@.reviews.@.product|[Book]") {
             Fetch(service: "books", if: $title) {
               {
@@ -876,44 +912,6 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
                 }
               }
             },
-          },
-          BatchFetch(service: "products") {
-            {
-              _e0(if: $title) {
-                paths: [
-                  "products.@.reviews.@.product|[Book]"
-                ]
-                {
-                  ... on Book {
-                    __typename
-                    id
-                  }
-                }
-              }
-              _e1 {
-                paths: [
-                  "products.@.reviews.@.product|[Magazine]"
-                ]
-                {
-                  ... on Magazine {
-                    __typename
-                    id
-                  }
-                }
-              }
-            }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Book {
-                  sku
-                }
-              }
-              _e1: _entities(representations: $__batch_reps_1) {
-                ... on Magazine {
-                  sku
-                }
-              }
-            }
           },
         },
       },
@@ -1006,6 +1004,44 @@ fn nested_interface_field_with_redundant_inline_fragments_other_type_order(
           },
         },
         Parallel {
+          BatchFetch(service: "products") {
+            {
+              _e0 {
+                paths: [
+                  "products.@.reviews.@.product|[Magazine]"
+                ]
+                {
+                  ... on Magazine {
+                    __typename
+                    id
+                  }
+                }
+              }
+              _e1(if: $title) {
+                paths: [
+                  "products.@.reviews.@.product|[Tome]"
+                ]
+                {
+                  ... on Tome {
+                    __typename
+                    id
+                  }
+                }
+              }
+            }
+            {
+              _e0: _entities(representations: $__batch_reps_0) {
+                ... on Magazine {
+                  sku
+                }
+              }
+              _e1: _entities(representations: $__batch_reps_1) {
+                ... on Tome {
+                  sku
+                }
+              }
+            }
+          },
           Flatten(path: "products.@.reviews.@.product|[Tome]") {
             Fetch(service: "books", if: $title) {
               {
@@ -1021,41 +1057,552 @@ fn nested_interface_field_with_redundant_inline_fragments_other_type_order(
               }
             },
           },
-          BatchFetch(service: "products") {
-            {
-              _e0(if: $title) {
-                paths: [
-                  "products.@.reviews.@.product|[Tome]"
-                ]
-                {
-                  ... on Tome {
-                    __typename
-                    id
-                  }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `Book` and `Movie` plan the same way, but only `Book` is in books, which has `Person.name`.
+/// `author` has selections, so a path through books can win for `name`, and `Movie`s can't go
+/// there: the two aren't planned together, and only `Book`s are sent to books as `Book`s.
+#[test]
+fn types_grouped_only_where_both_are_for_a_field_with_selections() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        "{ media { ... on Book { author { name } } ... on Movie { author { name } } } }",
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/grouped-types-field-with-selections.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "catalog") {
+          {
+            media {
+              __typename
+              ... on Movie {
+                author {
+                  __typename
+                  id
                 }
               }
-              _e1 {
-                paths: [
-                  "products.@.reviews.@.product|[Magazine]"
-                ]
-                {
-                  ... on Magazine {
-                    __typename
-                    id
-                  }
+              ... on Book {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        BatchFetch(service: "books") {
+          {
+            _e0 {
+              paths: [
+                "media.@|[Book]"
+              ]
+              {
+                ... on Book {
+                  __typename
+                  id
                 }
               }
             }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
-                ... on Tome {
-                  sku
+            _e1 {
+              paths: [
+                "media.@|[Movie].author"
+              ]
+              {
+                ... on Person {
+                  __typename
+                  id
                 }
               }
-              _e1: _entities(representations: $__batch_reps_1) {
-                ... on Magazine {
-                  sku
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Book {
+                author {
+                  ...a
                 }
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Person {
+                ...a
+              }
+            }
+          }
+          fragment a on Person {
+            name
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `media` is `[Book]` in a and `[Media]` in b. a can't take `... on Movie` under it, its schema
+/// has no `Movie` there, so a `Movie` goes to b, the one that has both. Only `Book` still goes to
+/// a, and a field of the interface itself goes to b, a's `media` has none.
+#[test]
+fn interface_field_narrowed_in_a_subgraph_gets_no_other_types_there() -> Result<(), Box<dyn Error>>
+{
+    init_logger();
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-field-narrowed.supergraph.graphql",
+        parse_operation("{ media { ... on Movie { length } ... on Book { title } } }"),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "b") {
+        {
+          media {
+            __typename
+            ... on Movie {
+              length
+            }
+            ... on Book {
+              title
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-field-narrowed.supergraph.graphql",
+        parse_operation("{ media { ... on Book { title } } }"),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          media {
+            __typename
+            ... on Book {
+              title
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-field-narrowed.supergraph.graphql",
+        parse_operation("{ media { id ... on Movie { length } } }"),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "b") {
+        {
+          media {
+            __typename
+            ... on Movie {
+              length
+            }
+            id
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `Shelf.media` is `[Book]` in a and `[Media]` in b. A field of the interface itself, or `Book`'s
+/// own, is in a, where the shelf comes from: one fetch, with `... on Book` kept, the field's type
+/// is `Media`. With `Movie` written first, planned with `Book`, a's objects can only be `Book`s,
+/// so a's path stays in, like with `Book` first, though b's covers both.
+#[test]
+fn interface_field_narrowed_under_an_entity_reads_its_fields_there() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-field-narrowed-under-entity.supergraph.graphql",
+        parse_operation("{ shelf { media { id } } }"),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          shelf {
+            media {
+              id
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-field-narrowed-under-entity.supergraph.graphql",
+        parse_operation("{ shelf { media { id ... on Book { title } } } }"),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          shelf {
+            media {
+              __typename
+              id
+              ... on Book {
+                title
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-field-narrowed-under-entity.supergraph.graphql",
+        parse_operation("{ shelf { media { ... on Movie { title } ... on Book { title } } } }"),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          shelf {
+            media {
+              __typename
+              ... on Book {
+                title
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `media` is `[Readable]` in a, an interface `Book` implements, and `[Media]` in b. a's
+/// `media` leads to `Readable`, with the move to `Book`.
+#[test]
+fn interface_field_narrowed_to_another_interface() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-field-narrowed-to-interface.supergraph.graphql",
+        parse_operation("{ media { ... on Book { pages } } }"),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          media {
+            __typename
+            ... on Book {
+              pages
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-field-narrowed-to-interface.supergraph.graphql",
+        parse_operation("{ media { id ... on Movie { length } } }"),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "b") {
+        {
+          media {
+            __typename
+            ... on Movie {
+              length
+            }
+            id
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+fn narrowed_plans(supergraph: &str, operations: &[&str]) -> Result<Vec<String>, Box<dyn Error>> {
+    operations
+        .iter()
+        .map(|operation| {
+            let query_plan = build_query_plan_with_defaults(
+                &format!("fixture/tests/{supergraph}.supergraph.graphql"),
+                parse_operation(operation),
+            )?;
+            Ok(format!("{operation}\n{query_plan}"))
+        })
+        .collect()
+}
+
+/// A conditional `... on Media` around fields of a field one subgraph narrows: the narrowed
+/// field's node is still named after the interface, so the wrapper stays, with its condition.
+#[test]
+fn conditional_interface_wrapper_under_a_narrowed_field() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let mut plans = narrowed_plans(
+        "interface-field-narrowed",
+        &[
+            "query($v: Boolean!) { media { ... on Media @include(if: $v) { id } } }",
+            "query($v: Boolean!) { media { ... on Media @include(if: $v) { id ... on Movie { length } } } }",
+        ],
+    )?;
+    plans.extend(narrowed_plans(
+        "interface-field-narrowed-under-entity",
+        &["query($v: Boolean!) { shelf { media { ... on Media @include(if: $v) { id } } } }"],
+    )?);
+    plans.extend(narrowed_plans(
+        "interface-field-narrowed-to-interface",
+        &["query($v: Boolean!) { media { ... on Media @include(if: $v) { id } } }"],
+    )?);
+    insta::assert_snapshot!(plans.join("\n"), @r#"
+    query($v: Boolean!) { media { ... on Media @include(if: $v) { id } } }
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($v:Boolean!) {
+          media {
+            ... on Media @include(if: $v) {
+              id
+            }
+          }
+        }
+      },
+    },
+
+    query($v: Boolean!) { media { ... on Media @include(if: $v) { id ... on Movie { length } } } }
+    QueryPlan {
+      Fetch(service: "b") {
+        query ($v:Boolean!) {
+          media {
+            ... on Media @include(if: $v) {
+              __typename
+              ... on Movie {
+                length
+              }
+              id
+            }
+          }
+        }
+      },
+    },
+
+    query($v: Boolean!) { shelf { media { ... on Media @include(if: $v) { id } } } }
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($v:Boolean!) {
+          shelf {
+            media {
+              ... on Media @include(if: $v) {
+                id
+              }
+            }
+          }
+        }
+      },
+    },
+
+    query($v: Boolean!) { media { ... on Media @include(if: $v) { id } } }
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($v:Boolean!) {
+          media {
+            ... on Media @include(if: $v) {
+              id
+            }
+          }
+        }
+      },
+    },
+    "#);
+    Ok(())
+}
+
+/// A fragment with a condition under a narrowed field, or under a conditional field, still gets
+/// the `__typename` the response needs to tell what the objects are.
+#[test]
+fn conditional_fragment_under_a_narrowed_field_gets_its_typename() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let mut plans = narrowed_plans(
+        "interface-field-narrowed",
+        &[
+            "query($v: Boolean!) { media { ... on Book @include(if: $v) { title } } }",
+            "query($x: Boolean!) { media @include(if: $x) { ... on Book { title } } }",
+        ],
+    )?;
+    plans.extend(narrowed_plans(
+        "interface-field-narrowed-under-entity",
+        &["query($v: Boolean!) { shelf { media { ... on Book @include(if: $v) { title } } } }"],
+    )?);
+    insta::assert_snapshot!(plans.join("\n"), @r#"
+    query($v: Boolean!) { media { ... on Book @include(if: $v) { title } } }
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($v:Boolean!) {
+          media {
+            __typename
+            ... on Book {
+              title @include(if: $v)
+            }
+          }
+        }
+      },
+    },
+
+    query($x: Boolean!) { media @include(if: $x) { ... on Book { title } } }
+    QueryPlan {
+      Fetch(service: "a", if: $x) {
+        query ($x:Boolean!) {
+          media @include(if: $x) {
+            __typename
+            ... on Book {
+              title
+            }
+          }
+        }
+      },
+    },
+
+    query($v: Boolean!) { shelf { media { ... on Book @include(if: $v) { title } } } }
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($v:Boolean!) {
+          shelf {
+            media {
+              __typename
+              ... on Book {
+                title @include(if: $v)
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+    Ok(())
+}
+
+/// The subgraph that narrows the field sorts after the wide one: `... on Book` still goes
+/// through it, `isbn` is only there, and under an entity it takes one fetch.
+#[test]
+fn narrowed_field_in_a_subgraph_that_sorts_last() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let mut plans = narrowed_plans(
+        "interface-field-narrowed-wide-first",
+        &["{ media { ... on Book { isbn } } }"],
+    )?;
+    plans.extend(narrowed_plans(
+        "interface-field-narrowed-under-entity-z",
+        &[
+            "{ shelf { media { ... on Book { title } } } }",
+            "{ shelf { media { ... on Movie { title } ... on Book { title } } } }",
+        ],
+    )?);
+    insta::assert_snapshot!(plans.join("\n"), @r#"
+    { media { ... on Book { isbn } } }
+    QueryPlan {
+      Fetch(service: "b") {
+        {
+          media {
+            __typename
+            ... on Book {
+              isbn
+            }
+          }
+        }
+      },
+    },
+
+    { shelf { media { ... on Book { title } } } }
+    QueryPlan {
+      Fetch(service: "z") {
+        {
+          shelf {
+            media {
+              __typename
+              ... on Book {
+                title
+              }
+            }
+          }
+        }
+      },
+    },
+
+    { shelf { media { ... on Movie { title } ... on Book { title } } } }
+    QueryPlan {
+      Fetch(service: "z") {
+        {
+          shelf {
+            media {
+              __typename
+              ... on Book {
+                title
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+    Ok(())
+}
+
+/// c requires `media { ... on Book { title } }`, and a, where the shelf comes from, narrows
+/// `media` to `[Book]`.
+#[test]
+fn requires_with_a_fragment_through_a_narrowed_field() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let plans = narrowed_plans("interface-field-narrowed-requires", &["{ shelf { x } }"])?;
+    insta::assert_snapshot!(plans.join("\n"), @r#"
+    { shelf { x } }
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            shelf {
+              __typename
+              id
+              media {
+                __typename
+                ... on Book {
+                  title
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "shelf") {
+          Fetch(service: "c") {
+            {
+              ... on Shelf {
+                __typename
+                media {
+                  ... on Book {
+                    title
+                  }
+                }
+                id
+              }
+            } =>
+            {
+              ... on Shelf {
+                x
               }
             }
           },
@@ -1063,6 +1610,5 @@ fn nested_interface_field_with_redundant_inline_fragments_other_type_order(
       },
     },
     "#);
-
     Ok(())
 }

@@ -1,10 +1,8 @@
 use crate::query_planner::{
-    tests::testkit::{build_query_plan_with_defaults, init_logger},
+    tests::testkit::{build_query_plan_from_sdl, build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
-
-// TODO: try to reproduce shared_root for mutations
 
 #[test]
 fn mutations() -> Result<(), Box<dyn Error>> {
@@ -357,11 +355,11 @@ fn next_field_waits_for_conditional_entity_fetch_of_previous_one() -> Result<(),
     Ok(())
 }
 
-/// `create` and `multiply` are both in `a`, so they go in one request, like in Apollo, even though
-/// `create` needs `b` for `isExpensive`. `b` runs after that request, once the product exists.
+/// `create` and `multiply` are both in `a`, but `create` needs `b` for `isExpensive`.
+/// A mutation field is done only when all of its data is, so `double` waits for `b`
+/// in a request of its own, and can't change what `b` reads.
 #[test]
-fn neighbours_in_one_graph_share_a_fetch_when_first_needs_another_fetch(
-) -> Result<(), Box<dyn Error>> {
+fn neighbours_in_one_graph_wait_for_the_first_ones_entity_fetch() -> Result<(), Box<dyn Error>> {
     init_logger();
     let document = parse_operation(
         r#"
@@ -386,7 +384,6 @@ fn neighbours_in_one_graph_share_a_fetch_when_first_needs_another_fetch(
               id
               price
             }
-            double: multiply(by: 2)
           }
         },
         Flatten(path: "create") {
@@ -405,6 +402,11 @@ fn neighbours_in_one_graph_share_a_fetch_when_first_needs_another_fetch(
             }
           },
         },
+        Fetch(service: "a") {
+          mutation {
+            double: multiply(by: 2)
+          }
+        },
       },
     },
     "#);
@@ -412,8 +414,8 @@ fn neighbours_in_one_graph_share_a_fetch_when_first_needs_another_fetch(
     Ok(())
 }
 
-/// `create` and `double` go to `a` in one request. `count` is in `c`, so it waits for the whole
-/// group, `isExpensive` from `b` included.
+/// `create` needs `b` for `isExpensive`, so `double` waits for it in a request of its own,
+/// and `count` in `c` waits for `double`.
 #[test]
 fn next_graph_waits_for_entity_fetch_of_the_group() -> Result<(), Box<dyn Error>> {
     init_logger();
@@ -441,7 +443,6 @@ fn next_graph_waits_for_entity_fetch_of_the_group() -> Result<(), Box<dyn Error>
               id
               price
             }
-            double: multiply(by: 2)
           }
         },
         Flatten(path: "create") {
@@ -459,6 +460,11 @@ fn next_graph_waits_for_entity_fetch_of_the_group() -> Result<(), Box<dyn Error>
               }
             }
           },
+        },
+        Fetch(service: "a") {
+          mutation {
+            double: multiply(by: 2)
+          }
         },
         Fetch(service: "c") {
           mutation {
@@ -560,7 +566,6 @@ fn next_graph_waits_for_entity_fetch_to_the_same_graph() -> Result<(), Box<dyn E
               id
               price
             }
-            double: multiply(by: 2)
           }
         },
         Flatten(path: "create") {
@@ -578,6 +583,11 @@ fn next_graph_waits_for_entity_fetch_to_the_same_graph() -> Result<(), Box<dyn E
               }
             }
           },
+        },
+        Fetch(service: "a") {
+          mutation {
+            double: multiply(by: 2)
+          }
         },
         Fetch(service: "b") {
           mutation {
@@ -679,6 +689,1110 @@ fn conditional_field_stays_in_its_group() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
+
+    Ok(())
+}
+
+#[test]
+fn shareable_mutation_field_runs_once() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // `createOrder` lives in both subgraphs, but `total` only in a and `eta` only in b.
+    // The mutation must hit one subgraph, the rest comes through an entity call.
+    let supergraph = r#"
+        enum join__Graph {
+            A @join__graph(name: "a", url: "")
+            B @join__graph(name: "b", url: "")
+        }
+        type Query @join__type(graph: A) @join__type(graph: B) {
+            ping: Boolean @join__field(graph: A)
+        }
+        type Mutation @join__type(graph: A) @join__type(graph: B) {
+            createOrder: Order
+        }
+        type Order @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
+            id: ID!
+            total: Int @join__field(graph: A)
+            eta: String @join__field(graph: B)
+        }
+    "#;
+    let query_plan = build_query_plan_from_sdl(
+        supergraph,
+        parse_operation("mutation { createOrder { total eta } }"),
+        Default::default(),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          mutation {
+            createOrder {
+              __typename
+              total
+              id
+            }
+          }
+        },
+        Flatten(path: "createOrder") {
+          Fetch(service: "b") {
+            {
+              ... on Order {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                eta
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    // everything is in b, so no reason to start in a
+    let query_plan = build_query_plan_from_sdl(
+        supergraph,
+        parse_operation("mutation { createOrder { id eta } }"),
+        Default::default(),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "b") {
+        mutation {
+          createOrder {
+            id
+            eta
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn mutation_key_does_not_jump_between_subgraphs() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // `Mutation` has a key in both subgraphs. Jumping from one `Mutation` to the other
+    // through `_entities` would run `createOrder` twice.
+    // b can't be jumped to for `Order`, so the mutation has to start in b.
+    let supergraph = r#"
+        enum join__Graph {
+            A @join__graph(name: "a", url: "")
+            B @join__graph(name: "b", url: "")
+        }
+        type Query @join__type(graph: A) @join__type(graph: B) {
+            ping: Boolean @join__field(graph: A)
+        }
+        type Mutation @join__type(graph: A, key: "__typename") @join__type(graph: B, key: "__typename") {
+            createOrder: Order
+        }
+        type Order @join__type(graph: A, key: "id") @join__type(graph: B, key: "id", resolvable: false) {
+            id: ID!
+            total: Int @join__field(graph: A)
+            eta: String @join__field(graph: B)
+        }
+    "#;
+    let query_plan = build_query_plan_from_sdl(
+        supergraph,
+        parse_operation("mutation { createOrder { total eta } }"),
+        Default::default(),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          mutation {
+            createOrder {
+              __typename
+              id
+              eta
+            }
+          }
+        },
+        Flatten(path: "createOrder") {
+          Fetch(service: "a") {
+            {
+              ... on Order {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                total
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn shareable_mutation_field_in_conditional_fragment_runs_once() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // The fragment keeps its @include, so it reaches the planner as one root selection.
+    // No subgraph has all of it (`cancelOrder` is only in c), but each mutation field
+    // inside it still has to run once, and in order.
+    let supergraph = r#"
+        enum join__Graph {
+            A @join__graph(name: "a", url: "")
+            B @join__graph(name: "b", url: "")
+            C @join__graph(name: "c", url: "")
+        }
+        type Query @join__type(graph: A) @join__type(graph: B) @join__type(graph: C) {
+            ping: Boolean @join__field(graph: A)
+        }
+        type Mutation @join__type(graph: A) @join__type(graph: B) @join__type(graph: C) {
+            createOrder: Order @join__field(graph: A) @join__field(graph: B)
+            cancelOrder: Boolean @join__field(graph: C)
+        }
+        type Order @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
+            id: ID!
+            total: Int @join__field(graph: A)
+            eta: String @join__field(graph: B)
+        }
+    "#;
+    let query_plan = build_query_plan_from_sdl(
+        supergraph,
+        parse_operation(
+            r#"
+            mutation ($run: Boolean!) {
+              ... on Mutation @include(if: $run) {
+                createOrder { total eta }
+                cancelOrder
+              }
+            }
+            "#,
+        ),
+        Default::default(),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a", if: $run) {
+          mutation ($run:Boolean!) {
+            ... on Mutation @include(if: $run) {
+              createOrder {
+                __typename
+                total
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "|[Mutation].createOrder") {
+          Fetch(service: "b", if: $run) {
+            {
+              ... on Order {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                eta
+              }
+            }
+          },
+        },
+        Fetch(service: "c", if: $run) {
+          mutation ($run:Boolean!) {
+            ... on Mutation @include(if: $run) {
+              cancelOrder
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn shareable_mutation_field_picks_subgraph_by_whole_plan() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // From a, `l1`, `l2` and `l3` come in one entity call to c.
+    // From b, they're local, but `x` takes two calls in a row (b -> e -> d).
+    // Counted per leaf, a looks more expensive (three trips vs one longer one),
+    // but its plan has fewer fetches, so a it is.
+    let supergraph = r#"
+        enum join__Graph {
+            A @join__graph(name: "a", url: "")
+            B @join__graph(name: "b", url: "")
+            C @join__graph(name: "c", url: "")
+            D @join__graph(name: "d", url: "")
+            E @join__graph(name: "e", url: "")
+        }
+        type Query @join__type(graph: A) @join__type(graph: B) @join__type(graph: C) @join__type(graph: D) @join__type(graph: E) {
+            ping: Boolean @join__field(graph: A)
+        }
+        type Mutation @join__type(graph: A) @join__type(graph: B) {
+            createOrder: Order
+        }
+        type Order
+            @join__type(graph: A, key: "id", resolvable: false)
+            @join__type(graph: B, key: "id", resolvable: false)
+            @join__type(graph: C, key: "id")
+            @join__type(graph: D, key: "code")
+            @join__type(graph: E, key: "id")
+            @join__type(graph: E, key: "code")
+        {
+            id: ID! @join__field(graph: A) @join__field(graph: B) @join__field(graph: C) @join__field(graph: E)
+            code: ID! @join__field(graph: D) @join__field(graph: E)
+            x: Int @join__field(graph: A) @join__field(graph: D)
+            l1: Int @join__field(graph: B) @join__field(graph: C)
+            l2: Int @join__field(graph: B) @join__field(graph: C)
+            l3: Int @join__field(graph: B) @join__field(graph: C)
+        }
+    "#;
+    let query_plan = build_query_plan_from_sdl(
+        supergraph,
+        parse_operation("mutation { createOrder { x l1 l2 l3 } }"),
+        Default::default(),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          mutation {
+            createOrder {
+              __typename
+              x
+              id
+            }
+          }
+        },
+        Flatten(path: "createOrder") {
+          Fetch(service: "c") {
+            {
+              ... on Order {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                l1
+                l2
+                l3
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn shareable_mutation_fields_stay_in_one_fetch() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // Both subgraphs can run both fields, but only b has `customer`.
+    // Back to back mutation fields in the same subgraph go in one fetch,
+    // so `cancelOrder` goes to b too, even though a could run it just as well on its own.
+    let supergraph = r#"
+        enum join__Graph {
+            A @join__graph(name: "a", url: "")
+            B @join__graph(name: "b", url: "")
+        }
+        type Query @join__type(graph: A) @join__type(graph: B) {
+            ping: Boolean @join__field(graph: A)
+        }
+        type Mutation @join__type(graph: A) @join__type(graph: B) {
+            createOrder: Order
+            cancelOrder(id: ID): Boolean
+        }
+        type Order @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
+            id: ID!
+            total: Int
+            customer: Customer @join__field(graph: B)
+        }
+        type Customer @join__type(graph: B) {
+            name: String
+        }
+    "#;
+    let query_plan = build_query_plan_from_sdl(
+        supergraph,
+        parse_operation(
+            "mutation { createOrder { id total customer { name } } cancelOrder(id: 1) }",
+        ),
+        Default::default(),
+        Default::default(),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "b") {
+        mutation {
+          createOrder {
+            id
+            total
+            customer {
+              name
+            }
+          }
+          cancelOrder(id: 1)
+        }
+      },
+    },
+    "#);
+
+    // same the other way around
+    let query_plan = build_query_plan_from_sdl(
+        supergraph,
+        parse_operation(
+            "mutation { cancelOrder(id: 1) createOrder { id total customer { name } } }",
+        ),
+        Default::default(),
+        Default::default(),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "b") {
+        mutation {
+          cancelOrder(id: 1)
+          createOrder {
+            id
+            total
+            customer {
+              name
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn shareable_mutation_field_between_fields_of_one_subgraph() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // `first` and `third` only run in b. `second` reads `total` right in a.
+    // In b it'd need an entity call to a, and `third` has to wait for that,
+    // as `second` is done only when `total` is. So b can't run all three in one request,
+    // and `second` goes to a.
+    let supergraph = r#"
+        enum join__Graph {
+            A @join__graph(name: "a", url: "")
+            B @join__graph(name: "b", url: "")
+        }
+        type Query @join__type(graph: A) @join__type(graph: B) {
+            ping: Boolean @join__field(graph: A)
+        }
+        type Mutation @join__type(graph: A) @join__type(graph: B) {
+            first: Boolean @join__field(graph: B)
+            second: Order
+            third: Boolean @join__field(graph: B)
+        }
+        type Order @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
+            id: ID!
+            total: Int @join__field(graph: A)
+        }
+    "#;
+    let query_plan = build_query_plan_from_sdl(
+        supergraph,
+        parse_operation("mutation { first second { total } third }"),
+        Default::default(),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          mutation {
+            first
+          }
+        },
+        Fetch(service: "a") {
+          mutation {
+            second {
+              total
+            }
+          }
+        },
+        Fetch(service: "b") {
+          mutation {
+            third
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn mutation_field_waits_for_entity_fetch_of_the_field_before() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // All three run in b, but `second` needs a for `total`. `second` is done only when `total`
+    // is, so `third` waits for that call, and can't change what a reads.
+    let supergraph = r#"
+        enum join__Graph {
+            A @join__graph(name: "a", url: "")
+            B @join__graph(name: "b", url: "")
+        }
+        type Query @join__type(graph: A) @join__type(graph: B) {
+            ping: Boolean @join__field(graph: A)
+        }
+        type Mutation @join__type(graph: B) {
+            first: Boolean
+            second: Order
+            third: Boolean
+        }
+        type Order @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
+            id: ID!
+            total: Int @join__field(graph: A)
+        }
+    "#;
+    let query_plan = build_query_plan_from_sdl(
+        supergraph,
+        parse_operation("mutation { first second { total } third }"),
+        Default::default(),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          mutation {
+            first
+            second {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "second") {
+          Fetch(service: "a") {
+            {
+              ... on Order {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                total
+              }
+            }
+          },
+        },
+        Fetch(service: "b") {
+          mutation {
+            third
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `create` is selected twice under one response key, so GraphQL runs it once, with both
+/// selections. With both conditions on, `a` gets one request that has both.
+#[test]
+fn field_selected_twice_in_a_conditional_fragment_runs_once() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation ($a: Boolean!, $b: Boolean!) {
+          ... on Mutation @include(if: $a) {
+            create: addProduct(input: { name: "new", price: 1 }) @include(if: $b) { isExpensive }
+            create: addProduct(input: { name: "new", price: 1 }) { id }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a", if: $a) {
+          mutation ($a:Boolean!,$b:Boolean!) {
+            ... on Mutation @include(if: $a) {
+              create: addProduct(input: {name: "new", price: 1}) @include(if: $b) {
+                __typename
+                id
+                price
+              }
+              create: addProduct(input: {name: "new", price: 1}) {
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "|[Mutation].create") {
+          Fetch(service: "b", if: $a && $b) {
+            {
+              ... on Product {
+                __typename
+                price
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                isExpensive
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Same, with each selection in a root fragment of its own condition.
+#[test]
+fn field_selected_in_two_conditional_fragments_runs_once() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation ($a: Boolean!, $b: Boolean!) {
+          ... on Mutation @include(if: $a) {
+            create: addProduct(input: { name: "new", price: 1 }) { isExpensive }
+          }
+          ... on Mutation @include(if: $b) {
+            create: addProduct(input: { name: "new", price: 1 }) { id }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a", if: $a || $b) {
+          mutation ($a:Boolean!,$b:Boolean!) {
+            ... on Mutation @include(if: $a) {
+              create: addProduct(input: {name: "new", price: 1}) {
+                __typename
+                id
+                ... on Product @include(if: $a) {
+                  __typename
+                  price
+                  id
+                }
+              }
+            }
+            ... on Mutation @include(if: $b) {
+              create: addProduct(input: {name: "new", price: 1}) {
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "|[Mutation].create") {
+          Fetch(service: "b", if: $a) {
+            {
+              ... on Product {
+                __typename
+                price
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                isExpensive
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// The field runs at its first selection that's on, with what every selection that's on asks
+/// for. With `$b` that's before `count`, without it after: two calls to `a` that never both run.
+#[test]
+fn field_selected_twice_with_another_between_runs_at_its_first_selection_that_is_on(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation ($b: Boolean!) {
+          create: addProduct(input: { name: "new", price: 1 }) @include(if: $b) { isExpensive }
+          count: add(num: 1)
+          create: addProduct(input: { name: "new", price: 1 }) { id }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a", if: $b) {
+          mutation ($b:Boolean!) {
+            ... on Mutation @include(if: $b) {
+              create: addProduct(input: {name: "new", price: 1}) {
+                __typename
+                id
+                ... on Product @include(if: $b) {
+                  __typename
+                  price
+                  id
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "|[Mutation].create") {
+          Fetch(service: "b", if: $b) {
+            {
+              ... on Product {
+                __typename
+                price
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                isExpensive
+              }
+            }
+          },
+        },
+        Fetch(service: "c") {
+          mutation {
+            count: add(num: 1)
+          }
+        },
+        Fetch(service: "a", if: !$b) {
+          mutation ($b:Boolean!) {
+            ... on Mutation @skip(if: $b) {
+              create: addProduct(input: {name: "new", price: 1}) {
+                id
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Each selection of `create` here has two conditions and another field after it. Saying
+/// "every one before is off" for the last one takes 2^20 copies, so the operation is turned
+/// down before any get made.
+#[test]
+fn field_selected_under_too_many_conditions_is_turned_down() {
+    init_logger();
+    let mut variables = Vec::new();
+    let mut selections = String::new();
+    for index in 0..20 {
+        variables.push(format!("$a{index}: Boolean!, $b{index}: Boolean!"));
+        selections.push_str(&format!(
+            r#"create: addProduct(input: {{ name: "new", price: 1 }}) @include(if: $a{index}) @skip(if: $b{index}) {{ id }}
+            count{index}: add(num: {index})
+            "#
+        ));
+    }
+    selections.push_str(r#"create: addProduct(input: { name: "new", price: 1 }) { id }"#);
+    let document = parse_operation(&format!(
+        "mutation ({}) {{ {selections} }}",
+        variables.join(", ")
+    ));
+
+    let started = std::time::Instant::now();
+    let error =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)
+            .expect_err("too many conditional copies");
+    assert!(
+        error
+            .to_string()
+            .contains("too many different @skip/@include conditions"),
+        "{error}"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+}
+
+/// The two `create`s sit in root fragments with the same condition, `count` between them.
+/// Merging the fragments into the first would run the second `create` before `count`, so they
+/// stay apart, and `create` runs before `count` only when its first selection is on.
+#[test]
+fn equal_root_fragments_around_another_field_keep_their_order() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation ($outer: Boolean!, $b: Boolean!) {
+          ... on Mutation @include(if: $outer) {
+            create: addProduct(input: { name: "new", price: 1 }) @include(if: $b) { isExpensive }
+          }
+          count: add(num: 1)
+          ... on Mutation @include(if: $outer) {
+            create: addProduct(input: { name: "new", price: 1 }) { id }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a", if: $b && $outer) {
+          mutation ($b:Boolean!,$outer:Boolean!) {
+            ... on Mutation @include(if: $b) {
+              ... on Mutation @include(if: $outer) {
+                create: addProduct(input: {name: "new", price: 1}) {
+                  __typename
+                  id
+                  ... on Product @include(if: $b) {
+                    __typename
+                    price
+                    id
+                  }
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "|[Mutation]|[Mutation].create") {
+          Fetch(service: "b", if: $b && $outer) {
+            {
+              ... on Product {
+                __typename
+                price
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                isExpensive
+              }
+            }
+          },
+        },
+        Fetch(service: "c") {
+          mutation {
+            count: add(num: 1)
+          }
+        },
+        Fetch(service: "a", if: $outer && !$b) {
+          mutation ($b:Boolean!,$outer:Boolean!) {
+            ... on Mutation @skip(if: $b) {
+              ... on Mutation @include(if: $outer) {
+                create: addProduct(input: {name: "new", price: 1}) {
+                  id
+                }
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// The same, with both fragments inside another conditional one: a fragment is still the
+/// root, so they don't merge across `count` either.
+#[test]
+fn equal_nested_root_fragments_around_another_field_keep_their_order() -> Result<(), Box<dyn Error>>
+{
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation ($wrap: Boolean!, $outer: Boolean!, $b: Boolean!) {
+          ... on Mutation @include(if: $wrap) {
+            ... on Mutation @include(if: $outer) {
+              create: addProduct(input: { name: "new", price: 1 }) @include(if: $b) { isExpensive }
+            }
+            count: add(num: 1)
+            ... on Mutation @include(if: $outer) {
+              create: addProduct(input: { name: "new", price: 1 }) { id }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a", if: $b && $outer && $wrap) {
+          mutation ($b:Boolean!,$outer:Boolean!,$wrap:Boolean!) {
+            ... on Mutation @include(if: $b) {
+              ... on Mutation @include(if: $wrap) {
+                ... on Mutation @include(if: $outer) {
+                  create: addProduct(input: {name: "new", price: 1}) {
+                    __typename
+                    id
+                    ... on Product @include(if: $b) {
+                      __typename
+                      price
+                      id
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "|[Mutation]|[Mutation]|[Mutation].create") {
+          Fetch(service: "b", if: $b && $outer && $wrap) {
+            {
+              ... on Product {
+                __typename
+                price
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                isExpensive
+              }
+            }
+          },
+        },
+        Fetch(service: "c", if: $wrap) {
+          mutation ($wrap:Boolean!) {
+            ... on Mutation @include(if: $wrap) {
+              count: add(num: 1)
+            }
+          }
+        },
+        Fetch(service: "a", if: $outer && $wrap && !$b) {
+          mutation ($b:Boolean!,$outer:Boolean!,$wrap:Boolean!) {
+            ... on Mutation @skip(if: $b) {
+              ... on Mutation @include(if: $wrap) {
+                ... on Mutation @include(if: $outer) {
+                  create: addProduct(input: {name: "new", price: 1}) {
+                    id
+                  }
+                }
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// A selection that `@include(if: $b) @skip(if: $b)` never lets run has no spot to take, and
+/// the rest of the mutation plans as without it.
+#[test]
+fn selection_that_never_runs_is_left_out() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation ($a: Boolean!, $b: Boolean!) {
+          create: addProduct(input: { name: "new", price: 1 }) @include(if: $a) { id }
+          count: add(num: 1)
+          create: addProduct(input: { name: "new", price: 1 }) @include(if: $b) @skip(if: $b) { id }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a", if: $a) {
+          mutation ($a:Boolean!) {
+            create: addProduct(input: {name: "new", price: 1}) @include(if: $a) {
+              id
+            }
+          }
+        },
+        Fetch(service: "c") {
+          mutation {
+            count: add(num: 1)
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `a` and `c` each run under `$on` at their first selection, with `b` and `d` always on. The
+/// fetch for them all has two equal `@include(if: $on)` fragments, for `a` and for `c`, and
+/// merging the second into the first would run `c` before `b`.
+#[test]
+fn equal_root_fragments_of_one_fetch_keep_their_order() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation ($on: Boolean!) {
+          a: multiply(by: 1) @include(if: $on)
+          b: multiply(by: 2)
+          a: multiply(by: 1)
+          c: multiply(by: 3) @include(if: $on)
+          d: multiply(by: 4)
+          c: multiply(by: 3)
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        mutation ($on:Boolean!) {
+          ... on Mutation @include(if: $on) {
+            ...a
+          }
+          b: multiply(by: 2)
+          ... on Mutation @skip(if: $on) {
+            ...a
+          }
+          ... on Mutation @include(if: $on) {
+            ...b
+          }
+          d: multiply(by: 4)
+          ... on Mutation @skip(if: $on) {
+            ...b
+          }
+        }
+        fragment a on Mutation {
+          a: multiply(by: 1)
+        }
+        fragment b on Mutation {
+          c: multiply(by: 3)
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// The same, with a field under the second fragment that needs another fetch: `isExpensive`
+/// is in b and requires `price` from a. The path to `create` goes into the second of the two
+/// equal fragments, not the first one.
+#[test]
+fn equal_root_fragments_of_one_fetch_path_into_the_second() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation ($on: Boolean!) {
+          ... on Mutation @include(if: $on) { a: multiply(by: 1) }
+          b: multiply(by: 2)
+          ... on Mutation @include(if: $on) {
+            create: addProduct(input: { name: "new", price: 1 }) { isExpensive }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          mutation ($on:Boolean!) {
+            ... on Mutation @include(if: $on) {
+              a: multiply(by: 1)
+            }
+            b: multiply(by: 2)
+            ... on Mutation @include(if: $on) {
+              create: addProduct(input: {name: "new", price: 1}) {
+                __typename
+                id
+                ... on Product @include(if: $on) {
+                  __typename
+                  price
+                  id
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "|[Mutation].create") {
+          Fetch(service: "b", if: $on) {
+            {
+              ... on Product {
+                __typename
+                price
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                isExpensive
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// A field under `@include(if: $b) @skip(if: $b)` never runs. With nothing else, the planner
+/// has nothing to fetch, and that's a plan, not an error: callers of the planner, like the Node
+/// addon, don't check for an empty operation first.
+#[test]
+fn mutation_with_every_field_skipped_has_an_empty_plan() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation ($b: Boolean!) {
+          add(num: 1) @include(if: $b) @skip(if: $b)
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r"
+    QueryPlan {
+      None,
+    },
+    ");
 
     Ok(())
 }

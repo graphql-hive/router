@@ -247,6 +247,50 @@ impl MergePath {
         self.inner.len()
     }
 
+    /// The path with `segment` in place of the one at `slot`.
+    pub fn with_segment_at(&self, slot: usize, segment: Segment) -> Self {
+        Self {
+            inner: self.inner[..slot]
+                .iter()
+                .cloned()
+                .chain(std::iter::once(segment))
+                .chain(self.inner[slot + 1..].iter().cloned())
+                .collect(),
+        }
+    }
+
+    /// The path with only `type_name` in the type condition at `slot`, the same path when
+    /// there's no type condition there.
+    pub fn with_only_type_at(&self, slot: usize, type_name: &str) -> Self {
+        match self.inner.get(slot) {
+            Some(Segment::TypeCondition(_, condition)) => self.with_segment_at(
+                slot,
+                Segment::TypeCondition(
+                    Rc::new(BTreeSet::from([type_name.to_string()])),
+                    condition.clone(),
+                ),
+            ),
+            _ => self.clone(),
+        }
+    }
+
+    /// The path with `type_name` added to the type condition at `slot`. `None` when there's no
+    /// type condition there, or it has `type_name` already.
+    pub fn with_type_added_at(&self, slot: usize, type_name: &str) -> Option<Self> {
+        let Some(Segment::TypeCondition(type_names, condition)) = self.inner.get(slot) else {
+            return None;
+        };
+        if type_names.contains(type_name) {
+            return None;
+        }
+        let mut type_names = BTreeSet::clone(type_names);
+        type_names.insert(type_name.to_string());
+        Some(self.with_segment_at(
+            slot,
+            Segment::TypeCondition(Rc::new(type_names), condition.clone()),
+        ))
+    }
+
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }

@@ -8,11 +8,11 @@ use petgraph::{
 use tracing::{instrument, trace};
 
 use crate::query_planner::{
-    ast::selection_set::selection_items_are_subset_of,
+    ast::{merge_path::MergePath, selection_set::selection_items_are_subset_of},
     planner::fetch::{
         error::FetchGraphError,
         fetch_graph::FetchGraph,
-        fetch_step_data::{FetchStepData, FetchStepFlags},
+        fetch_step_data::{FetchStepData, FetchStepFlags, NestedPlace},
         optimize::utils::MergedSteps,
         state::MultiTypeFetchStep,
     },
@@ -173,6 +173,11 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
+        // with several types of our own, the path has to say which one it's under
+        if self.place_of_nested(&other.response_path).is_none() {
+            return false;
+        }
+
         // Every type it fetches has to be in its input already, not just one of them.
         other
             .output
@@ -198,7 +203,16 @@ fn perform_passthrough_child_merge(
     fetch_graph: &mut FetchGraph<MultiTypeFetchStep>,
 ) -> Result<(), FetchGraphError> {
     let (me, other) = fetch_graph.get_pair_of_steps_mut(self_index, other_index)?;
-    let path = other.response_path.slice_from(me.response_path.len());
+    let (type_name, path) = match me
+        .place_of_nested(&other.response_path)
+        .ok_or(FetchGraphError::MismatchedResponsePath)?
+    {
+        NestedPlace::Type { type_name, rest } => (
+            Some(type_name.to_string()),
+            other.response_path.slice_from(rest),
+        ),
+        NestedPlace::EachType => (None, MergePath::default()),
+    };
 
     trace!(
         "merging fetch steps [{}] + [{}] at path {}",
@@ -207,7 +221,12 @@ fn perform_passthrough_child_merge(
         path
     );
 
-    me.output.migrate_from_another(&other.output, &path)?;
+    match type_name {
+        Some(type_name) => me
+            .output
+            .migrate(other.output.take(), &path, Some(&type_name))?,
+        None => me.output.migrate(other.output.take(), &path, None)?,
+    }
     me.merge_context_metadata(other);
     let source_id = other.id;
     let target_id = me.id;

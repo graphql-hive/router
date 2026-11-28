@@ -1,4 +1,4 @@
-use ahash::{HashMap, HashMapExt};
+use ahash::HashMap;
 use std::collections::{BTreeSet, VecDeque};
 use std::rc::Rc;
 
@@ -22,7 +22,37 @@ pub struct SelectionMismatchFinder<'a> {
     supergraph_state: &'a SupergraphState,
 }
 
-type MismatchesFound = Vec<(String, MergePath)>;
+/// The root type, the path of the field that needs an alias, and the index of its group's first
+/// mismatch in the list: the fields of one group share an alias.
+type MismatchesFound = Vec<(String, MergePath, usize)>;
+
+/// A field selected under a response key.
+struct Seen<'field, 'schema> {
+    parent: &'schema str,
+    field: &'field FieldSelection,
+    /// `None` when the subgraph doesn't list the field, see `handle_field`
+    in_subgraph: Option<&'schema TypeNode>,
+}
+
+/// The fields at one level of a selection set.
+#[derive(Default)]
+struct Level<'field, 'schema> {
+    /// The first field under each response key. A field that doesn't match it gets an alias,
+    /// see `handle_field`.
+    first: HashMap<&'field str, Seen<'field, 'schema>>,
+    /// The fields with an alias, with their response key and their group, so the same field
+    /// selected again gets the same alias.
+    aliased: Vec<(&'field str, Seen<'field, 'schema>, usize)>,
+}
+
+impl Seen<'_, '_> {
+    /// The same field of the same type with the same arguments, one value in the response
+    fn same_field(&self, other: &Seen) -> bool {
+        self.parent == other.parent
+            && self.field.name == other.field.name
+            && self.field.arguments_hash() == other.field.arguments_hash()
+    }
+}
 
 impl<'a> SelectionMismatchFinder<'a> {
     pub fn new(supergraph_state: &'a SupergraphState) -> Self {
@@ -70,19 +100,16 @@ impl<'a> SelectionMismatchFinder<'a> {
   parent_def = parent_def.name(),
   selection = format!("{}", selection_set)
 ))]
-fn handle_selection_set<'field, 'schema>(
+fn handle_selection_set<'schema>(
     root_def_type_name: &str,
     supergraph_state: &'schema SupergraphState,
     subgraph_state: &'schema SubgraphState,
     parent_def: &'schema SubgraphDefinition,
-    selection_set: &'field SelectionSet,
+    selection_set: &SelectionSet,
     parent_path: MergePath,
     mismatches_found: &mut MismatchesFound,
 ) {
-    // A HashMap of "field_name" to "field_return_type". When we encounter a field in a given selection-set level,
-    // we update the HashMap with the field's name and return type.
-    // We use this to monitor and find mismatches later.
-    let mut encountered_field_to_type: HashMap<&'field str, &'schema TypeNode> = HashMap::new();
+    let mut level = Level::default();
 
     // A queue for traversing the selection set. In case of an inline fragment, we "flatten" the selections and update the path.
     // Values are: (ParentType, Path, Selections)
@@ -109,7 +136,7 @@ fn handle_selection_set<'field, 'schema>(
                         type_def,
                         field,
                         &next_path,
-                        &mut encountered_field_to_type,
+                        &mut level,
                         mismatches_found,
                     );
 
@@ -131,10 +158,12 @@ fn handle_selection_set<'field, 'schema>(
                     unreachable!("fragment spread is not expected at this stage")
                 }
                 SelectionItem::InlineFragment(fragment) => {
-                    let fragment_type = subgraph_state
-                        .definitions
-                        .get(&fragment.type_condition)
-                        .unwrap();
+                    // same as for fields below a type the subgraph doesn't declare: skipped
+                    let Some(fragment_type) =
+                        subgraph_state.definitions.get(&fragment.type_condition)
+                    else {
+                        continue;
+                    };
                     let fragment_enter_path = path.push(Segment::TypeCondition(
                         Rc::new(BTreeSet::from([fragment.type_condition.clone()])),
                         fragment.into(),
@@ -162,42 +191,67 @@ fn handle_field<'field, 'schema>(
     parent_def: &'schema SubgraphDefinition,
     field: &'field FieldSelection,
     field_path: &MergePath,
-    encountered_field_to_type: &mut HashMap<&'field str, &'schema TypeNode>,
+    level: &mut Level<'field, 'schema>,
     mismatches_found: &mut MismatchesFound,
 ) -> Option<&'schema str> {
-    let parent_def_fields = parent_def.fields().unwrap();
     let field_name = field.name.as_str();
     let field_identifier = field.selection_identifier();
-    let field_type = parent_def_fields
-        .iter()
-        .find_map(|f| {
-            if f.name == field_name {
-                Some(
-                    f.join_field
-                        .as_ref()
-                        .and_then(|jf| jf.type_in_graph.as_ref())
-                        .unwrap_or(&f.field_type),
-                )
-            } else {
-                None
-            }
+    let in_subgraph = parent_def.fields().into_iter().flatten().find_map(|f| {
+        (f.name == field_name).then(|| {
+            f.join_field
+                .as_ref()
+                .and_then(|jf| jf.type_in_graph.as_ref())
+                .unwrap_or(&f.field_type)
         })
-        .unwrap();
+    });
+    // a supergraph can leave out the `external: true` entry of a provided field, so the
+    // subgraph's type doesn't list it even though the subgraph serves it. Its supergraph type
+    // is good enough to walk into, but it says nothing about what the subgraph declares, so a
+    // field like that only matches the same field selected again under its response key. Any
+    // other one gets an alias then.
+    let field_type = in_subgraph.or_else(|| {
+        let definition = state.definitions.get(parent_def.name())?;
+        Some(&definition.fields().get(field_name)?.field_type)
+    })?;
 
-    if let Some(maybe_conflicting_type) = encountered_field_to_type.get(field_identifier) {
-        if !same_response_shape(state, maybe_conflicting_type, field_type) {
+    let this = Seen {
+        parent: parent_def.name(),
+        field,
+        in_subgraph,
+    };
+    if let Some(first) = level.first.get(field_identifier) {
+        let matching = matches!(
+            (first.in_subgraph, in_subgraph),
+            (Some(first), Some(this)) if same_response_shape(state, first, this)
+        ) || first.same_field(&this);
+        if !matching {
             trace!(
-              "found a conflicting type for a selection field '{}', conflict is: '{}' <-> '{}', path: {}",
+              "found a conflicting type for a selection field '{}', conflict is: '{:?}' <-> '{}', path: {}",
               field_identifier,
-              maybe_conflicting_type,
+              first.in_subgraph,
               field_type,
               field_path,
           );
 
-            mismatches_found.push((root_def_type_name.to_string(), field_path.clone()));
+            // the same field selected again joins the group of the first one, its value is
+            // one object in the subgraph's response
+            let group = match level
+                .aliased
+                .iter()
+                .find(|(key, seen, _)| *key == field_identifier && seen.same_field(&this))
+            {
+                Some(&(_, _, group)) => group,
+                None => {
+                    level
+                        .aliased
+                        .push((field_identifier, this, mismatches_found.len()));
+                    mismatches_found.len()
+                }
+            };
+            mismatches_found.push((root_def_type_name.to_string(), field_path.clone(), group));
         }
     } else {
-        encountered_field_to_type.insert(field_identifier, field_type);
+        level.first.insert(field_identifier, this);
     }
 
     if field.is_leaf() {

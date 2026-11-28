@@ -59,6 +59,8 @@ use std::{
 
 use xxhash_rust::xxh3::Xxh3;
 
+use crate::query_planner::ast::semantic_eq::SemanticEq;
+
 use crate::query_planner::{
     ast::requires::RequiresSelectionSet,
     ast::{
@@ -389,8 +391,9 @@ impl EntityFetch {
     /// We verify all parts are identical, not only the hash value.
     fn eq_shape(&self, right: &EntityFetch) -> bool {
         self.shape_key == right.shape_key
-            && self.requires == right.requires
-            && self.entities_selection == right.entities_selection
+            // in any order: a representation is an object, its fields have no order
+            && self.requires.semantic_eq(&right.requires)
+            && self.entities_selection.semantic_eq(&right.entities_selection)
             && self.input_rewrites == right.input_rewrites
             && self.output_rewrites == right.output_rewrites
             && self.context == right.context

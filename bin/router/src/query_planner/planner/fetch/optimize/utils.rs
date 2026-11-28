@@ -21,6 +21,7 @@ use crate::query_planner::{
         response_keys::read_as_written,
         state::MultiTypeFetchStep,
     },
+    state::supergraph_state::OperationKind,
 };
 
 /// Where merged-away steps went, kept for a whole pass. Passes queue steps and pick merge pairs
@@ -76,9 +77,7 @@ fn merge_source_condition_into_non_entity_target(
     for (_, selection_set) in input.iter_selections_mut() {
         read_as_written(selection_set);
     }
-    source
-        .output
-        .migrate_from_another(&input, &MergePath::default())?;
+    source.output.migrate(input, &MergePath::default(), None)?;
 
     // Check if the condition is already enforced by the path
     let condition_redundant = matches!(
@@ -170,9 +169,14 @@ pub(crate) fn perform_fetch_step_merge(
             }
         }
     }
-    target
-        .output
-        .migrate_from_another(&source.output, &source_fetch_path)?;
+    // a mutation's fields run in the order they're in, so at its root nothing moves ahead
+    if source_fetch_path.is_empty() && target.operation_kind == OperationKind::Mutation {
+        target.output.migrate_mutation_root(source.output.take())?;
+    } else {
+        target
+            .output
+            .migrate(source.output.take(), &source_fetch_path, None)?;
+    }
 
     if let Some(input_rewrites) = source.input_rewrites.take() {
         if !input_rewrites.is_empty() {
@@ -185,7 +189,7 @@ pub(crate) fn perform_fetch_step_merge(
     if force_merge_inputs {
         target
             .input
-            .migrate_from_another(&source.input, &MergePath::default())?;
+            .migrate(source.input.clone(), &MergePath::default(), None)?;
     } else if target.input.selecting_same_types(&source.input) {
         // It's safe to not check if a condition was turned into an inline fragment,
         // because if a condition is present and "me" is a non-entity fetch step,
@@ -193,7 +197,7 @@ pub(crate) fn perform_fetch_step_merge(
         if target.response_path == source.response_path {
             target
                 .input
-                .migrate_from_another(&source.input, &MergePath::default())?;
+                .migrate(source.input.clone(), &MergePath::default(), None)?;
         } else if !source.response_path.starts_with(&target.response_path) {
             return Err(FetchGraphError::MismatchedResponsePath);
         }
@@ -289,8 +293,9 @@ pub fn is_reachable_via_alternative_upstream_path(
     Ok(false)
 }
 
-impl FetchGraph<MultiTypeFetchStep> {
-    /// Steps that got context from `from` get it from `to` now, as `from` was merged into it.
+impl<State> FetchGraph<State> {
+    /// Steps that got context from `from` get it from `to` now, as `from` was merged into it,
+    /// or dropped for it. Only when `uses_context` says some step has producers.
     pub(crate) fn replace_context_producer(&mut self, from: FetchId, to: FetchId) {
         if !self.uses_context {
             return;
@@ -301,7 +306,9 @@ impl FetchGraph<MultiTypeFetchStep> {
             }
         }
     }
+}
 
+impl FetchGraph<MultiTypeFetchStep> {
     pub(crate) fn merge_context_producers(&mut self) -> Result<(), FetchGraphError> {
         if !self.operation_kind.is_query() {
             return Ok(());
@@ -702,7 +709,7 @@ mod tests {
             single.add(&parse(query)).unwrap();
             result.declare_known_type(type_name);
             result
-                .migrate_from_another(&single.into_multi_type(), &MergePath::default())
+                .migrate(single.into_multi_type(), &MergePath::default(), None)
                 .unwrap();
         }
         result

@@ -205,6 +205,12 @@ impl PartialEq for FieldSelection {
 }
 
 impl FieldSelection {
+    /// Whether it's `__typename`.
+    #[inline]
+    pub fn is_typename(&self) -> bool {
+        self.name == "__typename"
+    }
+
     pub fn with_new_selections(&self, selections: SelectionSet) -> Self {
         FieldSelection {
             name: self.name.clone(),
@@ -518,79 +524,179 @@ pub fn merge_selection_set(
 
     let mut pending_items = Vec::with_capacity(source.items.len());
     for source_item in source.items.iter() {
-        let mut found = false;
-        for target_item in target.items.iter_mut() {
-            match (source_item, target_item) {
-                (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
-                    if source_field.selection_identifier()
-                        == target_field.selection_identifier()
-                        && (source_field.name != target_field.name
-                            || source_field.arguments() != target_field.arguments()) =>
-                {
-                    return Err(ResponseKeyConflict(
-                        source_field.selection_identifier().to_string(),
-                    ));
-                }
-                (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
-                    if source_field == target_field
-                        && field_condition_equal(
-                            &Option::<Condition>::from(source_field),
-                            target_field,
-                        ) =>
-                {
-                    found = true;
-                    merge_field_omit_from_response(target_field, source_field);
-                    merge_selection_set(
-                        &mut target_field.selections,
-                        &source_field.selections,
-                        as_first,
-                    )?;
-                    break;
-                }
-                (
-                    SelectionItem::InlineFragment(source_fragment),
-                    SelectionItem::InlineFragment(target_fragment),
-                ) if source_fragment.type_condition == target_fragment.type_condition
-                    && fragment_condition_equal(
-                        &Option::<Condition>::from(source_fragment),
-                        target_fragment,
-                    ) =>
-                {
-                    found = true;
-                    merge_selection_set(
-                        &mut target_fragment.selections,
-                        &source_fragment.selections,
-                        as_first,
-                    )?;
-                    break;
-                }
-                _ => {}
+        let Some(index) = merge_target(&target.items, source_item)? else {
+            pending_items.push(source_item.clone());
+            continue;
+        };
+        match (source_item, &mut target.items[index]) {
+            (SelectionItem::Field(source_field), SelectionItem::Field(target_field)) => {
+                merge_field_omit_from_response(target_field, source_field);
+                merge_selection_set(
+                    &mut target_field.selections,
+                    &source_field.selections,
+                    as_first,
+                )?;
             }
-        }
-
-        if !found {
-            pending_items.push(source_item.clone())
-        }
-    }
-
-    if !pending_items.is_empty() {
-        if as_first {
-            let mut new_items = pending_items;
-            new_items.append(&mut target.items);
-            target.items = new_items;
-        } else {
-            target.items.extend(pending_items);
+            (
+                SelectionItem::InlineFragment(source_fragment),
+                SelectionItem::InlineFragment(target_fragment),
+            ) => {
+                merge_selection_set(
+                    &mut target_fragment.selections,
+                    &source_fragment.selections,
+                    as_first,
+                )?;
+            }
+            _ => {}
         }
     }
-
+    add_unmerged(target, pending_items, as_first);
     Ok(())
+}
+
+/// Like `merge_selection_set`, moving what `source` has instead of copying it.
+pub fn merge_selection_set_owned(
+    target: &mut SelectionSet,
+    source: SelectionSet,
+    as_first: bool,
+) -> Result<(), ResponseKeyConflict> {
+    if source.items.is_empty() {
+        return Ok(());
+    }
+
+    let mut pending_items = Vec::with_capacity(source.items.len());
+    for source_item in source.items {
+        let Some(index) = merge_target(&target.items, &source_item)? else {
+            pending_items.push(source_item);
+            continue;
+        };
+        match (source_item, &mut target.items[index]) {
+            (SelectionItem::Field(mut source_field), SelectionItem::Field(target_field)) => {
+                merge_field_omit_from_response(target_field, &source_field);
+                merge_selection_set_owned(
+                    &mut target_field.selections,
+                    std::mem::take(&mut source_field.selections),
+                    as_first,
+                )?;
+            }
+            (
+                SelectionItem::InlineFragment(source_fragment),
+                SelectionItem::InlineFragment(target_fragment),
+            ) => {
+                merge_selection_set_owned(
+                    &mut target_fragment.selections,
+                    source_fragment.selections,
+                    as_first,
+                )?;
+            }
+            _ => {}
+        }
+    }
+    add_unmerged(target, pending_items, as_first);
+    Ok(())
+}
+
+/// Merges `source` into a mutation's root, `target`. Its fields run in order, so a fragment only
+/// merges into the item right before it, and the rest goes after. Fragments in there are still
+/// the root, so it carries into them; a field's selections merge as usual.
+pub fn merge_mutation_root(
+    target: &mut SelectionSet,
+    source: SelectionSet,
+) -> Result<(), ResponseKeyConflict> {
+    for source_item in source.items {
+        match (source_item, target.items.last_mut()) {
+            (
+                SelectionItem::InlineFragment(source_fragment),
+                Some(SelectionItem::InlineFragment(last)),
+            ) if source_fragment.type_condition == last.type_condition
+                && fragment_condition_equal(&Option::<Condition>::from(&source_fragment), last) =>
+            {
+                merge_mutation_root(&mut last.selections, source_fragment.selections)?;
+            }
+            (SelectionItem::Field(mut source_field), _) => {
+                // the same field under the same condition runs once, at its first spot
+                match merge_target(&target.items, &SelectionItem::Field(source_field.clone()))? {
+                    Some(index) => {
+                        if let SelectionItem::Field(target_field) = &mut target.items[index] {
+                            merge_field_omit_from_response(target_field, &source_field);
+                            merge_selection_set_owned(
+                                &mut target_field.selections,
+                                std::mem::take(&mut source_field.selections),
+                                false,
+                            )?;
+                        }
+                    }
+                    None => target.items.push(SelectionItem::Field(source_field)),
+                }
+            }
+            (source_item, _) => target.items.push(source_item),
+        }
+    }
+    Ok(())
+}
+
+/// The item of `target_items` that `source_item` merges into: the same field with the same
+/// condition, or a fragment on the same type with the same condition. An error when a field
+/// there has its response key but is another field.
+fn merge_target(
+    target_items: &[SelectionItem],
+    source_item: &SelectionItem,
+) -> Result<Option<usize>, ResponseKeyConflict> {
+    for (index, target_item) in target_items.iter().enumerate() {
+        match (source_item, target_item) {
+            (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
+                if source_field.selection_identifier() == target_field.selection_identifier()
+                    && (source_field.name != target_field.name
+                        || source_field.arguments() != target_field.arguments()) =>
+            {
+                return Err(ResponseKeyConflict(
+                    source_field.selection_identifier().to_string(),
+                ));
+            }
+            (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
+                if source_field == target_field
+                    && field_condition_equal(
+                        &Option::<Condition>::from(source_field),
+                        target_field,
+                    ) =>
+            {
+                return Ok(Some(index));
+            }
+            (
+                SelectionItem::InlineFragment(source_fragment),
+                SelectionItem::InlineFragment(target_fragment),
+            ) if source_fragment.type_condition == target_fragment.type_condition
+                && fragment_condition_equal(
+                    &Option::<Condition>::from(source_fragment),
+                    target_fragment,
+                ) =>
+            {
+                return Ok(Some(index));
+            }
+            _ => {}
+        }
+    }
+    Ok(None)
+}
+
+/// Puts the items nothing in `target` took before or after its own.
+fn add_unmerged(target: &mut SelectionSet, mut items: Vec<SelectionItem>, as_first: bool) {
+    if items.is_empty() {
+        return;
+    }
+    if as_first {
+        items.append(&mut target.items);
+        target.items = items;
+    } else {
+        target.items.extend(items);
+    }
 }
 
 #[inline]
 fn merge_field_omit_from_response(target: &mut FieldSelection, source: &FieldSelection) {
     // A skipped `__typename` is only there for an empty object.
     // If the client explicitly requested `__typename`, keep the visible field.
-    if target.name == "__typename" {
+    if target.is_typename() {
         target.omit_from_response &= source.omit_from_response;
     }
 }
@@ -634,43 +740,111 @@ pub fn find_selection_set_by_path<'a>(
     root_selection_set: &'a SelectionSet,
     path: &MergePath,
 ) -> Option<&'a SelectionSet> {
-    let mut current_selection_set = root_selection_set;
+    find_selection_set_by_segments(root_selection_set, &path.inner)
+}
 
-    for path_element in path.inner.iter() {
-        if matches!(path_element, Segment::List) {
-            continue;
-        }
-
-        current_selection_set = current_selection_set
-            .items
-            .iter()
-            .find(|item| segment_selects(path_element, item))
-            .and_then(item_selections)?;
+/// `find_selection_set_by_path` with a part of a path. A segment can match more than one item,
+/// like two `... on Mutation @include(if: $on)` kept apart so the fields between them keep their
+/// order: it goes into the first one the rest of the path is under.
+pub fn find_selection_set_by_segments<'a>(
+    selection_set: &'a SelectionSet,
+    path: &[Segment],
+) -> Option<&'a SelectionSet> {
+    let Some((segment, rest)) = path.split_first() else {
+        return Some(selection_set);
+    };
+    if matches!(segment, Segment::List) {
+        return find_selection_set_by_segments(selection_set, rest);
     }
-
-    Some(current_selection_set)
+    selection_set
+        .items
+        .iter()
+        .filter(|item| segment_selects(segment, item))
+        .filter_map(item_selections)
+        .find_map(|selections| find_selection_set_by_segments(selections, rest))
 }
 
 pub fn find_selection_set_by_path_mut<'a>(
     root_selection_set: &'a mut SelectionSet,
     path: &MergePath,
 ) -> Option<&'a mut SelectionSet> {
-    let mut current_selection_set = root_selection_set;
+    find_selection_set_by_segments_mut(root_selection_set, &path.inner)
+}
 
-    for path_element in path.inner.iter() {
-        if matches!(path_element, Segment::List) {
-            continue;
-        }
-
-        let index = current_selection_set
-            .items
-            .iter()
-            .position(|item| segment_selects(path_element, item))?;
-
-        current_selection_set = item_selections_mut(&mut current_selection_set.items[index])?;
+/// `find_selection_set_by_segments`, mutable.
+fn find_selection_set_by_segments_mut<'a>(
+    selection_set: &'a mut SelectionSet,
+    path: &[Segment],
+) -> Option<&'a mut SelectionSet> {
+    let Some((segment, rest)) = path.split_first() else {
+        return Some(selection_set);
+    };
+    if matches!(segment, Segment::List) {
+        return find_selection_set_by_segments_mut(selection_set, rest);
     }
+    selection_set
+        .items
+        .iter_mut()
+        .filter(|item| segment_selects(segment, item))
+        .filter_map(item_selections_mut)
+        .find_map(|selections| find_selection_set_by_segments_mut(selections, rest))
+}
 
-    Some(current_selection_set)
+/// Like `find_selection_set_by_path_mut`, but a type condition with several types, like
+/// `product|[Book|Movie]`, goes into the fragment of each, so it finds one selection set for each
+/// type. The fragments are different items, so they're found in one walk, in the order they're
+/// in. `false` when one of them isn't there.
+pub fn find_selection_sets_by_path_mut<'a>(
+    selection_set: &'a mut SelectionSet,
+    path: &[Segment],
+    found: &mut Vec<&'a mut SelectionSet>,
+) -> bool {
+    let Some((segment, rest)) = path.split_first() else {
+        found.push(selection_set);
+        return true;
+    };
+    match segment {
+        Segment::List => find_selection_sets_by_path_mut(selection_set, rest, found),
+        Segment::TypeCondition(type_names, condition) if type_names.len() > 1 => {
+            // the first fragment of each type, like a path with only that type would find
+            let mut taken: Vec<&str> = Vec::with_capacity(type_names.len());
+            for item in selection_set.items.iter_mut() {
+                let SelectionItem::InlineFragment(fragment) = item else {
+                    continue;
+                };
+                let Some(type_name) = type_names.get(&fragment.type_condition) else {
+                    continue;
+                };
+                if taken.contains(&type_name.as_str())
+                    || !fragment_condition_equal(condition, fragment)
+                {
+                    continue;
+                }
+                taken.push(type_name.as_str());
+                if !find_selection_sets_by_path_mut(&mut fragment.selections, rest, found) {
+                    return false;
+                }
+            }
+            taken.len() == type_names.len()
+        }
+        // the first item the rest of the path is under, see `find_selection_set_by_segments`
+        segment => {
+            let before = found.len();
+            for item in selection_set.items.iter_mut() {
+                if !segment_selects(segment, item) {
+                    continue;
+                }
+                let Some(selections) = item_selections_mut(item) else {
+                    continue;
+                };
+                if find_selection_sets_by_path_mut(selections, rest, found) {
+                    return true;
+                }
+                found.truncate(before);
+            }
+            false
+        }
+    }
 }
 
 pub fn field_condition_equal(cond: &Option<Condition>, field: &FieldSelection) -> bool {

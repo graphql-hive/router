@@ -585,7 +585,7 @@ pub(crate) fn inner_selection_set(document: &Document) -> &SelectionSet {
 /// operation, so the order of fields in a subgraph query doesn't matter.
 fn typename_first(set: &mut SelectionSet) {
     let typename = set.items.iter().position(|item| {
-        matches!(item, SelectionItem::Field(field) if field.name == "__typename" && field.alias.is_none())
+        matches!(item, SelectionItem::Field(field) if field.is_typename() && field.alias.is_none())
     });
     if let Some(index) = typename {
         set.items[..=index].rotate_right(1);
@@ -600,6 +600,31 @@ fn typename_first(set: &mut SelectionSet) {
 }
 
 impl PlanningFetchOperation {
+    /// An operation that isn't written out yet, only its `document`, not minified. An entity
+    /// fetch starts like this, as it may still get batched with others, and batching reads the
+    /// selections, so writing it out first would be thrown away.
+    pub(crate) fn draft(operation: OperationDefinition) -> Self {
+        Self {
+            document: Box::new(Document {
+                operation,
+                fragments: Vec::new(),
+            }),
+            operation: SubgraphFetchOperation {
+                document_str: Box::default(),
+                hash: 0,
+                name_write_position: 0,
+                context_template: None,
+                response_shape: None,
+                query_hash: QueryHash::default(),
+            },
+        }
+    }
+
+    /// Whether it's a `draft`, not written out yet.
+    pub(crate) fn is_draft(&self) -> bool {
+        self.operation.document_str.is_empty()
+    }
+
     pub fn from_anonymous_operation(mut document: Document) -> Self {
         typename_first(&mut document.operation.selection_set);
         for fragment in &mut document.fragments {

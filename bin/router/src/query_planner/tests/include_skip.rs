@@ -26,16 +26,11 @@ fn include_basic_test() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
-          query ($bool:Boolean) {
+          {
             product {
               __typename
               price
               id
-              ... on Product @include(if: $bool) {
-                __typename
-                price
-                id
-              }
             }
           }
         },
@@ -174,16 +169,11 @@ fn skip_basic_test() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
-          query ($bool:Boolean=false) {
+          {
             product {
               __typename
               price
               id
-              ... on Product @skip(if: $bool) {
-                __typename
-                price
-                id
-              }
             }
           }
         },
@@ -248,16 +238,11 @@ fn skip_and_include_field_condition_test() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
-          query ($include:Boolean=true,$skip:Boolean=false) {
+          {
             product {
               __typename
               price
               id
-              ... on Product @skip(if: $skip) @include(if: $include) {
-                __typename
-                price
-                id
-              }
             }
           }
         },
@@ -550,12 +535,12 @@ fn include_union_fragment_at_root_fetch_test() -> Result<(), Box<dyn Error>> {
         query ($bool:Boolean) {
           review {
             __typename
-            ... on UserReview {
+            ... on AnonymousReview {
               product @include(if: $bool) {
                 ...a
               }
             }
-            ... on AnonymousReview {
+            ... on UserReview {
               product @include(if: $bool) {
                 ...a
               }
@@ -759,16 +744,11 @@ fn qp_include_field_level() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
-          query ($bool:Boolean) {
+          {
             product {
               __typename
               price
               id
-              ... on Product @include(if: $bool) {
-                __typename
-                price
-                id
-              }
             }
           }
         },
@@ -783,10 +763,10 @@ fn qp_include_field_level() -> Result<(), Box<dyn Error>> {
             } =>
             ($bool:Boolean) {
               ... on Product {
+                isCheap
                 ... on Product @include(if: $bool) {
                   name
                 }
-                isCheap
               }
             }
           },
@@ -822,16 +802,11 @@ fn qp_include_field_level_unconditional_before_conditional() -> Result<(), Box<d
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
-          query ($bool:Boolean) {
+          {
             product {
               __typename
               price
               id
-              ... on Product @include(if: $bool) {
-                __typename
-                price
-                id
-              }
             }
           }
         },
@@ -846,10 +821,10 @@ fn qp_include_field_level_unconditional_before_conditional() -> Result<(), Box<d
             } =>
             ($bool:Boolean) {
               ... on Product {
-                isCheap
                 ... on Product @include(if: $bool) {
                   name
                 }
+                isCheap
               }
             }
           },
@@ -886,16 +861,11 @@ fn qp_include_field_level_all_merged_fields_conditional() -> Result<(), Box<dyn 
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
-          query ($bool:Boolean) {
+          {
             product {
               __typename
               price
               id
-              ... on Product @include(if: $bool) {
-                __typename
-                price
-                id
-              }
             }
           }
         },
@@ -946,16 +916,11 @@ fn qp_skip_field_level() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
-          query ($bool:Boolean) {
+          {
             product {
               __typename
               price
               id
-              ... on Product @skip(if: $bool) {
-                __typename
-                price
-                id
-              }
             }
           }
         },
@@ -970,10 +935,10 @@ fn qp_skip_field_level() -> Result<(), Box<dyn Error>> {
             } =>
             ($bool:Boolean) {
               ... on Product {
+                isCheap
                 ... on Product @skip(if: $bool) {
                   name
                 }
-                isCheap
               }
             }
           },
@@ -1009,16 +974,11 @@ fn qp_skip_field_level_unconditional_before_conditional() -> Result<(), Box<dyn 
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
-          query ($bool:Boolean) {
+          {
             product {
               __typename
               price
               id
-              ... on Product @skip(if: $bool) {
-                __typename
-                price
-                id
-              }
             }
           }
         },
@@ -1033,10 +993,10 @@ fn qp_skip_field_level_unconditional_before_conditional() -> Result<(), Box<dyn 
             } =>
             ($bool:Boolean) {
               ... on Product {
-                isCheap
                 ... on Product @skip(if: $bool) {
                   name
                 }
+                isCheap
               }
             }
           },
@@ -1074,16 +1034,11 @@ fn qp_skip_field_level_all_merged_fields_conditional() -> Result<(), Box<dyn Err
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
-          query ($bool:Boolean) {
+          {
             product {
               __typename
               price
               id
-              ... on Product @skip(if: $bool) {
-                __typename
-                price
-                id
-              }
             }
           }
         },
@@ -1137,16 +1092,11 @@ fn qp_skip_and_include_field_level_all_merged_fields_conditional() -> Result<(),
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
-          query ($include:Boolean,$skip:Boolean) {
+          {
             product {
               __typename
               price
               id
-              ... on Product @skip(if: $skip) @include(if: $include) {
-                __typename
-                price
-                id
-              }
             }
           }
         },
@@ -1200,23 +1150,12 @@ fn qp_mixed_include_skip_field_level_keeps_conditions_scoped() -> Result<(), Box
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
-          query ($include:Boolean,$skip:Boolean) {
+          {
             product {
               __typename
               price
               id
-              ... on Product @skip(if: $skip) {
-                ...a
-              }
-              ... on Product @include(if: $include) {
-                ...a
-              }
             }
-          }
-          fragment a on Product {
-            __typename
-            price
-            id
           }
         },
         Flatten(path: "product") {
@@ -1230,11 +1169,11 @@ fn qp_mixed_include_skip_field_level_keeps_conditions_scoped() -> Result<(), Box
             } =>
             ($include:Boolean,$skip:Boolean) {
               ... on Product {
-                ... on Product @include(if: $include) {
-                  name
-                }
                 ... on Product @skip(if: $skip) {
                   isCheap
+                }
+                ... on Product @include(if: $include) {
+                  name
                 }
               }
             }
@@ -1417,6 +1356,21 @@ fn qp_abstract_interface_mixed_conditions_stay_scoped() -> Result<(), Box<dyn Er
           }
         },
         Parallel {
+          Flatten(path: "products.@|[Book]") {
+            Fetch(service: "books", if: $showReviews) {
+              {
+                ... on Book {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Book {
+                  title
+                }
+              }
+            },
+          },
           Flatten(path: "products.@") {
             Fetch(service: "reviews", if: $showReviews) {
               {
@@ -1435,21 +1389,6 @@ fn qp_abstract_interface_mixed_conditions_stay_scoped() -> Result<(), Box<dyn Er
                 }
                 ... on Magazine {
                   reviewsCount
-                }
-              }
-            },
-          },
-          Flatten(path: "products.@|[Book]") {
-            Fetch(service: "books", if: $showReviews) {
-              {
-                ... on Book {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Book {
-                  title
                 }
               }
             },
@@ -2883,11 +2822,8 @@ fn merged_entity_call_keeps_the_condition_above_it() -> Result<(), Box<dyn Error
                 id
               }
             } =>
-            ($skip:Boolean!) {
+            {
               ... on Product {
-                ... on Product @skip(if: $skip) {
-                  pid
-                }
                 pid
               }
             }
@@ -2931,23 +2867,13 @@ fn merged_entity_call_keeps_the_condition_above_it() -> Result<(), Box<dyn Error
                 id
               }
             } =>
-            ($include:Boolean!,$skip:Boolean!) {
+            {
               ... on Product {
                 category {
-                  ...a
-                }
-                ... on Product @skip(if: $skip) {
-                  ... on Product @include(if: $include) {
-                    category {
-                      ...a
-                    }
-                  }
+                  tag
+                  id
                 }
               }
-            }
-            fragment a on Category {
-              tag
-              id
             }
           },
         },

@@ -38,7 +38,7 @@ impl EntityKeys {
                     .items
                     .iter()
                     .filter_map(|item| match item {
-                        SelectionItem::Field(field) if field.name != "__typename" => {
+                        SelectionItem::Field(field) if !field.is_typename() => {
                             Some(field.name.clone())
                         }
                         _ => None,

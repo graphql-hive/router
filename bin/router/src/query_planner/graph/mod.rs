@@ -27,14 +27,25 @@ use crate::query_planner::{
         selection_set::{InlineFragmentSelection, SelectionSet},
         type_aware_selection::TypeAwareSelection,
     },
-    federation_spec::{CachedFederationRules, FederationRules},
-    graph::node::{SubgraphTypeSpecialization, UnionMembersData},
+    federation_spec::{
+        demand_control::{CostDirective, ListSizeDirective},
+        directives::{
+            AuthenticatedDirective, JoinFieldDirective, JoinImplementsDirective, JoinTypeDirective,
+            PolicyDirective, RequiresScopesDirective,
+        },
+        CachedFederationRules, FederationRules,
+    },
+    graph::node::{NarrowedFieldData, SubgraphTypeSpecialization, UnionMembersData},
     state::supergraph_state::{
         OperationKind, SubgraphName as ResolvedSubgraphName, SupergraphDefinition, SupergraphField,
-        SupergraphState, SupergraphStateError,
+        SupergraphObjectType, SupergraphState, SupergraphStateError, TypeNode,
     },
 };
 use error::GraphError;
+use graphql_tools::parser::query::{
+    Selection as QuerySelection, SelectionSet as QuerySelectionSet,
+    TypeCondition as QueryTypeCondition,
+};
 use petgraph::{
     dot::Dot,
     graph::{EdgeIndex, NodeIndex},
@@ -62,6 +73,9 @@ struct SubgraphNodeKey<'state> {
 struct GraphBuildContext<'state> {
     resolved_graph_ids: HashMap<&'state str, ResolvedSubgraphName>,
     subgraph_nodes: HashMap<SubgraphNodeKey<'state>, NodeIndex>,
+    /// The tails of narrowed fields, the interface's own node in that subgraph and the type the
+    /// field returns there, see `Graph::copy_narrowed_edges`.
+    narrowed: Vec<(NodeIndex, NodeIndex, &'state str)>,
 }
 
 impl<'state> GraphBuildContext<'state> {
@@ -167,11 +181,21 @@ pub struct Graph<'graph> {
     /// The edges `upsert_edge` added, by head and tail, only while building. `push_edge`
     /// never adds one like them, so they're the only ones to look through.
     upserted: HashMap<(NodeIndex, NodeIndex), Vec<EdgeIndex>>,
-    /// The edges out of a node to a field, by the field name's hash. The walker looks a field up
-    /// on every path, and a type can have hundreds of fields to go through otherwise.
-    field_edges: HashMap<(NodeIndex, u64), Vec<EdgeIndex>>,
-    /// The entity and interface object moves out of each node that has any.
-    entity_moves: HashMap<NodeIndex, Vec<EdgeIndex>>,
+    /// The field and entity moves out of every node, see `EdgeIndexes`.
+    edge_indexes: EdgeIndexes,
+    /// Whether a field takes an argument from `@fromContext`. Resolving one looks up the path for
+    /// the ancestor that sets it, so a search from one spot can't be reused at another. Set
+    /// once the edges are indexed, read through `has_context_arguments`.
+    has_context_arguments: bool,
+    /// Object types the planner can't tell apart, see `interchangeable_types`, by the group
+    /// they're in. Only types that share a group with another are here.
+    pub(crate) type_groups: HashMap<&'graph str, u32>,
+    /// What decides how each object type that could share a group is planned, field by field,
+    /// see `interchangeable_for`.
+    pub(crate) type_profiles: HashMap<&'graph str, TypeProfile<'graph>>,
+    /// What each field's `@requires` needs, by type and field: the fields, when it's only plain
+    /// ones like `"price currency"`, or `None`. Only fields with `@requires` are here.
+    pub(crate) required_fields: RequiredFields<'graph>,
 }
 
 impl<'graph> Graph<'graph> {
@@ -212,6 +236,8 @@ impl<'graph> Graph<'graph> {
         instance.build_graph(supergraph_state)?;
         instance.upserted = HashMap::new();
         instance.index_edges();
+        (instance.type_groups, instance.type_profiles) = interchangeable_types(supergraph_state);
+        instance.required_fields = required_fields(supergraph_state);
 
         for node in instance.graph.node_weights_mut() {
             if let Node::SubgraphType(subgraph_type) = node {
@@ -225,30 +251,90 @@ impl<'graph> Graph<'graph> {
         Ok(instance)
     }
 
-    /// Fills `field_edges` and `entity_moves`, keeping the order `edges_from` gives.
+    /// Whether `a` and `b` are object types the planner can't tell apart, see
+    /// `interchangeable_types`.
+    pub(crate) fn interchangeable(&self, a: &str, b: &str) -> bool {
+        match (self.type_groups.get(a), self.type_groups.get(b)) {
+            (Some(a), Some(b)) => a == b,
+            _ => false,
+        }
+    }
+
+    /// Whether the planner plans `fields` on `a` and on `b` the same way, from objects in
+    /// `subgraphs`: interchangeable types, or for these fields, types that every subgraph keys
+    /// the same way, in the same interfaces and unions where both are, with the same
+    /// `@join__field`s for each of these fields, and in each of `subgraphs`. A subgraph only one
+    /// of them is in then has none of these fields, and with one key everywhere, no path goes
+    /// through it.
+    pub(crate) fn interchangeable_for<'f>(
+        &self,
+        a: &str,
+        b: &str,
+        mut fields: impl Iterator<Item = &'f str>,
+        mut subgraphs: impl Iterator<Item = &'f str>,
+    ) -> bool {
+        if self.interchangeable(a, b) {
+            return true;
+        }
+        let (Some(a), Some(b)) = (self.type_profiles.get(a), self.type_profiles.get(b)) else {
+            return false;
+        };
+        let same_field = |field: &str| {
+            field == "__typename"
+                || matches!((a.fields.get(field), b.fields.get(field)), (Some(a), Some(b)) if a == b)
+        };
+        a.key == b.key
+            // the key gets read the same way for both, so the objects leave a subgraph the same
+            && key_field_names(a.key).all(same_field)
+            && a.subgraphs.iter().all(|(subgraph, profile)| {
+                b.subgraphs
+                    .get(subgraph)
+                    .is_none_or(|theirs| theirs == profile)
+            })
+            && subgraphs.all(|subgraph| {
+                a.subgraphs.contains_key(subgraph) && b.subgraphs.contains_key(subgraph)
+            })
+            && fields.all(same_field)
+    }
+
+    /// Fills `edge_indexes`, keeping the order `edges_from` gives.
     fn index_edges(&mut self) {
-        let mut field_edges: HashMap<(NodeIndex, u64), Vec<EdgeIndex>> = HashMap::new();
-        let mut entity_moves: HashMap<NodeIndex, Vec<EdgeIndex>> = HashMap::new();
+        let mut indexes = EdgeIndexes {
+            starts: Vec::with_capacity(self.graph.node_count() + 1),
+            edges: Vec::with_capacity(self.graph.edge_count()),
+        };
+        let mut entity_moves = Vec::new();
+        let mut has_context_arguments = false;
         for node in self.graph.node_indices() {
+            let fields_start = indexes.edges.len();
             for edge in self.edges_from(node) {
                 match edge.weight() {
-                    Edge::FieldMove(field) => field_edges
-                        .entry((node, name_hash(field.name)))
-                        .or_default()
-                        .push(edge.id()),
-                    Edge::ReentryMove(reentry) => field_edges
-                        .entry((node, name_hash(&reentry.name)))
-                        .or_default()
-                        .push(edge.id()),
+                    Edge::FieldMove(field) => {
+                        has_context_arguments |= !field.context_arguments.is_empty();
+                        indexes.edges.push((name_hash(field.name), edge.id()))
+                    }
+                    Edge::ReentryMove(reentry) => {
+                        indexes.edges.push((name_hash(&reentry.name), edge.id()))
+                    }
+                    // they have no name, see `EdgeIndexes::edges`
                     Edge::EntityMove(_) | Edge::InterfaceObjectTypeMove(_) => {
-                        entity_moves.entry(node).or_default().push(edge.id())
+                        entity_moves.push((NO_NAME, edge.id()))
                     }
                     _ => {}
                 }
             }
+            // stable, so the edges of one field keep their order
+            indexes.edges[fields_start..].sort_by_key(|(hash, _)| *hash);
+            let entities_start = indexes.edges.len();
+            indexes.edges.append(&mut entity_moves);
+            indexes
+                .starts
+                .push((fields_start as u32, entities_start as u32));
         }
-        self.field_edges = field_edges;
-        self.entity_moves = entity_moves;
+        let end = indexes.edges.len() as u32;
+        indexes.starts.push((end, end));
+        self.edge_indexes = indexes;
+        self.has_context_arguments = has_context_arguments;
     }
 
     /// The field and re-entry moves out of `node` to the field `name`, like going through
@@ -261,11 +347,13 @@ impl<'graph> Graph<'graph> {
     where
         's: 'n,
     {
-        self.field_edges
-            .get(&(node, name_hash(name)))
-            .into_iter()
-            .flatten()
-            .map(|index| self.edge_reference(*index))
+        let hash = name_hash(name);
+        let fields = self.edge_indexes.fields(node);
+        let first = fields.partition_point(|(other, _)| *other < hash);
+        fields[first..]
+            .iter()
+            .take_while(move |(other, _)| *other == hash)
+            .map(|(_, index)| self.edge_reference(*index))
             .filter(move |edge| match edge.weight() {
                 Edge::FieldMove(field) => field.name == name,
                 Edge::ReentryMove(reentry) => reentry.name == name,
@@ -298,11 +386,14 @@ impl<'graph> Graph<'graph> {
     /// The entity and interface object moves out of `node`, like going through `edges_from` for
     /// them.
     pub fn entity_moves_from(&self, node: NodeIndex) -> impl Iterator<Item = EdgeReference<'_>> {
-        self.entity_moves
-            .get(&node)
-            .into_iter()
-            .flatten()
-            .map(|index| self.edge_reference(*index))
+        self.edge_indexes
+            .entity_moves(node)
+            .map(|index| self.edge_reference(index))
+    }
+
+    /// Whether a field anywhere in the graph takes an argument from `@fromContext`.
+    pub(crate) fn has_context_arguments(&self) -> bool {
+        self.has_context_arguments
     }
 
     pub(crate) fn edge_reference(&self, index: EdgeIndex) -> EdgeReference<'_> {
@@ -352,9 +443,45 @@ impl<'graph> Graph<'graph> {
         let provides = self.build_field_edges(state, &mut build_context, &mut cached_rules)?;
         self.build_interface_implementation_edges(state, &mut build_context)?;
         self.build_entity_reference_edges(state, &mut build_context, &mut cached_rules)?;
+        self.copy_narrowed_edges(state, std::mem::take(&mut build_context.narrowed));
         self.build_provides_edges(state, provides)?;
 
         Ok(())
+    }
+
+    /// Gives each narrowed field's tail the edges of the interface's own node in that subgraph,
+    /// once they're all built: its fields, entity moves and selfie. Of its moves to the types
+    /// that implement it, only the one to the type the field returns there, or to those that
+    /// type takes in when it's an interface too.
+    fn copy_narrowed_edges(
+        &mut self,
+        state: &'graph SupergraphState,
+        narrowed: Vec<(NodeIndex, NodeIndex, &'graph str)>,
+    ) {
+        for (tail, plain, to) in narrowed {
+            let possible = state.all_possible_types(to);
+            let edges: Vec<(NodeIndex, Edge<'graph>)> = self
+                .graph
+                .edges(plain)
+                .filter(|edge| match edge.weight() {
+                    Edge::AbstractMove(name) => {
+                        name == to || possible.is_some_and(|types| types.contains(name))
+                    }
+                    _ => true,
+                })
+                .map(|edge| {
+                    let target = if edge.target() == plain {
+                        tail
+                    } else {
+                        edge.target()
+                    };
+                    (target, edge.weight().clone())
+                })
+                .collect();
+            for (target, edge) in edges {
+                self.push_edge(tail, target, edge);
+            }
+        }
     }
 
     pub fn pretty_print_node(&self, node_index: &NodeIndex) -> String {
@@ -470,11 +597,16 @@ impl<'graph> Graph<'graph> {
         build_context: &mut GraphBuildContext<'graph>,
         cached_rules: &mut CachedFederationRules<'graph>,
     ) -> Result<(), GraphError> {
-        for (def_name, definition) in state
-            .definitions
-            .iter()
-            .filter(|(_, definition)| Self::can_have_entity_moves(definition))
-        {
+        // A mutation or subscription field runs where its root type is, and only once.
+        // A @key on those root types can't be used to jump between subgraphs,
+        // it would run the field again in another subgraph through `_entities`.
+        let is_mutation_or_subscription = |name: &str| {
+            state.mutation_type.as_deref() == Some(name)
+                || state.subscription_type.as_deref() == Some(name)
+        };
+        for (def_name, definition) in state.definitions.iter().filter(|(name, definition)| {
+            Self::can_have_entity_moves(definition) && !is_mutation_or_subscription(name)
+        }) {
             let is_interface = definition.is_interface_type();
             let join_types = definition.join_types();
 
@@ -1197,13 +1329,47 @@ impl<'graph> Graph<'graph> {
                         target_type
                     );
 
-                    let tail = self.upsert_subgraph_node(
-                        build_context,
-                        state,
-                        target_type,
-                        graph_id,
-                        state.is_interface_object_in_subgraph(target_type, graph_id),
-                    )?;
+                    let is_interface_object =
+                        state.is_interface_object_in_subgraph(target_type, graph_id);
+                    // A field that returns an interface but another type in this subgraph,
+                    // `@join__field(graph: A, type: "[Book]")`, leads to a node of its own: named
+                    // after the interface, the type the operation has there, with its fields, and
+                    // without the moves to the types A's schema has no fragment for there. Its
+                    // edges are copied once the interface's are built, see `copy_narrowed_edges`.
+                    let narrowed_to = maybe_join_field
+                        .and_then(|join_field| join_field.type_in_graph.as_ref())
+                        .map(|type_in_graph| type_in_graph.inner_type())
+                        .filter(|type_in_graph| *type_in_graph != target_type);
+                    let tail = match narrowed_to {
+                        Some(to) => {
+                            let tail = self.upsert_node(Node::new_specialized_node(
+                                target_type,
+                                build_context.resolve_graph_id(state, graph_id)?.clone(),
+                                is_interface_object,
+                                SubgraphTypeSpecialization::Narrowed(NarrowedFieldData {
+                                    type_name: def_name,
+                                    field_name,
+                                    to,
+                                }),
+                            ));
+                            let plain = self.upsert_subgraph_node(
+                                build_context,
+                                state,
+                                target_type,
+                                graph_id,
+                                is_interface_object,
+                            )?;
+                            build_context.narrowed.push((tail, plain, to));
+                            tail
+                        }
+                        None => self.upsert_subgraph_node(
+                            build_context,
+                            state,
+                            target_type,
+                            graph_id,
+                            is_interface_object,
+                        )?,
+                    };
 
                     let edge = self.push_edge(
                         head,
@@ -1621,9 +1787,551 @@ impl Display for Graph<'_> {
     }
 }
 
+/// The field moves out of each node, sorted by the field name's hash, then its entity moves, all
+/// in one list. The walker looks a field up on every path, and a type can have hundreds of fields
+/// to go through otherwise. One list instead of a map of lists keeps building the graph cheap.
+#[derive(Debug, Default)]
+struct EdgeIndexes {
+    /// Per node, where its field moves and where its entity moves start in `edges`, and one more
+    /// entry for the end.
+    starts: Vec<(u32, u32)>,
+    /// The field name's hash and the edge. Entity moves have no name, theirs is `NO_NAME`, and
+    /// only `fields` looks at the hash.
+    edges: Vec<(u64, EdgeIndex)>,
+}
+
+const NO_NAME: u64 = 0;
+
+impl EdgeIndexes {
+    fn fields(&self, node: NodeIndex) -> &[(u64, EdgeIndex)] {
+        match self.starts.get(node.index()) {
+            Some(&(fields, entities)) => &self.edges[fields as usize..entities as usize],
+            None => &[],
+        }
+    }
+
+    fn entity_moves(&self, node: NodeIndex) -> impl Iterator<Item = EdgeIndex> + '_ {
+        let moves = match (
+            self.starts.get(node.index()),
+            self.starts.get(node.index() + 1),
+        ) {
+            (Some(&(_, entities)), Some(&(next, _))) => {
+                &self.edges[entities as usize..next as usize]
+            }
+            _ => &[],
+        };
+        moves.iter().map(|(_, index)| *index)
+    }
+}
+
 fn name_hash(name: &str) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = rustc_hash::FxHasher::default();
     name.hash(&mut hasher);
     hasher.finish()
+}
+
+/// Object types every subgraph treats the same way, in groups. The same keys and the same
+/// subgraphs, the same interfaces and unions in each, the same fields with the same
+/// `@join__field` in each: everything the graph is built from but the name. A type that names
+/// itself, like `next: Movie`, has nothing in common with another one. The planner plans the same
+/// selections on two of them once, see the walker.
+fn interchangeable_types(
+    state: &SupergraphState,
+) -> (HashMap<&str, u32>, HashMap<&str, TypeProfile<'_>>) {
+    // a type named in a field set, like `@provides(fields: "... on Book { title }")`, gets
+    // something the others don't
+    let Some(named_in_field_sets) = types_named_in_field_sets(state) else {
+        return Default::default();
+    };
+    let mut unions: HashMap<&str, Vec<(&str, &str)>> = HashMap::new();
+    for (name, definition) in state.definitions.iter() {
+        if let SupergraphDefinition::Union(union_type) = definition {
+            for member in &union_type.union_members {
+                unions
+                    .entry(member.member.as_str())
+                    .or_default()
+                    .push((name.as_str(), member.graph.as_str()));
+            }
+        }
+    }
+    for memberships in unions.values_mut() {
+        memberships.sort_unstable();
+    }
+    let mut profiles = HashMap::new();
+    // the planner compares these a lot, so each distinct one gets an id
+    let mut field_ids = FieldProfileIds::default();
+    let mut membership_ids: HashMap<Vec<&str>, u32> = HashMap::new();
+    // equal signatures hash the same, so only the ones in a bucket get compared
+    let mut buckets: HashMap<u64, Vec<(TypeSignature, Vec<&str>)>> = HashMap::new();
+    for (name, definition) in state.definitions.iter() {
+        let SupergraphDefinition::Object(object) = definition else {
+            continue;
+        };
+        // an interface object in some subgraph turns into these types with its own moves, and
+        // an interface with a key is called as the interface, with a type rewritten per type
+        let behind_interface_object = object.join_implements.iter().any(|join| {
+            matches!(
+                state.definitions.get(&join.interface),
+                Some(SupergraphDefinition::Interface(interface))
+                    if interface.join_type.iter().any(|join| join.is_interface_object || join.key.is_some())
+            )
+        });
+        if object.root_type.is_some()
+            || behind_interface_object
+            || named_in_field_sets.contains(name.as_str())
+        {
+            continue;
+        }
+        let unions = unions.get(name.as_str()).map_or(&[][..], Vec::as_slice);
+        let signature = TypeSignature::of(object, unions);
+
+        if let Some(profile) = type_profile(
+            state,
+            name,
+            object,
+            unions,
+            &signature,
+            &mut field_ids,
+            &mut membership_ids,
+        ) {
+            profiles.insert(name.as_str(), profile);
+        }
+
+        // a type that names itself can't be swapped for another
+        if signature.fields.iter().any(|field| field.names_type(name)) {
+            continue;
+        }
+        let bucket = buckets.entry(signature.bucket()).or_default();
+        match bucket.iter_mut().find(|(other, _)| *other == signature) {
+            Some((_, names)) => names.push(name.as_str()),
+            None => bucket.push((signature, vec![name.as_str()])),
+        }
+    }
+    let mut signatures: Vec<Vec<&str>> = buckets
+        .into_values()
+        .flatten()
+        .map(|(_, names)| names)
+        .filter(|names| names.len() > 1)
+        .collect();
+    signatures.sort();
+    let mut groups = HashMap::new();
+    for (group, names) in signatures.into_iter().enumerate() {
+        for name in names {
+            groups.insert(name, group as u32);
+        }
+    }
+    (groups, profiles)
+}
+
+/// What `interchangeable_for` compares of `object`. `None` when it has no single key made of
+/// plain fields.
+fn type_profile<'a>(
+    state: &SupergraphState,
+    name: &str,
+    object: &'a SupergraphObjectType,
+    unions: &[(&'a str, &'a str)],
+    signature: &TypeSignature<'a>,
+    field_ids: &mut FieldProfileIds<'a>,
+    membership_ids: &mut HashMap<Vec<&'a str>, u32>,
+) -> Option<TypeProfile<'a>> {
+    // A path between two subgraphs takes the key, so it's the same for both types only when the
+    // key is: the same plain fields everywhere, which `interchangeable_for` compares like any
+    // other field. A key like `details { code }` reads fields of another type, and those can
+    // come from other places per type, through an `@override` or a `@provides` on one of them,
+    // so the planner would send one type's objects the way the other's go.
+    let mut keys = object.join_type.iter().map(|join| join.key.as_deref());
+    let key = keys.next().flatten()?;
+    // A plain key is field names and nothing else, no `{`, `(`, `:` or `@`. Its names are
+    // then the key's text split up, nothing to parse or keep, see `key_field_names`.
+    if !keys.all(|other| other == Some(key))
+        || !key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || key_separator(byte))
+        || key_field_names(key).next().is_none()
+        || !key_field_names(key).all(|name| object.fields.contains_key(name))
+    {
+        return None;
+    }
+    let subgraphs = object
+        .join_type
+        .iter()
+        .map(|join| {
+            let mut memberships: Vec<&str> = object
+                .join_implements
+                .iter()
+                .filter(|implements| implements.graph_id == join.graph_id)
+                .map(|implements| implements.interface.as_str())
+                .chain(
+                    unions
+                        .iter()
+                        .filter(|(_, graph)| *graph == join.graph_id)
+                        .map(|(union, _)| *union),
+                )
+                .collect();
+            memberships.sort_unstable();
+            let next = membership_ids.len() as u32;
+            (
+                join.graph_id.as_str(),
+                SubgraphProfile {
+                    memberships: *membership_ids.entry(memberships).or_insert(next),
+                    // with `resolvable: false` the objects can come from there, but no entity
+                    // call goes in
+                    resolvable: join.resolvable,
+                },
+            )
+        })
+        .collect();
+    let fields = signature
+        .fields
+        .iter()
+        .filter(|field| !field.names_type(name))
+        .map(|field| {
+            let mut field = field.clone();
+            // in every subgraph that has the type, so in the one the objects are in, and a path
+            // there beats any other: which subgraphs those are doesn't matter. Only for a leaf:
+            // under a field with selections a path through another subgraph can win for a field
+            // below, and that subgraph has to have both types.
+            if field.join_fields.is_empty()
+                && Graph::is_leaf_output_type(state, field.field_type.inner_type())
+            {
+                field.resolvable_in = None;
+            }
+            (field.name, field_ids.id(field))
+        })
+        .collect();
+    Some(TypeProfile {
+        key,
+        subgraphs,
+        fields,
+    })
+}
+
+fn key_separator(byte: u8) -> bool {
+    byte.is_ascii_whitespace() || byte == b','
+}
+
+/// The field names of a plain key like `id sku`, see `type_profile`.
+fn key_field_names(key: &str) -> impl Iterator<Item = &str> {
+    key.split(|c: char| c.is_ascii() && key_separator(c as u8))
+        .filter(|name| !name.is_empty())
+}
+
+/// See `Graph::required_fields`.
+pub(crate) type RequiredFields<'graph> =
+    HashMap<&'graph str, HashMap<&'graph str, Option<Vec<String>>>>;
+
+fn required_fields(state: &SupergraphState) -> RequiredFields<'_> {
+    let mut required = RequiredFields::new();
+    // the same `@requires` on many types gets parsed once
+    let mut parsed: HashMap<&str, Option<Vec<String>>> = HashMap::new();
+    for (type_name, definition) in state.definitions.iter() {
+        for (field_name, field) in definition.fields() {
+            let mut all_requires = field
+                .join_field
+                .iter()
+                .filter_map(|join| join.requires.as_deref())
+                .peekable();
+            if all_requires.peek().is_none() {
+                continue;
+            }
+            let mut fields = Some(Vec::new());
+            for requires in all_requires {
+                let plain = parsed
+                    .entry(requires)
+                    .or_insert_with(|| plain_field_names(requires));
+                fields = match (fields, plain) {
+                    (Some(mut fields), Some(plain)) => {
+                        for name in plain.iter() {
+                            if !fields.contains(name) {
+                                fields.push(name.clone());
+                            }
+                        }
+                        Some(fields)
+                    }
+                    _ => None,
+                };
+            }
+            required
+                .entry(type_name.as_str())
+                .or_default()
+                .insert(field_name.as_str(), fields);
+        }
+    }
+    required
+}
+
+/// The field names in `fields`, when it's only fields without arguments or selections, like
+/// `"price currency"`.
+fn plain_field_names(fields: &str) -> Option<Vec<String>> {
+    FederationRules::parse_field_set(fields)?
+        .items
+        .into_iter()
+        .map(|selection| match selection {
+            QuerySelection::Field(field)
+                if field.alias.is_none()
+                    && field.arguments.is_empty()
+                    && field.directives.is_empty()
+                    && field.selection_set.items.is_empty() =>
+            {
+                Some(field.name)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The types the `@key`, `@provides`, `@requires` and `@fromContext` field sets name, in a
+/// `... on T`. `None` when one doesn't parse, as then there's no telling.
+fn types_named_in_field_sets(state: &SupergraphState) -> Option<HashSet<&str>> {
+    // most are the same few, like `"id"`, so each gets parsed once
+    let mut field_sets = HashSet::new();
+    for definition in state.definitions.values() {
+        let join_types = match definition {
+            SupergraphDefinition::Object(object) => object.join_type.as_slice(),
+            SupergraphDefinition::Interface(interface) => interface.join_type.as_slice(),
+            _ => &[],
+        };
+        field_sets.extend(join_types.iter().filter_map(|join| join.key.as_deref()));
+        for field in definition.fields().values() {
+            for join in &field.join_field {
+                field_sets.extend(
+                    [&join.provides, &join.requires]
+                        .into_iter()
+                        .flatten()
+                        .map(String::as_str),
+                );
+                for argument in &join.context_arguments {
+                    let selection = argument.selection.trim();
+                    field_sets.insert(
+                        selection
+                            .strip_prefix('{')
+                            .and_then(|inner| inner.strip_suffix('}'))
+                            .unwrap_or(selection),
+                    );
+                }
+            }
+        }
+    }
+    let mut named = HashSet::new();
+    for fields in field_sets {
+        collect_type_conditions(
+            &FederationRules::parse_field_set(fields)?,
+            &mut named,
+            state,
+        );
+    }
+    Some(named)
+}
+
+fn collect_type_conditions<'s>(
+    selection_set: &QuerySelectionSet<'_, String>,
+    named: &mut HashSet<&'s str>,
+    state: &'s SupergraphState,
+) {
+    for selection in &selection_set.items {
+        match selection {
+            QuerySelection::Field(field) => {
+                collect_type_conditions(&field.selection_set, named, state)
+            }
+            QuerySelection::InlineFragment(fragment) => {
+                if let Some(QueryTypeCondition::On(type_name)) = &fragment.type_condition {
+                    if let Some((name, _)) = state.definitions.get_key_value(type_name) {
+                        named.insert(name.as_str());
+                    }
+                }
+                collect_type_conditions(&fragment.selection_set, named, state)
+            }
+            QuerySelection::FragmentSpread(_) => {}
+        }
+    }
+}
+
+/// Everything about an object type the graph is built from, but its name, see
+/// `interchangeable_types`. Lists that come in no particular order are sorted.
+#[derive(PartialEq)]
+struct TypeSignature<'a> {
+    join_type: Vec<&'a JoinTypeDirective>,
+    join_implements: Vec<&'a JoinImplementsDirective>,
+    unions: Vec<(&'a str, &'a str)>,
+    subgraphs: Vec<&'a str>,
+    requires_scopes: &'a [RequiresScopesDirective],
+    policy: &'a [PolicyDirective],
+    authenticated: &'a [AuthenticatedDirective],
+    cost: Option<&'a CostDirective>,
+    /// By name.
+    fields: Vec<FieldProfile<'a>>,
+}
+
+impl<'a> TypeSignature<'a> {
+    fn of(object: &'a SupergraphObjectType, unions: &[(&'a str, &'a str)]) -> Self {
+        let mut join_type: Vec<_> = object.join_type.iter().collect();
+        join_type.sort_by(|a, b| {
+            (
+                &a.graph_id,
+                &a.key,
+                a.extension,
+                a.resolvable,
+                a.is_interface_object,
+            )
+                .cmp(&(
+                    &b.graph_id,
+                    &b.key,
+                    b.extension,
+                    b.resolvable,
+                    b.is_interface_object,
+                ))
+        });
+        let mut join_implements: Vec<_> = object.join_implements.iter().collect();
+        join_implements
+            .sort_by(|a, b| (&a.graph_id, &a.interface).cmp(&(&b.graph_id, &b.interface)));
+        let mut subgraphs: Vec<_> = object
+            .used_in_subgraphs
+            .iter()
+            .map(String::as_str)
+            .collect();
+        subgraphs.sort_unstable();
+        let mut fields: Vec<_> = object.fields.values().map(FieldProfile::of).collect();
+        fields.sort_by(|a, b| a.name.cmp(b.name));
+        TypeSignature {
+            join_type,
+            join_implements,
+            unions: unions.to_vec(),
+            subgraphs,
+            requires_scopes: &object.requires_scopes,
+            policy: &object.policy,
+            authenticated: &object.authenticated,
+            cost: object.cost.as_ref(),
+            fields,
+        }
+    }
+
+    /// A hash of the parts that hash. Equal signatures have equal ones.
+    fn bucket(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = rustc_hash::FxHasher::default();
+        for join in &self.join_type {
+            (&join.graph_id, &join.key).hash(&mut hasher);
+        }
+        self.subgraphs.hash(&mut hasher);
+        for field in &self.fields {
+            field.bucket().hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+}
+
+/// Everything about a field the graph is built from, see `interchangeable_types`.
+#[derive(Clone, PartialEq)]
+struct FieldProfile<'a> {
+    name: &'a str,
+    field_type: &'a TypeNode,
+    inaccessible: bool,
+    /// By subgraph. Two for one subgraph keep the schema's order, which can only make two
+    /// fields look different.
+    join_fields: Vec<&'a JoinFieldDirective>,
+    /// By name.
+    arguments: Vec<(&'a str, &'a TypeNode)>,
+    requires_scopes: &'a [RequiresScopesDirective],
+    policy: &'a [PolicyDirective],
+    authenticated: &'a [AuthenticatedDirective],
+    cost: Option<&'a CostDirective>,
+    list_size: Option<&'a ListSizeDirective>,
+    /// `None` when it doesn't matter, see `interchangeable_types`.
+    resolvable_in: Option<&'a [u16]>,
+}
+
+impl<'a> FieldProfile<'a> {
+    fn of(field: &'a SupergraphField) -> Self {
+        let mut join_fields: Vec<_> = field.join_field.iter().collect();
+        join_fields.sort_by(|a, b| a.graph_id.cmp(&b.graph_id));
+        let mut arguments: Vec<_> = field
+            .argument_types
+            .iter()
+            .map(|(name, type_node)| (name.as_str(), type_node))
+            .collect();
+        arguments.sort_by(|a, b| a.0.cmp(b.0));
+        FieldProfile {
+            name: &field.name,
+            field_type: &field.field_type,
+            inaccessible: field.inaccessible,
+            join_fields,
+            arguments,
+            requires_scopes: &field.requires_scopes,
+            policy: &field.policy,
+            authenticated: &field.authenticated,
+            cost: field.cost.as_ref(),
+            list_size: field.list_size.as_ref(),
+            resolvable_in: Some(&field.resolvable_in),
+        }
+    }
+
+    /// A hash of the parts that hash. Equal profiles have equal ones.
+    fn bucket(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = rustc_hash::FxHasher::default();
+        (self.name, self.field_type, self.resolvable_in).hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Whether it returns `type_name`, or takes or reads it somewhere.
+    fn names_type(&self, type_name: &str) -> bool {
+        self.field_type.inner_type() == type_name
+            || self
+                .arguments
+                .iter()
+                .any(|(_, argument)| argument.inner_type() == type_name)
+            || self.join_fields.iter().any(|join| {
+                join.type_in_graph
+                    .as_ref()
+                    .is_some_and(|type_node| type_node.inner_type() == type_name)
+                    || join
+                        .context_arguments
+                        .iter()
+                        .any(|argument| argument.type_in_graph.inner_type() == type_name)
+            })
+    }
+}
+
+/// What decides how the planner plans the fields of an object type, field by field, for types
+/// that aren't the same everywhere, see `Graph::interchangeable_for`.
+#[derive(Debug)]
+pub(crate) struct TypeProfile<'graph> {
+    /// Its key, the same plain list of fields in every subgraph that has it, like `id` or
+    /// `id sku`. A path between two subgraphs then never needs a third one.
+    key: &'graph str,
+    /// The subgraphs that have it, with what decides how the planner goes in and out there.
+    subgraphs: HashMap<&'graph str, SubgraphProfile>,
+    /// Each field that doesn't name the type, with the id of its `FieldProfile`.
+    fields: HashMap<&'graph str, u32>,
+}
+
+/// An object type in one subgraph, see `TypeProfile::subgraphs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SubgraphProfile {
+    /// The interfaces and unions it's in there, the same id for the same ones.
+    memberships: u32,
+    /// Whether an entity call can go in, so not `resolvable: false`.
+    resolvable: bool,
+}
+
+/// Gives each distinct `FieldProfile` an id, see `TypeProfile::fields`.
+#[derive(Default)]
+struct FieldProfileIds<'a> {
+    /// Equal profiles hash the same, so only the ones in a bucket get compared.
+    buckets: HashMap<u64, Vec<(FieldProfile<'a>, u32)>>,
+    count: u32,
+}
+
+impl<'a> FieldProfileIds<'a> {
+    fn id(&mut self, profile: FieldProfile<'a>) -> u32 {
+        let bucket = self.buckets.entry(profile.bucket()).or_default();
+        if let Some((_, id)) = bucket.iter().find(|(other, _)| *other == profile) {
+            return *id;
+        }
+        let id = self.count;
+        self.count += 1;
+        bucket.push((profile, id));
+        id
+    }
 }

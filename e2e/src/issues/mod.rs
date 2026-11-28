@@ -4259,6 +4259,294 @@ mod issues_e2e_tests {
     }
 
     #[ntex::test]
+    /// A mutation field selected twice under one response key runs once, like GraphQL collects
+    /// it into one field. Here one selection is behind `@include` and needs an entity fetch,
+    /// the other isn't, and with both on `a` still gets one request.
+    async fn mutation_selected_twice_under_one_key_runs_once() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+        use std::sync::{Arc, Mutex};
+
+        let mocks = mock_subgraphs(json!({
+            "a": {
+                "mutation": {
+                    "addProduct": { "__typename": "Product", "id": "1", "price": 599.99 }
+                }
+            },
+            "b": {
+                "entities": [
+                    { "__typename": "Product", "id": "1", "price": 599.99, "isExpensive": true }
+                ]
+            }
+        }));
+        let answered = Arc::new(Mutex::new(Vec::new()));
+        let answered_by_mocks = answered.clone();
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(move |request| {
+                answered_by_mocks.lock().unwrap().push(request.path.clone());
+                mocks(request)
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.mutation-order.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let response = router
+            .send_graphql_request(
+                r#"mutation ($run: Boolean!, $withPrice: Boolean!) {
+                  ... on Mutation @include(if: $run) {
+                    create: addProduct(input: { name: "new", price: 599.99 }) @include(if: $withPrice) { isExpensive }
+                    create: addProduct(input: { name: "new", price: 599.99 }) { id }
+                  }
+                }"#,
+                Some(sonic_rs::json!({ "run": true, "withPrice": true })),
+                None,
+            )
+            .await;
+
+        insta::assert_snapshot!(response.string_body().await, @r#"{"data":{"create":{"isExpensive":true,"id":"1"}}}"#);
+        assert_eq!(*answered.lock().unwrap(), vec!["/a", "/b"]);
+    }
+
+    #[ntex::test]
+    /// GraphQL drops a skipped selection before it collects the fields, so a mutation field
+    /// selected twice runs at its first selection that's on. With `$b`, `create` runs before
+    /// `count`, without it after. Once either way.
+    async fn mutation_selected_twice_runs_at_its_first_selection_that_is_on() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+        use std::sync::{Arc, Mutex};
+
+        let mocks = mock_subgraphs(json!({
+            "a": {
+                "mutation": {
+                    "addProduct": { "__typename": "Product", "id": "1", "price": 599.99 }
+                }
+            },
+            "b": {
+                "entities": [
+                    { "__typename": "Product", "id": "1", "price": 599.99, "isExpensive": true }
+                ]
+            },
+            "c": {
+                "mutation": { "add": 1 }
+            }
+        }));
+        let answered = Arc::new(Mutex::new(Vec::new()));
+        let answered_by_mocks = answered.clone();
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(move |request| {
+                answered_by_mocks.lock().unwrap().push(request.path.clone());
+                mocks(request)
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.mutation-order.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"mutation ($b: Boolean!) {
+          create: addProduct(input: { name: "new", price: 599.99 }) @include(if: $b) { isExpensive }
+          count: add(num: 1)
+          create: addProduct(input: { name: "new", price: 599.99 }) { id }
+        }"#;
+
+        let response = router
+            .send_graphql_request(query, Some(sonic_rs::json!({ "b": true })), None)
+            .await;
+        insta::assert_snapshot!(response.string_body().await, @r#"{"data":{"create":{"isExpensive":true,"id":"1"},"count":1}}"#);
+        assert_eq!(
+            std::mem::take(&mut *answered.lock().unwrap()),
+            vec!["/a", "/b", "/c"]
+        );
+
+        let response = router
+            .send_graphql_request(query, Some(sonic_rs::json!({ "b": false })), None)
+            .await;
+        insta::assert_snapshot!(response.string_body().await, @r#"{"data":{"create":{"id":"1"},"count":1}}"#);
+        assert_eq!(*answered.lock().unwrap(), vec!["/c", "/a"]);
+    }
+
+    #[ntex::test]
+    /// The selections of `create` are in two root fragments with the same condition, `count`
+    /// between them. They can't be merged into the first fragment, or the second `create` would
+    /// run before `count` when the first one is off.
+    async fn mutation_fragments_with_one_condition_keep_their_order() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+        use std::sync::{Arc, Mutex};
+
+        let mocks = mock_subgraphs(json!({
+            "a": {
+                "mutation": {
+                    "addProduct": { "__typename": "Product", "id": "1", "price": 599.99 }
+                }
+            },
+            "b": {
+                "entities": [
+                    { "__typename": "Product", "id": "1", "price": 599.99, "isExpensive": true }
+                ]
+            },
+            "c": {
+                "mutation": { "add": 1 }
+            }
+        }));
+        let answered = Arc::new(Mutex::new(Vec::new()));
+        let answered_by_mocks = answered.clone();
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(move |request| {
+                answered_by_mocks.lock().unwrap().push(request.path.clone());
+                mocks(request)
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.mutation-order.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"mutation ($outer: Boolean!, $b: Boolean!) {
+          ... on Mutation @include(if: $outer) {
+            create: addProduct(input: { name: "new", price: 599.99 }) @include(if: $b) { isExpensive }
+          }
+          count: add(num: 1)
+          ... on Mutation @include(if: $outer) {
+            create: addProduct(input: { name: "new", price: 599.99 }) { id }
+          }
+        }"#;
+
+        let response = router
+            .send_graphql_request(
+                query,
+                Some(sonic_rs::json!({ "outer": true, "b": true })),
+                None,
+            )
+            .await;
+        insta::assert_snapshot!(response.string_body().await, @r#"{"data":{"create":{"isExpensive":true,"id":"1"},"count":1}}"#);
+        assert_eq!(
+            std::mem::take(&mut *answered.lock().unwrap()),
+            vec!["/a", "/b", "/c"]
+        );
+
+        let response = router
+            .send_graphql_request(
+                query,
+                Some(sonic_rs::json!({ "outer": true, "b": false })),
+                None,
+            )
+            .await;
+        insta::assert_snapshot!(response.string_body().await, @r#"{"data":{"create":{"id":"1"},"count":1}}"#);
+        assert_eq!(
+            std::mem::take(&mut *answered.lock().unwrap()),
+            vec!["/c", "/a"]
+        );
+
+        // the same inside another conditional fragment, which is still the root
+        let nested = r#"mutation ($wrap: Boolean!, $outer: Boolean!, $b: Boolean!) {
+          ... on Mutation @include(if: $wrap) {
+            ... on Mutation @include(if: $outer) {
+              create: addProduct(input: { name: "new", price: 599.99 }) @include(if: $b) { isExpensive }
+            }
+            count: add(num: 1)
+            ... on Mutation @include(if: $outer) {
+              create: addProduct(input: { name: "new", price: 599.99 }) { id }
+            }
+          }
+        }"#;
+        for (b, expected) in [(true, vec!["/a", "/b", "/c"]), (false, vec!["/c", "/a"])] {
+            let response = router
+                .send_graphql_request(
+                    nested,
+                    Some(sonic_rs::json!({ "wrap": true, "outer": true, "b": b })),
+                    None,
+                )
+                .await;
+            assert!(response.string_body().await.contains(r#""count":1"#));
+            assert_eq!(
+                std::mem::take(&mut *answered.lock().unwrap()),
+                expected,
+                "b: {b}"
+            );
+        }
+    }
+
+    #[ntex::test]
+    /// A mutation whose only selection `@include(if: $b) @skip(if: $b)` never lets run has
+    /// nothing to do, like one whose every field is skipped.
+    async fn mutation_selection_that_never_runs_sends_nothing() {
+        use std::sync::{Arc, Mutex};
+
+        let answered = Arc::new(Mutex::new(Vec::new()));
+        let answered_by_mocks = answered.clone();
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(move |request| {
+                answered_by_mocks.lock().unwrap().push(request.path.clone());
+                None
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.mutation-order.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let response = router
+            .send_graphql_request(
+                r#"mutation ($b: Boolean!) {
+                  create: addProduct(input: { name: "new", price: 599.99 }) @include(if: $b) @skip(if: $b) { id }
+                }"#,
+                Some(sonic_rs::json!({ "b": true })),
+                None,
+            )
+            .await;
+        insta::assert_snapshot!(response.string_body().await, @r#"{"data":{}}"#);
+        assert!(answered.lock().unwrap().is_empty());
+    }
+
+    #[ntex::test]
     /// https://github.com/graphql-hive/router/issues/1189
     ///
     /// When every field of a query or a mutation is skipped, there's nothing to plan, and the
@@ -4801,5 +5089,194 @@ mod issues_e2e_tests {
         let body: serde_json::Value =
             serde_json::from_slice(requests.last().unwrap().body.as_deref().unwrap()).unwrap();
         assert_eq!(body["query"], json!("{t{x}}"));
+    }
+
+    #[ntex::test]
+    /// A provided field the subgraph's type doesn't list, selected twice on one type: both
+    /// selections are one field in the subgraph's response, so with `$show` the client gets both
+    /// children in one object. Next to `Book.details` the two `Movie.details` share one alias.
+    async fn provided_field_missing_from_the_subgraph_keeps_its_selections_together() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: ../bin/router/fixture/tests/provides-missing-external-entry.supergraph.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      shelf:
+                        url: "http://{host}/shelf"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        // what shelf answers, matched by the shape of the query it gets
+        let _same_key = server
+            .mock("POST", "/shelf")
+            .match_body(mockito::Matcher::Regex(
+                r"on Movie\{details\{x\} details @include".to_string(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"media":[{"__typename":"Movie","details":{"x":"mx","y":"my"}}]}}"#,
+            )
+            .create();
+        let _shared_alias = server
+            .mock("POST", "/shelf")
+            .match_body(mockito::Matcher::Regex(
+                r"on Movie\{_internal_qp_alias_0: details\{\.\.\.a\} _internal_qp_alias_0: details @include".to_string(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"media":[
+                    {"__typename":"Book","details":{"x":"bx"}},
+                    {"__typename":"Movie","_internal_qp_alias_0":{"x":"mx","y":"my"}}
+                ]}}"#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"query ($show: Boolean!) {
+                  media { ... on Movie { details { x } details @include(if: $show) { y } } }
+                }"#,
+                Some(sonic_rs::json!({ "show": true })),
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "media": [
+              {
+                "details": {
+                  "x": "mx",
+                  "y": "my"
+                }
+              }
+            ]
+          }
+        }
+        "#);
+
+        let res = router
+            .send_graphql_request(
+                r#"query ($show: Boolean!) {
+                  media {
+                    ... on Book { details { x } }
+                    ... on Movie { details { x } details @include(if: $show) { y } }
+                  }
+                }"#,
+                Some(sonic_rs::json!({ "show": true })),
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "media": [
+              {
+                "details": {
+                  "x": "bx"
+                }
+              },
+              {
+                "details": {
+                  "x": "mx",
+                  "y": "my"
+                }
+              }
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// A provided field the subgraph's type doesn't list gets an alias next to `Book.extras`,
+    /// and `Film.x` under it gets one too, as `Print.x` has another type. The client gets both
+    /// keys back.
+    async fn provided_field_missing_from_the_subgraph_and_a_field_under_it_get_aliases() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: ../bin/router/fixture/tests/provides-missing-external-entry.supergraph.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      shelf:
+                        url: "http://{host}/shelf"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        // what shelf answers, matched by the shape of the query it gets
+        let _shelf = server
+            .mock("POST", "/shelf")
+            .match_body(mockito::Matcher::Regex(
+                r"on Movie\{_internal_qp_alias_0: extras\{__typename \.\.\.on Print\{\.\.\.a\} \.\.\.on Film\{_internal_qp_alias_0: x\}".to_string(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"media":[
+                    {"__typename":"Book","extras":{"__typename":"Print","x":"bp"}},
+                    {"__typename":"Movie","_internal_qp_alias_0":{"__typename":"Film","_internal_qp_alias_0":"mf"}},
+                    {"__typename":"Movie","_internal_qp_alias_0":{"__typename":"Print","x":"mp"}}
+                ]}}"#,
+            )
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"{
+                  media {
+                    ... on Book { extras { ... on Print { x } } }
+                    ... on Movie { extras { ... on Print { x } ... on Film { x } } }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "media": [
+              {
+                "extras": {
+                  "x": "bp"
+                }
+              },
+              {
+                "extras": {
+                  "x": "mf"
+                }
+              },
+              {
+                "extras": {
+                  "x": "mp"
+                }
+              }
+            ]
+          }
+        }
+        "#);
     }
 }

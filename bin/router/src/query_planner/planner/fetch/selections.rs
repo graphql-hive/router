@@ -2,14 +2,16 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Display,
     marker::PhantomData,
+    rc::Rc,
 };
 
 use crate::query_planner::{
     ast::{
-        merge_path::{Condition, MergePath},
+        merge_path::{Condition, MergePath, Segment},
         selection_item::SelectionItem,
         selection_set::{
-            find_selection_set_by_path_mut, merge_selection_set, response_keys_conflict,
+            find_selection_set_by_path_mut, find_selection_sets_by_path_mut, merge_mutation_root,
+            merge_selection_set, merge_selection_set_owned, response_keys_conflict,
             selection_items_are_subset_of, FieldSelection, InlineFragmentSelection,
             ResponseKeyConflict, SelectionSet,
         },
@@ -31,6 +33,24 @@ pub enum FetchStepSelectionsError {
 pub struct FetchStepSelections<State> {
     selections: BTreeMap<String, SelectionSet>,
     _state: PhantomData<State>,
+}
+
+/// Where the objects of `type_name` are, when a step's selections move to `fetch_path` of
+/// another step. With one type that's `fetch_path`. With several, like `search.@|[Book|Movie]`
+/// or `search.@`, each type's fields go under its own type condition there: `search.@|[Movie]`.
+fn path_of_type(several: bool, fetch_path: &MergePath, type_name: &str) -> MergePath {
+    if !several || fetch_path.is_empty() {
+        return fetch_path.clone();
+    }
+    match fetch_path.last() {
+        Some(Segment::TypeCondition(..)) => {
+            fetch_path.with_only_type_at(fetch_path.len() - 1, type_name)
+        }
+        _ => fetch_path.push(Segment::TypeCondition(
+            Rc::new(BTreeSet::from([type_name.to_string()])),
+            None,
+        )),
+    }
 }
 
 impl Display for FetchStepSelections<SingleTypeFetchStep> {
@@ -231,45 +251,23 @@ impl FetchStepSelections<SingleTypeFetchStep> {
         }
     }
 
-    pub fn definition_name(&self) -> &str {
-        self.first_definition_name()
-            .expect("SingleTypeFetchStep should have exactly one selection")
-    }
-
-    pub fn selection_set(&self) -> &SelectionSet {
-        self.selections
-            .iter()
-            .next()
-            .expect("SingleTypeFetchStep should have exactly one selection")
-            .1
-    }
-
-    pub fn selection_set_mut(&mut self) -> &mut SelectionSet {
-        self.selections
-            .iter_mut()
-            .next()
-            .expect("SingleTypeFetchStep should have exactly one selection")
-            .1
-    }
-
+    /// Adds `selection_set` at `fetch_path` of `definition_name`, or of the only type there is.
     pub fn add_at_path(
         &mut self,
+        definition_name: Option<&str>,
         fetch_path: &MergePath,
         selection_set: SelectionSet,
     ) -> Result<(), FetchStepSelectionsError> {
-        let def_name = self.definition_name().to_string();
-
-        self.add_at_path_inner(&def_name, fetch_path, selection_set, false)
+        self.add_at_path_of(definition_name, fetch_path, selection_set, false)
     }
 
     pub fn add_selection_typename(
         &mut self,
+        definition_name: Option<&str>,
         fetch_path: &MergePath,
     ) -> Result<(), FetchStepSelectionsError> {
-        let def_name = self.definition_name().to_string();
-
-        self.add_at_path_inner(
-            &def_name,
+        self.add_at_path_of(
+            definition_name,
             fetch_path,
             SelectionSet {
                 items: vec![SelectionItem::Field(FieldSelection::new_typename())],
@@ -277,6 +275,70 @@ impl FetchStepSelections<SingleTypeFetchStep> {
             true,
         )
     }
+
+    fn add_at_path_of(
+        &mut self,
+        definition_name: Option<&str>,
+        fetch_path: &MergePath,
+        selection_set: SelectionSet,
+        as_first: bool,
+    ) -> Result<(), FetchStepSelectionsError> {
+        let current = match definition_name {
+            Some(definition_name) => self.selections.get_mut(definition_name),
+            None => self.selections.values_mut().next(),
+        }
+        .ok_or_else(|| {
+            FetchStepSelectionsError::UnexpectedMissingDefinition(
+                definition_name.unwrap_or_default().to_string(),
+            )
+        })?;
+        add_at_each_path(
+            current,
+            fetch_path,
+            selection_set,
+            as_first,
+            definition_name.unwrap_or_default(),
+        )
+    }
+}
+
+/// Merges `selection_set` into `current` at `fetch_path`, and when a type condition on it has
+/// several types, under each of them: a step that took the objects of several branches, like
+/// `product.|[Book|Movie].reviews.@`, merged into one that has them apart.
+fn add_at_each_path(
+    current: &mut SelectionSet,
+    fetch_path: &MergePath,
+    selection_set: SelectionSet,
+    as_first: bool,
+    definition_name: &str,
+) -> Result<(), FetchStepSelectionsError> {
+    let missing = || {
+        FetchStepSelectionsError::MissingPathInSelection(
+            fetch_path.to_string(),
+            definition_name.to_string(),
+        )
+    };
+    let several_types = fetch_path.inner.iter().any(
+        |segment| matches!(segment, Segment::TypeCondition(type_names, _) if type_names.len() > 1),
+    );
+    if !several_types {
+        let at_path = find_selection_set_by_path_mut(current, fetch_path).ok_or_else(missing)?;
+        merge_selection_set_owned(at_path, selection_set, as_first)?;
+        return Ok(());
+    }
+    let mut found = Vec::new();
+    if !find_selection_sets_by_path_mut(current, &fetch_path.inner, &mut found) {
+        return Err(missing());
+    }
+    // the last one takes `selection_set` itself, the others a copy
+    let last = found.pop();
+    for at_path in found {
+        merge_selection_set_owned(at_path, selection_set.clone(), as_first)?;
+    }
+    if let Some(at_path) = last {
+        merge_selection_set_owned(at_path, selection_set, as_first)?;
+    }
+    Ok(())
 }
 
 impl<State> FetchStepSelections<State> {
@@ -338,32 +400,6 @@ impl<State> FetchStepSelections<State> {
 
     pub fn selections_for_definition(&self, definition_name: &str) -> Option<&SelectionSet> {
         self.selections.get(definition_name)
-    }
-
-    fn add_at_path_inner(
-        &mut self,
-        definition_name: &str,
-        fetch_path: &MergePath,
-        selection_set: SelectionSet,
-        as_first: bool,
-    ) -> Result<(), FetchStepSelectionsError> {
-        let current = self
-            .selections_for_definition_mut(definition_name)
-            .ok_or_else(|| {
-                FetchStepSelectionsError::UnexpectedMissingDefinition(definition_name.to_string())
-            })?;
-
-        let selection_set_at_path = find_selection_set_by_path_mut(current, fetch_path)
-            .ok_or_else(|| {
-                FetchStepSelectionsError::MissingPathInSelection(
-                    fetch_path.to_string(),
-                    definition_name.to_string(),
-                )
-            })?;
-
-        merge_selection_set(selection_set_at_path, &selection_set, as_first)?;
-
-        Ok(())
     }
 }
 
@@ -467,19 +503,57 @@ impl FetchStepSelections<MultiTypeFetchStep> {
             .insert(abstract_type.to_string(), selection_set);
     }
 
-    pub fn migrate_from_another(
+    /// Moves `other`'s selections to `fetch_path` here: into `definition_name` when given, into
+    /// the only type here when there's one, else each into its own type. With several types in
+    /// `other`, each type's go under its own type condition, see `path_of_type`.
+    pub fn migrate(
         &mut self,
-        other: &Self,
+        other: Self,
         fetch_path: &MergePath,
+        definition_name: Option<&str>,
     ) -> Result<(), FetchStepSelectionsError> {
-        let maybe_merge_into = self.try_as_single().map(|str| str.to_string());
-
-        for (definition_name, selection_set) in other.iter_selections() {
-            let target_type = maybe_merge_into.as_ref().unwrap_or(definition_name);
-            self.add_at_path_inner(target_type, fetch_path, selection_set.clone(), false)?;
+        let into = definition_name
+            .or_else(|| self.try_as_single())
+            .map(str::to_string);
+        let several = other.is_fetching_multiple_types();
+        for (other_definition_name, selection_set) in other.selections {
+            let path = path_of_type(several, fetch_path, &other_definition_name);
+            let definition_name = into.as_deref().unwrap_or(&other_definition_name);
+            let current = self
+                .selections_for_definition_mut(definition_name)
+                .ok_or_else(|| {
+                    FetchStepSelectionsError::UnexpectedMissingDefinition(
+                        definition_name.to_string(),
+                    )
+                })?;
+            add_at_each_path(current, &path, selection_set, false, definition_name)?;
         }
-
         Ok(())
+    }
+
+    /// Adds `other` after ours at a mutation's root, see `merge_mutation_root`.
+    pub fn migrate_mutation_root(&mut self, other: Self) -> Result<(), FetchStepSelectionsError> {
+        for (definition_name, selection_set) in other.selections {
+            let current = self
+                .selections_for_definition_mut(&definition_name)
+                .ok_or_else(|| {
+                    FetchStepSelectionsError::UnexpectedMissingDefinition(definition_name.clone())
+                })?;
+            merge_mutation_root(current, selection_set)?;
+        }
+        Ok(())
+    }
+
+    /// Takes the selections out, leaving none.
+    pub fn take(&mut self) -> Self {
+        Self {
+            selections: std::mem::take(&mut self.selections),
+            _state: Default::default(),
+        }
+    }
+
+    pub fn remove_definition(&mut self, definition_name: &str) {
+        self.selections.remove(definition_name);
     }
 
     pub fn wrap_with_condition(&mut self, condition: Condition) {
@@ -535,10 +609,39 @@ impl FetchStepSelections<MultiTypeFetchStep> {
 }
 
 impl FetchStepSelections<SingleTypeFetchStep> {
+    /// Adds to the only type of a step that has one.
     pub fn add(&mut self, selection_set: &SelectionSet) -> Result<(), FetchStepSelectionsError> {
-        merge_selection_set(self.selection_set_mut(), selection_set, false)?;
+        debug_assert!(self.selections.len() == 1, "the step takes several types");
+        let current = self
+            .selections
+            .values_mut()
+            .next()
+            .expect("SingleTypeFetchStep should have a selection");
+        merge_selection_set(current, selection_set, false)?;
 
         Ok(())
+    }
+
+    pub fn add_to(
+        &mut self,
+        definition_name: &str,
+        selection_set: &SelectionSet,
+    ) -> Result<(), FetchStepSelectionsError> {
+        let current = self
+            .selections_for_definition_mut(definition_name)
+            .ok_or_else(|| {
+                FetchStepSelectionsError::UnexpectedMissingDefinition(definition_name.to_string())
+            })?;
+        merge_selection_set(current, selection_set, false)?;
+
+        Ok(())
+    }
+
+    /// Makes room for another type, for an entity call that takes several.
+    pub fn add_definition(&mut self, definition_name: &str) {
+        self.selections
+            .entry(definition_name.to_string())
+            .or_default();
     }
 
     pub fn new(definition_name: &str) -> Self {

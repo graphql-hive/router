@@ -3,7 +3,7 @@ use std::collections::{btree_map::Entry, BTreeMap};
 
 use petgraph::graph::EdgeIndex;
 
-use crate::query_planner::graph::Graph;
+use crate::query_planner::graph::{edge::NON_FIELD_MOVE_COST, Graph};
 
 use super::{error::WalkOperationError, path::OperationPath};
 
@@ -14,9 +14,10 @@ pub struct BestPathTracker<'graph> {
     subgraph_to_best_paths: BTreeMap<&'graph str, (Vec<OperationPath<'graph>>, u64)>,
 }
 
-/// How much more than a leaf's cheapest path a path can cost and still be a candidate: the
-/// search can take a pricier path when the plan makes its trips anyway.
-const LEAF_PATH_WINDOW: u64 = 2000;
+/// How much more than a leaf's cheapest path a path can cost and still be a candidate, two moves
+/// that aren't field moves: the search can take a pricier path when the plan makes its trips
+/// anyway.
+const LEAF_PATH_WINDOW: u64 = 2 * NON_FIELD_MOVE_COST;
 
 /// The paths to a leaf the search chooses from: the cheapest, and the best one to each other
 /// subgraph within `LEAF_PATH_WINDOW` of it.
@@ -30,39 +31,44 @@ pub fn find_leaf_paths<'graph>(paths: Vec<OperationPath<'graph>>) -> Vec<Operati
         .collect()
 }
 
-pub fn find_best_paths<'graph>(paths: Vec<OperationPath<'graph>>) -> Vec<OperationPath<'graph>> {
-    let mut best_paths = Vec::new();
-    let mut best_cost = 0;
-
-    for path in paths {
-        if best_cost == 0 {
-            best_cost = path.cost;
-            best_paths = vec![path];
-        } else if best_cost == path.cost {
-            best_paths.push(path);
-        } else if best_cost > path.cost {
-            best_cost = path.cost;
-            best_paths = vec![path];
-        }
-    }
-
-    best_paths
+/// The cheapest paths to a requirement leaf of `from`, see `OperationPath::requirement_cost`.
+pub fn find_best_requirement_paths<'graph>(
+    graph: &Graph<'_>,
+    from: &OperationPath<'graph>,
+    entered: &[Option<u16>],
+    paths: Vec<OperationPath<'graph>>,
+) -> Vec<OperationPath<'graph>> {
+    let costs: Vec<u64> = paths
+        .iter()
+        .map(|path| path.requirement_cost(graph, from, entered))
+        .collect();
+    let cheapest = costs.iter().copied().min().unwrap_or(0);
+    paths
+        .into_iter()
+        .zip(costs)
+        .filter(|(_, cost)| *cost == cheapest)
+        .map(|(path, _)| path)
+        .collect()
 }
 
 /// One path per requirement leaf. Any of a leaf's tied best paths reaches it, so keeping them
 /// all fetches the same value more than once. Picking one per leaf on its own can still send
 /// the leaves down different routes, like `whiskers` through `Animal`'s key and `tricks`
 /// through `Dog`'s. So each leaf takes the path whose edges the most leaves could use too,
-/// the first one on a tie.
-pub fn pick_shared_paths<'graph>(
+/// the first one on a tie. Only the edges after `from`, where the paths start: the ones before
+/// are how `from` got there, and counting them would make the pick depend on that.
+pub fn pick_shared_paths<'graph, 'from>(
+    from: &'from OperationPath<'graph>,
     tied_paths_per_leaf: Vec<Vec<OperationPath<'graph>>>,
-) -> impl Iterator<Item = OperationPath<'graph>> {
+) -> impl Iterator<Item = OperationPath<'graph>> + 'from {
     // Nothing to pick from when no leaf has a tie, and that's almost always.
     let mut leaves_per_edge: HashMap<EdgeIndex, usize> = HashMap::new();
     if tied_paths_per_leaf.iter().any(|paths| paths.len() > 1) {
         for paths in &tied_paths_per_leaf {
-            let edges: HashSet<EdgeIndex> =
-                paths.iter().flat_map(|path| path.get_edges()).collect();
+            let edges: HashSet<EdgeIndex> = paths
+                .iter()
+                .flat_map(|path| path.edges_after(from))
+                .collect();
             for edge in edges {
                 *leaves_per_edge.entry(edge).or_default() += 1;
             }
@@ -75,9 +81,8 @@ pub fn pick_shared_paths<'graph>(
         }
         // `rev` so that `max_by_key`, which keeps the last maximum, keeps the first.
         paths.into_iter().rev().max_by_key(|path| {
-            path.get_edges()
-                .iter()
-                .map(|edge| leaves_per_edge[edge])
+            path.edges_after(from)
+                .map(|edge| leaves_per_edge[&edge])
                 .sum::<usize>()
         })
     })

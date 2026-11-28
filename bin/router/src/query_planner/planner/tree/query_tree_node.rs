@@ -5,9 +5,7 @@ use tracing::{instrument, trace};
 use crate::query_planner::{
     ast::{arguments::ArgumentsMap, merge_path::Condition},
     graph::{error::GraphError, Graph},
-    planner::walker::path::{
-        same_attributes, ContextRequirement, OperationPath, PathSegment, SelectionAttributes,
-    },
+    planner::walker::path::{ContextRequirement, OperationPath, PathSegment, SelectionAttributes},
 };
 
 use super::query_tree::QueryTree;
@@ -65,7 +63,7 @@ impl<'a> MergeIdentity<'a> {
             && self.mutation_field_position == node.mutation_field_position
             && self.condition == node.condition.as_ref()
             && self.context_coordinate == node.context_coordinate()
-            && same_attributes(self.selection_attributes, &node.selection_attributes)
+            && *self.selection_attributes == node.selection_attributes
     }
 
     /// The node `QueryTreeNode::from_path_segment_sequences` makes of `segment`, with `position`

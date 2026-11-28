@@ -19,6 +19,8 @@ use crate::query_planner::{
 };
 
 impl FetchStepData<MultiTypeFetchStep> {
+    /// Whether `other` can go into this step, both being calls to the same subgraph at the same
+    /// spot. Whether it costs a wave is `merge_without_delaying_children`'s to check.
     pub fn can_merge_at_same_spot(&self, other: &Self) -> bool {
         if !self.can_merge_context(other) {
             return false;

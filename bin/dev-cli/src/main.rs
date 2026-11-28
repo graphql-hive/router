@@ -13,10 +13,9 @@ use hive_router::query_planner::planner::fetch::fetch_graph::build_fetch_graph_f
 use hive_router::query_planner::planner::fetch::fetch_graph::FetchGraph;
 use hive_router::query_planner::planner::fetch::state::MultiTypeFetchStep;
 use hive_router::query_planner::planner::plan_nodes::planning::QueryPlan;
-use hive_router::query_planner::planner::query_plan::build_query_plan_from_fetch_graph;
 use hive_router::query_planner::planner::tree::query_tree::QueryTree;
 use hive_router::query_planner::planner::walker::walk_operation;
-use hive_router::query_planner::planner::QueryPlannerOptions;
+use hive_router::query_planner::planner::{Planner, QueryPlannerOptions};
 use hive_router::query_planner::state::supergraph_state::SupergraphState;
 use hive_router::query_planner::utils::cancellation::CancellationToken;
 use hive_router::query_planner::utils::parsing::parse_operation;
@@ -68,6 +67,7 @@ fn main() {
                 &override_context,
                 &operation,
                 &cancellation_token,
+                None,
             )
             .unwrap();
 
@@ -85,6 +85,29 @@ fn main() {
 
                 for path in best_path {
                     println!("    {}", path.pretty_print(&graph));
+                }
+            }
+
+            // a mutation or subscription field more than one subgraph can run has an empty spot
+            // above, the planner picks one of these
+            for (root_field, choices) in &best_paths_per_leaf.entrypoint_choices {
+                println!(
+                    "Root field at index {} can start in {} subgraphs:",
+                    root_field,
+                    choices.len(),
+                );
+                for (choice, paths_per_leaf) in choices.iter().enumerate() {
+                    println!("  Choice {}:", choice);
+                    for (index, best_path) in paths_per_leaf.iter().enumerate() {
+                        println!(
+                            "    Path at index {} has total of {} best paths:",
+                            index,
+                            best_path.len(),
+                        );
+                        for path in best_path {
+                            println!("        {}", path.pretty_print(&graph));
+                        }
+                    }
                 }
             }
         }
@@ -166,38 +189,22 @@ fn process_fetch_graph(
 }
 
 fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
-    let (graph, operation, supergraph) = load_graph_operation(supergraph_path, operation_path);
-    let override_context = PlannerOverrideContext::default();
-    let cancellation_token = CancellationToken::new();
+    let supergraph_sdl =
+        std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
+    let planner = Planner::new_from_supergraph(
+        &parse_schema(&supergraph_sdl),
+        QueryPlannerOptions::default(),
+    )
+    .expect("failed to create planner");
+    let operation = get_operation(operation_path, &planner.supergraph);
 
-    let best_paths_per_leaf = walk_operation(
-        &graph,
-        supergraph,
-        &override_context,
-        &operation,
-        &cancellation_token,
-    )
-    .unwrap();
-    let query_tree =
-        find_best_combination(&graph, best_paths_per_leaf, &cancellation_token).unwrap();
-    let fetch_graph = build_fetch_graph_from_query_tree(
-        &graph,
-        supergraph,
-        &override_context,
-        query_tree,
-        &operation,
-        &QueryPlannerOptions::default(),
-        &cancellation_token,
-    )
-    .expect("failed to build fetch graph");
-
-    build_query_plan_from_fetch_graph(
-        fetch_graph,
-        supergraph,
-        &QueryPlannerOptions::default(),
-        &cancellation_token,
-    )
-    .expect("failed to build query plan")
+    planner
+        .plan_from_normalized_operation(
+            &operation,
+            PlannerOverrideContext::default(),
+            &CancellationToken::new(),
+        )
+        .expect("failed to build query plan")
 }
 
 fn process_merged_tree(
@@ -219,6 +226,7 @@ fn process_merged_tree(
         &override_context,
         &operation,
         &cancellation_token,
+        None,
     )
     .unwrap();
     let query_tree =

@@ -184,6 +184,10 @@ impl Display for OverrideLabel {
     }
 }
 
+/// What every move but a field move costs: entity moves, re-entries, abstract and interface
+/// object moves. A field move costs 1.
+pub const NON_FIELD_MOVE_COST: u64 = 1000;
+
 #[derive(Clone)]
 pub enum Edge<'graph> {
     SubgraphEntrypoint {
@@ -365,7 +369,7 @@ impl<'graph> Edge<'graph> {
     pub fn cost(&self) -> u64 {
         let move_cost = match self {
             Self::FieldMove(_) => 1,
-            _ => 1000,
+            _ => NON_FIELD_MOVE_COST,
         };
 
         let requirement_cost = match self.requirements() {

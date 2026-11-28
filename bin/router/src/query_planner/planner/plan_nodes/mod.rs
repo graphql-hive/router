@@ -1,6 +1,7 @@
 use crate::query_planner::ast::requires::RequiresSelectionSet;
 use crate::query_planner::{
     ast::{
+        document::Document,
         merge_path::Condition,
         minification::minify_operation,
         operation::{split_group, OperationDefinition, PlanningFetchOperation, VariableDefinition},
@@ -762,7 +763,7 @@ fn create_input_selection_set(
 fn create_output_operation(
     step: &FetchStepData<MultiTypeFetchStep>,
     supergraph: &SupergraphState,
-) -> PlanningFetchOperation {
+) -> OperationDefinition {
     let mut variables = vec![VariableDefinition {
         name: "representations".to_string(),
         variable_type: TypeNode::NonNull(Box::new(TypeNode::List(Box::new(TypeNode::NonNull(
@@ -778,7 +779,7 @@ fn create_output_operation(
     let mut selections = step.output.to_non_root_selection_set();
     typename::add_typename_for_projection_to_entities(&mut selections, supergraph);
 
-    let operation_def = OperationDefinition {
+    OperationDefinition {
         name: None,
         operation_kind: Some(OperationKind::Query),
         variable_definitions: Some(variables),
@@ -799,11 +800,69 @@ fn create_output_operation(
                 omit_from_response: false,
             })],
         },
-    };
+    }
+}
 
-    let document = minify_operation(operation_def, supergraph).expect("Failed to minify");
+/// Writes out the operations of the fetches that are still drafts, see
+/// `PlanningFetchOperation::draft`: the ones that didn't get batched.
+pub(crate) fn finish_drafts(
+    node: &mut PlanNode<Planning>,
+    supergraph: &SupergraphState,
+) -> Result<(), QueryPlanError> {
+    match node {
+        PlanNode::Fetch(fetch) => finish_draft(fetch, supergraph)?,
+        PlanNode::Flatten(flatten) => finish_drafts(&mut flatten.node, supergraph)?,
+        PlanNode::Sequence(SequenceNode { nodes }) | PlanNode::Parallel(ParallelNode { nodes }) => {
+            for node in nodes {
+                finish_drafts(node, supergraph)?;
+            }
+        }
+        PlanNode::Subscription(subscription) => {
+            finish_draft(&mut subscription.primary, supergraph)?
+        }
+        PlanNode::Defer(defer) => {
+            let deferred = defer.deferred.iter_mut().map(|deferred| &mut deferred.node);
+            for node in std::iter::once(&mut defer.primary.node)
+                .chain(deferred)
+                .flatten()
+            {
+                finish_drafts(node, supergraph)?;
+            }
+        }
+        PlanNode::BatchFetch(_) => {}
+    }
+    Ok(())
+}
 
-    PlanningFetchOperation::from_anonymous_operation(document)
+fn finish_draft(
+    fetch: &mut FetchNode<Planning>,
+    supergraph: &SupergraphState,
+) -> Result<(), QueryPlanError> {
+    if !fetch.operation.is_draft() {
+        return Ok(());
+    }
+    let operation = std::mem::replace(
+        &mut fetch.operation.document.operation,
+        OperationDefinition {
+            name: None,
+            operation_kind: None,
+            selection_set: SelectionSet::default(),
+            variable_definitions: None,
+        },
+    );
+    fetch.operation =
+        PlanningFetchOperation::from_anonymous_operation(minify(operation, supergraph)?);
+    Ok(())
+}
+
+/// `minify_operation`, failing as a planning error.
+fn minify(
+    operation: OperationDefinition,
+    supergraph: &SupergraphState,
+) -> Result<Document, QueryPlanError> {
+    minify_operation(operation, supergraph).map_err(|error| {
+        QueryPlanError::Internal(format!("Failed to minify an operation: {error}"))
+    })
 }
 
 impl FetchNode<Planning> {
@@ -813,11 +872,18 @@ impl FetchNode<Planning> {
         supergraph: &SupergraphState,
         options: &QueryPlannerOptions,
         depends_on: FetchIdList,
-    ) -> Self {
-        match step.is_entity_call() {
+    ) -> Result<Self, QueryPlanError> {
+        Ok(match step.is_entity_call() {
             true => {
                 let planner_requires = create_input_selection_set(&step.input);
-                let mut operation = create_output_operation(step, supergraph);
+                let operation = create_output_operation(step, supergraph);
+                // written out once batching is done, see `finish_drafts`. One with contextual
+                // arguments is never batched, and gets its groups from the written-out one.
+                let mut operation = if step.context_variable_definitions.is_empty() {
+                    PlanningFetchOperation::draft(operation)
+                } else {
+                    PlanningFetchOperation::from_anonymous_operation(minify(operation, supergraph)?)
+                };
                 let custom_scalar_paths = custom_scalar_paths_from_fetch_output(
                     &step.output,
                     supergraph,
@@ -883,8 +949,7 @@ impl FetchNode<Planning> {
                     selection_set,
                     variable_definitions: step.variable_definitions.clone(),
                 };
-                let document =
-                    minify_operation(operation_def, supergraph).expect("Failed to minify");
+                let document = minify(operation_def, supergraph)?;
 
                 FetchNode {
                     id: step.id,
@@ -914,7 +979,7 @@ impl FetchNode<Planning> {
                     entity_reuse: None,
                 }
             }
-        }
+        })
     }
 }
 
@@ -925,8 +990,8 @@ impl PlanNode<Planning> {
         supergraph: &SupergraphState,
         options: &QueryPlannerOptions,
         depends_on: FetchIdList,
-    ) -> Option<Self> {
-        let mut fetch = FetchNode::from_fetch_step(step, supergraph, options, depends_on);
+    ) -> Result<Option<Self>, QueryPlanError> {
+        let mut fetch = FetchNode::from_fetch_step(step, supergraph, options, depends_on)?;
 
         // A fetch runs when the `@include`/`@skip` around it hold and any of its fields is asked
         // for. The step has the innermost condition, its path has the ones around it, and the
@@ -940,14 +1005,16 @@ impl PlanNode<Planning> {
                     .chain(&step.gated_by)
             };
             // conditions that can't all hold, it never runs
-            let around = ConditionGroup::new(
+            let Some(around) = ConditionGroup::new(
                 path_conditions()
                     .filter_map(Condition::to_include_if)
                     .collect(),
                 path_conditions()
                     .filter_map(Condition::to_skip_if)
                     .collect(),
-            )?;
+            ) else {
+                return Ok(None);
+            };
             fetch.run_if = conditions::run_if(
                 &around,
                 step.output
@@ -956,11 +1023,11 @@ impl PlanNode<Planning> {
             );
             // no field can ever be asked for, it never runs
             if fetch.run_if.as_ref().is_some_and(Vec::is_empty) {
-                return None;
+                return Ok(None);
             }
         }
 
-        Some(if !step.response_path.is_empty() {
+        Ok(Some(if !step.response_path.is_empty() {
             PlanNode::Flatten(FlattenNode {
                 path: step.response_path.clone().into(),
                 node: Box::new(PlanNode::Fetch(Box::new(fetch))),
@@ -969,7 +1036,7 @@ impl PlanNode<Planning> {
             PlanNode::Subscription(Box::new(SubscriptionNode { primary: fetch }))
         } else {
             PlanNode::Fetch(Box::new(fetch))
-        })
+        }))
     }
 }
 

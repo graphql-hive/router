@@ -1866,12 +1866,9 @@ fn requires_reenters_with_a_key_its_source_lacks_next_to_a_conditional_field(
                 id
               }
             } =>
-            ($a:Boolean!) {
+            {
               ... on Product {
                 sku
-                ... on Product @include(if: $a) {
-                  sku
-                }
               }
             }
           },
@@ -1891,25 +1888,46 @@ fn requires_reenters_with_a_key_its_source_lacks_next_to_a_conditional_field(
             }
           },
         },
-        Flatten(path: "product") {
-          Fetch(service: "shipping") {
-            {
-              ... on Product {
-                __typename
-                id
-                sku
-                weight
-              }
-            } =>
-            ($a:Boolean!) {
-              ... on Product {
-                ... on Product @include(if: $a) {
-                  carrier
+        BatchFetch(service: "shipping") {
+          {
+            _e0 {
+              paths: [
+                "product"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  weight
+                  id
+                  sku
                 }
+              }
+            }
+            _e1(if: $a) {
+              paths: [
+                "product"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  id
+                  sku
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Product {
                 shippingEstimate
               }
             }
-          },
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Product {
+                carrier
+              }
+            }
+          }
         },
       },
     },
@@ -1968,11 +1986,10 @@ fn leaf_skips_requires_when_another_subgraph_has_it_plain() -> Result<(), Box<dy
     Ok(())
 }
 
-/// `reviews` needs `username` from `accounts` to resolve `reviewsUrl`, and the key of the seller
-/// (its `id`) comes from the `reviews` call for `Product`. `accounts` already hands `username`
-/// over next to `sellerRating`. Whichever fetch ends up giving `username`, the `reviews` call for
-/// `User` still has to run after the `reviews` call for `Product`: its key is in that response.
-/// In one request with it, the representations would go out without `id`.
+/// `reviews` needs `username` from `accounts` to resolve `reviewsUrl`. `accounts` hands `username`
+/// over next to `sellerRating`, and the seller's `id` with it, so the `reviews` call for `User`
+/// reads everything from `accounts` and can share a request with the `reviews` call for `Product`.
+/// The next test is the one where the key comes from that other `reviews` call.
 #[test]
 fn requires_waits_for_the_fetch_with_its_key() -> Result<(), Box<dyn Error>> {
     init_logger();
@@ -1996,7 +2013,7 @@ fn requires_waits_for_the_fetch_with_its_key() -> Result<(), Box<dyn Error>> {
           }
         },
         Flatten(path: "products.@") {
-          Fetch(service: "reviews") {
+          Fetch(service: "accounts") {
             {
               ... on Product {
                 __typename
@@ -2005,16 +2022,17 @@ fn requires_waits_for_the_fetch_with_its_key() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Product {
-                reviewCount
+                sellerRating
                 seller {
                   __typename
                   id
+                  username
                 }
               }
             }
           },
         },
-        BatchFetch(service: "accounts") {
+        BatchFetch(service: "reviews") {
           {
             _e0 {
               paths: [
@@ -2023,6 +2041,7 @@ fn requires_waits_for_the_fetch_with_its_key() -> Result<(), Box<dyn Error>> {
               {
                 ... on User {
                   __typename
+                  username
                   id
                 }
               }
@@ -2042,21 +2061,88 @@ fn requires_waits_for_the_fetch_with_its_key() -> Result<(), Box<dyn Error>> {
           {
             _e0: _entities(representations: $__batch_reps_0) {
               ... on User {
-                ...a
+                reviewsUrl
               }
             }
             _e1: _entities(representations: $__batch_reps_1) {
               ... on Product {
-                sellerRating
-                seller {
-                  ...a
-                }
+                reviewCount
               }
             }
           }
-          fragment a on User {
-            username
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
+
+/// Same as the one above, but `accounts` can't take entity calls for `User`, so `username` for
+/// the `@requires` comes from `users` whichever way the seller is reached. Then the seller comes
+/// from `reviews`, with its `id`, and `accounts` still covers `username`. The `reviews` call for
+/// `User` has to wait for the `reviews` call for `Product`, its key is in that response. In one
+/// request with it, the representations would go out without `id`.
+#[test]
+fn requires_waits_for_the_fetch_with_its_key_from_the_same_subgraph() -> Result<(), Box<dyn Error>>
+{
+    init_logger();
+    let document = parse_operation(
+        r#"{ products { reviewCount sellerRating seller { reviewsUrl username } } }"#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requirement-key-from-another-fetch-no-entity-call.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            products {
+              __typename
+              id
+            }
           }
+        },
+        Parallel {
+          Flatten(path: "products.@") {
+            Fetch(service: "accounts") {
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Product {
+                  sellerRating
+                  seller {
+                    username
+                  }
+                }
+              }
+            },
+          },
+          Flatten(path: "products.@") {
+            Fetch(service: "reviews") {
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Product {
+                  reviewCount
+                  seller {
+                    __typename
+                    id
+                  }
+                }
+              }
+            },
+          },
         },
         Flatten(path: "products.@.seller") {
           Fetch(service: "reviews") {
@@ -2077,5 +2163,256 @@ fn requires_waits_for_the_fetch_with_its_key() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
+    Ok(())
+}
+
+/// `score` in `d` requires `p` and `q`. `p` is in `b` and `c`, `q` only in `c`. `topB` starts in
+/// `b`, so `b` gives `p` with no trip of its own. `top.related` gets to a `Product` through `b`
+/// and back. What one of them picks for `p` mustn't change what the other picks, whichever field
+/// comes first.
+#[test]
+fn requires_provider_does_not_depend_on_an_earlier_field() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let plan = |query: &str| -> Result<serde_json::Value, Box<dyn Error>> {
+        let plan = build_query_plan_with_defaults(
+            "fixture/tests/requires-provider-after-revisit.supergraph.graphql",
+            parse_operation(query),
+        )?;
+        Ok(serde_json::to_value(&plan)?)
+    };
+
+    let alone = plan("{ topB { score } }")?;
+    let after = plan("{ top { related { score } } topB { score } }")?;
+    let before = plan("{ topB { score } top { related { score } } }")?;
+
+    assert_eq!(providers_of(&alone, &["topB"], "p"), ["b"]);
+    assert_eq!(providers_of(&after, &["topB"], "p"), ["b"]);
+    assert_eq!(providers_of(&before, &["topB"], "p"), ["b"]);
+
+    Ok(())
+}
+
+/// The services a fetch reads `field` from for the objects at `path`.
+fn providers_of(plan: &serde_json::Value, path: &[&str], field: &str) -> Vec<String> {
+    use serde_json::Value;
+
+    fn is_word(char: char) -> bool {
+        char.is_alphanumeric() || char == '_'
+    }
+    // the selection set right after the word `marker`, braces included
+    fn block_after<'a>(text: &'a str, marker: &str) -> Option<&'a str> {
+        let start = text.match_indices(marker).find_map(|(index, _)| {
+            let end = index + marker.len();
+            let before = text[..index].chars().next_back().is_some_and(is_word);
+            let after = text[end..].chars().next().is_some_and(is_word);
+            (!before && !after).then_some(end)
+        })?;
+        let open = start + text[start..].find('{')?;
+        let mut depth = 0;
+        for (index, char) in text[open..].char_indices() {
+            match char {
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                _ => continue,
+            }
+            if depth == 0 {
+                return Some(&text[open..=open + index]);
+            }
+        }
+        None
+    }
+    fn reads(selections: Option<&str>, field: &str) -> bool {
+        selections.is_some_and(|selections| {
+            selections
+                .split(|char| !is_word(char))
+                .any(|word| word == field)
+        })
+    }
+    fn keys(path: &Value) -> Vec<String> {
+        path.as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|segment| segment.get("Field").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect()
+    }
+    fn walk(node: &Value, at: &[String], want: &[String], field: &str, out: &mut Vec<String>) {
+        match node {
+            Value::Object(map) => {
+                let service = || map["serviceName"].as_str().unwrap_or_default().to_string();
+                let operation = map
+                    .get("operation")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                match map.get("kind").and_then(Value::as_str) {
+                    Some("Flatten") => walk(&map["node"], &keys(&map["path"]), want, field, out),
+                    Some("Fetch") => {
+                        let selections = if at.is_empty() {
+                            // a root fetch, the field sits under the root field
+                            let marker = want.first().map(String::as_str).unwrap_or_default();
+                            block_after(operation, marker)
+                        } else if at == want {
+                            block_after(operation, "_entities")
+                        } else {
+                            None
+                        };
+                        if reads(selections, field) {
+                            out.push(service());
+                        }
+                    }
+                    Some("BatchFetch") => {
+                        for alias in map["entityBatch"]["aliases"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                        {
+                            let at_path = alias["paths"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .any(|path| keys(path) == want);
+                            let name = alias["alias"].as_str().unwrap_or_default();
+                            let marker = format!("{name}: _entities");
+                            if at_path && reads(block_after(operation, &marker), field) {
+                                out.push(service());
+                            }
+                        }
+                    }
+                    _ => map
+                        .values()
+                        .for_each(|value| walk(value, at, want, field, out)),
+                }
+            }
+            Value::Array(items) => items
+                .iter()
+                .for_each(|item| walk(item, at, want, field, out)),
+            _ => {}
+        }
+    }
+
+    let want: Vec<String> = path.iter().map(|key| key.to_string()).collect();
+    let mut out = Vec::new();
+    walk(plan, &[], &want, field, &mut out);
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// `u4` requires `u3`, which only `a` has. Getting `u` from `b` means a trip to `a` for `u3`
+/// and another to `b` for `u4`. Getting it from `a` reads `u3` right there, a wave less.
+#[test]
+fn requires_from_subgraph_the_object_comes_from() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          t {
+            t1
+            u {
+              u4
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-from-fetched-subgraph.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "root") {
+          {
+            t {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "t") {
+          Fetch(service: "a") {
+            {
+              ... on T {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on T {
+                u {
+                  __typename
+                  id
+                  u3
+                }
+                t1
+              }
+            }
+          },
+        },
+        Flatten(path: "t.u") {
+          Fetch(service: "b") {
+            {
+              ... on U {
+                __typename
+                u3
+                id
+              }
+            } =>
+            {
+              ... on U {
+                u4
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
+
+/// `score` on the `@interfaceObject` in `scoring` requires `tag`, which `objects` and `extra`
+/// both have. `objectAccounts` gets to an `Admin` through `objects`, so reading `tag` there is
+/// no extra trip, `accounts` doesn't go through either. Both get to the same node, and what one
+/// picks mustn't go to the other, whichever field comes first. Composed with Apollo's composer:
+/// the Guild one doesn't take a field shared by two `@interfaceObject`s.
+#[test]
+fn requires_provider_follows_where_the_object_came_from() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let plan = |query: &str| -> Result<serde_json::Value, Box<dyn Error>> {
+        let plan = build_query_plan_with_defaults(
+            "fixture/tests/requires-provider-by-object-sources.supergraph.graphql",
+            parse_operation(query),
+        )?;
+        Ok(serde_json::to_value(&plan)?)
+    };
+    let accounts = "accounts { ... on Admin { score } }";
+    let object_accounts = "objectAccounts { ... on Admin { score } }";
+
+    for query in [
+        format!("{{ {accounts} }}"),
+        format!("{{ {accounts} {object_accounts} }}"),
+        format!("{{ {object_accounts} {accounts} }}"),
+    ] {
+        assert_eq!(
+            providers_of(&plan(&query)?, &["accounts"], "tag"),
+            ["extra"],
+            "{query}"
+        );
+    }
+    for query in [
+        format!("{{ {object_accounts} }}"),
+        format!("{{ {accounts} {object_accounts} }}"),
+        format!("{{ {object_accounts} {accounts} }}"),
+    ] {
+        assert_eq!(
+            providers_of(&plan(&query)?, &["objectAccounts"], "tag"),
+            ["objects"],
+            "{query}"
+        );
+    }
+
     Ok(())
 }

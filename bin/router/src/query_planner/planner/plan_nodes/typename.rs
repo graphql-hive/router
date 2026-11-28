@@ -143,7 +143,7 @@ fn is_unconditional(include_if: &Option<String>, skip_if: &Option<String>) -> bo
 /// A `__typename` that's always there, not under a condition.
 fn has_typename(set: &SelectionSet) -> bool {
     set.items.iter().any(|item| {
-        matches!(item, SelectionItem::Field(field) if field.name == "__typename"
+        matches!(item, SelectionItem::Field(field) if field.is_typename()
             && field.alias.is_none()
             && field.include_if.is_none()
             && field.skip_if.is_none())

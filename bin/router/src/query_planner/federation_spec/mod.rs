@@ -206,6 +206,20 @@ impl<'a> CachedFederationRules<'a> {
 }
 
 impl FederationRules {
+    /// A field set like `"id"` or `"... on Book { title }"`, as written. `None` when it doesn't
+    /// parse.
+    pub fn parse_field_set(fields: &str) -> Option<SelectionSet<'static, String>> {
+        let document = parse_query::<String>(&format!("{{{fields}}}"))
+            .ok()?
+            .into_static();
+        match document.definitions.into_iter().next()? {
+            Definition::Operation(OperationDefinition::SelectionSet(selection_set)) => {
+                Some(selection_set)
+            }
+            _ => None,
+        }
+    }
+
     pub fn parse_key<'a>(
         supergraph: &SupergraphState,
         subgraph_name: &'a str,

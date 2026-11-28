@@ -8,6 +8,7 @@ use petgraph::graph::{EdgeIndex, NodeIndex};
 use petgraph::visit::NodeRef;
 use tracing::{instrument, trace};
 
+use crate::query_planner::ast::arguments::ArgumentsMap;
 use crate::query_planner::ast::merge_path::Condition;
 use crate::query_planner::ast::selection_set::InlineFragmentSelection;
 use crate::query_planner::graph::edge::PlannerOverrideContext;
@@ -23,7 +24,7 @@ use crate::query_planner::{
     },
     planner::{
         tree::query_tree_node::QueryTreeNode,
-        walker::best_path::{find_best_paths, pick_shared_paths, BestPathTracker},
+        walker::best_path::{find_best_requirement_paths, pick_shared_paths, BestPathTracker},
     },
     state::supergraph_state::{SupergraphDefinition, SupergraphState},
 };
@@ -31,7 +32,9 @@ use crate::query_planner::{
 use super::{
     error::WalkOperationError,
     excluded::ExcludedFromLookup,
-    path::{ContextRequirement, OperationPath, PathSegment, SelectionAttributes, UnionContext},
+    path::{
+        ContextRequirement, OperationPath, PathSegment, PathStep, SelectionAttributes, UnionContext,
+    },
 };
 
 #[derive(Debug)]
@@ -105,10 +108,41 @@ type CheckedRequirement = Option<SatisfiedMove>;
 /// indirect paths from the same paths, so each of them would check the same moves again. Only
 /// the first step of a search with nothing excluded yet goes here, the rest depends on the search.
 #[derive(Default)]
-pub struct MoveRequirements<'graph> {
+pub struct SearchCache<'graph> {
     /// By the path's last segment, root and the edge. The segment is kept, so its address isn't
     /// reused by another path while it's a key.
     checked: RefCell<HashMap<(usize, NodeIndex, EdgeIndex), Vec<CheckedMove<'graph>>>>,
+    /// The indirect searches done so far, by the node they started from, the field and its
+    /// arguments, so aliases of a field with other arguments don't scan each other's. A field
+    /// gets searched for from the same node many times in one operation, like under every type
+    /// of a union. What a search finds doesn't depend on how the path got to that node: the
+    /// requirements are resolved from there on. Only on the type it got down to, see
+    /// `OperationPath::narrowed_to`, so that's in the key too, and on the subgraphs the object
+    /// came through since its field, see `OperationPath::object_sources`: a trip into one of
+    /// those is free. So the steps it found go on from the next path too, without searching
+    /// again.
+    searches: RefCell<SearchesByStart<'graph>>,
+}
+
+type SearchesByStart<'graph> = HashMap<
+    (
+        NodeIndex,
+        Option<&'graph str>,
+        &'graph str,
+        Option<&'graph ArgumentsMap>,
+    ),
+    Vec<IndirectSearch<'graph>>,
+>;
+
+type ObjectSources = (Vec<Option<u16>>, Vec<NodeIndex>);
+
+struct IndirectSearch<'graph> {
+    union_context: Option<UnionContext<'graph>>,
+    /// The path's `object_sources`, sorted, without repeats
+    sources: ObjectSources,
+    field: &'graph FieldSelection,
+    target_subgraph_ids: Option<Box<[u16]>>,
+    found: Rc<[Vec<PathStep>]>,
 }
 
 struct CheckedMove<'graph> {
@@ -117,7 +151,84 @@ struct CheckedMove<'graph> {
     requirement: CheckedRequirement,
 }
 
-impl<'graph> MoveRequirements<'graph> {
+impl<'graph> SearchCache<'graph> {
+    /// What a search for the field `target` from `path` found from the same node before, see
+    /// `searches`, or else `search`. Only for a search that starts with nothing excluded, which
+    /// `Walk::find_indirect_paths` checks. Not with `@fromContext` fields in the graph: they read
+    /// their value from an ancestor, so a search depends on the whole path.
+    pub(super) fn indirect_paths(
+        &self,
+        graph: &'graph Graph<'graph>,
+        path: &OperationPath<'graph>,
+        target: &NavigationTarget<'graph, '_>,
+        search: impl FnOnce() -> Result<Vec<OperationPath<'graph>>, WalkOperationError>,
+    ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
+        let &NavigationTarget::Field {
+            field,
+            target_subgraph_ids,
+            ..
+        } = target
+        else {
+            return search();
+        };
+        if graph.has_context_arguments() {
+            return search();
+        }
+        let key = (
+            path.tail(),
+            path.narrowed_to(graph),
+            field.name.as_str(),
+            field.arguments(),
+        );
+        let sources = {
+            let (mut entered, mut came_from) = path.object_sources(graph);
+            entered.sort_unstable();
+            entered.dedup();
+            came_from.sort_unstable();
+            came_from.dedup();
+            (entered, came_from)
+        };
+        let found = self.searches.borrow().get(&key).and_then(|searches| {
+            searches
+                .iter()
+                .find(|search| {
+                    // the name and arguments are in the key already
+                    search.union_context == path.union_context
+                        && search.sources == sources
+                        && search.target_subgraph_ids.as_deref() == target_subgraph_ids
+                        && same_selections(&search.field.selections, &field.selections)
+                })
+                .map(|search| Rc::clone(&search.found))
+        });
+        if let Some(found) = found {
+            return Ok(found
+                .iter()
+                .map(|steps| path.replay(graph, steps, target))
+                .collect());
+        }
+        let paths = search()?;
+        // kept only when every path found goes on from ours, so its steps can go on from the
+        // next path. Searches only ever extend the path they start from, this is a safety net
+        if let Some(found) = paths
+            .iter()
+            .map(|found| found.steps_after(path))
+            .collect::<Option<Vec<_>>>()
+        {
+            self.searches
+                .borrow_mut()
+                .entry(key)
+                .or_default()
+                .push(IndirectSearch {
+                    union_context: path.union_context.clone(),
+                    sources,
+                    field,
+                    target_subgraph_ids: target_subgraph_ids.map(Box::from),
+                    found: found.into(),
+                });
+        }
+        Ok(paths)
+    }
+
     fn get_or_check(
         &self,
         path: &OperationPath<'graph>,
@@ -153,31 +264,59 @@ impl<'graph> MoveRequirements<'graph> {
     }
 }
 
+/// Whether a search for `a` finds what one for `b` does: the same field with the same arguments
+/// and selections, which is all `RequirementCycleChecker` looks at. Not the alias or conditions.
+fn same_field(a: &FieldSelection, b: &FieldSelection) -> bool {
+    a.name == b.name
+        && a.arguments() == b.arguments()
+        && same_selections(&a.selections, &b.selections)
+}
+
+fn same_selections(a: &SelectionSet, b: &SelectionSet) -> bool {
+    a.items.len() == b.items.len()
+        && a.items.iter().zip(&b.items).all(|pair| match pair {
+            (SelectionItem::Field(a), SelectionItem::Field(b)) => same_field(a, b),
+            (SelectionItem::InlineFragment(a), SelectionItem::InlineFragment(b)) => {
+                a.type_condition == b.type_condition
+                    && same_selections(&a.selections, &b.selections)
+            }
+            (SelectionItem::FragmentSpread(a), SelectionItem::FragmentSpread(b)) => a == b,
+            _ => false,
+        })
+}
+
+/// Where a search goes. The field is the operation's, kept as long as the operation, the
+/// subgraphs it may end in are often worked out for one field only, so they can live shorter.
 #[derive(Debug)]
-pub enum NavigationTarget<'op> {
+pub enum NavigationTarget<'op, 'ids> {
     Field {
         field: &'op FieldSelection,
-        target_subgraph_ids: Option<&'op [u16]>,
+        target_subgraph_ids: Option<&'ids [u16]>,
         /// The field's alias and arguments, for every path advanced to it
         attributes: Rc<SelectionAttributes>,
     },
-    ConcreteType(&'op str, Option<Condition>),
+    /// A type condition, and the other types planned with it, see `SelectionAttributes::also`.
+    ConcreteType(&'op str, Option<Condition>, Option<Rc<SelectionAttributes>>),
 }
 
-impl<'op> NavigationTarget<'op> {
-    pub fn field(field: &'op FieldSelection, target_subgraph_ids: Option<&'op [u16]>) -> Self {
+impl<'op, 'ids> NavigationTarget<'op, 'ids> {
+    pub fn field(field: &'op FieldSelection, target_subgraph_ids: Option<&'ids [u16]>) -> Self {
         NavigationTarget::Field {
             field,
             target_subgraph_ids,
             attributes: Rc::new(SelectionAttributes {
                 alias: field.alias.clone(),
                 arguments: field.arguments.clone(),
+                also: None,
             }),
         }
     }
 
     /// The same field target, limited to these subgraphs.
-    pub fn in_subgraphs(&self, target_subgraph_ids: Option<&'op [u16]>) -> Self {
+    pub fn in_subgraphs<'other>(
+        &self,
+        target_subgraph_ids: Option<&'other [u16]>,
+    ) -> NavigationTarget<'op, 'other> {
         match self {
             NavigationTarget::Field {
                 field, attributes, ..
@@ -186,8 +325,8 @@ impl<'op> NavigationTarget<'op> {
                 target_subgraph_ids,
                 attributes: Rc::clone(attributes),
             },
-            NavigationTarget::ConcreteType(type_name, condition) => {
-                NavigationTarget::ConcreteType(type_name, condition.clone())
+            NavigationTarget::ConcreteType(type_name, condition, also) => {
+                NavigationTarget::ConcreteType(type_name, condition.clone(), also.clone())
             }
         }
     }
@@ -199,18 +338,18 @@ enum NavigationTargetKey<'op> {
     ConcreteType(&'op str),
 }
 
-impl<'op> From<&'op NavigationTarget<'op>> for NavigationTargetKey<'op> {
-    fn from(target: &'op NavigationTarget<'op>) -> Self {
+impl<'op> From<&'op NavigationTarget<'op, '_>> for NavigationTargetKey<'op> {
+    fn from(target: &'op NavigationTarget<'op, '_>) -> Self {
         match target {
             NavigationTarget::Field { field, .. } => NavigationTargetKey::Field(&field.name),
-            NavigationTarget::ConcreteType(type_name, _) => {
+            NavigationTarget::ConcreteType(type_name, _, _) => {
                 NavigationTargetKey::ConcreteType(type_name)
             }
         }
     }
 }
 
-struct PathSearch<'graph> {
+pub(super) struct PathSearch<'graph> {
     graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
@@ -221,7 +360,7 @@ struct PathSearch<'graph> {
 }
 
 impl<'graph> PathSearch<'graph> {
-    fn new(
+    pub(super) fn new(
         graph: &'graph Graph<'graph>,
         supergraph: &'graph SupergraphState,
         override_context: &'graph PlannerOverrideContext,
@@ -235,25 +374,6 @@ impl<'graph> PathSearch<'graph> {
             active_edge_checks: ActiveEdgeChecks::default(),
         }
     }
-}
-
-#[instrument(level = "trace", skip_all, fields(
-  path = path.pretty_print(graph),
-  current_cost = path.cost
-))]
-#[allow(clippy::too_many_arguments)]
-pub fn find_indirect_paths<'graph>(
-    graph: &'graph Graph<'graph>,
-    supergraph: &'graph SupergraphState,
-    override_context: &'graph PlannerOverrideContext,
-    path: &OperationPath<'graph>,
-    target: &NavigationTarget<'_>,
-    excluded: &ExcludedFromLookup<'graph>,
-    cancellation_token: &'graph CancellationToken,
-    moves: Option<&MoveRequirements<'graph>>,
-) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
-    PathSearch::new(graph, supergraph, override_context, cancellation_token)
-        .find_indirect_paths(path, target, excluded, moves)
 }
 
 impl<'graph> PathSearch<'graph> {
@@ -274,12 +394,12 @@ impl<'graph> PathSearch<'graph> {
                 Some(SupergraphDefinition::Union(union)) if union.types.iter().any(|name| name == current_type_name))
     }
 
-    fn find_indirect_paths(
+    pub(super) fn find_indirect_paths(
         &mut self,
         path: &OperationPath<'graph>,
-        target: &NavigationTarget<'_>,
+        target: &NavigationTarget<'_, '_>,
         excluded: &ExcludedFromLookup<'graph>,
-        moves: Option<&MoveRequirements<'graph>>,
+        moves: Option<&SearchCache<'graph>>,
     ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
         let graph = self.graph;
         let cancellation_token = self.cancellation_token;
@@ -302,7 +422,7 @@ impl<'graph> PathSearch<'graph> {
             RequirementCycleChecker::new(self.supergraph, tail_node.name_str());
 
         // Respect the path's current union scope when targeting a concrete type.
-        if let NavigationTarget::ConcreteType(type_name, _) = target {
+        if let NavigationTarget::ConcreteType(type_name, _, _) = target {
             if !path.can_resolve_union_member(type_name) {
                 return Ok(Vec::new());
             }
@@ -512,7 +632,7 @@ impl<'graph> PathSearch<'graph> {
         &mut self,
         path: &OperationPath<'graph>,
         edge_ref: &EdgeReference<'graph>,
-        target: &NavigationTarget<'_>,
+        target: &NavigationTarget<'_, '_>,
     ) -> Result<Option<OperationPath<'graph>>, WalkOperationError> {
         let graph = self.graph;
         trace!(
@@ -571,7 +691,7 @@ pub fn find_self_referencing_direct_path<'graph>(
         if let Some(new_path) = path_search.try_advance_direct_path(
             path,
             &edge_ref,
-            &NavigationTarget::ConcreteType(type_name, Some(condition.clone())),
+            &NavigationTarget::ConcreteType(type_name, Some(condition.clone()), None),
         )? {
             trace!("Finished finding direct path, found one",);
             return Ok(new_path);
@@ -592,7 +712,7 @@ pub fn find_direct_paths<'graph>(
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
-    target: &NavigationTarget<'_>,
+    target: &NavigationTarget<'_, '_>,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
     PathSearch::new(graph, supergraph, override_context, cancellation_token)
@@ -608,7 +728,7 @@ pub fn find_direct_path<'graph>(
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
-    target: &NavigationTarget<'_>,
+    target: &NavigationTarget<'_, '_>,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<Option<OperationPath<'graph>>, WalkOperationError> {
     PathSearch::new(graph, supergraph, override_context, cancellation_token)
@@ -621,7 +741,7 @@ fn direct_edges<'graph, 't>(
     graph: &'graph Graph<'graph>,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
-    target: &'t NavigationTarget<'_>,
+    target: &'t NavigationTarget<'_, '_>,
 ) -> Box<dyn Iterator<Item = EdgeReference<'graph>> + 't>
 where
     'graph: 't,
@@ -629,7 +749,7 @@ where
     let path_tail_index = path.tail();
 
     match target {
-        NavigationTarget::ConcreteType(type_name, _)
+        NavigationTarget::ConcreteType(type_name, _, _)
             if !path.can_resolve_union_member(type_name) =>
         {
             Box::new(std::iter::empty())
@@ -650,7 +770,7 @@ where
                 None => Box::new(edges),
             }
         }
-        NavigationTarget::ConcreteType(type_name, _condition) => Box::new(
+        NavigationTarget::ConcreteType(type_name, _, _) => Box::new(
             graph
                 .edges_from(path_tail_index)
                 .filter(move |e| match e.weight() {
@@ -666,7 +786,7 @@ impl<'graph> PathSearch<'graph> {
     fn find_direct_path(
         &mut self,
         path: &OperationPath<'graph>,
-        target: &NavigationTarget<'_>,
+        target: &NavigationTarget<'_, '_>,
     ) -> Result<Option<OperationPath<'graph>>, WalkOperationError> {
         for edge_ref in direct_edges(self.graph, self.override_context, path, target) {
             if let Some(next_path) = self.try_advance_direct_path(path, &edge_ref, target)? {
@@ -682,7 +802,7 @@ impl<'graph> PathSearch<'graph> {
     fn find_direct_paths(
         &mut self,
         path: &OperationPath<'graph>,
-        target: &NavigationTarget<'_>,
+        target: &NavigationTarget<'_, '_>,
     ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
         let mut result: Vec<OperationPath<'graph>> = vec![];
 
@@ -892,6 +1012,8 @@ impl<'graph> PathSearch<'graph> {
         let cancellation_token = self.cancellation_token;
         let mut requirements: VecDeque<MoveRequirement> = VecDeque::new();
         let mut tied_paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
+        // where `path`'s object is fetched from, for the leaves with more than one path
+        let mut entered: Option<Vec<Option<u16>>> = None;
 
         for selection in selection_set.items.iter() {
             // context selections can carry type conditions for other ancestor types,
@@ -938,7 +1060,13 @@ impl<'graph> PathSearch<'graph> {
                             }
 
                             if selection_field_requirement.is_leaf() {
-                                let best_paths = find_best_paths(next_paths);
+                                let best_paths = if next_paths.len() < 2 {
+                                    next_paths
+                                } else {
+                                    let entered =
+                                        entered.get_or_insert_with(|| path.object_sources(graph).0);
+                                    find_best_requirement_paths(graph, path, entered, next_paths)
+                                };
                                 trace!(
                                     "Found {} best paths for this leaf requirement",
                                     best_paths.len()
@@ -987,7 +1115,7 @@ impl<'graph> PathSearch<'graph> {
         }
 
         let paths_to_requirements: Vec<OperationPath<'graph>> =
-            pick_shared_paths(tied_paths_per_leaf)
+            pick_shared_paths(path, tied_paths_per_leaf)
                 .map(|best_path| path.build_requirement_continuation_path(&best_path))
                 .collect();
 
@@ -1034,7 +1162,9 @@ impl<'graph> PathSearch<'graph> {
         let indirect_target = direct_target.in_subgraphs(target_subgraph_ids.as_deref());
         for path in move_requirement.paths.iter() {
             let direct_paths = self.find_direct_paths(path, &direct_target)?;
-            // Skip looking for indirect paths if we already found direct paths to a leaf
+            // Skip looking for indirect paths if we already found direct paths to a leaf. Unlike
+            // the walker, even one that needs `@requires` itself: a requirement takes the cheapest
+            // way, it doesn't go through the plan choice that weighs waves.
             let found_direct_paths_to_leaf = !direct_paths.is_empty() && field.is_leaf();
             direct_path_results.push(direct_paths);
 
@@ -1118,7 +1248,7 @@ impl<'graph> PathSearch<'graph> {
                     path,
                     // @skip/@include can't be used in @requires and @provides,
                     // that's why we pass no condition
-                    &NavigationTarget::ConcreteType(type_name, None),
+                    &NavigationTarget::ConcreteType(type_name, None, None),
                 )?);
             }
         }
@@ -1131,7 +1261,7 @@ impl<'graph> PathSearch<'graph> {
                 path_from_rc,
                 // @skip/@include can't be used in @requires and @provides,
                 // that's why we pass no condition
-                &NavigationTarget::ConcreteType(type_name, None),
+                &NavigationTarget::ConcreteType(type_name, None, None),
                 excluded,
                 None,
             )?);

@@ -953,12 +953,12 @@ fn union_list_test() -> Result<(), Box<dyn Error>> {
                   id
                   items {
                     __typename
-                    ... on PaperBook {
+                    ... on DigitalBook {
                       product {
                         ...a
                       }
                     }
-                    ... on DigitalBook {
+                    ... on PaperBook {
                       product {
                         ...a
                       }
@@ -1088,6 +1088,83 @@ fn conditional_union_type_condition_on_its_own_field_include_mixed_members(
               }
             }
           }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// The same with the members asking for the same fields, so `ComponentA` and `ComponentC` are
+/// planned once, for `ComponentA` with `ComponentC` too. The wrapper's selfie edge comes after
+/// the `components` field, and every member still gets its `product`.
+#[test]
+fn conditional_union_type_condition_on_its_own_field_include_grouped_members(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($v: Boolean!) {
+          card {
+            components {
+              ... on Component @include(if: $v) {
+                __typename
+                ... on ComponentA { product { id a } }
+                ... on ComponentC { product { id a } }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/union-member-entity-fields.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "card") {
+          query ($v:Boolean!) {
+            card {
+              components {
+                ... on Component @include(if: $v) {
+                  __typename
+                  ... on ComponentA {
+                    product {
+                      ...a
+                    }
+                  }
+                  ... on ComponentC {
+                    product {
+                      ...a
+                    }
+                  }
+                }
+              }
+            }
+          }
+          fragment a on Product {
+            __typename
+            id
+          }
+        },
+        Flatten(path: "card.components.@|[Component]|[ComponentA|ComponentC].product") {
+          Fetch(service: "product", if: $v) {
+            {
+              ... on Product {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                a
+              }
+            }
+          },
         },
       },
     },
@@ -1324,6 +1401,424 @@ fn union_members_ask_only_for_their_own_entity_fields() -> Result<(), Box<dyn Er
             _e2: _entities(representations: $__batch_reps_2) {
               ... on Product {
                 a
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Book and Movie have the same key and `title`, but `b` only resolves Book by key and `c`
+/// only Movie. The fragments can't be planned once for both: each type goes to its own.
+#[test]
+fn fragments_on_types_resolvable_in_other_subgraphs_stay_apart() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation("{ media { ... on Book { title } ... on Movie { title } } }");
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/group-key-resolvable.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            media {
+              __typename
+              ... on Book {
+                __typename
+                id
+              }
+              ... on Movie {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Parallel {
+          Flatten(path: "media.@|[Movie]") {
+            Fetch(service: "c") {
+              {
+                ... on Movie {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Movie {
+                  title
+                }
+              }
+            },
+          },
+          Flatten(path: "media.@|[Book]") {
+            Fetch(service: "b") {
+              {
+                ... on Book {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Book {
+                  title
+                }
+              }
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Book and Movie are both keyed by `details { code }`, but `s` hands over `code` only
+/// through `Book.details`. A Movie's `code` comes from `o`, with or without the Book
+/// fragment next to it.
+#[test]
+fn fragments_on_types_that_get_their_key_another_way_stay_apart() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation("{ media { ... on Book { title } ... on Movie { title } } }");
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/group-key-route.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "s") {
+          {
+            media {
+              __typename
+              ... on Book {
+                __typename
+                details {
+                  code
+                }
+              }
+              ... on Movie {
+                __typename
+                details {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "media.@|[Movie].details") {
+          Fetch(service: "o") {
+            {
+              ... on Details {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Details {
+                code
+              }
+            }
+          },
+        },
+        BatchFetch(service: "t") {
+          {
+            _e0 {
+              paths: [
+                "media.@|[Movie]"
+              ]
+              {
+                ... on Movie {
+                  __typename
+                  details {
+                    code
+                  }
+                }
+              }
+            }
+            _e1 {
+              paths: [
+                "media.@|[Book]"
+              ]
+              {
+                ... on Book {
+                  __typename
+                  details {
+                    code
+                  }
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Movie {
+                title
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Book {
+                title
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `media` returns `[Book]` in a and `[Media]` in b. `Book` and `Movie` plan the same way, so
+/// their fragments are planned once, for `Book` with `Movie` too. A path that's at `Book`
+/// already, through a, goes straight to `title`, but one through b is at `Media` and still
+/// takes `... on Book`, and `Movie` with it: `Movie`'s `title` has nowhere else to go.
+#[test]
+fn fragment_planned_for_several_types_keeps_them_on_a_path_at_its_type(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let supergraph = r#"
+        enum join__Graph {
+            A @join__graph(name: "a", url: "")
+            B @join__graph(name: "b", url: "")
+        }
+        type Query @join__type(graph: A) @join__type(graph: B) {
+            media: [Media] @join__field(graph: A, type: "[Book]") @join__field(graph: B, type: "[Media]")
+        }
+        union Media @join__type(graph: B) @join__unionMember(graph: B, member: "Book") @join__unionMember(graph: B, member: "Movie") = Book | Movie
+        type Book @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
+            id: ID!
+            title: String
+            pages: Int
+        }
+        type Movie @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
+            id: ID!
+            title: String
+            length: Int
+        }
+    "#;
+    let query_plan = crate::query_planner::tests::testkit::build_query_plan_from_sdl(
+        supergraph,
+        parse_operation("{ media { ... on Book { title } ... on Movie { title } } }"),
+        Default::default(),
+        Default::default(),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          media {
+            __typename
+            ... on Book {
+              title
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    // the same with one object, not a list: a's `media` is a `Book`
+    let query_plan = crate::query_planner::tests::testkit::build_query_plan_from_sdl(
+        &supergraph
+            .replace(r#"type: "[Book]""#, r#"type: "Book""#)
+            .replace(r#"type: "[Media]""#, r#"type: "Media""#)
+            .replace("media: [Media]", "media: Media"),
+        parse_operation("{ media { ... on Book { title } ... on Movie { title } } }"),
+        Default::default(),
+        Default::default(),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          media {
+            __typename
+            ... on Book {
+              title
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    // `Movie` written first: the fragment is planned for `Movie`, with `Book` too, and no
+    // path leads to `Movie`. Each still takes `Book`, a's is at it already.
+    let query_plan = crate::query_planner::tests::testkit::build_query_plan_from_sdl(
+        supergraph,
+        parse_operation("{ media { ... on Movie { title } ... on Book { title } } }"),
+        Default::default(),
+        Default::default(),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          media {
+            __typename
+            ... on Book {
+              title
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    let query_plan = crate::query_planner::tests::testkit::build_query_plan_from_sdl(
+        supergraph,
+        parse_operation("{ media { ... on Movie { title length } ... on Book { title pages } } }"),
+        Default::default(),
+        Default::default(),
+    )?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          media {
+            __typename
+            ... on Book {
+              title
+              pages
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `r` is `[XY]` on `T1` and `[XYZ]` on `T2`. The calls for the `child` under `X` and `Y` are
+/// batched for `T1` and `T2`, and `X` and `Y` are every type of `T1`'s `r`, not of `T2`'s: the
+/// `[X|Y]` stays, or the call for them would also take a `Z`'s `child`, with the other currency.
+#[test]
+fn several_type_condition_kept_when_the_field_type_differs_per_type() -> Result<(), Box<dyn Error>>
+{
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          a {
+            ... on T1 {
+              r {
+                ... on X { child { price(currency: "USD") } }
+                ... on Y { child { price(currency: "USD") } }
+              }
+            }
+            ... on T2 {
+              r {
+                ... on X { child { price(currency: "USD") } }
+                ... on Y { child { price(currency: "USD") } }
+                ... on Z { child { price(currency: "EUR") } }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/several-type-parent-field-types.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            a {
+              __typename
+              ... on T1 {
+                r {
+                  __typename
+                  ... on X {
+                    ...a
+                  }
+                  ... on Y {
+                    ...c
+                  }
+                }
+              }
+              ... on T2 {
+                r {
+                  __typename
+                  ... on X {
+                    ...a
+                  }
+                  ... on Y {
+                    ...c
+                  }
+                  ... on Z {
+                    child {
+                      ...b
+                    }
+                  }
+                }
+              }
+            }
+          }
+          fragment a on X {
+            child {
+              ...b
+            }
+          }
+          fragment b on Child {
+            __typename
+            id
+          }
+          fragment c on Y {
+            child {
+              ...b
+            }
+          }
+        },
+        BatchFetch(service: "b") {
+          {
+            _e0 {
+              paths: [
+                "a.@|[T2].r.@|[Z].child"
+              ]
+              {
+                ... on Child {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1 {
+              paths: [
+                "a.@|[T1|T2].r.@|[X|Y].child"
+              ]
+              {
+                ... on Child {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Child {
+                price(currency: "EUR")
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Child {
+                price(currency: "USD")
               }
             }
           }
