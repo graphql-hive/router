@@ -608,29 +608,6 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             .collect()
     };
 
-    // The type planned with this one that a path's objects can only be, when its field is
-    // narrowed in that subgraph: at `Book` under a `media` one subgraph has as `[Book]`, or at
-    // that `media`'s node when it's a union, with the move to `Book` only. A path like that
-    // doesn't leave out any type the others take, the others aren't there.
-    let only_type =
-        |path: &OperationPath<'graph>| -> Result<Option<&'graph str>, WalkOperationError> {
-            if through_narrowed_field(graph, supergraph, path) {
-                return at_a_planned_type(path);
-            }
-            let Some(data) = graph.node(path.tail())?.union_members_data() else {
-                return Ok(None);
-            };
-            let only = match data.possible_members.as_slice() {
-                [only] => *only,
-                _ => return Ok(None),
-            };
-            let planned = also
-                .as_ref()
-                .and_then(|attributes| attributes.also.as_ref())
-                .is_some_and(|names| names.iter().any(|name| name == only));
-            Ok(planned.then_some(only))
-        };
-
     let mut next_paths: Vec<OperationPath<'graph>> = Vec::with_capacity(paths.len());
     // the types planned with this one that a path got to, and the paths that got nowhere
     let mut covered: Vec<&'graph str> = vec![];
@@ -649,17 +626,14 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             continue;
         }
 
-        if also.is_some() {
-            if let Some(type_name) = only_type(path)? {
-                if at_a_planned_type(path)? == Some(type_name) {
-                    next_paths.push(stay_at(path, type_name)?);
-                    covered.push(type_name);
-                    continue;
-                }
-                if advance(&mut next_paths, path, type_name, None)? {
-                    covered.push(type_name);
-                    continue;
-                }
+        // At a type planned with it through a field narrowed in that subgraph, like `Book`
+        // under a `media` one subgraph has as `[Book]`, its objects can only be that type: it
+        // doesn't leave out any type the other paths take, the others aren't there.
+        if also.is_some() && through_narrowed_field(graph, supergraph, path) {
+            if let Some(type_name) = at_a_planned_type(path)? {
+                next_paths.push(stay_at(path, type_name)?);
+                covered.push(type_name);
+                continue;
             }
         }
 
