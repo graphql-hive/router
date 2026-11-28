@@ -743,48 +743,51 @@ pub fn find_selection_set_by_path<'a>(
     find_selection_set_by_segments(root_selection_set, &path.inner)
 }
 
-/// `find_selection_set_by_path` with a part of a path.
+/// `find_selection_set_by_path` with a part of a path. A segment can match more than one item,
+/// like two `... on Mutation @include(if: $on)` kept apart so the fields between them keep their
+/// order: it goes into the first one the rest of the path is under.
 pub fn find_selection_set_by_segments<'a>(
-    root_selection_set: &'a SelectionSet,
+    selection_set: &'a SelectionSet,
     path: &[Segment],
 ) -> Option<&'a SelectionSet> {
-    let mut current_selection_set = root_selection_set;
-
-    for path_element in path.iter() {
-        if matches!(path_element, Segment::List) {
-            continue;
-        }
-
-        current_selection_set = current_selection_set
-            .items
-            .iter()
-            .find(|item| segment_selects(path_element, item))
-            .and_then(item_selections)?;
+    let Some((segment, rest)) = path.split_first() else {
+        return Some(selection_set);
+    };
+    if matches!(segment, Segment::List) {
+        return find_selection_set_by_segments(selection_set, rest);
     }
-
-    Some(current_selection_set)
+    selection_set
+        .items
+        .iter()
+        .filter(|item| segment_selects(segment, item))
+        .filter_map(item_selections)
+        .find_map(|selections| find_selection_set_by_segments(selections, rest))
 }
 
 pub fn find_selection_set_by_path_mut<'a>(
     root_selection_set: &'a mut SelectionSet,
     path: &MergePath,
 ) -> Option<&'a mut SelectionSet> {
-    let mut current_selection_set = root_selection_set;
+    find_selection_set_by_segments_mut(root_selection_set, &path.inner)
+}
 
-    for path_element in path.inner.iter() {
-        if matches!(path_element, Segment::List) {
-            continue;
-        }
-
-        let index = current_selection_set
-            .items
-            .iter()
-            .position(|item| segment_selects(path_element, item))?;
-
-        current_selection_set = item_selections_mut(&mut current_selection_set.items[index])?;
+/// `find_selection_set_by_segments`, mutable.
+fn find_selection_set_by_segments_mut<'a>(
+    selection_set: &'a mut SelectionSet,
+    path: &[Segment],
+) -> Option<&'a mut SelectionSet> {
+    let Some((segment, rest)) = path.split_first() else {
+        return Some(selection_set);
+    };
+    if matches!(segment, Segment::List) {
+        return find_selection_set_by_segments_mut(selection_set, rest);
     }
-
-    Some(current_selection_set)
+    selection_set
+        .items
+        .iter_mut()
+        .filter(|item| segment_selects(segment, item))
+        .filter_map(item_selections_mut)
+        .find_map(|selections| find_selection_set_by_segments_mut(selections, rest))
 }
 
 /// Like `find_selection_set_by_path_mut`, but a type condition with several types, like
@@ -824,18 +827,22 @@ pub fn find_selection_sets_by_path_mut<'a>(
             }
             taken.len() == type_names.len()
         }
+        // the first item the rest of the path is under, see `find_selection_set_by_segments`
         segment => {
-            let Some(item) = selection_set
-                .items
-                .iter_mut()
-                .find(|item| segment_selects(segment, item))
-            else {
-                return false;
-            };
-            match item_selections_mut(item) {
-                Some(selections) => find_selection_sets_by_path_mut(selections, rest, found),
-                None => false,
+            let before = found.len();
+            for item in selection_set.items.iter_mut() {
+                if !segment_selects(segment, item) {
+                    continue;
+                }
+                let Some(selections) = item_selections_mut(item) else {
+                    continue;
+                };
+                if find_selection_sets_by_path_mut(selections, rest, found) {
+                    return true;
+                }
+                found.truncate(before);
             }
+            false
         }
     }
 }

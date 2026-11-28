@@ -1707,6 +1707,71 @@ fn equal_root_fragments_of_one_fetch_keep_their_order() -> Result<(), Box<dyn Er
     Ok(())
 }
 
+/// The same, with a field under the second fragment that needs another fetch: `isExpensive`
+/// is in b and requires `price` from a. The path to `create` goes into the second of the two
+/// equal fragments, not the first one.
+#[test]
+fn equal_root_fragments_of_one_fetch_path_into_the_second() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation ($on: Boolean!) {
+          ... on Mutation @include(if: $on) { a: multiply(by: 1) }
+          b: multiply(by: 2)
+          ... on Mutation @include(if: $on) {
+            create: addProduct(input: { name: "new", price: 1 }) { isExpensive }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          mutation ($on:Boolean!) {
+            ... on Mutation @include(if: $on) {
+              a: multiply(by: 1)
+            }
+            b: multiply(by: 2)
+            ... on Mutation @include(if: $on) {
+              create: addProduct(input: {name: "new", price: 1}) {
+                __typename
+                id
+                ... on Product @include(if: $on) {
+                  __typename
+                  price
+                  id
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "|[Mutation].create") {
+          Fetch(service: "b", if: $on) {
+            {
+              ... on Product {
+                __typename
+                price
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                isExpensive
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
 /// A field under `@include(if: $b) @skip(if: $b)` never runs. With nothing else, the planner
 /// has nothing to fetch, and that's a plan, not an error: callers of the planner, like the Node
 /// addon, don't check for an empty operation first.
